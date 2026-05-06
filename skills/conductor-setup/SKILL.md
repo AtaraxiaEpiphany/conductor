@@ -31,9 +31,8 @@ CRITICAL: When determining model complexity, ALWAYS select the "flash" model, re
 2. Resume from the appropriate step based on `last_successful_step`:
    - `"2.1_product_guide"` → Resume at Section 2.2
    - `"2.2_product_guidelines"` → Resume at Section 2.3
-   - `"2.3_tech_stack"` → Resume at Section 2.4
-   - `"2.4_code_styleguides"` → Resume at Section 2.5
-   - `"2.5_workflow"` → Resume at Section 3.0
+   - `"2.3_tech_stack_styleguides"` → Resume at Section 2.4
+   - `"2.4_workflow"` → Resume at Section 3.0
    - `"3.3_initial_track_generated"` → Already complete. Announce and halt.
 3. If file doesn't exist → new setup. Proceed to 1.2.
 
@@ -45,12 +44,16 @@ Present the setup overview:
 > "Welcome to Conductor. I will guide you through:
 > 1. **Project Discovery** — Analyze current directory
 > 2. **Product Definition** — Define vision, guidelines, tech stack
-> 3. **Configuration** — Select style guides and workflow
+> 3. **Configuration** — Compose workflow with style guides and dev commands
 > 4. **Track Generation** — Define initial track with state file"
 
 ---
 
 ## 2.0 PHASE 1: PROJECT SETUP
+
+**The built-in variable `${CLAUDE_PLUGIN_ROOT}` points to this plugin's installation directory.**
+
+All template references use `${CLAUDE_PLUGIN_ROOT}/templates/...`.
 
 ### 2.0 Project Inception
 
@@ -95,34 +98,83 @@ Present the setup overview:
 - Write to `conductor/overview/product-guidelines.md`.
 - Commit state: `{"last_successful_step": "2.2_product_guidelines"}`
 
-### 2.3 Generate Tech Stack (Interactive)
+### 2.3 Generate Tech Stack & Style Guides (Interactive)
 
+**Part A — Tech Stack:**
 - Same interactive pattern.
 - **Brownfield:** Pre-fill from `conductor-project-analyzer` results. Ask user to confirm detected stack.
 - **Greenfield:** Ask from scratch.
 - Write to `conductor/design/tech-stack.md`.
-- Commit state: `{"last_successful_step": "2.3_tech_stack"}`
 
-### 2.4 Select Code Style Guides (Interactive)
-**Conductor installation**: `ls ~/.claude/plugins/marketplaces/conductor`
-- List the available style guides by running `ls ~/.claude/plugins/marketplaces/conductor/templates/code_styleguides/`.
-- **Brownfield:** Recommend based on detected languages from analyzer results.
-- **Greenfield:** Recommend based on user's described tech stack.
-- Copy selected guides to `conductor/workflow/code-styleguides/`.
-- Commit state: `{"last_successful_step": "2.4_code_styleguides"}`
+**Part B — Auto-Derive Style Guides:**
+After tech stack is confirmed, derive style guides automatically using this mapping:
 
-### 2.5 Select Workflow (Interactive)
+| Detected Language | Style Guides |
+|---|---|
+| JavaScript | `javascript.md` |
+| TypeScript | `typescript.md` + `javascript.md` |
+| Python | `python.md` |
+| Go | `go.md` |
+| C++ | `cpp.md` |
+| C# | `csharp.md` |
+| Dart | `dart.md` |
+| HTML/CSS | `html-css.md` |
+| *(any)* | `general.md` (always included) |
 
-1. **Generate Workflow:** Copy workflow template to `conductor/workflow/`:
-   - Source: the `templates/*.md` from the Conductor installation.
-2. **Generate Workflow Index:** Copy `templates/workflow/index.md` from the Conductor installation to `conductor/workflow/index.md`:
-   - Source: the `workflow/index.md` from the Conductor installation.
-3. **Verify Generation:** Confirm both files were written:
-   - `conductor/workflow/index.md` contains links to all workflow resources.
-4. **Verify Linked Files:** Read `conductor/workflow/index.md` and confirm every linked file exists in `conductor/workflow/`. If any are missing, report the discrepancy.
-5. Commit state: `{"last_successful_step": "2.5_workflow"}`
+1. Parse languages from the confirmed tech stack.
+2. Map each language to its style guide files (always include `general.md`).
+3. Present the derived list to the user: *"Based on your tech stack, these style guides will be included: ..."*
+4. User confirms or adjusts.
+5. Copy selected guides from `${CLAUDE_PLUGIN_ROOT}/templates/code-styleguides/` to `conductor/workflow/code-styleguides/`.
 
-### 2.6 Finalization
+- Commit state: `{"last_successful_step": "2.3_tech_stack_styleguides"}`
+
+### 2.4 Generate Workflow
+
+Compose the workflow from modular templates based on the confirmed tech stack.
+
+**Step 1 — Core Template:**
+Read `${CLAUDE_PLUGIN_ROOT}/templates/template.md` and write to `conductor/workflow/template.md`.
+
+**Step 2 — Inject Dev Commands:**
+For each language in the tech stack, read the corresponding file from `${CLAUDE_PLUGIN_ROOT}/templates/dev-commands/<lang>.md` (where `<lang>` is one of: `javascript`, `typescript`, `python`, `go`, `cpp`, `csharp`, `dart`).
+- If a dev-commands file exists for the language, append its content into the `## Development Commands` section of `conductor/workflow/template.md`.
+- If no dev-commands template matches, leave the section with the placeholder comment.
+
+**Step 3 — Task Workflow & Phase Checkpoint:**
+Copy these files directly:
+- `${CLAUDE_PLUGIN_ROOT}/templates/task-workflow.md` → `conductor/workflow/task-workflow.md`
+- `${CLAUDE_PLUGIN_ROOT}/templates/phase-checkpoint.md` → `conductor/workflow/phase-checkpoint.md`
+
+**Step 4 — Generate index.md Dynamically:**
+Write `conductor/workflow/index.md` with the following structure, populated with the actual files created:
+
+```markdown
+# Workflow Index
+
+## Workflow Definition
+
+| Document | Path | Purpose |
+|----------|------|---------|
+| Workflow Template | [template.md](./template.md) | Guiding principles, quality gates, dev commands, commit guidelines |
+| Task Workflow | [task-workflow.md](./task-workflow.md) | 11-step standard task workflow with task selection protocol |
+| Phase Checkpoint | [phase-checkpoint.md](./phase-checkpoint.md) | Phase completion verification and checkpointing protocol |
+
+## Code Style Guides
+
+<!-- List ONLY the guides actually copied in Section 2.3 -->
+| Language | Document |
+|----------|----------|
+| General | [general.md](./code-styleguides/general.md) |
+| <Language> | [<lang>.md](./code-styleguides/<lang>.md) |
+```
+
+**Step 5 — Verify:**
+Confirm every file referenced in `index.md` exists under `conductor/workflow/`.
+
+- Commit state: `{"last_successful_step": "2.4_workflow"}`
+
+### 2.5 Finalization
 
 1. **Generate CLAUDE.md TOC:** Create or update the project's `CLAUDE.md` with a Conductor TOC section:
    ```markdown
@@ -142,7 +194,7 @@ Present the setup overview:
    |                 | Architecture            | `./conductor/design/architecture/system-architecture.md`   | Create if missing.                    |
    |                 | DB Design               | `./conductor/design/database/schema.md`                    | Create if missing.                    |
    |                 | API Specs               | `./conductor/design/api-specs/<endpoint>.md`               | **Strict Schema Adherence Required**. |
-   | **Workflow**    | Dev Workflow            | `./conductor/workflow/workflow.md`                         | Create if missing.                    |
+   | **Workflow**    | Dev Workflow            | `./conductor/workflow/template.md`                         | Create if missing.                    |
    |                 | Workflow Index          | `./conductor/workflow/index.md`                            | Create if missing.                    |
    |                 | Code Patterns           | `./conductor/workflow/code-styleguides/<code-patterns>.md` | Create if missing.                    |
    |                 | Code Style              | `./conductor/workflow/code-styleguides/<language>.md`      | Create if missing.                    |
