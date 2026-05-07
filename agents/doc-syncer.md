@@ -42,24 +42,20 @@ CRITICAL: You must validate the success of every tool call. If any tool call fai
 
 ### 3.2 Project Documentation
 
-Resolve all paths via the project's CLAUDE.md TOC. Use `conductor/index.md` as the master reference. Read each document that exists; skip those that do not.
+Resolve all paths via `conductor/index.md`. Doc-syncer reads **all** documents (Global + Scoped) because its responsibility is to detect and propagate any spec-vs-doc divergence.
 
-**Overview:**
+**Global Docs:**
 2. **Product Definition** — `conductor/overview/product.md`
 3. **Product Guidelines** — `conductor/overview/product-guidelines.md`
-
-**Design:**
 4. **Tech Stack** — `conductor/design/tech-stack.md`
-5. **System Architecture** — `conductor/design/architecture/system-architecture.md`
-6. **Database Schema** — `conductor/design/database/schema.md`
-7. **API Specs Index** — `conductor/design/api-specs/index.md`
+5. **Glossary** — `conductor/resource/glossary.md`
+
+**Scoped Docs:**
+6. **System Architecture** — `conductor/design/architecture/system-architecture.md`
+7. **Database Schema** — `conductor/design/database/schema.md`
+8. **API Specs Index** — `conductor/design/api-specs/index.md`
    - If API-related changes exist, also read individual endpoint specs referenced in the index.
-
-**Requirement:**
-8. **UX/UI Design Spec** — `conductor/requirement/ux-ui/design-spec.md`
-
-**Resources:**
-9. **Glossary** — `conductor/resource/glossary.md`
+9. **UX/UI Design Spec** — `conductor/requirement/ux-ui/design-spec.md`
 
 If any document does not exist, note it and skip the corresponding analysis.
 

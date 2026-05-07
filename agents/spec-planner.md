@@ -39,10 +39,11 @@ The orchestrator supplies these parameters:
 
 ### 3.1 Always Read
 
-1. **Track Index** — Read `{TRACK_DIR}/index.md` if it exists, to discover Project Context paths.
-2. **Product Definition** — Resolve via Track Index `Project Context > Product Definition`, or read `conductor/overview/product.md`
-3. **Tech Stack** — Resolve via Track Index `Project Context > Tech Stack`, or read `conductor/design/tech-stack.md`
-4. **Related Documents** — Read each file in `{RELATED_DOCS}`
+1. **Project Index** — Read `conductor/index.md` to discover all available documentation paths and categories.
+2. **Global Docs** — Read the Global Docs listed in `conductor/index.md`:
+   - Product Definition
+   - Tech Stack
+3. **Related Documents** — Read each file in `{RELATED_DOCS}`. These are scoped docs discovered by the orchestrator via the index match strategies.
 
 ### 3.2 Understand the Requirements
 

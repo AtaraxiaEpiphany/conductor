@@ -42,9 +42,9 @@ The orchestrator supplies these parameters:
 
 ## 3.0 ANALYSIS PROTOCOL
 
-### 3.1 Load Context
+### 3.1 Load Global Context
 
-Read the following files:
+Read these files unconditionally:
 
 1. **Plan** — `{TRACK_DIR}/plan.md`
    - Understand every task and its status.
@@ -60,18 +60,31 @@ Read the following files:
 4. **Issues Log** — `{TRACK_DIR}/issues.md` (if exists)
    - Review any failure entries and skip analysis verdicts.
 
-5. **Project Guidelines** — `{PRODUCT_GUIDELINES}`
+5. **Product Guidelines** — `{PRODUCT_GUIDELINES}`
 6. **Tech Stack** — `{TECH_STACK}`
 7. **Code Style Guides** — Read all `.md` files in `{STYLEGUIDES_DIR}`
 
-### 3.2 Analyze Changes
+### 3.2 Load Diff & Determine Scope
 
-**Load the diff:**
-- `git diff --shortstat {REVISION_RANGE}` — volume check
-- **< 300 lines:** `git diff {REVISION_RANGE}` — full diff
-- **>= 300 lines:** `git diff --name-only {REVISION_RANGE}` then iterate file by file
+1. `git diff --shortstat {REVISION_RANGE}` — volume check
+2. **< 300 lines:** `git diff {REVISION_RANGE}` — full diff
+3. **>= 300 lines:** `git diff --name-only {REVISION_RANGE}` then iterate file by file
+4. `git diff --name-only {REVISION_RANGE}` → extract changed file paths for scoped doc matching.
 
-### 3.3 Verify Checklist
+### 3.3 Load Scoped Context
+
+Match changed files to scoped design docs. Only read documents relevant to the diff.
+
+| Changed File Pattern | Read Scoped Doc | Match By |
+|----------------------|-----------------|----------|
+| `routes/**`, `controllers/**`, `api/**` | `conductor/design/api-specs/index.md` → matching endpoint docs | Endpoint path or handler name |
+| `models/**`, `migrations/**`, `schema/**` | `conductor/design/database/index.md` | Table name from file path |
+| `services/**`, `lib/**`, `src/**` (structural) | `conductor/design/architecture/system-architecture.md` | Component name from directory structure |
+| `components/**`, `pages/**`, `views/**` | `conductor/requirement/ux-ui/design-spec.md` | Page or component name |
+
+Skip any scoped doc that does not exist or has no matching changes.
+
+### 3.4 Verify Checklist
 
 Execute each verification:
 
@@ -104,6 +117,11 @@ Execute each verification:
    - Read `issues.md` for all skip analysis verdicts.
    - Assess: was each skip justified? What is the downstream risk?
 
+7. **Design Doc Consistency** (if scoped docs loaded)
+   - Do API changes match the api-specs documentation?
+   - Do database changes match the schema documentation?
+   - Do architectural changes match the system-architecture documentation?
+
 ---
 
 ## 4.0 OUTPUT FORMAT
@@ -119,6 +137,7 @@ Return **exactly** this block. The orchestrator parses it to generate the final 
 - PLAN_COMPLIANCE: Yes|No|Partial
 - STATE_CONSISTENCY: Consistent|Inconsistent
 - STYLE_COMPLIANCE: Pass|Fail
+- DESIGN_DOC_CONSISTENCY: Yes|No|N/A
 - NEW_TESTS: Yes|No
 - TEST_COVERAGE: Yes|No|Partial
 - TEST_RESULTS: Passed|Failed|Not_Run
