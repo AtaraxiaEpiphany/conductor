@@ -69,7 +69,7 @@ CRITICAL: You must validate the success of every tool call. If any tool call fai
 
 ### 2.3 Dispatch Spec & Plan Generator Subagent
 
-Once requirements are gathered, dispatch the `conductor-spec-planner` subagent to generate `spec.md` and `plan.md`.
+Once requirements are gathered, dispatch the `conductor-spec-planner` subagent. The subagent writes `spec.md` and `plan.md` directly to disk and returns a compact summary.
 
 **Build the dispatch prompt:**
 
@@ -88,22 +88,21 @@ Once requirements are gathered, dispatch the `conductor-spec-planner` subagent t
 3. Pass the dispatch prompt above as the prompt.
 4. Wait for the subagent to complete.
 5. Parse the `---SPEC PLAN RESULT---` / `---END SPEC PLAN RESULT---` block.
+6. On **FAILURE** → announce error and halt.
+7. On **SUCCESS** → extract `PLAN_STRUCTURE` for Step 2.5. The files are already on disk.
 
 ### 2.4 Review Generated Artifacts
 
-1. Extract `SPEC_CONTENT` and `PLAN_CONTENT` from the result.
-2. **Present spec to user** for review. Revise until confirmed.
-3. **Present plan to user** for review. Revise until confirmed.
+1. **Read spec.md** from disk. Present to user for review. Revise until confirmed.
+2. **Read plan.md** from disk. Present to user for review. Revise until confirmed.
 
-### 2.5 Create Track Artifacts
+### 2.5 Create Track State Artifacts
 
 1. **Check for existing track name:** Resolve **Tracks Directory**. List existing track directories. If proposed short name matches, halt and suggest alternatives.
 
 2. **Generate Track ID:** Format `shortname_YYYYMMDD`.
 
-3. **Create Directory:** `<Tracks Directory>/<track_id>/`.
-
-4. **Create `track-state.json`:** Build the initial state by parsing the confirmed `plan.md`:
+3. **Create `track-state.json`** using `PLAN_STRUCTURE` from the subagent result:
    ```json
    {
      "track_id": "<track_id>",
@@ -125,25 +124,21 @@ Once requirements are gathered, dispatch the `conductor-spec-planner` subagent t
      ]
    }
    ```
-   - Parse `plan.md` Phase/Task hierarchy to populate `phases[]`. Each `- [ ] Task:` line becomes a task entry.
-   - Set `current_phase_index` and `current_task_index` to `0` (first task).
+   Map each entry in `PLAN_STRUCTURE.phases[]` to the `phases[]` array above. Set all statuses to `"pending"`.
 
-5. **Write Files:**
-   - `<track_id>/spec.md` — confirmed specification.
-   - `<track_id>/plan.md` — confirmed plan.
-   - `<track_id>/index.md`:
-     ```markdown
-     # Track <track_id> Context
+4. **Write Track index.md:**
+   ```markdown
+   # Track <track_id> Context
 
-     ## Track Files
-     - [Specification](./spec.md)
-     - [Implementation Plan](./plan.md)
-     - [Track State](./track-state.json)
-     - [Issues Log](./issues.md) (created lazily on first failure)
-     ```
+   ## Track Files
+   - [Specification](./spec.md)
+   - [Implementation Plan](./plan.md)
+   - [Track State](./track-state.json)
+   - [Issues Log](./issues.md) (created lazily on first failure)
+   ```
    - Do NOT create `issues.md` — it is created lazily on first failure.
 
-6. **Update Tracks Registry:**
+5. **Update Tracks Registry:**
    - Append new section:
      ```markdown
 
@@ -153,5 +148,5 @@ Once requirements are gathered, dispatch the `conductor-spec-planner` subagent t
        *Link: [./<Relative Track Path>/](./<Relative Track Path>/)*
      ```
 
-7. **Announce Completion:**
+6. **Announce Completion:**
    > "New track '<track_id>' created. Start implementation with `/conductor:implement`."

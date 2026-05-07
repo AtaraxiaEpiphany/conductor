@@ -14,6 +14,7 @@ You are an AI agent. Your primary function is to set up and manage a software pr
 
 **Available Subagents:**
 - **`conductor-project-analyzer`** — Scans brownfield projects to detect tech stack, architecture, and structure. Dispatch via `Agent` tool with `subagent_type: "conductor-project-analyzer"`.
+- **`conductor-spec-planner`** — Generates spec.md and plan.md content from requirements and project context. Returns structured output block. Dispatch via `Agent` tool with `subagent_type: "conductor-spec-planner"`.
 
 **Core Protocols:** Execution Firewall — defined in the system prompt. File paths resolved via project CLAUDE.md TOC.
 
@@ -33,7 +34,8 @@ CRITICAL: When determining model complexity, ALWAYS select the "flash" model, re
    - `"2.2_product_guidelines"` → Resume at Section 2.3
    - `"2.3_tech_stack_styleguides"` → Resume at Section 2.4
    - `"2.4_workflow"` → Resume at Section 3.0
-   - `"3.3_initial_track_generated"` → Already complete. Announce and halt.
+   - `"3.4_track_artifacts_created"` → Resume at Section 3.5 (commit only)
+   - `"3.5_setup_complete"` → Already complete. Announce and halt.
 3. If file doesn't exist → new setup. Proceed to 1.2.
 
 ---
@@ -194,8 +196,7 @@ Confirm every file referenced in `index.md` exists under `conductor/workflow/`.
    |                 | Architecture            | `./conductor/design/architecture/system-architecture.md`   | Create if missing.                    |
    |                 | DB Design               | `./conductor/design/database/schema.md`                    | Create if missing.                    |
    |                 | API Specs               | `./conductor/design/api-specs/<endpoint>.md`               | **Strict Schema Adherence Required**. |
-   | **Workflow**    | Dev Workflow            | `./conductor/workflow/template.md`                         | Create if missing.                    |
-   |                 | Workflow Index          | `./conductor/workflow/index.md`                            | Create if missing.                    |
+   | **Workflow**    | Workflow Index          | `./conductor/workflow/index.md`                            | Create if missing.                    |
    |                 | Code Patterns           | `./conductor/workflow/code-styleguides/<code-patterns>.md` | Create if missing.                    |
    |                 | Code Style              | `./conductor/workflow/code-styleguides/<language>.md`      | Create if missing.                    |
    |                 | Git Flow                | `./conductor/workflow/git-flow.md`                         | Create if missing.                    |
@@ -227,15 +228,37 @@ Confirm every file referenced in `index.md` exists under `conductor/workflow/`.
 - Generate single track title.
 - User confirmation.
 
-### 3.3 Create Track Artifacts
+### 3.3 Dispatch Spec & Plan Generator
 
-1. **Initialize Tracks File:** Create `conductor/tracks.md`.
-2. **Generate Track Artifacts:**
-   - Generate `spec.md` and `plan.md` automatically.
-   - Inject phase completion tasks per workflow.
-   - Include status markers `[ ]` for every task.
+Once requirements are gathered and track is confirmed, dispatch the `conductor-spec-planner` subagent. The subagent writes `spec.md` and `plan.md` directly to disk and returns a compact summary.
 
-3. **Create track-state.json:**
+**Build the dispatch prompt:**
+
+```
+## Generation Input
+- TRACK_DIR: {track_dir}
+- TRACK_DESCRIPTION: {confirmed track description}
+- TRACK_TYPE: {inferred type}
+- USER_ANSWERS: {collected requirements or "N/A"}
+- RELATED_DOCS: {comma-separated paths to product.md, tech-stack.md, etc.}
+```
+
+**Launch the subagent:**
+1. Use the **Agent tool** with `subagent_type: "conductor-spec-planner"`.
+2. Description: `"Generate spec and plan for initial track '<track_description>'"`.
+3. Pass the dispatch prompt above as the prompt.
+4. Wait for the subagent to complete.
+5. Parse the `---SPEC PLAN RESULT---` / `---END SPEC PLAN RESULT---` block.
+6. On **FAILURE** → announce error and halt.
+7. On **SUCCESS** → extract `PLAN_STRUCTURE` for Step 3.4. The files are already on disk.
+
+### 3.4 Create Track State Artifacts (Parent)
+
+**The subagent already wrote `spec.md` and `plan.md` to disk. The parent only creates state/registry files.**
+
+1. **Initialize Tracks File:** Create `conductor/tracks.md` if it does not exist.
+
+2. **Generate track-state.json** using `PLAN_STRUCTURE` from the subagent result:
    ```json
    {
      "track_id": "<track_id>",
@@ -257,49 +280,64 @@ Confirm every file referenced in `index.md` exists under `conductor/workflow/`.
      ]
    }
    ```
+   Map each entry in `PLAN_STRUCTURE.phases[]` to the `phases[]` array above. Set all statuses to `"pending"`.
 
-4. **Write all files:** `spec.md`, `plan.md`, `track-state.json`, `index.md`.
-   - `index.md` template:
-     ```markdown
-      # Project Context
+3. **Write Track index.md:**
+   ```markdown
+   # Track <track_id> Context
 
-      ## Product Overview
+   ## Track Files
+   - [Specification](./spec.md)
+   - [Implementation Plan](./plan.md)
+   - [Track State](./track-state.json)
+   - [Issues Log](./issues.md) (created lazily on first failure)
+   ```
 
-      - [Product Definition](./overview/product.md)
-      - [Product Guidelines](./overview/product-guidelines.md)
+4. **Write Project index.md:**
+   ```markdown
+    # Project Context
 
-      ## Product Requirement
+    ## Product Overview
 
-      - [PRD Index](./requirement/prd/index.md)
-         > ⚠️ **CRITICAL**: ONLY read the **matching or semantically similar** product requirement docs.
+    - [Product Definition](./overview/product.md)
+    - [Product Guidelines](./overview/product-guidelines.md)
 
-      ## Design System
+    ## Product Requirement
 
-      - [Tech Stack](./design/tech-stack.md)
-      - [Design Specification](./requirement/ux-ui/design-spec.md)
-      - [System Architecture](./design/architecture/system-architecture.md)
-      - [Database Design](./design/database/index.md)
-      - [API Specifications](./design/api-specs/index.md)
-         > ⚠️ **CRITICAL**: ONLY read the **matching or semantically similar** API docs.
+    - [PRD Index](./requirement/prd/index.md)
+       > ⚠️ **CRITICAL**: ONLY read the **matching or semantically similar** product requirement docs.
 
-      ## Development Workflow
+    ## Design System
 
-      - [Workflow Index](./workflow/index.md)
+    - [Tech Stack](./design/tech-stack.md)
+    - [Design Specification](./requirement/ux-ui/design-spec.md)
+    - [System Architecture](./design/architecture/system-architecture.md)
+    - [Database Design](./design/database/index.md)
+    - [API Specifications](./design/api-specs/index.md)
+       > ⚠️ **CRITICAL**: ONLY read the **matching or semantically similar** API docs.
 
-      ## Knowledge & Resources
+    ## Development Workflow
 
-      - [References](./resource/references/index.md)
-      - [FAQ](./resource/faq/index.md)
-      - [Glossary](./resource/glossary.md)
+    - [Workflow Index](./workflow/index.md)
 
-      ## Management
+    ## Knowledge & Resources
 
-      - [Tracks Registry](./tracks.md)
-     ```
-5. **Commit state:** `{"last_successful_step": "3.3_initial_track_generated"}`
+    - [References](./resource/references/index.md)
+    - [FAQ](./resource/faq/index.md)
+    - [Glossary](./resource/glossary.md)
 
-### 3.4 Final Announcement
+    ## Management
 
-1. Announce completion.
-2. Commit all files: `conductor(setup): Add conductor setup files`
-3. Inform user: "Run `/conductor:implement` to begin."
+    - [Tracks Registry](./tracks.md)
+   ```
+
+5. **Update Tracks Registry:** Append the new track section to `conductor/tracks.md`.
+
+6. **Write checkpoint state:** `{"last_successful_step": "3.4_track_artifacts_created"}`
+
+### 3.5 Final Commit (Parent)
+
+1. `git add` all conductor files.
+2. `git commit -m "conductor(setup): Add conductor setup files"`
+3. Announce completion with summary of created artifacts.
+4. Inform user: "Run `/conductor:implement` to begin."
