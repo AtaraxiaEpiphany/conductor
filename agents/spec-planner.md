@@ -116,6 +116,8 @@ Structure:
 ## Phase 1: {Phase Name}
 - [ ] Task: {task description} <!-- AC-1, TC-1.1, TC-1.2 -->
 - [ ] Task: {task description} <!-- AC-2, TC-2.1 -->
+  - [ ] Subtask: {subtask description}
+  - [ ] Subtask: {subtask description}
 - [ ] Task: Conductor - User Manual Verification 'Phase 1' (Protocol in task-workflow.md)
 
 ## Phase 2: {Phase Name}
@@ -123,25 +125,70 @@ Structure:
 - [ ] Task: Conductor - User Manual Verification 'Phase 2' (Protocol in task-workflow.md)
 ```
 
-**Rules:**
-- Every task and sub-task gets a `[ ]` status marker.
-- Append a manual verification task at the end of each phase.
-- If a matching skill exists for a task, annotate with `> MUST use skill **<skill-name>** to complete the task`.
-- Phases should follow logical dependency order.
-- Tasks should be atomic and independently testable.
-- Read the workflow file to respect any task-level conventions.
-- **AC Traceability**: Each implementation task MUST have an HTML comment `<!-- AC-n, TC-n.n, ... -->` linking to the acceptance criteria and test scenarios it covers. This enables the orchestrator to pass precise AC context to task-executor subagents.
+<!--
+================================================================================
+ ⚠️  ATTENTION: RULES BELOW ARE MANDATORY. EVERY RULE MUST BE FOLLOWED.
+================================================================================
+-->
 
-**Task Type Tags:**
-- `[Explore]` — Code investigation, architecture analysis, dependency mapping. No code changes, no TDD. Use for Phase 1 exploration tasks (understanding codebase before implementation).
-- `[Docs]` — Documentation-only changes. Skips TDD.
-- `[Config]` — Configuration file changes. Skips TDD.
-- `[Chore]` — Maintenance tasks (dependencies, tooling). Skips TDD.
-- No tag (default) — Standard TDD workflow applies.
+**<rules>**
 
-**When to use `[Explore]`:**
-- First phase often needs exploration tasks to understand existing code before planning changes.
-- Examples: "Explore the authentication module architecture", "Map API endpoints and their handlers", "Analyze database schema and relationships".
+These rules are **non-negotiable**. Violating any rule will break the orchestrator.
+
+1. **Status Markers**: Every task and subtask gets a `[ ]` status marker. Indented subtasks use two-space indentation under their parent.
+2. **Manual Verification**: Append a manual verification task at the end of each phase.
+3. **Skill Annotation**: If a matching skill exists for a task, annotate with `> MUST use skill **<skill-name>** to complete the task`.
+4. **Phase Order**: Phases should follow logical dependency order.
+5. **Atomic Tasks**: Tasks should be atomic and independently testable.
+6. **Workflow Conventions**: Read the workflow file to respect any task-level conventions.
+7. **AC Traceability**: Each implementation task MUST have an HTML comment `<!-- AC-n, TC-n.n, ... -->` linking to the acceptance criteria and test scenarios it covers. This enables the orchestrator to pass precise AC context to task-executor subagents. **Only the parent task carries the AC annotation** — subtasks inherit AC context from their parent.
+
+**</rules>**
+
+<!--
+================================================================================
+ ⚠️  ATTENTION: TASK TYPE TAGS — USE CORRECTLY OR TDD WILL BE SKIPPED.
+================================================================================
+-->
+
+**<task-type-tags>**
+
+Prepend the tag BEFORE the task description. Tag determines whether TDD is required.
+
+| Tag | Meaning | TDD Required | When to Use |
+|-----|---------|-------------|-------------|
+| `[Explore]` | Code investigation, architecture analysis, dependency mapping | **NO** | Phase 1 exploration — understanding codebase before implementation. Examples: "Explore the authentication module architecture", "Map API endpoints and their handlers" |
+| `[Docs]` | Documentation-only changes | **NO** | Writing or updating docs. No code changes. |
+| `[Config]` | Configuration file changes | **NO** | .env, .yaml, .json config files. No business logic. |
+| `[Chore]` | Maintenance tasks | **NO** | Dependencies, tooling, CI/CD. No feature code. |
+| *(no tag)* | Standard implementation task | **YES** | Default. Full TDD workflow: Red → Green → Refactor. |
+
+**Important**: Subtasks inherit the parent's task type tag. Do NOT tag subtasks individually.
+
+**</task-type-tags>**
+
+**<subtask-rules>**
+
+Not every task needs subtasks. Follow these guidelines:
+
+**When to use subtasks:**
+- The task involves **3+ distinct logical steps** that each need independent verification.
+- The task spans **multiple files or modules** with clear boundaries.
+- The task has **complex acceptance criteria** that map to distinct deliverables.
+
+**When NOT to use subtasks (keep flat):**
+- The task is a single, focused change (e.g., "Add validation to form field").
+- The task touches one file or one module.
+- The task has simple, single-aspect acceptance criteria.
+
+**Subtask format rules:**
+- Indent subtasks with 2 spaces under the parent task.
+- Subtask descriptions should be specific and actionable.
+- A parent with subtasks does NOT carry its own implementation — the subtasks ARE the implementation.
+- A parent without subtasks IS the implementation task.
+- Subtask count: minimum 2, recommended maximum 5. If more than 5, split into separate parent tasks.
+
+**</subtask-rules>**
 
 ### 4.3 Write Files
 
@@ -166,11 +213,21 @@ PLAN_STRUCTURE:
   "phases": [
     {
       "name": "Phase 1: ...",
-      "tasks": ["Task 1 name", "Task 2 name", "Conductor - User Manual Verification 'Phase 1'"]
+      "tasks": [
+        { "name": "Task 1 name" },
+        {
+          "name": "Task 2 name",
+          "subtasks": ["Subtask 2.1 name", "Subtask 2.2 name"]
+        },
+        { "name": "Conductor - User Manual Verification 'Phase 1'" }
+      ]
     },
     {
       "name": "Phase 2: ...",
-      "tasks": ["Task 3 name", "Conductor - User Manual Verification 'Phase 2'"]
+      "tasks": [
+        { "name": "Task 3 name" },
+        { "name": "Conductor - User Manual Verification 'Phase 2'" }
+      ]
     }
   ]
 }
@@ -180,8 +237,10 @@ SUMMARY: <one-line summary of what was generated>
 
 **`PLAN_STRUCTURE` rules:**
 - Extract phase names and task names from the generated `plan.md`.
+- Tasks WITH subtasks: use `{ "name": "...", "subtasks": ["..."] }` format.
+- Tasks WITHOUT subtasks: use `{ "name": "..." }` format (no `subtasks` key).
 - This compact JSON is used by the parent to generate `track-state.json` without reading the full file.
-- Exclude HTML comments (`<!-- ... -->`) from task names.
+- Exclude HTML comments (`<!-- ... -->`) and task type tags from task names.
 
 On failure:
 

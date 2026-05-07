@@ -78,12 +78,14 @@ Current: Phase <n> — Task <m>: <task_name>
 Progress: <completed>/<total> tasks (<percentage>%)
 
 Phase 1: <name> [completed]
-  [x] Task 1.1: <name> [<sha>]
+  [x] Task 1.1: <name> [a1b2c3d]
   [>] Task 1.2: <name> [skipped]
 
 Phase 2: <name> [in_progress]
-  [x] Task 2.1: <name> [<sha>]
+  [x] Task 2.1: <name> [d4e5f6g]
   [~] Task 2.2: <name> [in_progress]
+    [~] Subtask 2.2.1: <name> [active]
+    [ ] Subtask 2.2.2: <name> [pending]
   [ ] Task 2.3: <name> [pending]
 
 Phase 3: <name> [pending]

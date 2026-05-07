@@ -118,13 +118,26 @@ Once requirements are gathered, dispatch the `spec-planner` subagent. The subage
          "name": "Phase 1: ...",
          "status": "pending",
          "tasks": [
-           { "name": "Task name from plan", "status": "pending" }
+           {
+             "name": "Task name from plan",
+             "status": "pending"
+           },
+           {
+             "name": "Task with subtasks",
+             "status": "pending",
+             "subtasks": [
+               { "name": "Subtask 1", "status": "pending" },
+               { "name": "Subtask 2", "status": "pending" }
+             ]
+           }
          ]
        }
      ]
    }
    ```
-   Map each entry in `PLAN_STRUCTURE.phases[]` to the `phases[]` array above. Set all statuses to `"pending"`.
+   Map each entry in `PLAN_STRUCTURE.phases[]` to the `phases[]` array above:
+   - Tasks WITHOUT `subtasks` key → create task with `status: "pending"` only.
+   - Tasks WITH `subtasks` key → create task with `status: "pending"` and `subtasks` array, each subtask with `status: "pending"`.
 
 4. **Write Track index.md:**
    ```markdown

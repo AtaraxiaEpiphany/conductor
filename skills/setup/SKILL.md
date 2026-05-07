@@ -274,13 +274,26 @@ Once requirements are gathered and track is confirmed, dispatch the `spec-planne
          "name": "Phase 1: ...",
          "status": "pending",
          "tasks": [
-           { "name": "Task name", "status": "pending" }
+           {
+             "name": "Task name",
+             "status": "pending"
+           },
+           {
+             "name": "Task with subtasks",
+             "status": "pending",
+             "subtasks": [
+               { "name": "Subtask 1", "status": "pending" },
+               { "name": "Subtask 2", "status": "pending" }
+             ]
+           }
          ]
        }
      ]
    }
    ```
-   Map each entry in `PLAN_STRUCTURE.phases[]` to the `phases[]` array above. Set all statuses to `"pending"`.
+   Map each entry in `PLAN_STRUCTURE.phases[]` to the `phases[]` array above:
+   - Tasks WITHOUT `subtasks` key → create task with `status: "pending"` only.
+   - Tasks WITH `subtasks` key → create task with `status: "pending"` and `subtasks` array, each subtask with `status: "pending"`.
 
 3. **Write Track index.md:**
    ```markdown

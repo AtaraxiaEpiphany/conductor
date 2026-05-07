@@ -321,11 +321,11 @@ Status marker mapping:
 |------------------|---------|
 | `pending` | `[ ]` |
 | `in_progress` | `[~]` |
-| `completed` | `[x] [<sha>]` |
-| `failed` | `[!] [<sha>]` |
-| `skipped` | `[>] [<sha>]` |
-| `blocked` | `[#] [<sha>]` |
-| `cancelled` | `[-] [<sha>]` |
+| `completed` | `[x] ... [sha]` (SHA appended at line end) |
+| `failed` | `[!] ... [sha]` (SHA appended at line end) |
+| `skipped` | `[>] ... [sha]` (SHA appended at line end) |
+| `blocked` | `[#] ... [sha]` (SHA appended at line end) |
+| `cancelled` | `[-] ... [sha]` (SHA appended at line end) |
 
 ---
 

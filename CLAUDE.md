@@ -19,7 +19,11 @@ Six mandatory pre-action checks. Violating any 🔴 rule is a terminal error.
 
 ### 🔴 F1 — Global State Lock
 
-Only ONE task may be in `[~]` state at any time. Before marking `[~]`, verify no other `[~]` exists in `plan.md`. **No exceptions.**
+Only ONE unit of work may be active at any time. The allowed `[~]` pattern is:
+- **Flat task**: ONE `[~]` at task level (no subtasks).
+- **Hierarchical task**: ONE `[~]` on the parent + ONE `[~]` on the active child subtask.
+
+Before marking `[~]`, verify no more than ONE parent `[~]` and ONE child `[~]` exist in `plan.md`. **No other `[~]` combinations are allowed.**
 
 ### 🔴 F2 — TDD Gate
 
@@ -31,15 +35,20 @@ No commit if code coverage < 80%. Run the coverage tool — never assume. **Exem
 
 ### 🔴 F4 — SHA Must Exist
 
-Every non-transient marker MUST have `[sha]`. Only `[ ]` and `[~]` are exempt.
+Every non-transient marker MUST have `[sha]` **appended at the end of the task line**. Only `[ ]` and `[~]` are exempt.
 
-| Marker      | SHA required | SHA source                 |
-| ----------- | ------------ | -------------------------- |
-| `[x] [sha]` | YES          | Implementation code commit |
-| `[!] [sha]` | YES          | State management commit    |
-| `[>] [sha]` | YES          | Skip decision commit       |
-| `[#] [sha]` | YES          | Block decision commit      |
-| `[-] [sha]` | YES          | Cancellation commit        |
+**⚠️ CRITICAL: SHA is ALWAYS appended at the END of the line, never between the marker and the task description.**
+
+Correct: `- [x] Task description [a1b2c3d]`
+Wrong:   `- [x] [a1b2c3d] Task description`
+
+| Marker | SHA required | SHA source                 | Example Line                              |
+| ------ | ------------ | -------------------------- | ----------------------------------------- |
+| `[x]`  | YES          | Implementation code commit | `- [x] Task description [a1b2c3d]`        |
+| `[!]`  | YES          | State management commit    | `- [!] Task description [a1b2c3d]`        |
+| `[>]`  | YES          | Skip decision commit       | `- [>] Task description [a1b2c3d]`        |
+| `[#]`  | YES          | Block decision commit      | `- [#] Task description [a1b2c3d]`        |
+| `[-]`  | YES          | Cancellation commit        | `- [-] Task description [a1b2c3d]`        |
 
 ### 🟡 F5 — Checkpoint Integrity
 
@@ -57,23 +66,36 @@ Every leaf-level task in `plan.md` MUST complete the full 11-step lifecycle.
 
 ### Task State Model
 
-| Marker      | State       | Category                                       |
-| ----------- | ----------- | ---------------------------------------------- |
-| `[ ]`       | pending     | Active                                         |
-| `[~]`       | in_progress | Active (ONLY ONE globally, no SHA — transient) |
-| `[x] [sha]` | completed   | Terminal                                       |
-| `[!] [sha]` | failed      | Recoverable                                    |
-| `[>] [sha]` | skipped     | Terminal                                       |
-| `[#] [sha]` | blocked     | Requires human                                 |
-| `[-] [sha]` | cancelled   | Terminal                                       |
+| Marker  | State       | Category                                       | Line Format                          |
+| ------- | ----------- | ---------------------------------------------- | ------------------------------------ |
+| `[ ]`   | pending     | Active                                         | `- [ ] Task description`             |
+| `[~]`   | in_progress | Active (transient, no SHA)                     | `- [~] Task description`             |
+| `[x]`   | completed   | Terminal                                       | `- [x] Task description [a1b2c3d]`   |
+| `[!]`   | failed      | Recoverable                                    | `- [!] Task description [a1b2c3d]`   |
+| `[>]`   | skipped     | Terminal                                       | `- [>] Task description [a1b2c3d]`   |
+| `[#]`   | blocked     | Requires human                                 | `- [#] Task description [a1b2c3d]`   |
+| `[-]`   | cancelled   | Terminal                                       | `- [-] Task description [a1b2c3d]`   |
+
+**Subtask Format (indented under parent):**
+```
+- [~] Task: {description} <!-- AC-1 -->
+  - [~] Subtask: {active subtask}
+  - [ ] Subtask: {pending subtask}
+```
+
+**SHA is ALWAYS at the end of the line**, after any HTML comments. Example:
+```
+- [x] Task: {description} <!-- AC-1, TC-1.1 --> [a1b2c3d]
+  - [x] Subtask: {description} [f2e3d4c]
+```
 
 **Transitions:**
 ```
-pending → in_progress → completed [sha] (SUCCESS)
-                      → failed [sha] → in_progress (retry)
-                                     → skipped [sha] (safe to skip)
-                                     → blocked [sha] (needs human)
-blocked [sha] → pending (human reset)
+pending → in_progress → completed (SUCCESS, SHA appended at line end)
+                      → failed (SHA appended at line end) → in_progress (retry)
+                                                               → skipped (SHA appended at line end)
+                                                               → blocked (SHA appended at line end, needs human)
+blocked → pending (human reset, SHA removed)
 ```
 
 ### Steps 1-2: Selection
@@ -84,11 +106,17 @@ blocked [sha] → pending (human reset)
 | **2. Lock**   | Mark `[~]` in `plan.md`. Emit lock statement. | `TASK LOCK ACQUIRED: 'Phase X → Task Y'` |
 
 **Selection Algorithm:**
-1. Find first `[~]` Main Task → select its first `[ ]` subtask.
-2. No `[~]` → find first `[ ]` Main Task → mark `[~]` → select first subtask.
-3. No subtasks → treat Main Task as the task.
-4. **Skip over** terminal markers (`[x] [sha]`, `[>] [sha]`, `[-] [sha]`) — do not select them.
-5. **Halt on** `[!] [sha]` (failed) or `[#] [sha]` (blocked) — these require orchestrator handling, not selection.
+1. Find first parent task with `[~]` → it is in progress.
+   a. If it has subtasks → find its first `[ ]` subtask → mark subtask `[~]` → dispatch subtask.
+   b. If all subtasks are terminal → parent task is complete (advance).
+2. No parent `[~]` exists → find first `[ ]` parent task → mark parent `[~]`.
+   a. If it has subtasks → find first `[ ]` subtask → mark subtask `[~]` → dispatch subtask.
+   b. If no subtasks → dispatch parent task directly as the leaf task.
+3. No `[ ]` parent tasks remain → all tasks are terminal.
+4. **Skip over** terminal markers (`[x]`, `[>]`, `[-]`) — do not select them.
+5. **Halt on** `[!]` (failed) or `[#]` (blocked) — these require orchestrator handling, not selection.
+
+**Subtask completion rule:** When a subtask completes, advance to the next `[ ]` subtask within the same parent. When ALL subtasks within a parent are terminal, the parent transitions to terminal state.
 
 ### Steps 3-9: TDD Execution 🔴 CRITICAL
 
@@ -162,22 +190,22 @@ For tasks tagged `[Explore]` (read-only code investigation), the orchestrator MU
 
 These steps apply to the **happy path** (SUCCESS). For failure/skip/blocked outcomes, the orchestrator handles transitions.
 
-| Step                | Action                                                                   |
-| ------------------- | ------------------------------------------------------------------------ |
-| **10. Record SHA**  | `[~]` → `[x] [sha]` in `plan.md`.                                        |
-| **11. Commit Plan** | Stage `plan.md`. Commit: `conductor(plan): mark task '<name>' complete`. |
+| Step                | Action                                                                                        |
+| ------------------- | --------------------------------------------------------------------------------------------- |
+| **10. Record SHA**  | `[~]` → `[x]` in `plan.md`. Append `[sha]` at the END of the task line.                      |
+| **11. Commit Plan** | Stage `plan.md`. Commit: `conductor(plan): mark task '<name>' complete`.                      |
 
 ### Non-Happy-Path Outcomes
 
-| Outcome             | Marker Change             | Next Action             |
-| ------------------- | ------------------------- | ----------------------- |
-| FAILURE (retryable) | `[~]` → `[!] [sha]`       | Re-dispatch subagent    |
-| FAILURE (skip OK)   | `[!] [sha]` → `[>] [sha]` | Advance to next task    |
-| FAILURE (skip NO)   | `[!] [sha]` → `[#] [sha]` | Halt, await human       |
-| CANCELLED           | any → `[-] [sha]`         | Track termination       |
-| HUMAN RESET         | `[#] [sha]` → `[ ]`       | Re-select for execution |
+| Outcome             | Marker Change                                  | Next Action             |
+| ------------------- | ---------------------------------------------- | ----------------------- |
+| FAILURE (retryable) | `[~]` → `[!]`, append SHA at line end          | Re-dispatch subagent    |
+| FAILURE (skip OK)   | `[!]` line → replace with `[>]`, update SHA    | Advance to next task    |
+| FAILURE (skip NO)   | `[!]` line → replace with `[#]`, update SHA    | Halt, await human       |
+| CANCELLED           | any → `[-]`, append SHA at line end            | Track termination       |
+| HUMAN RESET         | Remove SHA, `[#]` → `[ ]`                      | Re-select for execution |
 
-**SHA rule:** After every state commit, extract SHA via `git log -1 --format="%h"` and append.
+**SHA rule:** After every state commit, extract SHA via `git log -1 --format="%h"` and append at the END of the task line.
 
 ### Phase Checkpoint Protocol
 
@@ -265,7 +293,7 @@ Conductor prefixes: `conductor(plan)` `conductor(checkpoint)` `chore(conductor)`
 | V5   | Bundle test + implementation in one commit | F2           |
 | V6   | Skip phase checkpoint                      | F5           |
 | V7   | Derive state from plan.md                  | State Lock   |
-| V8   | Multiple `[~]` simultaneously              | F1           |
+| V8   | More than ONE parent `[~]` + ONE child `[~]` simultaneously | F1           |
 | V9   | Skip git notes                             | Audit        |
 | V10  | Non-conventional commit message            | Quality      |
 | V11  | Subagent modifying state                   | Orchestrator |

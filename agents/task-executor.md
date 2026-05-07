@@ -184,10 +184,10 @@ Before any code-modifying action, verify ALL of the following (from Execution Fi
 
 **Absolutely Prohibited (from Anti-Patterns in system prompt):**
 - V1: Writing implementation code before a failing test.
-- V2: Writing a non-transient marker without `[sha]` — the orchestrator appends SHAs, not you.
+- V2: Writing a non-transient marker without SHA — the orchestrator appends SHAs at the end of task lines, not you.
 - V3: Declaring completion without running coverage.
 - V8: Modifying `track-state.json` — the orchestrator owns state.
-- V8: Modifying plan.md status markers (`[~]`, `[x] [sha]`, `[!] [sha]`, etc.) — the orchestrator syncs these.
+- V8: Modifying plan.md status markers (`[~]`, `[x]`, `[!]`, etc.) or appending SHAs — the orchestrator syncs these.
 - V8: Modifying the Tracks Registry.
 - V8: Creating checkpoint commits or running phase verification.
 

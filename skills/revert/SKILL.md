@@ -99,25 +99,31 @@ After all git reverts succeed:
 2. **For Task revert:**
    - Set `task.status = "pending"`
    - Remove `commit_sha`, `completed_at`, `retry_count`, `last_failure_summary`, `skip_analysis`
+   - **If task has subtasks:** Reset all subtasks to `status: "pending"`, remove completion fields from each.
+   - Remove `current_subtask_index` if present.
    - Update `current_phase_index` and `current_task_index` to point to this task
 3. **For Phase revert:**
-   - Reset ALL tasks in the phase to `pending`
-   - Remove all completion fields
+   - Reset ALL tasks (and their subtasks) in the phase to `pending`
+   - Remove all completion fields from tasks and subtasks
+   - Remove `current_subtask_index` if present
    - Update indices to point to the first task of this phase
 4. **For Track revert:**
-   - Reset ALL tasks across ALL phases to `pending`
-   - Remove all completion fields
+   - Reset ALL tasks (and their subtasks) across ALL phases to `pending`
+   - Remove all completion fields from tasks and subtasks
+   - Remove `current_subtask_index` if present
    - Set `current_phase_index = 0`, `current_task_index = 0`
 
 ### 5.3 Sync plan.md
 
 Re-project from `track-state.json` to `plan.md`:
-- `[x] [<sha>]` → `[ ]`
-- `[~]` → `[ ]`
-- `[!] [<sha>]` → `[ ]`
-- `[>] [<sha>]` → `[ ]`
-- `[#] [<sha>]` → `[ ]`
-- `[-] [<sha>]` → `[ ]`
+- Remove SHA from line end, then change marker:
+  - `[x] ...line... [sha]` → `[ ] ...line...`
+  - `[!] ...line... [sha]` → `[ ] ...line...`
+  - `[>] ...line... [sha]` → `[ ] ...line...`
+  - `[#] ...line... [sha]` → `[ ] ...line...`
+  - `[-] ...line... [sha]` → `[ ] ...line...`
+  - `[~] ...line...` → `[ ] ...line...`
+- Apply same rules to indented subtask lines
 - Remove `[checkpoint: <sha>]` from phase headings (for phase/track revert)
 
 ### 5.4 Commit State Sync
