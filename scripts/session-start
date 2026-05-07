@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# SessionStart hook: inject plugin CLAUDE.md as additionalContext
+set -euo pipefail
+
+INSTRUCTIONS="${CLAUDE_PLUGIN_ROOT}/conductor.md"
+
+if [[ ! -f "$INSTRUCTIONS" ]]; then
+  echo '{"additionalContext":""}'
+  exit 0
+fi
+
+CONTENT=$(cat "$INSTRUCTIONS")
+
+# Use python for safe JSON encoding (handles quotes, newlines, etc.)
+python3 -c "
+import json, sys
+content = sys.stdin.read()
+print(json.dumps({'additionalContext': content}))
+" <<< "$CONTENT"
