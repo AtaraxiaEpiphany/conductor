@@ -2,6 +2,7 @@
 name: status
 description: Displays project progress by reading track-state.json as the authoritative source
 when_to_use: User wants to see track progress, check task status, or get a project overview
+argument-hint: "[track_name]"
 allowed-tools: Read, Grep, Glob
 model: haiku
 ---
@@ -33,9 +34,13 @@ CRITICAL: You must validate the success of every tool call. If any tool call fai
 
 ### 2.1 Read Track States
 
-1. **Locate Tracks Registry:** Resolve via project CLAUDE.md TOC.
-2. **Parse Track Entries:** Extract all track descriptions, status markers, and folder links.
-3. **For Each Track:**
+1. **Resolve Arguments:** Check `$ARGUMENTS` for an optional track name filter.
+2. **Locate Tracks Registry:** Resolve via project CLAUDE.md TOC.
+3. **Parse Track Entries:** Extract all track descriptions, status markers, and folder links.
+4. **Filter Tracks:**
+   - **If a track name was provided in `$ARGUMENTS`:** Perform exact, case-insensitive match. Only show status for that track.
+   - **If no track name provided:** Show status for ALL tracks (default behavior).
+5. **For Each Track (filtered):**
    - Resolve the track folder path.
    - Read `<track_folder>/track-state.json`.
    - If `track-state.json` does not exist: note as "legacy track — no state file".

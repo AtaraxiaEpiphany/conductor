@@ -2,7 +2,7 @@
 name: review
 description: Reviews completed track work using track-state.json for context and commit tracking
 when_to_use: User wants to review a track's implementation quality, check code compliance, or verify test coverage
-arguments: [track_name]
+argument-hint: "[track_name]"
 allowed-tools: Bash, Read, Edit, Write, Grep, Glob, Agent, NotebookEdit, AskUserQuestion
 model: sonnet
 ---
@@ -43,9 +43,19 @@ CRITICAL: You must validate the success of every tool call. If any tool call fai
 
 ### 2.1 Identify Scope
 
-1. **Check for User Input:** If arguments provided, use them as target scope.
-2. **Auto-Detect Scope:** If no input, read **Tracks Registry**. Look for a track marked `[~]` or `[x]`.
-3. **Confirm Scope** with user.
+1. **Resolve Arguments:** Check `$ARGUMENTS` for a user-provided track name.
+2. **Locate and Parse Tracks Registry:**
+   - Resolve the **Tracks Registry** via project CLAUDE.md TOC.
+   - Parse the file to extract track entries, their status markers, and folder links.
+3. **Select Track:**
+   - **If a track name was provided in `$ARGUMENTS`:** Perform exact, case-insensitive match against registry entries. Confirm via `AskUserQuestion`.
+   - **If no track name provided (auto-detect from registry):**
+     a. Find tracks marked `[x]` (completed) — these are primary review candidates.
+     b. If no `[x]` tracks → find tracks marked `[~]` (in-progress) for mid-track review.
+     c. If exactly one candidate → auto-select, announce.
+     d. If multiple candidates → present list via `AskUserQuestion` with track descriptions for user to choose.
+     e. If no candidates → inform user: "No reviewable tracks found." and HALT.
+4. **Confirm Scope** with user via `AskUserQuestion`.
 
 ### 2.2 Retrieve Context
 

@@ -2,7 +2,7 @@
 name: revert
 description: Reverts work with track-state.json state synchronization
 when_to_use: User wants to revert a task, phase, or entire track while keeping state consistent
-arguments: [scope]
+argument-hint: "[scope]"
 allowed-tools: Bash, Read, Edit, Write, Grep, Glob
 model: sonnet
 ---
@@ -34,14 +34,24 @@ CRITICAL: You must validate the success of every tool call. If any tool call fai
 
 ## 2.0 PHASE 1: TARGET SELECTION & CONFIRMATION
 
-**GOAL: Identify and confirm the unit of work to revert.**
+**GOAL: Identify and confirm the unit of work to revert. Scope argument is optional — auto-detect from context when not provided.**
 
-1. **Check for User-Provided Target:** If argument provided, proceed to Direct Confirmation.
-2. **Guided Selection (default):**
-   - Read `track-state.json` for each track.
-   - Find in-progress items first. Fallback to 5 most recently completed.
-   - Present hierarchical menu grouped by Track.
-3. **Confirm with user.**
+1. **Resolve Arguments:** Check `$ARGUMENTS` for a user-provided scope (track name, phase, or task).
+
+2. **Locate and Parse Tracks Registry:**
+   - Resolve the **Tracks Registry** via project CLAUDE.md TOC.
+   - Parse the file to extract track entries, their status markers, and folder links.
+
+3. **Select Target:**
+   - **If scope provided in `$ARGUMENTS`:** Parse the scope (track name / phase / task). Resolve against registry and track-state.json. Proceed to confirmation.
+   - **If no scope provided (auto-detect from registry):**
+     a. Find tracks marked `[~]` (in-progress). If exactly one → auto-select.
+     b. If no `[~]` tracks → find tracks with recent activity (read `track-state.json` `updated_at`).
+     c. If exactly one candidate → auto-select, read its `track-state.json` to find in-progress or recently completed items.
+     d. If multiple candidates → present list via `AskUserQuestion` for user to choose.
+     e. If no tracks found → inform user and HALT.
+   - Read `track-state.json` for the selected track. Find in-progress items first. Fallback to 5 most recently completed items. Present hierarchical menu grouped by Track via `AskUserQuestion`.
+4. **Confirm with user via `AskUserQuestion`.**
 
 ---
 

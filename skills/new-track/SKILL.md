@@ -2,7 +2,7 @@
 name: new-track
 description: Creates a new track with spec, plan, and track-state.json for orchestrator-driven execution
 when_to_use: User wants to create a new feature track, bug fix track, or chore track with specification and plan
-arguments: [track_description]
+argument-hint: "[track_description]"
 allowed-tools: Bash, Read, Edit, Write, Grep, Glob, Agent, NotebookEdit, AskUserQuestion
 model: sonnet
 ---
@@ -44,8 +44,11 @@ CRITICAL: You must validate the success of every tool call. If any tool call fai
 
 1. **Load Project Context:** Read and understand the project documents.
 2. **Get Track Description:**
-   - If `{{args}}` contains a description: use it.
-   - If empty: ask the user for a brief description.
+   - If `$ARGUMENTS` contains a description: use it directly.
+   - If empty: use `AskUserQuestion` to interactively collect a track description:
+     - Ask: "What would you like to build? Please describe the feature, bug fix, or chore."
+     - Accept the user's response as the track description.
+     - If the user provides insufficient detail, follow up with a clarifying question via `AskUserQuestion`.
 3. **Infer Track Type:** Analyze the description. Do NOT ask the user to classify it.
 
 ### 2.2 Interactive Requirements Gathering

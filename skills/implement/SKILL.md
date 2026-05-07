@@ -2,7 +2,7 @@
 name: implement
 description: Orchestrates track task execution via subagents with track-state.json synchronization
 when_to_use: User wants to implement a track, execute pending tasks, or run the conductor implementation workflow
-arguments: [track_name]
+argument-hint: "[track_name]"
 allowed-tools: Bash, Read, Edit, Write, Grep, Glob, Agent, NotebookEdit, AskUserQuestion
 model: sonnet
 ---
@@ -58,17 +58,22 @@ CRITICAL: You must validate the success of every tool call. If any tool call fai
 
 ## 2.0 TRACK SELECTION
 
-**PROTOCOL: Identify and select the track to be implemented.**
+**PROTOCOL: Identify and select the track to be implemented. Track name is optional — auto-detect from context when not provided.**
 
-1. **Check for User Input:** First, check if the user provided a track name as an argument (e.g., `/conductor:implement <track_description>`).
+1. **Resolve Arguments:** Check `$ARGUMENTS` for a user-provided track name.
 
 2. **Locate and Parse Tracks Registry:**
-   - Resolve the **Tracks Registry**.
+   - Resolve the **Tracks Registry** via project CLAUDE.md TOC.
    - Parse the file to extract track entries, their status markers, and folder links.
 
 3. **Select Track:**
-   - **If a track name was provided:** Perform exact, case-insensitive match. Confirm with user.
-   - **If no track name provided:** Find the first track NOT marked as `[x]` or `[-]`. Announce auto-selection.
+   - **If a track name was provided in `$ARGUMENTS`:** Perform exact, case-insensitive match against registry entries. Confirm with user via `AskUserQuestion`.
+   - **If no track name provided (auto-detect from registry):**
+     a. Find tracks marked `[~]` (in-progress). If exactly one → auto-select it.
+     b. If no `[~]` tracks → find tracks marked `[ ]` (pending, not completed/cancelled).
+     c. If exactly one candidate → announce auto-selection, proceed.
+     d. If multiple candidates → present list via `AskUserQuestion` with track descriptions for user to choose.
+     e. If no candidates found → inform user: "No active tracks found. Create one with `/conductor:new-track`." and HALT.
 
 4. **Verify track-state.json exists:**
    - Resolve the track's folder path via the Tracks Registry.
