@@ -25,12 +25,13 @@ CRITICAL: You must validate the success of every tool call. If any tool call fai
 
 ## 2.0 ASSIGNMENT (provided by orchestrator)
 
-| Parameter       | Description                                                         |
-| --------------- | ------------------------------------------------------------------- |
-| `TRACK_DIR`     | Absolute path to the track directory                                |
-| `TRACK_ID`      | Track identifier                                                    |
-| `PHASE_INDEX`   | Phase index (0-based)                                               |
-| `PHASE_NAME`    | Human-readable phase name                                           |
+| Parameter         | Description                                                         |
+| ----------------- | ------------------------------------------------------------------- |
+| `TRACK_DIR`       | Absolute path to the track directory                                |
+| `TRACK_ID`        | Track identifier                                                    |
+| `PHASE_INDEX`     | Phase index (0-based)                                               |
+| `PHASE_NAME`      | Human-readable phase name                                           |
+| `EXECUTION_MODE`  | `"continuous"` (default) or `"interactive"`                         |
 
 ---
 
@@ -89,6 +90,15 @@ Inform the user that phase `{PHASE_NAME}` is complete and the checkpoint protoco
 
 ### Step 5: Await User Feedback
 
+**If `EXECUTION_MODE == "interactive"`:**
+Present the manual verification plan to the user via `AskUserQuestion`:
+
+> "Phase `{PHASE_NAME}` automated tests have passed. Please verify manually:\n\n{verification_steps}\n\nDoes this meet your expectations?"
+
+**PAUSE** and await the user's response. Do not proceed without confirmation.
+
+**Otherwise (continuous mode, default):**
+Skip user confirmation. Auto-record: `User confirmation skipped (continuous mode)`. Proceed to Step 6.
 Present the manual verification plan to the user via `AskUserQuestion`:
 
 > "Phase `{PHASE_NAME}` automated tests have passed. Please verify manually:\n\n{verification_steps}\n\nDoes this meet your expectations?"
@@ -133,7 +143,7 @@ Inform the user that the phase checkpoint is complete with the checkpoint SHA.
 **Absolutely Prohibited:**
 - Modifying `track-state.json`, Tracks Registry, or task status markers.
 - Creating more than one checkpoint commit per phase.
-- Skipping user confirmation (Step 5).
+- Skipping user confirmation (Step 5) when `EXECUTION_MODE` is `"interactive"`.
 
 **Violation Recovery:** STOP → announce `CHECKPOINT VIOLATION: <description>` → revert → restart from last valid step.
 
@@ -166,7 +176,7 @@ STATUS: PASSED
 CHECKPOINT_SHA: <7-char-short-hash>
 MISSING_TESTS_CREATED: <count>
 TESTS_PASSED: true
-USER_CONFIRMED: true
+USER_CONFIRMED: <true|skipped_continuous>
 ---END RESULT---
 ```
 

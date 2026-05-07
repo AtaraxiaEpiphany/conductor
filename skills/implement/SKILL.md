@@ -130,8 +130,24 @@ RECOVER → SELECT → PRE_DISPATCH → DISPATCH → PROCESS(SUCCESS|FAILURE) �
 ```
 pending → in_progress → completed | failed → (retry) → in_progress
                                              → skip_analysis → skipped | blocked
+pending → deferred (auto, by [Manual] tag) → completed (human verifies later)
+deferred → skipped (human decides not needed)
 blocked → pending (human reset) | Any → cancelled
 ```
+
+### 4.0.3 Execution Modes
+
+The orchestrator supports two execution modes, configured in `track-state.json`:
+
+| Mode | Key | Behavior |
+|------|-----|----------|
+| `continuous` | `"execution_mode": "continuous"` | Default. Auto-defers `[Manual]` tasks, auto-proceeds through phase checkpoints. |
+| `interactive` | `"execution_mode": "interactive"` | Pauses for user confirmation at manual checkpoints. |
+
+**Continuous mode behavior:**
+- Tasks tagged `[Manual]` are automatically deferred without dispatching a subagent.
+- Phase checkpoint user confirmation (Step 5) is skipped — automated tests still run.
+- After all non-deferred tasks complete, a **Deferred Verification Report** is generated (Section 5.5).
 
 ### 4.1 Select Next Task
 
@@ -141,6 +157,8 @@ blocked → pending (human reset) | Any → cancelled
 4. **If `type == "parent-complete"`** → subtasks all done but parent not finalized. Run: `track-state complete "<track_dir>" <phase> <task> --sha ""`. Then re-run `next`.
 5. Check `tags` for dispatch routing:
    - Contains `"Explore"` → **Section 4.3.E**.
+   - Contains `"Manual"` **AND** `execution_mode != "interactive"` → **Section 4.3.M** (auto-defer).
+   - Contains `"Manual"` **AND** `execution_mode == "interactive"` → Ask user via `AskUserQuestion` whether to defer or execute now.
    - Otherwise → **Section 4.3.T**.
 
 ### 4.2 Pre-Dispatch State Update
@@ -172,6 +190,18 @@ Route based on `tags` from the `next` command output.
 ```
 
 After completion, commit: `docs(explore): {task_name}`. Proceed to **Section 4.5**.
+
+### 4.3.M Auto-Defer Manual Tasks (`[Manual]` + continuous mode)
+
+**For tasks tagged `[Manual]` in continuous mode — skip subagent dispatch entirely.**
+
+1. Run: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/track-state" defer "<track_dir>" <phase> <task> [<subtask>] --reason 'Deferred: manual verification task in continuous mode'`
+2. Run: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/track-state" sync-plan "<track_dir>"`
+3. Git commit:
+   - Get current short SHA: `git log -1 --format="%h"`
+   - `chore(conductor): Defer manual task '<task_name>' [deferred]`
+4. Emit: `MANUAL TASK DEFERRED: 'Phase <n> → Task <m>: <task_name>'. Will be presented for verification after all tasks complete.`
+5. Continue to **Section 4.6** (phase boundary check).
 
 ### 4.3.T Dispatch Task Executor Subagent (default tasks)
 
@@ -253,6 +283,7 @@ Dispatch `conductor:phase-checker` subagent. `Agent` tool, `subagent_type: "cond
 - TRACK_ID: {track_id}
 - PHASE_INDEX: {phase_index}
 - PHASE_NAME: {phase_name}
+- EXECUTION_MODE: {execution_mode from track-state.json, or "continuous"}
 ```
 
 Parse `---CHECKPOINT RESULT---` / `---END RESULT---`. If STATUS is FAILED → announce failure and HALT. Otherwise → return to **Section 4.1**.
@@ -267,6 +298,34 @@ Parse `---CHECKPOINT RESULT---` / `---END RESULT---`. If STATUS is FAILED → an
 2. Run: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/track-state" sync-plan "<track_dir>"`
 3. Update **Tracks Registry**: Change the track marker from `[~]` to `[x]`.
 4. Git commit: `chore(conductor): Complete track '<track_description>'`
+
+---
+
+## 5.5 DEFERRED VERIFICATION REPORT
+
+**PROTOCOL: After track finalization, present all deferred tasks for user verification.**
+
+1. Run: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/track-state" deferred-report "<track_dir>"`
+2. Parse JSON output. If `count == 0` → skip to **Section 6.0**.
+3. Present report to user:
+
+```
+## Deferred Verification Report — Track: {track_id}
+
+### Requires Manual Verification ({count} items)
+{for each deferred task:}
+{index}. [ ] {task_name} — Phase {phase+1}, {phase_name}
+   Reason: {reason}
+
+### Completed: {completed_count}/{total_count} tasks
+### Deferred: {count}
+```
+
+4. For each deferred task, ask the user via `AskUserQuestion`:
+   - "Verify and mark completed" → `track-state complete "<track_dir>" <phase> <task> --sha ""`
+   - "Skip (not needed)" → `track-state skip "<track_dir>" <phase> <task> --reason 'User verified not needed'`
+   - "Defer (keep for later)" → no action
+5. After processing all user responses, run `sync-plan` and commit.
 
 ---
 

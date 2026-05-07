@@ -56,7 +56,7 @@ For each track with a state file, compute status from task aggregation:
 | All tasks `cancelled` | `cancelled` |
 | Any task `blocked` and no `in_progress`/`failed` | `blocked` |
 | Any task `in_progress` or `failed` | `in_progress` |
-| All tasks `completed` or `skipped` | `completed` |
+| All tasks `completed`, `skipped`, or `deferred` | `completed` |
 | All tasks `pending` | `new` |
 
 **Phase-Level Status:** Same logic applied per-phase.
@@ -73,6 +73,7 @@ Generated: <current timestamp>
 - Total Tracks: <n>
 - Completed: <n> | In Progress: <n> | Blocked: <n> | New: <n>
 - Overall Progress: <completed_tasks>/<total_tasks> (<percentage>%)
+- Deferred: <deferred_count> tasks awaiting manual verification
 
 ---
 
@@ -92,6 +93,7 @@ Phase 2: <name> [in_progress]
     [~] Subtask 2.2.1: <name> [active]
     [ ] Subtask 2.2.2: <name> [pending]
   [ ] Task 2.3: <name> [pending]
+  [d] Task 2.4: [Manual] <name> [deferred]
 
 Phase 3: <name> [pending]
   [ ] Task 3.1: <name> [pending]
@@ -113,6 +115,15 @@ If any track has tasks in `failed` or `blocked` state, add an **Issues** section
 
 - **Failed**: Task '<name>' (Phase <n>) — attempt <retry_count>/<max_retries>
   - Last failure: <last_failure_summary>
+```
+
+If any track has deferred tasks, add a **Deferred Verification** section:
+
+```
+## Deferred Tasks (awaiting manual verification)
+
+### Track: <track_id> — <deferred_count> deferred
+- [ ] <task_name> (Phase <n>) — <defer_reason>
 ```
 
 ### 2.5 Next Actions

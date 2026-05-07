@@ -118,11 +118,11 @@ Structure:
 - [ ] Task: {task description} <!-- AC-2, TC-2.1 -->
   - [ ] Subtask: {subtask description}
   - [ ] Subtask: {subtask description}
-- [ ] Task: Conductor - User Manual Verification 'Phase 1' (Protocol in task-workflow.md)
+- [ ] [Manual] Task: Conductor - User Manual Verification 'Phase 1' (Protocol in task-workflow.md)
 
 ## Phase 2: {Phase Name}
 - [ ] Task: {task description} <!-- AC-3, TC-3.1 -->
-- [ ] Task: Conductor - User Manual Verification 'Phase 2' (Protocol in task-workflow.md)
+- [ ] [Manual] Task: Conductor - User Manual Verification 'Phase 2' (Protocol in task-workflow.md)
 ```
 
 <!--
@@ -136,7 +136,7 @@ Structure:
 These rules are **non-negotiable**. Violating any rule will break the orchestrator.
 
 1. **Status Markers**: Every task and subtask gets a `[ ]` status marker. Indented subtasks use two-space indentation under their parent.
-2. **Manual Verification**: Append a manual verification task at the end of each phase.
+2. **Manual Verification**: Append a manual verification task at the end of each phase. Tag it with `[Manual]` so the orchestrator can auto-defer it in continuous mode.
 3. **Skill Annotation**: If a matching skill exists for a task, annotate with `> MUST use skill **<skill-name>** to complete the task`.
 4. **Phase Order**: Phases should follow logical dependency order.
 5. **Atomic Tasks**: Tasks should be atomic and independently testable.
@@ -161,6 +161,7 @@ Prepend the tag BEFORE the task description. Tag determines whether TDD is requi
 | `[Docs]` | Documentation-only changes | **NO** | Writing or updating docs. No code changes. |
 | `[Config]` | Configuration file changes | **NO** | .env, .yaml, .json config files. No business logic. |
 | `[Chore]` | Maintenance tasks | **NO** | Dependencies, tooling, CI/CD. No feature code. |
+| `[Manual]` | Requires human verification, cannot be automated | **NO** | Tasks that need human eyes/hands: manual UI testing, cross-browser checks, staging deployment verification, email delivery confirmation, accessibility audit. These tasks are auto-deferred in continuous mode. |
 | *(no tag)* | Standard implementation task | **YES** | Default. Full TDD workflow: Red → Green → Refactor. |
 
 **Important**: Subtasks inherit the parent's task type tag. Do NOT tag subtasks individually.
@@ -219,14 +220,14 @@ PLAN_STRUCTURE:
           "name": "Task 2 name",
           "subtasks": ["Subtask 2.1 name", "Subtask 2.2 name"]
         },
-        { "name": "Conductor - User Manual Verification 'Phase 1'" }
+        { "name": "[Manual] Conductor - User Manual Verification 'Phase 1'" }
       ]
     },
     {
       "name": "Phase 2: ...",
       "tasks": [
         { "name": "Task 3 name" },
-        { "name": "Conductor - User Manual Verification 'Phase 2'" }
+        { "name": "[Manual] Conductor - User Manual Verification 'Phase 2'" }
       ]
     }
   ]

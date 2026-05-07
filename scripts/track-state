@@ -11,7 +11,9 @@ Usage:
     track-state complete <track-dir> <phase> <task> [<subtask>] --sha <sha>
     track-state fail <track-dir> <phase> <task> [<subtask>] --summary <text>
     track-state skip <track-dir> <phase> <task> [<subtask>] --reason <text>
+    track-state defer <track-dir> <phase> <task> [<subtask>] --reason <text>
     track-state block <track-dir> <phase> <task> [<subtask>] --reason <text>
+    track-state deferred-report <track-dir>
     track-state sync-plan <track-dir>
     track-state phase-done <track-dir> <phase>
     track-state finalize <track-dir>
@@ -30,11 +32,12 @@ MARKER_MAP = {
     "completed": "x",
     "failed": "!",
     "skipped": ">",
+    "deferred": "d",
     "blocked": "#",
     "cancelled": "-",
 }
 
-SHA_MARKERS = {"x", "!", ">", "#", "-"}
+SHA_MARKERS = {"x", "!", ">", "#", "-", "d"}
 
 
 # ── Utilities ─────────────────────────────────────────────────────────
@@ -73,7 +76,7 @@ def clean(tgt, keep):
 
 
 def extract_tags(name):
-    return re.findall(r"\[(Explore|Docs|Config|Chore)\]", name)
+    return re.findall(r"\[(Explore|Docs|Config|Chore|Manual)\]", name)
 
 
 def conductor_dir(track_dir):
@@ -125,7 +128,7 @@ def _do_complete(track_dir, p, t, s=None, sha=None):
     parent_completed = False
     if si is not None:
         parent = state["phases"][pi]["tasks"][ti]
-        if all(sub["status"] in ("completed", "skipped") for sub in parent.get("subtasks", [])):
+        if all(sub["status"] in ("completed", "skipped", "deferred") for sub in parent.get("subtasks", [])):
             parent["status"] = "completed"
             parent["commit_sha"] = sha or ""
             parent["completed_at"] = now_iso()
@@ -180,6 +183,30 @@ def _do_block(track_dir, p, t, s=None, reason=""):
 
     state["updated_at"] = now_iso()
     save(track_dir, state)
+
+
+def _do_defer(track_dir, p, t, s=None, reason=""):
+    state = load(track_dir)
+    pi, ti = int(p), int(t)
+    si = int(s) if s is not None else None
+
+    tgt = target(state, pi, ti, si)
+    tgt["status"] = "deferred"
+    tgt["defer_reason"] = reason
+    clean(tgt, {"status", "defer_reason"})
+
+    parent_deferred = False
+    if si is not None:
+        parent = state["phases"][pi]["tasks"][ti]
+        if all(sub["status"] in ("completed", "skipped", "deferred") for sub in parent.get("subtasks", [])):
+            parent["status"] = "deferred"
+            parent["defer_reason"] = "All subtasks deferred or completed"
+            clean(parent, {"status", "defer_reason"})
+            parent_deferred = True
+
+    state["updated_at"] = now_iso()
+    save(track_dir, state)
+    return parent_deferred
 
 
 def _do_sync_plan(track_dir):
@@ -403,6 +430,33 @@ def cmd_block(track_dir, p, t, s=None, reason=""):
     out(dict(ok=True))
 
 
+def cmd_defer(track_dir, p, t, s=None, reason=""):
+    parent_deferred = _do_defer(track_dir, p, t, s, reason)
+    out(dict(ok=True, parent_deferred=parent_deferred))
+
+
+def cmd_deferred_report(track_dir):
+    """List all deferred tasks with their context for final verification."""
+    state = load(track_dir)
+    deferred = []
+    for pi, phase in enumerate(state["phases"]):
+        for ti, task in enumerate(phase["tasks"]):
+            if task["status"] == "deferred":
+                deferred.append(dict(
+                    phase=pi, task=ti, subtask=None,
+                    name=task["name"], reason=task.get("defer_reason", ""),
+                    phase_name=phase["name"],
+                ))
+            for si, sub in enumerate(task.get("subtasks", [])):
+                if sub["status"] == "deferred":
+                    deferred.append(dict(
+                        phase=pi, task=ti, subtask=si,
+                        name=sub["name"], reason=sub.get("defer_reason", ""),
+                        phase_name=phase["name"],
+                    ))
+    out(dict(deferred=deferred, count=len(deferred)))
+
+
 def cmd_finalize(track_dir):
     state = load(track_dir)
     state["current_phase_index"] = -1
@@ -418,7 +472,7 @@ def cmd_finalize(track_dir):
 
     if "blocked" in statuses:
         state["status"] = "blocked"
-    elif all(s in ("completed", "skipped") for s in statuses):
+    elif all(s in ("completed", "skipped", "deferred") for s in statuses):
         state["status"] = "completed"
     else:
         state["status"] = "completed"
@@ -431,7 +485,7 @@ def cmd_finalize(track_dir):
 def cmd_phase_done(track_dir, p):
     state = load(track_dir)
     phase = state["phases"][int(p)]
-    terminal = {"completed", "skipped", "cancelled", "blocked"}
+    terminal = {"completed", "skipped", "cancelled", "blocked", "deferred"}
     total = 0
     done = 0
     for task in phase["tasks"]:
@@ -569,6 +623,12 @@ def main():
             cmd_block(track_dir, pos[0], pos[1],
                       pos[2] if len(pos) > 2 else None,
                       flag(args, "--reason") or "")
+        elif cmd == "defer":
+            cmd_defer(track_dir, pos[0], pos[1],
+                      pos[2] if len(pos) > 2 else None,
+                      flag(args, "--reason") or "")
+        elif cmd == "deferred-report":
+            cmd_deferred_report(track_dir)
         elif cmd == "sync-plan":
             cmd_sync_plan(track_dir)
         elif cmd == "phase-done":

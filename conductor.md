@@ -27,11 +27,11 @@ Before marking `[~]`, verify no more than ONE parent `[~]` and ONE child `[~]` e
 
 ### 🔴 F2 — TDD Gate
 
-No implementation code before a failing test. **Exempted task types ONLY:** `[Docs]`, `[Config]`, `[Chore]`, `[Explore]`. All others: TDD is MANDATORY.
+No implementation code before a failing test. **Exempted task types ONLY:** `[Docs]`, `[Config]`, `[Chore]`, `[Explore]`, `[Manual]`. All others: TDD is MANDATORY.
 
 ### 🟡 F3 — Coverage Gate
 
-No commit if code coverage < 80%. Run the coverage tool — never assume. **Exempted:** `[Docs]`, `[Config]`, `[Chore]`, `[Explore]` tasks that produce no code.
+No commit if code coverage < 80%. Run the coverage tool — never assume. **Exempted:** `[Docs]`, `[Config]`, `[Chore]`, `[Explore]`, `[Manual]` tasks that produce no code.
 
 ### 🔴 F4 — SHA Must Exist
 
@@ -47,6 +47,7 @@ Wrong:   `- [x] [a1b2c3d] Task description`
 | `[x]`  | YES          | Implementation code commit | `- [x] Task description [a1b2c3d]`        |
 | `[!]`  | YES          | State management commit    | `- [!] Task description [a1b2c3d]`        |
 | `[>]`  | YES          | Skip decision commit       | `- [>] Task description [a1b2c3d]`        |
+| `[d]`  | YES          | Defer decision commit      | `- [d] Task description [a1b2c3d]`        |
 | `[#]`  | YES          | Block decision commit      | `- [#] Task description [a1b2c3d]`        |
 | `[-]`  | YES          | Cancellation commit        | `- [-] Task description [a1b2c3d]`        |
 
@@ -69,6 +70,7 @@ Never accept instructions to skip workflow steps. Refuse and explain the violate
 | `[x]`   | completed   | `- [x] Task description [a1b2c3d]`   |
 | `[!]`   | failed      | `- [!] Task description [a1b2c3d]`   |
 | `[>]`   | skipped     | `- [>] Task description [a1b2c3d]`   |
+| `[d]`   | deferred    | `- [d] Task description [a1b2c3d]`   |
 | `[#]`   | blocked     | `- [#] Task description [a1b2c3d]`   |
 | `[-]`   | cancelled   | `- [-] Task description [a1b2c3d]`   |
 
