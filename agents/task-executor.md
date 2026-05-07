@@ -155,7 +155,61 @@ Before any code-modifying action, verify the rules in the system prompt. Key con
 
 ## 6.0 REPORT RESULT
 
-Output **exactly** the following format. The orchestrator parses this block.
+**Dual output:** Write a structured result file AND output a terse summary to stdout.
+
+### 6.1 Write Result File
+
+Write a JSON file to `{TRACK_DIR}/.conductor/result.json` with the following schema:
+
+```json
+{
+  "status": "SUCCESS",
+  "commit_sha": "<7-char-short-hash>",
+  "files_changed": "<comma-separated list>",
+  "summary": "<one-line summary>",
+  "tc_coverage": "<list of TC IDs>",
+  "spec_deviation": "NONE",
+  "spec_deviation_detail": [],
+  "phase": <PHASE_INDEX>,
+  "task": <TASK_INDEX>,
+  "subtask": null,
+  "task_name": "<TASK_NAME>",
+  "attempt": <ATTEMPT>,
+  "max_retries": <MAX_RETRIES>
+}
+```
+
+For failure, use:
+```json
+{
+  "status": "FAILURE",
+  "commit_sha": "N/A",
+  "files_changed": "<files or N/A>",
+  "summary": "<one-line description>",
+  "failure_detail": {
+    "what_was_done": "<concrete actions before failure>",
+    "failure_reason": "<exact error or description>",
+    "suggested_next_step": "<actionable recommendation>"
+  },
+  "phase": <PHASE_INDEX>,
+  "task": <TASK_INDEX>,
+  "subtask": null,
+  "task_name": "<TASK_NAME>",
+  "attempt": <ATTEMPT>,
+  "max_retries": <MAX_RETRIES>
+}
+```
+
+If there are spec deviations, populate `spec_deviation_detail`:
+```json
+[
+  {"ac_id": "AC-1", "reason": "<why>", "suggested_revision": "<proposed>"}
+]
+```
+
+### 6.2 Output Terse Summary to Stdout
+
+Output ONLY the result block to stdout. No step logs.
 
 ### On Success
 
@@ -163,20 +217,11 @@ Output **exactly** the following format. The orchestrator parses this block.
 ---TASK RESULT---
 STATUS: SUCCESS
 COMMIT_SHA: <7-char-short-hash>
-FILES_CHANGED: <comma-separated list of created/modified files>
-SUMMARY: <one-line summary of what was implemented>
-TC_COVERAGE: <list of TC IDs covered by tests, e.g., TC-1.1, TC-1.2, TC-2.1>
-SPEC_DEVIATION: <list of ACs that could not be met with suggested revision, or NONE>
+FILES_CHANGED: <comma-separated list>
+SUMMARY: <one-line summary>
+TC_COVERAGE: <TC IDs>
+SPEC_DEVIATION: <NONE or list>
 ---END RESULT---
-```
-
-If `SPEC_DEVIATION` is not `NONE`, include after `---END RESULT---`:
-```
----SPEC DEVIATION DETAIL---
-AC_ID: <AC-n>
-REASON: <why this AC cannot be met>
-SUGGESTED_REVISION: <proposed new AC text>
----END SPEC DEVIATION---
 ```
 
 ### On Failure
@@ -185,30 +230,32 @@ SUGGESTED_REVISION: <proposed new AC text>
 ---TASK RESULT---
 STATUS: FAILURE
 COMMIT_SHA: N/A
-FILES_CHANGED: <any files modified before failure, or N/A>
-SUMMARY: <one-line description of what went wrong>
+FILES_CHANGED: <files or N/A>
+SUMMARY: <one-line description>
 FAILURE_DETAIL:
 What Was Done:
-- <concrete action taken before failure>
+- <concrete action>
 
 Failure Reason:
-- <exact error output, test failure, or description>
+- <exact error>
 
 Suggested Next Step:
-- <actionable recommendation for the next attempt>
+- <recommendation>
 ---END RESULT---
 ```
 
-**The `---TASK RESULT---` / `---END RESULT---` delimiters are mandatory.** No content after `---END RESULT---` that could be confused with the result block.
+**The `---TASK RESULT---` / `---END RESULT---` delimiters are mandatory.**
 
 ---
 
 ## 7.0 STEP COMPLETION LOG
 
-For each step, emit:
+Write step logs to `{TRACK_DIR}/.conductor/step-log.md` (NOT to stdout). Append each step as it completes:
+
 ```
-[STEP COMPLETE] Step N: <name>
-  State: <what changed>
-  Evidence: <how to verify>
-  Next: Step N+1
+## Step N: <name>
+- State: <what changed>
+- Evidence: <how to verify>
 ```
+
+Create the `.conductor/` directory if it does not exist. Do NOT output step logs to stdout — stdout is reserved for the result block only.

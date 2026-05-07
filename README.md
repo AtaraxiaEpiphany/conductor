@@ -19,7 +19,7 @@ Conductor is a Claude Code plugin built on **Spec-Driven Development** and **Sub
             ▼                 ▼                    ▼
    ┌────────────┐    ┌────────────┐      ┌────────────┐
    │   Skills   │    │  Subagents │      │ Templates  │
-   │  (6 cmds)  │    │  (6 agents)│      │  + Styles  │
+   │  (6 cmds)  │    │  (8 agents)│      │  + Styles  │
    └────────────┘    └────────────┘      └────────────┘
 ```
 
@@ -28,7 +28,7 @@ Conductor is a Claude Code plugin built on **Spec-Driven Development** and **Sub
 | Principle | Description |
 |-----------|-------------|
 | **Orchestrator-Subagent Pattern** | The orchestrator manages state and dispatches tasks; subagents focus on single-responsibility execution |
-| **Context Isolation** | State mutations via CLI scripts; subagents self-extract context (ACs, specs). Main session context stays minimal |
+| **Context Isolation** | State mutations via CLI scripts; subagents self-extract ACs/specs; phase checkpoints and doc sync run in isolated subagent context. Step logs write to files, results via `process-result`. Main session context stays minimal |
 | **TDD Enforcement** | Mandatory Red-Green-Refactor cycle — no implementation code without a failing test |
 | **Single State Lock** | Only one task may be `in_progress` globally, eliminating concurrent conflicts |
 | **Audit Trail** | Every state transition is accompanied by a git commit + git note for full traceability |
@@ -59,6 +59,8 @@ Conductor is a Claude Code plugin built on **Spec-Driven Development** and **Sub
 | **conductor:project-analyzer** | Brownfield project analysis: detect tech stack, architecture patterns, project structure | `setup` |
 | **conductor:code-reviewer** | Deep code review: diff analysis, plan compliance, style check, test execution | `review` |
 | **conductor:skip-analyst** | Failed task analysis: evaluate whether a task can be safely skipped and assess downstream impact | `implement` (retry exhausted) |
+| **conductor:phase-checker** | Phase checkpoint verification: test coverage, automated tests, manual verification plan, checkpoint commit | `implement` (phase boundary) |
+| **conductor:doc-syncer** | Project documentation sync: update product.md, tech-stack.md, product-guidelines.md after track completion | `implement` (track completion) |
 
 ---
 
@@ -156,7 +158,9 @@ conductor-plugin/
 │   ├── spec-planner.md                #   Spec & plan generation
 │   ├── project-analyzer.md            #   Brownfield project detection
 │   ├── code-reviewer.md               #   Deep code analysis
-│   └── skip-analyst.md                #   Failure impact analysis
+│   ├── skip-analyst.md                #   Failure impact analysis
+│   ├── phase-checker.md               #   Phase checkpoint verification
+│   └── doc-syncer.md                  #   Project documentation sync
 │
 ├── hooks/
 │   └── hooks.json                     # Hook event configurations
@@ -170,7 +174,7 @@ conductor-plugin/
 │   └── track-state                    #   State management CLI (Python 3)
 │       # Commands: next, recover, lock, complete,
 │       #   fail, skip, block, sync-plan,
-│       #   phase-done, finalize
+│       #   phase-done, finalize, process-result
 ├── output-styles/                     # Output formatting styles
 ├── themes/                            # Color theme definitions
 │
@@ -261,16 +265,16 @@ Interactive workflow:
 ```
 
 The orchestrator:
-1. Loads track state and recovers from interruptions
+1. Loads track state and recovers from interruptions via `track-state recover`
 2. Selects next pending task (global state lock) via `track-state next`
 3. Dispatches appropriate subagent:
    - `[Explore]` tasks → `conductor:explorer` (read-only investigation)
    - Default tasks → `conductor:task-executor` (TDD workflow, self-extracts ACs from spec.md)
-4. Processes result: success → advance, failure → retry/skip analysis
-5. Executes phase checkpoint protocol at phase boundaries
-6. Syncs project documentation upon track completion
+4. Processes result via `track-state process-result` (state update + plan sync + issues.md)
+5. Dispatches `conductor:phase-checker` at phase boundaries
+6. Dispatches `conductor:doc-syncer` upon track completion
 
-All state mutations are performed by the `track-state` CLI script — the orchestrator never reads or edits `track-state.json` directly.
+All state mutations are performed by the `track-state` CLI script — the orchestrator never reads or edits `track-state.json` directly. Subagents self-extract ACs from spec.md and write step logs to files, keeping orchestrator context minimal.
 
 ### 4. Monitor Progress
 
@@ -373,6 +377,7 @@ track-state <command> <track-dir> [options]
 | `sync-plan` | Re-project all markers to plan.md from state | `{synced}` |
 | `phase-done <p>` | Check if all tasks in phase are terminal | `{complete, terminal, total}` |
 | `finalize` | Set indices to -1, compute track-level status | `{status}` |
+| `process-result` | Read `.conductor/result.json`, update state + plan + issues.md in one call | `{status, sha, parent_completed, deviations}` or `{status, retry_count, summary}` |
 
 ---
 

@@ -15,6 +15,7 @@ Usage:
     track-state sync-plan <track-dir>
     track-state phase-done <track-dir> <phase>
     track-state finalize <track-dir>
+    track-state process-result <track-dir>
 """
 
 import json
@@ -34,6 +35,9 @@ MARKER_MAP = {
 }
 
 SHA_MARKERS = {"x", "!", ">", "#", "-"}
+
+
+# ── Utilities ─────────────────────────────────────────────────────────
 
 
 def load(track_dir):
@@ -72,7 +76,236 @@ def extract_tags(name):
     return re.findall(r"\[(Explore|Docs|Config|Chore)\]", name)
 
 
-# ── Commands ──────────────────────────────────────────────────────────
+def conductor_dir(track_dir):
+    d = Path(track_dir) / ".conductor"
+    d.mkdir(exist_ok=True)
+    return d
+
+
+# ── Internal State Operations ────────────────────────────────────────
+# These perform state mutations without printing output.
+# Used by both public commands and process-result.
+
+
+def _do_lock(track_dir, p, t, s=None):
+    state = load(track_dir)
+    pi, ti = int(p), int(t)
+    si = int(s) if s is not None else None
+
+    tgt = target(state, pi, ti, si)
+    tgt["status"] = "in_progress"
+    clean(tgt, {"status"})
+
+    state["current_phase_index"] = pi
+    state["current_task_index"] = ti
+    if si is not None:
+        state["current_subtask_index"] = si
+        parent = state["phases"][pi]["tasks"][ti]
+        if parent["status"] != "in_progress":
+            parent["status"] = "in_progress"
+    else:
+        state.pop("current_subtask_index", None)
+
+    state["updated_at"] = now_iso()
+    save(track_dir, state)
+
+
+def _do_complete(track_dir, p, t, s=None, sha=None):
+    """Returns parent_completed bool."""
+    state = load(track_dir)
+    pi, ti = int(p), int(t)
+    si = int(s) if s is not None else None
+
+    tgt = target(state, pi, ti, si)
+    tgt["status"] = "completed"
+    tgt["commit_sha"] = sha or ""
+    tgt["completed_at"] = now_iso()
+    clean(tgt, {"status", "commit_sha", "completed_at"})
+
+    parent_completed = False
+    if si is not None:
+        parent = state["phases"][pi]["tasks"][ti]
+        if all(sub["status"] in ("completed", "skipped") for sub in parent.get("subtasks", [])):
+            parent["status"] = "completed"
+            parent["commit_sha"] = sha or ""
+            parent["completed_at"] = now_iso()
+            clean(parent, {"status", "commit_sha", "completed_at"})
+            parent_completed = True
+
+    state["updated_at"] = now_iso()
+    save(track_dir, state)
+    return parent_completed
+
+
+def _do_fail(track_dir, p, t, s=None, summary=""):
+    """Returns retry_count."""
+    state = load(track_dir)
+    pi, ti = int(p), int(t)
+    si = int(s) if s is not None else None
+
+    tgt = target(state, pi, ti, si)
+    tgt["status"] = "failed"
+    tgt["retry_count"] = tgt.get("retry_count", -1) + 1
+    tgt["last_failure_summary"] = summary
+    clean(tgt, {"status", "retry_count", "last_failure_summary"})
+
+    state["updated_at"] = now_iso()
+    save(track_dir, state)
+    return tgt["retry_count"]
+
+
+def _do_skip(track_dir, p, t, s=None, reason=""):
+    state = load(track_dir)
+    pi, ti = int(p), int(t)
+    si = int(s) if s is not None else None
+
+    tgt = target(state, pi, ti, si)
+    tgt["status"] = "skipped"
+    tgt["skip_analysis"] = reason
+    clean(tgt, {"status", "skip_analysis"})
+
+    state["updated_at"] = now_iso()
+    save(track_dir, state)
+
+
+def _do_block(track_dir, p, t, s=None, reason=""):
+    state = load(track_dir)
+    pi, ti = int(p), int(t)
+    si = int(s) if s is not None else None
+
+    tgt = target(state, pi, ti, si)
+    tgt["status"] = "blocked"
+    tgt["skip_analysis"] = reason
+    clean(tgt, {"status", "skip_analysis"})
+
+    state["updated_at"] = now_iso()
+    save(track_dir, state)
+
+
+def _do_sync_plan(track_dir):
+    """Sync plan.md markers from state. Returns synced count."""
+    state = load(track_dir)
+    plan_path = Path(track_dir) / "plan.md"
+
+    with open(plan_path) as f:
+        lines = f.readlines()
+
+    result = []
+    phase_idx = -1
+    task_idx = -1
+    subtask_idx = -1
+    synced = 0
+
+    for line in lines:
+        stripped = line.rstrip("\n")
+
+        pm = re.match(r"^##\s+Phase\s+(\d+)", stripped)
+        if pm:
+            phase_idx = int(pm.group(1)) - 1
+            task_idx = -1
+            subtask_idx = -1
+            result.append(stripped)
+            continue
+
+        tm = re.match(r"^(\s*)-\s+\[([ x~!>#\-])\]\s+(.*)", stripped)
+        if tm:
+            indent = tm.group(1)
+            rest = tm.group(3)
+            is_subtask = len(indent) > 0
+
+            rest_clean = re.sub(r"\s+\[[0-9a-f]{7}\]$", "", rest)
+
+            try:
+                if is_subtask:
+                    subtask_idx += 1
+                    sub = state["phases"][phase_idx]["tasks"][task_idx]["subtasks"][subtask_idx]
+                    marker = MARKER_MAP.get(sub["status"], " ")
+                    sha = sub.get("commit_sha", "")
+                else:
+                    task_idx += 1
+                    subtask_idx = -1
+                    t = state["phases"][phase_idx]["tasks"][task_idx]
+                    marker = MARKER_MAP.get(t["status"], " ")
+                    sha = t.get("commit_sha", "")
+
+                new_line = f"{indent}- [{marker}] {rest_clean}"
+                if sha and marker in SHA_MARKERS:
+                    new_line += f" [{sha}]"
+                result.append(new_line)
+                synced += 1
+                continue
+            except (IndexError, KeyError):
+                result.append(stripped)
+                continue
+
+        result.append(stripped)
+
+    with open(plan_path, "w") as f:
+        f.write("\n".join(result))
+        f.write("\n")
+
+    return synced
+
+
+# ── Issues.md Management ─────────────────────────────────────────────
+
+
+def _append_failure(track_dir, result_data):
+    """Append a failure entry to issues.md."""
+    issues_path = Path(track_dir) / "issues.md"
+    ts = now_iso()
+    task_name = result_data.get("task_name", "unknown")
+    attempt = result_data.get("attempt", 1)
+    max_retries = result_data.get("max_retries", 3)
+    detail = result_data.get("failure_detail", {})
+
+    header = ""
+    if not issues_path.exists():
+        track_id = result_data.get("track_id", "unknown")
+        header = f"# Track: {track_id} — Failure Reports\n\n"
+
+    entry = (
+        f"### Task: {task_name} | Attempt: {attempt}/{max_retries} | {ts}\n"
+        f"**What Was Done**: {detail.get('what_was_done', 'N/A')}\n"
+        f"**Failure Reason**: {detail.get('failure_reason', 'N/A')}\n"
+        f"**Suggested Next Step**: {detail.get('suggested_next_step', 'N/A')}\n"
+        "---\n\n"
+    )
+
+    with open(issues_path, "a") as f:
+        f.write(header + entry)
+
+
+def _append_deviation(track_dir, task_name, dev):
+    """Append a spec deviation entry to issues.md."""
+    issues_path = Path(track_dir) / "issues.md"
+    ts = now_iso()
+
+    header = ""
+    if not issues_path.exists():
+        track_id = "unknown"
+        # Try to get track_id from state
+        try:
+            state = load(track_dir)
+            track_id = state.get("track_id", "unknown")
+        except Exception:
+            pass
+        header = f"# Track: {track_id} — Failure Reports\n\n"
+
+    entry = (
+        f"### Spec Deviation: {task_name} | {ts}\n"
+        f"**AC**: {dev.get('ac_id', 'N/A')} | "
+        f"**Reason**: {dev.get('reason', 'N/A')} | "
+        f"**Revision**: {dev.get('suggested_revision', 'N/A')} | "
+        f"**Status**: pending-review\n"
+        "---\n\n"
+    )
+
+    with open(issues_path, "a") as f:
+        f.write(header + entry)
+
+
+# ── Public Commands ──────────────────────────────────────────────────
 
 
 def cmd_next(track_dir):
@@ -146,98 +379,27 @@ def cmd_recover(track_dir):
 
 
 def cmd_lock(track_dir, p, t, s=None):
-    state = load(track_dir)
-    pi, ti = int(p), int(t)
-    si = int(s) if s is not None else None
-
-    tgt = target(state, pi, ti, si)
-    tgt["status"] = "in_progress"
-    clean(tgt, {"status"})
-
-    state["current_phase_index"] = pi
-    state["current_task_index"] = ti
-    if si is not None:
-        state["current_subtask_index"] = si
-        parent = state["phases"][pi]["tasks"][ti]
-        if parent["status"] != "in_progress":
-            parent["status"] = "in_progress"
-    else:
-        state.pop("current_subtask_index", None)
-
-    state["updated_at"] = now_iso()
-    save(track_dir, state)
+    _do_lock(track_dir, p, t, s)
     out(dict(ok=True))
 
 
 def cmd_complete(track_dir, p, t, s=None, sha=None):
-    state = load(track_dir)
-    pi, ti = int(p), int(t)
-    si = int(s) if s is not None else None
-
-    tgt = target(state, pi, ti, si)
-    tgt["status"] = "completed"
-    tgt["commit_sha"] = sha or ""
-    tgt["completed_at"] = now_iso()
-    clean(tgt, {"status", "commit_sha", "completed_at"})
-
-    parent_completed = False
-    if si is not None:
-        parent = state["phases"][pi]["tasks"][ti]
-        if all(sub["status"] in ("completed", "skipped") for sub in parent.get("subtasks", [])):
-            parent["status"] = "completed"
-            parent["commit_sha"] = sha or ""
-            parent["completed_at"] = now_iso()
-            clean(parent, {"status", "commit_sha", "completed_at"})
-            parent_completed = True
-
-    state["updated_at"] = now_iso()
-    save(track_dir, state)
+    parent_completed = _do_complete(track_dir, p, t, s, sha)
     out(dict(ok=True, parent_completed=parent_completed))
 
 
 def cmd_fail(track_dir, p, t, s=None, summary=""):
-    state = load(track_dir)
-    pi, ti = int(p), int(t)
-    si = int(s) if s is not None else None
-
-    tgt = target(state, pi, ti, si)
-    tgt["status"] = "failed"
-    tgt["retry_count"] = tgt.get("retry_count", -1) + 1
-    tgt["last_failure_summary"] = summary
-    clean(tgt, {"status", "retry_count", "last_failure_summary"})
-
-    state["updated_at"] = now_iso()
-    save(track_dir, state)
-    out(dict(retry_count=tgt["retry_count"]))
+    retry_count = _do_fail(track_dir, p, t, s, summary)
+    out(dict(retry_count=retry_count))
 
 
 def cmd_skip(track_dir, p, t, s=None, reason=""):
-    state = load(track_dir)
-    pi, ti = int(p), int(t)
-    si = int(s) if s is not None else None
-
-    tgt = target(state, pi, ti, si)
-    tgt["status"] = "skipped"
-    tgt["skip_analysis"] = reason
-    clean(tgt, {"status", "skip_analysis"})
-
-    state["updated_at"] = now_iso()
-    save(track_dir, state)
+    _do_skip(track_dir, p, t, s, reason)
     out(dict(ok=True))
 
 
 def cmd_block(track_dir, p, t, s=None, reason=""):
-    state = load(track_dir)
-    pi, ti = int(p), int(t)
-    si = int(s) if s is not None else None
-
-    tgt = target(state, pi, ti, si)
-    tgt["status"] = "blocked"
-    tgt["skip_analysis"] = reason
-    clean(tgt, {"status", "skip_analysis"})
-
-    state["updated_at"] = now_iso()
-    save(track_dir, state)
+    _do_block(track_dir, p, t, s, reason)
     out(dict(ok=True))
 
 
@@ -284,73 +446,72 @@ def cmd_phase_done(track_dir, p):
 
 
 def cmd_sync_plan(track_dir):
-    state = load(track_dir)
-    plan_path = Path(track_dir) / "plan.md"
-
-    with open(plan_path) as f:
-        lines = f.readlines()
-
-    result = []
-    phase_idx = -1
-    task_idx = -1
-    subtask_idx = -1
-    synced = 0
-
-    for line in lines:
-        stripped = line.rstrip("\n")
-
-        # Phase header
-        pm = re.match(r"^##\s+Phase\s+(\d+)", stripped)
-        if pm:
-            phase_idx = int(pm.group(1)) - 1
-            task_idx = -1
-            subtask_idx = -1
-            result.append(stripped)
-            continue
-
-        # Task or subtask line
-        tm = re.match(r"^(\s*)-\s+\[([ x~!>#\-])\]\s+(.*)", stripped)
-        if tm:
-            indent = tm.group(1)
-            rest = tm.group(3)
-            is_subtask = len(indent) > 0
-
-            # Strip existing SHA from end
-            rest_clean = re.sub(r"\s+\[[0-9a-f]{7}\]$", "", rest)
-
-            try:
-                if is_subtask:
-                    subtask_idx += 1
-                    sub = state["phases"][phase_idx]["tasks"][task_idx]["subtasks"][subtask_idx]
-                    marker = MARKER_MAP.get(sub["status"], " ")
-                    sha = sub.get("commit_sha", "")
-                else:
-                    task_idx += 1
-                    subtask_idx = -1
-                    t = state["phases"][phase_idx]["tasks"][task_idx]
-                    marker = MARKER_MAP.get(t["status"], " ")
-                    sha = t.get("commit_sha", "")
-
-                new_line = f"{indent}- [{marker}] {rest_clean}"
-                if sha and marker in SHA_MARKERS:
-                    new_line += f" [{sha}]"
-                result.append(new_line)
-                synced += 1
-                continue
-            except (IndexError, KeyError):
-                result.append(stripped)
-                continue
-
-        result.append(stripped)
-
-    with open(plan_path, "w") as f:
-        f.write("\n".join(result))
-        f.write("\n")
-
+    synced = _do_sync_plan(track_dir)
     out(dict(synced=synced))
 
 
-# ── Dispatch ──────────────────────────────────────────────────────────
+def cmd_process_result(track_dir):
+    """Read .conductor/result.json, update state, sync plan, manage issues.
+    Outputs minimal JSON summary. Deletes result file after processing."""
+    result_path = conductor_dir(track_dir) / "result.json"
+
+    if not result_path.exists():
+        out(dict(error="No result file at .conductor/result.json"))
+        return
+
+    with open(result_path) as f:
+        r = json.load(f)
+
+    status = r.get("status", "").upper()
+    p = str(r.get("phase", ""))
+    t = str(r.get("task", ""))
+    s = r.get("subtask")
+    if s is not None:
+        s = str(s)
+    task_name = r.get("task_name", "unknown")
+
+    if status == "SUCCESS":
+        sha = r.get("commit_sha", "")
+        parent_completed = _do_complete(track_dir, p, t, s, sha)
+        _do_sync_plan(track_dir)
+
+        # Handle spec deviations
+        deviations = r.get("spec_deviation_detail", [])
+        for dev in deviations:
+            _append_deviation(track_dir, task_name, dev)
+
+        # Clean up
+        result_path.unlink(missing_ok=True)
+
+        out(dict(
+            status="success",
+            sha=sha,
+            parent_completed=parent_completed,
+            deviations=len(deviations),
+        ))
+
+    elif status == "FAILURE":
+        summary = r.get("summary", "")
+        retry_count = _do_fail(track_dir, p, t, s, summary)
+        _do_sync_plan(track_dir)
+
+        # Append to issues.md
+        _append_failure(track_dir, r)
+
+        # Clean up
+        result_path.unlink(missing_ok=True)
+
+        out(dict(
+            status="failure",
+            retry_count=retry_count,
+            summary=summary,
+        ))
+
+    else:
+        out(dict(error=f"Unknown status: {status}"))
+
+
+# ── Dispatch ─────────────────────────────────────────────────────────
 
 
 def flag(args, name):
@@ -414,6 +575,8 @@ def main():
             cmd_phase_done(track_dir, pos[0])
         elif cmd == "finalize":
             cmd_finalize(track_dir)
+        elif cmd == "process-result":
+            cmd_process_result(track_dir)
         else:
             print(f"Unknown command: {cmd}", file=sys.stderr)
             sys.exit(1)
