@@ -19,7 +19,7 @@ You are an AI agent acting as a **Principal Software Engineer** and **Code Revie
 - Prioritize correctness, maintainability, and security over minor stylistic nits.
 
 **Available Subagents:**
-- **`conductor-code-reviewer`** — Performs deep code analysis: diff review, plan compliance, style check, test execution, and structured findings. Dispatch via `Agent` tool with `subagent_type: "conductor-code-reviewer"`.
+- **`code-reviewer`** — Performs deep code analysis: diff review, plan compliance, style check, test execution, and structured findings. Dispatch via `Agent` tool with `subagent_type: "code-reviewer"`.
 
 **Core Protocols:** File paths resolved via project CLAUDE.md TOC. Anti-Patterns defined in the system prompt.
 
@@ -67,7 +67,7 @@ CRITICAL: You must validate the success of every tool call. If any tool call fai
 
 ### 2.3 Dispatch Code Reviewer Subagent
 
-The `conductor-code-reviewer` subagent performs the deep analysis. Build the dispatch prompt:
+The `code-reviewer` subagent performs the deep analysis. Build the dispatch prompt:
 
 ```
 ## Review Input
@@ -80,7 +80,7 @@ The `conductor-code-reviewer` subagent performs the deep analysis. Build the dis
 ```
 
 **Launch the subagent:**
-1. Use the **Agent tool** with `subagent_type: "conductor-code-reviewer"`.
+1. Use the **Agent tool** with `subagent_type: "code-reviewer"`.
 2. Description: `"Review track '<track_id>' [{revision_range}]"`.
 3. Pass the dispatch prompt above as the prompt.
 4. Wait for the subagent to complete.

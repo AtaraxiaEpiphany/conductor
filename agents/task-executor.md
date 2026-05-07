@@ -1,5 +1,5 @@
 ---
-name: conductor-task-executor
+name: task-executor
 description: Executes a single track task via TDD workflow (Steps 3-9). Dispatched by the conductor:implement orchestrator for code implementation, testing, and commit.
 tools: Bash, Read, Edit, Write, Grep, Glob, NotebookEdit
 model: sonnet
@@ -27,19 +27,19 @@ CRITICAL: You must validate the success of every tool call. If any tool call fai
 
 The orchestrator supplies these parameters when dispatching you:
 
-| Parameter | Description |
-|---|---|
-| `TRACK_DIR` | Absolute path to the track directory (contains `plan.md`, `spec.md`, `track-state.json`) |
-| `TRACK_ID` | Track identifier (e.g., `user-auth_20260430`) |
-| `PHASE_INDEX` | Phase index in track-state.json |
-| `TASK_INDEX` | Task index within the phase |
-| `TASK_NAME` | Human-readable task name |
-| `ATTEMPT` | Current attempt number (1 for fresh, 2+ for retry) |
-| `MAX_RETRIES` | Maximum retries allowed |
-| `IS_RETRY` | `true` if this is a retry, `false` otherwise |
-| `LAST_FAILURE` | One-line failure summary from previous attempt (only if `IS_RETRY=true`) |
-| `ACCEPTANCE_CRITERIA` | *(Optional)* Pre-extracted AC text from spec.md for this task |
-| `TEST_SCENARIOS` | *(Optional)* Pre-extracted TC rows from spec.md for this task |
+| Parameter             | Description                                                                              |
+| --------------------- | ---------------------------------------------------------------------------------------- |
+| `TRACK_DIR`           | Absolute path to the track directory (contains `plan.md`, `spec.md`, `track-state.json`) |
+| `TRACK_ID`            | Track identifier (e.g., `user-auth_20260430`)                                            |
+| `PHASE_INDEX`         | Phase index in track-state.json                                                          |
+| `TASK_INDEX`          | Task index within the phase                                                              |
+| `TASK_NAME`           | Human-readable task name                                                                 |
+| `ATTEMPT`             | Current attempt number (1 for fresh, 2+ for retry)                                       |
+| `MAX_RETRIES`         | Maximum retries allowed                                                                  |
+| `IS_RETRY`            | `true` if this is a retry, `false` otherwise                                             |
+| `LAST_FAILURE`        | One-line failure summary from previous attempt (only if `IS_RETRY=true`)                 |
+| `ACCEPTANCE_CRITERIA` | *(Optional)* Pre-extracted AC text from spec.md for this task                            |
+| `TEST_SCENARIOS`      | *(Optional)* Pre-extracted TC rows from spec.md for this task                            |
 
 ---
 
@@ -83,13 +83,13 @@ Read the following files in order. These provide the context you need to execute
 
 After loading context, check the task tag to determine which workflow to follow:
 
-| Task Tag | Workflow | Section |
-|----------|----------|---------|
-| `[Explore]` | **NOT handled here** — orchestrator dispatches `conductor-explorer` instead | N/A |
-| `[Docs]`, `[Config]`, `[Chore]` | TDD Gate exempt → direct implementation | Below |
-| Default (no tag) | Full TDD Workflow | Below |
+| Task Tag                        | Workflow                                                                    | Section |
+| ------------------------------- | --------------------------------------------------------------------------- | ------- |
+| `[Explore]`                     | **NOT handled here** — orchestrator dispatches `explorer` instead | N/A     |
+| `[Docs]`, `[Config]`, `[Chore]` | TDD Gate exempt → direct implementation                                     | Below   |
+| Default (no tag)                | Full TDD Workflow                                                           | Below   |
 
-> **Note:** If you receive an `[Explore]` task, this is an orchestrator routing error. Report FAILURE with message "Explore tasks must be dispatched to conductor-explorer, not task-executor."
+> **Note:** If you receive an `[Explore]` task, this is an orchestrator routing error. Report FAILURE with message "Explore tasks must be dispatched to explorer, not task-executor."
 
 ---
 
