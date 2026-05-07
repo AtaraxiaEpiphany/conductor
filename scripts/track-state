@@ -263,7 +263,7 @@ def _do_sync_plan(track_dir):
             rest = tm.group(3)
             is_subtask = len(indent) > 0
 
-            rest_clean = re.sub(r"\s+\[[0-9a-f]{7}\]$", "", rest)
+            rest_clean = re.sub(r"(\s+\[[0-9a-f]{7}\])+$", "", rest)
 
             try:
                 if is_subtask:
