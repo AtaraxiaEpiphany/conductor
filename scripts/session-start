@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# SessionStart hook: inject plugin CLAUDE.md as additionalContext
+# SessionStart hook: inject conductor-core.md as additionalContext
+# Only the Core layer is injected at session start to minimize context footprint.
+# Orchestration and Reference layers are loaded on-demand by individual skills.
 set -euo pipefail
 
-INSTRUCTIONS="${CLAUDE_PLUGIN_ROOT}/conductor.md"
+INSTRUCTIONS="${CLAUDE_PLUGIN_ROOT}/conductor-core.md"
 
 if [[ ! -f "$INSTRUCTIONS" ]]; then
   echo '{"additionalContext":""}'

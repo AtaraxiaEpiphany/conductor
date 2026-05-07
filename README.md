@@ -170,7 +170,7 @@ conductor-plugin/
 │
 ├── bin/                               # Executables (added to PATH)
 ├── scripts/                           # Hook & utility scripts
-│   ├── session-start                  #   SessionStart hook (injects conductor.md)
+│   ├── session-start                  #   SessionStart hook (injects conductor-core.md)
 │   └── track-state                    #   State management CLI (Python 3)
 │       # Commands: next, recover, lock, complete,
 │       #   fail, skip, block, sync-plan,

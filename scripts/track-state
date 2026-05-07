@@ -5,8 +5,8 @@ All commands output JSON to stdout. Exit 0 on success, 1 on error.
 Keeps orchestrator context clean by handling all JSON/markdown mutations.
 
 Usage:
-    track-state next <track-dir>
-    track-state recover <track-dir>
+    track-state next <track-dir> [--compact]
+    track-state recover <track-dir> [--compact]
     track-state lock <track-dir> <phase> <task> [<subtask>]
     track-state complete <track-dir> <phase> <task> [<subtask>] --sha <sha>
     track-state fail <track-dir> <phase> <task> [<subtask>] --summary <text>
@@ -60,6 +60,29 @@ def now_iso():
 
 def out(obj):
     print(json.dumps(obj, ensure_ascii=False))
+
+
+def out_compact(obj):
+    """Ultra-compact single-line output for --compact mode."""
+    if obj.get("phase", -1) < 0:
+        print("ALL_DONE")
+        return
+    p, t = obj.get("phase", "?"), obj.get("task", "?")
+    s = obj.get("subtask")
+    name = obj.get("name", "?")
+    ttype = obj.get("type", "?")
+    tags = ",".join(obj.get("tags", []))
+    status = obj.get("status", "")
+    loc = f"P{p}.T{t}" + (f".S{s}" if s is not None else "")
+    parts = [loc, name, ttype]
+    if tags:
+        parts.append(f"tags=[{tags}]")
+    if status:
+        parts.append(f"status={status}")
+    retry = obj.get("retry_count")
+    if retry:
+        parts.append(f"retry={retry}")
+    print(" | ".join(parts))
 
 
 def target(state, p, t, s=None):
@@ -335,8 +358,9 @@ def _append_deviation(track_dir, task_name, dev):
 # ── Public Commands ──────────────────────────────────────────────────
 
 
-def cmd_next(track_dir):
+def cmd_next(track_dir, compact=False):
     state = load(track_dir)
+    result = None
     # Pass 1: in_progress tasks (recovery / dispatch continuation)
     for pi, phase in enumerate(state["phases"]):
         for ti, task in enumerate(phase["tasks"]):
@@ -345,45 +369,73 @@ def cmd_next(track_dir):
                 if subs:
                     for si, sub in enumerate(subs):
                         if sub["status"] in ("in_progress", "pending"):
-                            return out(dict(phase=pi, task=ti, subtask=si,
-                                            name=sub["name"], type="subtask",
-                                            tags=extract_tags(sub["name"])))
-                    return out(dict(phase=pi, task=ti, subtask=None,
-                                    name=task["name"], type="parent-complete", tags=[]))
-                return out(dict(phase=pi, task=ti, subtask=None,
-                                name=task["name"], type="flat",
-                                tags=extract_tags(task["name"])))
-    # Pass 2: pending tasks (new dispatch)
-    for pi, phase in enumerate(state["phases"]):
-        for ti, task in enumerate(phase["tasks"]):
-            if task["status"] == "pending":
-                subs = task.get("subtasks")
-                if subs:
-                    for si, sub in enumerate(subs):
-                        if sub["status"] == "pending":
-                            return out(dict(phase=pi, task=ti, subtask=si,
-                                            name=sub["name"], type="subtask",
-                                            tags=extract_tags(sub["name"])))
+                            result = dict(phase=pi, task=ti, subtask=si,
+                                          name=sub["name"], type="subtask",
+                                          tags=extract_tags(sub["name"]))
+                            break
+                    if not result:
+                        result = dict(phase=pi, task=ti, subtask=None,
+                                      name=task["name"], type="parent-complete", tags=[])
                 else:
-                    return out(dict(phase=pi, task=ti, subtask=None,
-                                    name=task["name"], type="flat",
-                                    tags=extract_tags(task["name"])))
-    out(dict(phase=-1, task=-1, subtask=None, name=None, type=None, tags=[]))
+                    result = dict(phase=pi, task=ti, subtask=None,
+                                  name=task["name"], type="flat",
+                                  tags=extract_tags(task["name"]))
+                break
+        if result:
+            break
+    # Pass 2: pending tasks (new dispatch)
+    if not result:
+        for pi, phase in enumerate(state["phases"]):
+            for ti, task in enumerate(phase["tasks"]):
+                if task["status"] == "pending":
+                    subs = task.get("subtasks")
+                    if subs:
+                        for si, sub in enumerate(subs):
+                            if sub["status"] == "pending":
+                                result = dict(phase=pi, task=ti, subtask=si,
+                                              name=sub["name"], type="subtask",
+                                              tags=extract_tags(sub["name"]))
+                                break
+                        if not result:
+                            continue
+                    else:
+                        result = dict(phase=pi, task=ti, subtask=None,
+                                      name=task["name"], type="flat",
+                                      tags=extract_tags(task["name"]))
+                    break
+            if result:
+                break
+    if not result:
+        result = dict(phase=-1, task=-1, subtask=None, name=None, type=None, tags=[])
+    if compact:
+        out_compact(result)
+    else:
+        out(result)
 
 
-def cmd_recover(track_dir):
+def cmd_recover(track_dir, compact=False):
     state = load(track_dir)
     pi = state.get("current_phase_index", -1)
     ti = state.get("current_task_index", -1)
     si = state.get("current_subtask_index")
 
     if pi < 0 or ti < 0:
-        return out(dict(status="no_active_task"))
+        result = dict(status="no_active_task")
+        if compact:
+            print("NO_ACTIVE_TASK")
+        else:
+            out(result)
+        return
 
     try:
         task = state["phases"][pi]["tasks"][ti]
     except IndexError:
-        return out(dict(status="no_active_task"))
+        result = dict(status="no_active_task")
+        if compact:
+            print("NO_ACTIVE_TASK")
+        else:
+            out(result)
+        return
 
     if si is not None and "subtasks" in task:
         si = min(si, len(task["subtasks"]) - 1)
@@ -395,14 +447,18 @@ def cmd_recover(track_dir):
         name = task["name"]
         ttype = "flat"
 
-    out(dict(
+    result = dict(
         status=tgt.get("status", "pending"),
         phase=pi, task=ti, subtask=si,
         name=name, type=ttype,
         retry_count=tgt.get("retry_count", 0),
         last_failure_summary=tgt.get("last_failure_summary"),
         tags=extract_tags(name),
-    ))
+    )
+    if compact:
+        out_compact(result)
+    else:
+        out(result)
 
 
 def cmd_lock(track_dir, p, t, s=None):
@@ -575,6 +631,9 @@ def flag(args, name):
     return None
 
 
+_BOOL_FLAGS = {"--compact"}
+
+
 def positional(args):
     """Extract positional args, skipping flags and their values."""
     result = []
@@ -584,7 +643,8 @@ def positional(args):
             skip = False
             continue
         if a.startswith("--"):
-            skip = True
+            if a not in _BOOL_FLAGS:
+                skip = True
             continue
         result.append(a)
     return result
@@ -602,9 +662,9 @@ def main():
 
     try:
         if cmd == "next":
-            cmd_next(track_dir)
+            cmd_next(track_dir, compact="--compact" in args)
         elif cmd == "recover":
-            cmd_recover(track_dir)
+            cmd_recover(track_dir, compact="--compact" in args)
         elif cmd == "lock":
             cmd_lock(track_dir, pos[0], pos[1], pos[2] if len(pos) > 2 else None)
         elif cmd == "complete":
