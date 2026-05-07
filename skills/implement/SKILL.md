@@ -213,6 +213,36 @@ Dispatch `conductor:doc-syncer`. Prompt: `TRACK_DIR={track_dir} TRACK_ID={track_
 
 ---
 
-## 7.0 CLEANUP
+## 7.0 AUTO-REVIEW
 
-Present options: A) Review (`/conductor:review`), B) Archive, C) Delete, D) Skip.
+Automatically dispatch code review after track completion.
+
+1. Get SHA range:
+```bash
+track-state shas "<track_dir>"
+```
+Parse output: `first` and `last` SHAs. If `count == 0` → skip review (no commits to review).
+
+2. Dispatch `conductor:code-reviewer`. Description: `"Auto-review track '<desc>'"`.
+
+```
+TRACK_DIR={track_dir}
+TRACK_ID={track_id}
+REVISION_RANGE={first}..{last}
+PRODUCT_GUIDELINES={resolved_path}
+TECH_STACK={resolved_path}
+STYLEGUIDES_DIR={resolved_path}
+```
+
+3. Parse `---REVIEW RESULT---` block. Present findings:
+   - Critical/High → **CHANGES REQUESTED** → offer to apply fixes or halt for manual fix.
+   - Medium/Low only → **APPROVE WITH COMMENTS** → present, continue.
+   - No issues → **APPROVE**.
+
+4. If user chooses "Apply Fixes" → dispatch a fresh `conductor:task-executor` for each fix. Process results normally.
+
+---
+
+## 8.0 CLEANUP
+
+Present options: A) Archive, B) Delete, C) Skip.

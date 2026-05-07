@@ -9,160 +9,66 @@ model: sonnet
 
 # Conductor NewTrack
 
-## 1.0 SYSTEM DIRECTIVE
+## 0.0 LOAD REFERENCE LAYER
 
-You are an AI agent assistant for the Conductor spec-driven development framework. Your current task is to guide the user through creating a new "Track" (a feature or bug fix), generate the necessary specification (`spec.md`), plan (`plan.md`), and state (`track-state.json`) files, and organize them within a dedicated track directory.
+Read and internalize `${CLAUDE_PLUGIN_ROOT}/conductor-reference.md` for file resolution rules.
 
-**Available Subagents:**
-- **`conductor:spec-planner`** — Generates spec.md and plan.md from collected requirements and project context. Dispatch via `Agent` tool with `subagent_type: "conductor:spec-planner"`.
+## 1.0 SETUP CHECK
 
-**Core Protocols:** File paths resolved via project CLAUDE.md TOC.
+1. Verify via project CLAUDE.md TOC: Tracks Registry, Product Definition, Tech Stack, Workflow Index.
+2. If ANY missing → halt: `"Conductor environment incomplete — missing: <files>. Run /conductor:setup."`
 
-CRITICAL: You must validate the success of every tool call. If any tool call fails, halt immediately, announce the failure, and await instructions.
+**Subagent:** `conductor:spec-planner` — generates spec.md and plan.md.
 
----
-
-## 1.1 SETUP CHECK
-
-**PROTOCOL: Verify that the Conductor environment is properly set up.**
-
-1. **Verify Core Context:** Using the file paths from **project CLAUDE.md TOC**, resolve and verify the existence of:
-   - **Tracks Registry** (to confirm setup completed)
-   - **Product Definition**
-   - **Tech Stack**
-   - **Workflow Index** (`conductor/workflow/index.md`)
-
-2. **Handle Failure:**
-   - If ANY are missing, halt immediately.
-   - Announce: "Conductor environment incomplete — missing: <files>. Please run `/conductor:setup`."
+CRITICAL: Validate every tool call. On failure → halt → announce.
 
 ---
 
-## 2.0 NEW TRACK INITIALIZATION
+## 2.0 TRACK INITIALIZATION
 
-### 2.1 Get Track Description and Determine Type
+### 2.1 Description & Type
 
-1. **Load Project Context:** Read and understand the project documents.
-2. **Get Track Description:**
-   - If `$ARGUMENTS` contains a description: use it directly.
-   - If empty: use `AskUserQuestion` to interactively collect a track description:
-     - Ask: "What would you like to build? Please describe the feature, bug fix, or chore."
-     - Accept the user's response as the track description.
-     - If the user provides insufficient detail, follow up with a clarifying question via `AskUserQuestion`.
-3. **Infer Track Type:** Analyze the description. Do NOT ask the user to classify it.
+1. Get description from `$ARGUMENTS` or `AskUserQuestion`.
+2. Infer track type (feature/bugfix/chore) — do NOT ask user.
 
-### 2.2 Interactive Requirements Gathering
+### 2.2 Context Discovery
 
-#### Context Discovery & Workflow Decision
+1. **Scan & Match:** Search for files semantically related to track's goal.
+2. **Found relevant docs** → read + synthesize, skip questioning. Collect paths for subagent.
+3. **Not found** → ask user: interactive Q&A (2-5 questions sequentially), manual context, or correct paths.
 
-1. **Scan & Match:** Search for files semantically related to the track's goal.
-2. **Evaluate & Branch:**
-   - **PATH A: Relevant Documents FOUND** — Read and synthesize. Skip questioning phase. Collect document paths for the subagent.
-   - **PATH B: NO Relevant Documents FOUND** — Present options to user:
-     1. Start Interactive Q&A
-     2. Provide Context Manually
-     3. Correct Search paths
+### 2.3 Dispatch Spec-Planner
 
-#### Questioning Phase (if needed)
-
-1. Ask questions **sequentially (one by one)**. Wait for each response.
-2. **Classify** each question as "Additive" or "Exclusive Choice".
-3. For features: ask 3-5 questions. For bugs/chores: ask 2-3 questions.
-4. Present 2-3 options with "Type your own answer" as last option.
-
-### 2.3 Dispatch Spec & Plan Generator Subagent
-
-Once requirements are gathered, dispatch the `conductor:spec-planner` subagent. The subagent writes `spec.md` and `plan.md` directly to disk and returns a compact summary.
-
-**Build the dispatch prompt:**
+`Agent` tool, `subagent_type: "conductor:spec-planner"`. Description: `"Generate spec/plan for '<desc>'"`.
 
 ```
-## Generation Input
-- TRACK_DIR: {track_dir}
-- TRACK_DESCRIPTION: {description}
-- TRACK_TYPE: {type}
-- USER_ANSWERS: {collected answers or "N/A"}
-- RELATED_DOCS: {comma-separated paths or "N/A"}
+TRACK_DIR={track_dir}
+TRACK_DESCRIPTION={desc}
+TRACK_TYPE={type}
+USER_ANSWERS={answers or N/A}
+RELATED_DOCS={paths or N/A}
 ```
 
-**Launch the subagent:**
-1. Use the **Agent tool** with `subagent_type: "conductor:spec-planner"`.
-2. Description: `"Generate spec and plan for track '<track_description>'"`.
-3. Pass the dispatch prompt above as the prompt.
-4. Wait for the subagent to complete.
-5. Parse the `---SPEC PLAN RESULT---` / `---END SPEC PLAN RESULT---` block.
-6. On **FAILURE** → announce error and halt.
-7. On **SUCCESS** → extract `PLAN_STRUCTURE` for Step 2.5. The files are already on disk.
+Parse `---SPEC PLAN RESULT---` block. Extract `PLAN_STRUCTURE`. Files are on disk.
 
-### 2.4 Review Generated Artifacts
+### 2.4 Review Artifacts
 
-1. **Read spec.md** from disk. Present to user for review. Revise until confirmed.
-2. **Read plan.md** from disk. Present to user for review. Revise until confirmed.
+1. Read spec.md → present for review → revise until confirmed.
+2. Read plan.md → present for review → revise until confirmed.
 
-### 2.5 Create Track State Artifacts
+### 2.5 Create State Artifacts
 
-1. **Check for existing track name:** Resolve **Tracks Directory**. List existing track directories. If proposed short name matches, halt and suggest alternatives.
-
-2. **Generate Track ID:** Format `shortname_YYYYMMDD`.
-
-3. **Create `track-state.json`** using `PLAN_STRUCTURE` from the subagent result:
+1. **Check uniqueness:** List existing track dirs. If name matches → halt → suggest alternatives.
+2. **Track ID:** Format `shortname_YYYYMMDD`.
+3. **track-state.json:** Generate from `PLAN_STRUCTURE`. Schema:
    ```json
-   {
-     "track_id": "<track_id>",
-     "type": "<inferred_type>",
-     "status": "new",
-     "created_at": "<ISO 8601 timestamp>",
-     "updated_at": "<ISO 8601 timestamp>",
-     "description": "<user description>",
-     "current_phase_index": 0,
-     "current_task_index": 0,
-     "phases": [
-       {
-         "name": "Phase 1: ...",
-         "status": "pending",
-         "tasks": [
-           {
-             "name": "Task name from plan",
-             "status": "pending"
-           },
-           {
-             "name": "Task with subtasks",
-             "status": "pending",
-             "subtasks": [
-               { "name": "Subtask 1", "status": "pending" },
-               { "name": "Subtask 2", "status": "pending" }
-             ]
-           }
-         ]
-       }
-     ]
-   }
+   {"track_id":"...", "type":"...", "status":"new", "description":"...",
+    "current_phase_index":0, "current_task_index":0,
+    "phases":[{"name":"...", "status":"pending",
+      "tasks":[{"name":"...", "status":"pending",
+        "subtasks":[{"name":"...", "status":"pending"}]}]}]}
    ```
-   Map each entry in `PLAN_STRUCTURE.phases[]` to the `phases[]` array above:
-   - Tasks WITHOUT `subtasks` key → create task with `status: "pending"` only.
-   - Tasks WITH `subtasks` key → create task with `status: "pending"` and `subtasks` array, each subtask with `status: "pending"`.
-
-4. **Write Track index.md:**
-   ```markdown
-   # Track <track_id> Context
-
-   ## Track Files
-   - [Specification](./spec.md)
-   - [Implementation Plan](./plan.md)
-   - [Track State](./track-state.json)
-   - [Issues Log](./issues.md) (created lazily on first failure)
-   ```
-   - Do NOT create `issues.md` — it is created lazily on first failure.
-
-5. **Update Tracks Registry:**
-   - Append new section:
-     ```markdown
-
-     ---
-
-     - [ ] **Track: <Track Description>**
-       *Link: [./<Relative Track Path>/](./<Relative Track Path>/)*
-     ```
-
-6. **Announce Completion:**
-   > "New track '<track_id>' created. Start implementation with `/conductor:implement`."
+   Tasks with `subtasks` key → include subtasks array. Without → flat task.
+4. **Track index:** Read `${CLAUDE_PLUGIN_ROOT}/templates/track-index.md`, replace `{TRACK_ID}`, write to `<track_dir>/index.md`.
+5. **Update Tracks Registry:** Append entry to `conductor/tracks.md`.
+6. Announce: `"New track '<track_id>' created. Run /conductor:implement."`

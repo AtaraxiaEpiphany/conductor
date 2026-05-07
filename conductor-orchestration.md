@@ -24,6 +24,7 @@ RECOVER → SELECT → PRE_DISPATCH → DISPATCH → PROCESS → PHASE_BOUNDARY 
 | `conductor:skip-analyst` | on failure (retries exhausted) | Skip safety analysis |
 | `conductor:phase-checker` | on phase completion | Phase checkpoint verification |
 | `conductor:doc-syncer` | on track completion | Project documentation sync |
+| `conductor:code-reviewer` | on track completion (auto-review) | Deep code review with diff analysis |
 | `conductor:spec-planner` | setup/newTrack | spec.md and plan.md generation |
 | `conductor:project-analyzer` | setup | Brownfield project analysis |
 

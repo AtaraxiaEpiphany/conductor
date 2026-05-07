@@ -560,6 +560,27 @@ def cmd_sync_plan(track_dir):
     out(dict(synced=synced))
 
 
+def cmd_shas(track_dir):
+    """Extract all commit SHAs from completed tasks. Returns first/last for revision range."""
+    state = load(track_dir)
+    shas = []
+    for phase in state["phases"]:
+        for task in phase["tasks"]:
+            sha = task.get("commit_sha", "")
+            if sha and task["status"] in ("completed", "skipped", "failed", "blocked", "deferred", "cancelled"):
+                shas.append(sha)
+            for sub in task.get("subtasks", []):
+                sha = sub.get("commit_sha", "")
+                if sha and sub["status"] in ("completed", "skipped", "failed", "blocked", "deferred", "cancelled"):
+                    shas.append(sha)
+    out(dict(
+        shas=shas,
+        first=shas[0] if shas else None,
+        last=shas[-1] if shas else None,
+        count=len(shas),
+    ))
+
+
 def cmd_process_result(track_dir):
     """Read .conductor/result.json, update state, sync plan, manage issues.
     Outputs minimal JSON summary. Deletes result file after processing."""
@@ -693,6 +714,8 @@ def main():
             cmd_sync_plan(track_dir)
         elif cmd == "phase-done":
             cmd_phase_done(track_dir, pos[0])
+        elif cmd == "shas":
+            cmd_shas(track_dir)
         elif cmd == "finalize":
             cmd_finalize(track_dir)
         elif cmd == "process-result":
