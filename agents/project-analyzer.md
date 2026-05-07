@@ -1,5 +1,5 @@
 ---
-name: project-analyzer
+name: conductor:project-analyzer
 description: Analyzes a brownfield project to detect tech stack, architecture, and structure. Dispatched by conductor:setup during brownfield project discovery.
 tools: Bash, Read, Grep, Glob
 model: sonnet

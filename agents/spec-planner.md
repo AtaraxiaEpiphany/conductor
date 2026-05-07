@@ -1,5 +1,5 @@
 ---
-name: spec-planner
+name: conductor:spec-planner
 description: Generates spec.md and plan.md from user requirements and project context. Writes files directly, returns compact summary to minimize parent context pressure. Dispatched by conductor:setup and conductor:newTrack.
 tools: Read, Write, Grep, Glob
 model: sonnet
@@ -84,7 +84,7 @@ Structure:
 
 ## Test Scenarios
 
-Map each AC to concrete test scenarios. These guide the task-executor's TDD Step 3 (Red phase).
+Map each AC to concrete test scenarios. These guide the conductor:task-executor's TDD Step 3 (Red phase).
 
 | ID     | AC Ref | Scenario                     | Expected Outcome  |
 | ------ | ------ | ---------------------------- | ----------------- |
@@ -141,7 +141,7 @@ These rules are **non-negotiable**. Violating any rule will break the orchestrat
 4. **Phase Order**: Phases should follow logical dependency order.
 5. **Atomic Tasks**: Tasks should be atomic and independently testable.
 6. **Workflow Conventions**: Read the workflow file to respect any task-level conventions.
-7. **AC Traceability**: Each implementation task MUST have an HTML comment `<!-- AC-n, TC-n.n, ... -->` linking to the acceptance criteria and test scenarios it covers. This enables the orchestrator to pass precise AC context to task-executor subagents. **Only the parent task carries the AC annotation** — subtasks inherit AC context from their parent.
+7. **AC Traceability**: Each implementation task MUST have an HTML comment `<!-- AC-n, TC-n.n, ... -->` linking to the acceptance criteria and test scenarios it covers. This enables the orchestrator to pass precise AC context to conductor:task-executor subagents. **Only the parent task carries the AC annotation** — subtasks inherit AC context from their parent.
 
 **</rules>**
 

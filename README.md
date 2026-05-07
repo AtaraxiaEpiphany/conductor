@@ -52,12 +52,12 @@ Conductor is a Claude Code plugin built on **Spec-Driven Development** and **Sub
 
 | Subagent | Role | Dispatched By |
 |----------|------|---------------|
-| **task-executor** | TDD workflow execution (Steps 3-9): write tests, implement code, verify coverage, commit | `implement` |
-| **explorer** | Read-only code exploration: architecture analysis, dependency mapping, codebase investigation | `implement` (for `[Explore]` tasks) |
-| **spec-planner** | Generate spec.md and plan.md: transform requirements into specifications and implementation plans | `newTrack` |
-| **project-analyzer** | Brownfield project analysis: detect tech stack, architecture patterns, project structure | `setup` |
-| **code-reviewer** | Deep code review: diff analysis, plan compliance, style check, test execution | `review` |
-| **skip-analyst** | Failed task analysis: evaluate whether a task can be safely skipped and assess downstream impact | `implement` (retry exhausted) |
+| **conductor:task-executor** | TDD workflow execution (Steps 3-9): write tests, implement code, verify coverage, commit | `implement` |
+| **conductor:explorer** | Read-only code exploration: architecture analysis, dependency mapping, codebase investigation | `implement` (for `[Explore]` tasks) |
+| **conductor:spec-planner** | Generate spec.md and plan.md: transform requirements into specifications and implementation plans | `newTrack` |
+| **conductor:project-analyzer** | Brownfield project analysis: detect tech stack, architecture patterns, project structure | `setup` |
+| **conductor:code-reviewer** | Deep code review: diff analysis, plan compliance, style check, test execution | `review` |
+| **conductor:skip-analyst** | Failed task analysis: evaluate whether a task can be safely skipped and assess downstream impact | `implement` (retry exhausted) |
 
 ---
 
@@ -148,12 +148,12 @@ conductor-plugin/
 │   └── revert/SKILL.md                # Safe rollback
 ├── agents/
 │   └── subagents/                     # Specialized execution agents
-│       ├── task-executor.md           # TDD implementation (Steps 3-9)
-│       ├── explorer.md                # Read-only codebase investigation
-│       ├── spec-planner.md            # Spec & plan generation
-│       ├── project-analyzer.md        # Brownfield project detection
-│       ├── code-reviewer.md           # Deep code analysis
-│       └── skip-analyst.md            # Failure impact analysis
+│       ├── conductor:task-executor.md           # TDD implementation (Steps 3-9)
+│       ├── conductor:explorer.md                # Read-only codebase investigation
+│       ├── conductor:spec-planner.md            # Spec & plan generation
+│       ├── conductor:project-analyzer.md        # Brownfield project detection
+│       ├── conductor:code-reviewer.md           # Deep code analysis
+│       └── conductor:skip-analyst.md            # Failure impact analysis
 ├── templates/                         # Workflow & style guide templates
 │   ├── template.md                    # Full workflow template
 │   ├── task-workflow.md               # 11-step task workflow
@@ -229,7 +229,7 @@ Setup wizard will:
 Interactive workflow:
 1. Scans for related documents in your project
 2. Collects requirements through guided Q&A
-3. Dispatches `spec-planner` to generate spec.md and plan.md
+3. Dispatches `conductor:spec-planner` to generate spec.md and plan.md
 4. Creates `track-state.json` with full task hierarchy
 
 ### 3. Implement
@@ -242,8 +242,8 @@ The orchestrator:
 1. Loads track state and recovers from interruptions
 2. Selects next pending task (global state lock)
 3. Dispatches appropriate subagent:
-   - `[Explore]` tasks → `explorer` (read-only investigation)
-   - Default tasks → `task-executor` (TDD workflow)
+   - `[Explore]` tasks → `conductor:explorer` (read-only investigation)
+   - Default tasks → `conductor:task-executor` (TDD workflow)
 4. Processes result: success → advance, failure → retry/skip analysis
 5. Executes phase checkpoint protocol at phase boundaries
 6. Syncs project documentation upon track completion
@@ -272,7 +272,7 @@ Tasks in `plan.md` can be annotated with type tags that modify workflow behavior
 | Tag | TDD Gate | Description |
 |-----|----------|-------------|
 | (none) | **Required** | Standard TDD workflow: Red → Green → Refactor → Coverage → Commit |
-| `[Explore]` | N/A | Read-only code investigation. Dispatched to `explorer` subagent |
+| `[Explore]` | N/A | Read-only code investigation. Dispatched to `conductor:explorer` subagent |
 | `[Docs]` | Skipped | Documentation-only changes |
 | `[Config]` | Skipped | Configuration file changes |
 | `[Chore]` | Skipped | Maintenance tasks (dependencies, tooling) |

@@ -21,9 +21,9 @@ You are an AI **orchestrator** agent for the Conductor spec-driven development f
 5. Execute phase checkpoint protocol at phase boundaries
 
 **Available Subagents:**
-- **`task-executor`** — Executes a single task via TDD workflow (Steps 3-9). Dispatch via `Agent` tool with `subagent_type: "task-executor"`.
-- **`explorer`** — Read-only code investigation for `[Explore]` tasks. Dispatch via `Agent` tool with `subagent_type: "explorer"`.
-- **`skip-analyst`** — Analyzes whether a failed task can be safely skipped. Dispatch via `Agent` tool with `subagent_type: "skip-analyst"`.
+- **`conductor:task-executor`** — Executes a single task via TDD workflow (Steps 3-9). Dispatch via `Agent` tool with `subagent_type: "conductor:task-executor"`.
+- **`conductor:explorer`** — Read-only code investigation for `[Explore]` tasks. Dispatch via `Agent` tool with `subagent_type: "conductor:explorer"`.
+- **`conductor:skip-analyst`** — Analyzes whether a failed task can be safely skipped. Dispatch via `Agent` tool with `subagent_type: "conductor:skip-analyst"`.
 
 **State Authority**: `track-state.json` is ALWAYS the source of truth. `plan.md` is a synchronized projection. Never derive state from plan.md — always write state first, then project to plan.md.
 
@@ -264,14 +264,14 @@ Before dispatching the subagent, update state:
    - Otherwise → dispatching a flat parent task.
 
 2. **Determine subagent type by reading the task/subtask in `plan.md`:**
-   - If the task description contains `[Explore]` tag → dispatch `explorer` (Section 4.3.E).
-   - Otherwise → dispatch `task-executor` (Section 4.3.T).
+   - If the task description contains `[Explore]` tag → dispatch `conductor:explorer` (Section 4.3.E).
+   - Otherwise → dispatch `conductor:task-executor` (Section 4.3.T).
 
 3. **For subtasks:** The dispatch prompt should use the subtask's description. The parent task's AC annotation is used for test context.
 
 ### 4.3.E Dispatch Explorer Subagent (`[Explore]` tasks)
 
-The `explorer` subagent performs read-only code investigation and documents findings. It does NOT write code or run tests.
+The `conductor:explorer` subagent performs read-only code investigation and documents findings. It does NOT write code or run tests.
 
 **Build the dispatch prompt:**
 
@@ -286,13 +286,13 @@ The `explorer` subagent performs read-only code investigation and documents find
 ```
 
 **Launch the subagent:**
-1. Use the **Agent tool** with `subagent_type: "explorer"`.
+1. Use the **Agent tool** with `subagent_type: "conductor:explorer"`.
 2. Description: `"Explore task '<task_name>' [phase_index.task_index]"`.
 3. Pass the dispatch prompt above as the prompt.
 4. Wait for the subagent to complete.
 5. Parse the `---TASK RESULT---` / `---END RESULT---` block from the response.
 
-After the explorer completes, commit the exploration notes:
+After the conductor:explorer completes, commit the exploration notes:
 ```
 docs(explore): {task_name}
 ```
@@ -300,7 +300,7 @@ Then proceed to **Section 4.5** to process the result.
 
 ### 4.3.T Dispatch Task Executor Subagent (default tasks)
 
-The `task-executor` subagent executes the TDD workflow Steps 3-9. It already contains the full execution protocol — you only need to provide task assignment parameters.
+The `conductor:task-executor` subagent executes the TDD workflow Steps 3-9. It already contains the full execution protocol — you only need to provide task assignment parameters.
 
 **Extract AC context before dispatch:**
 1. Read the task line in `plan.md` at the current `(phase_index, task_index)`.
@@ -329,10 +329,10 @@ The `task-executor` subagent executes the TDD workflow Steps 3-9. It already con
 {extracted TC rows — only the TCs linked to this task via the annotation}
 ```
 
-If the task line has **no** `<!-- AC -->` annotation, omit both sections and let the task-executor read the full spec as fallback.
+If the task line has **no** `<!-- AC -->` annotation, omit both sections and let the conductor:task-executor read the full spec as fallback.
 
 **Launch the subagent:**
-1. Use the **Agent tool** with `subagent_type: "task-executor"`.
+1. Use the **Agent tool** with `subagent_type: "conductor:task-executor"`.
 2. Description: `"Execute task '<task_name>' [phase_index.task_index]"`.
 3. Pass the dispatch prompt above as the prompt.
 4. Wait for the subagent to complete.
@@ -468,7 +468,7 @@ If the task line has **no** `<!-- AC -->` annotation, omit both sections and let
 
 ### 4.5.1 Skip Analysis (Retry Exhausted)
 
-When `retry_count >= max_retries`, dispatch the `skip-analyst` subagent.
+When `retry_count >= max_retries`, dispatch the `conductor:skip-analyst` subagent.
 
 **Build the dispatch prompt:**
 
@@ -483,7 +483,7 @@ When `retry_count >= max_retries`, dispatch the `skip-analyst` subagent.
 ```
 
 **Launch the subagent:**
-1. Use the **Agent tool** with `subagent_type: "skip-analyst"`.
+1. Use the **Agent tool** with `subagent_type: "conductor:skip-analyst"`.
 2. Description: `"Skip analysis for task '<task_name>' [phase_index.task_index]"`.
 3. Pass the dispatch prompt above as the prompt.
 4. Wait for the subagent to complete.

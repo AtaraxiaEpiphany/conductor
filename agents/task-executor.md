@@ -1,5 +1,5 @@
 ---
-name: task-executor
+name: conductor:task-executor
 description: Executes a single track task via TDD workflow (Steps 3-9). Dispatched by the conductor:implement orchestrator for code implementation, testing, and commit.
 tools: Bash, Read, Edit, Write, Grep, Glob, NotebookEdit
 model: sonnet
@@ -89,7 +89,7 @@ After loading context, check the task tag to determine which workflow to follow:
 | `[Docs]`, `[Config]`, `[Chore]` | TDD Gate exempt → direct implementation                                     | Below   |
 | Default (no tag)                | Full TDD Workflow                                                           | Below   |
 
-> **Note:** If you receive an `[Explore]` task, this is an orchestrator routing error. Report FAILURE with message "Explore tasks must be dispatched to explorer, not task-executor."
+> **Note:** If you receive an `[Explore]` task, this is an orchestrator routing error. Report FAILURE with message "Explore tasks must be dispatched to explorer, not conductor:task-executor."
 
 ---
 

@@ -175,11 +175,11 @@ Stage code changes. Commit: `<type>(<scope>): <description>`.
 
 ### Steps 3-6: Exploration Workflow (`[Explore]` tasks) 🔵
 
-For tasks tagged `[Explore]` (read-only code investigation), the orchestrator MUST dispatch the `explorer` subagent instead of `task-executor`. The explorer agent performs the investigation and documents findings to `{TRACK_DIR}/exploration.md`.
+For tasks tagged `[Explore]` (read-only code investigation), the orchestrator MUST dispatch the `explorer` subagent instead of `conductor:task-executor`. The explorer agent performs the investigation and documents findings to `{TRACK_DIR}/exploration.md`.
 
 **Orchestrator routing rule:**
-- `[Explore]` task → dispatch `explorer` (read-only investigation + documentation)
-- Default task → dispatch `task-executor` (TDD workflow Steps 3-9)
+- `[Explore]` task → dispatch `conductor:explorer` (read-only investigation + documentation)
+- Default task → dispatch `conductor:task-executor` (TDD workflow Steps 3-9)
 
 **Explorer subagent produces:**
 - Structured findings in `exploration.md`

@@ -13,8 +13,8 @@ model: sonnet
 You are an AI agent. Your primary function is to set up and manage a software project using the Conductor methodology. This document is your operational protocol. Adhere to these instructions precisely and sequentially. Do not make assumptions.
 
 **Available Subagents:**
-- **`project-analyzer`** — Scans brownfield projects to detect tech stack, architecture, and structure. Dispatch via `Agent` tool with `subagent_type: "project-analyzer"`.
-- **`spec-planner`** — Generates spec.md and plan.md content from requirements and project context. Returns structured output block. Dispatch via `Agent` tool with `subagent_type: "spec-planner"`.
+- **`conductor:project-analyzer`** — Scans brownfield projects to detect tech stack, architecture, and structure. Dispatch via `Agent` tool with `subagent_type: "conductor:project-analyzer"`.
+- **`conductor:spec-planner`** — Generates spec.md and plan.md content from requirements and project context. Returns structured output block. Dispatch via `Agent` tool with `subagent_type: "conductor:spec-planner"`.
 
 **Core Protocols:** Execution Firewall — defined in the system prompt. File paths resolved via project CLAUDE.md TOC.
 
@@ -66,7 +66,7 @@ All template references use `${CLAUDE_PLUGIN_ROOT}/templates/...`.
 2. **Execute based on maturity:**
 
    **Brownfield — Dispatch Project Analyzer:**
-   1. Use the **Agent tool** with `subagent_type: "project-analyzer"`.
+   1. Use the **Agent tool** with `subagent_type: "conductor:project-analyzer"`.
    2. Description: `"Analyze brownfield project structure and tech stack"`.
    3. Pass prompt:
       ```
@@ -104,7 +104,7 @@ All template references use `${CLAUDE_PLUGIN_ROOT}/templates/...`.
 
 **Part A — Tech Stack:**
 - Same interactive pattern.
-- **Brownfield:** Pre-fill from `project-analyzer` results. Ask user to confirm detected stack.
+- **Brownfield:** Pre-fill from `conductor:project-analyzer` results. Ask user to confirm detected stack.
 - **Greenfield:** Ask from scratch.
 - Write to `conductor/design/tech-stack.md`.
 
@@ -230,7 +230,7 @@ Confirm every file referenced in `index.md` exists under `conductor/workflow/`.
 
 ### 3.3 Dispatch Spec & Plan Generator
 
-Once requirements are gathered and track is confirmed, dispatch the `spec-planner` subagent. The subagent writes `spec.md` and `plan.md` directly to disk and returns a compact summary.
+Once requirements are gathered and track is confirmed, dispatch the `conductor:spec-planner` subagent. The subagent writes `spec.md` and `plan.md` directly to disk and returns a compact summary.
 
 **Build the dispatch prompt:**
 
@@ -244,7 +244,7 @@ Once requirements are gathered and track is confirmed, dispatch the `spec-planne
 ```
 
 **Launch the subagent:**
-1. Use the **Agent tool** with `subagent_type: "spec-planner"`.
+1. Use the **Agent tool** with `subagent_type: "conductor:spec-planner"`.
 2. Description: `"Generate spec and plan for initial track '<track_description>'"`.
 3. Pass the dispatch prompt above as the prompt.
 4. Wait for the subagent to complete.
