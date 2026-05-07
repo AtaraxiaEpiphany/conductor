@@ -28,6 +28,7 @@ Conductor is a Claude Code plugin built on **Spec-Driven Development** and **Sub
 | Principle | Description |
 |-----------|-------------|
 | **Orchestrator-Subagent Pattern** | The orchestrator manages state and dispatches tasks; subagents focus on single-responsibility execution |
+| **Context Isolation** | State mutations via CLI scripts; subagents self-extract context (ACs, specs). Main session context stays minimal |
 | **TDD Enforcement** | Mandatory Red-Green-Refactor cycle — no implementation code without a failing test |
 | **Single State Lock** | Only one task may be `in_progress` globally, eliminating concurrent conflicts |
 | **Audit Trail** | Every state transition is accompanied by a git commit + git note for full traceability |
@@ -165,6 +166,11 @@ conductor-plugin/
 │
 ├── bin/                               # Executables (added to PATH)
 ├── scripts/                           # Hook & utility scripts
+│   ├── session-start                  #   SessionStart hook (injects conductor.md)
+│   └── track-state                    #   State management CLI (Python 3)
+│       # Commands: next, recover, lock, complete,
+│       #   fail, skip, block, sync-plan,
+│       #   phase-done, finalize
 ├── output-styles/                     # Output formatting styles
 ├── themes/                            # Color theme definitions
 │
@@ -256,13 +262,15 @@ Interactive workflow:
 
 The orchestrator:
 1. Loads track state and recovers from interruptions
-2. Selects next pending task (global state lock)
+2. Selects next pending task (global state lock) via `track-state next`
 3. Dispatches appropriate subagent:
    - `[Explore]` tasks → `conductor:explorer` (read-only investigation)
-   - Default tasks → `conductor:task-executor` (TDD workflow)
+   - Default tasks → `conductor:task-executor` (TDD workflow, self-extracts ACs from spec.md)
 4. Processes result: success → advance, failure → retry/skip analysis
 5. Executes phase checkpoint protocol at phase boundaries
 6. Syncs project documentation upon track completion
+
+All state mutations are performed by the `track-state` CLI script — the orchestrator never reads or edits `track-state.json` directly.
 
 ### 4. Monitor Progress
 
@@ -342,6 +350,29 @@ Status marker mapping:
 | `skipped` | `[>] ... [sha]` (SHA appended at line end) |
 | `blocked` | `[#] ... [sha]` (SHA appended at line end) |
 | `cancelled` | `[-] ... [sha]` (SHA appended at line end) |
+
+---
+
+## `track-state` CLI Reference
+
+All `track-state.json` mutations are handled by the `scripts/track-state` Python CLI. The orchestrator calls it via bash — never reads/edits the JSON directly.
+
+```
+track-state <command> <track-dir> [options]
+```
+
+| Command | Description | Output |
+|---------|-------------|--------|
+| `next` | Find next dispatchable task (in_progress > pending) | `{phase, task, subtask, name, type, tags}` |
+| `recover` | Get recovery context for current task | `{status, phase, task, subtask, name, type, retry_count, ...}` |
+| `lock <p> <t> [<s>]` | Set task to in_progress, update indices | `{ok}` |
+| `complete <p> <t> [<s>] --sha <sha>` | Set task to completed, check parent completion | `{ok, parent_completed}` |
+| `fail <p> <t> [<s>] --summary <text>` | Set task to failed, increment retry_count | `{retry_count}` |
+| `skip <p> <t> [<s>] --reason <text>` | Set task to skipped | `{ok}` |
+| `block <p> <t> [<s>] --reason <text>` | Set task to blocked | `{ok}` |
+| `sync-plan` | Re-project all markers to plan.md from state | `{synced}` |
+| `phase-done <p>` | Check if all tasks in phase are terminal | `{complete, terminal, total}` |
+| `finalize` | Set indices to -1, compute track-level status | `{status}` |
 
 ---
 

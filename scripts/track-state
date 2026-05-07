@@ -1,0 +1,426 @@
+#!/usr/bin/env python3
+"""track-state — Conductor track state management CLI.
+
+All commands output JSON to stdout. Exit 0 on success, 1 on error.
+Keeps orchestrator context clean by handling all JSON/markdown mutations.
+
+Usage:
+    track-state next <track-dir>
+    track-state recover <track-dir>
+    track-state lock <track-dir> <phase> <task> [<subtask>]
+    track-state complete <track-dir> <phase> <task> [<subtask>] --sha <sha>
+    track-state fail <track-dir> <phase> <task> [<subtask>] --summary <text>
+    track-state skip <track-dir> <phase> <task> [<subtask>] --reason <text>
+    track-state block <track-dir> <phase> <task> [<subtask>] --reason <text>
+    track-state sync-plan <track-dir>
+    track-state phase-done <track-dir> <phase>
+    track-state finalize <track-dir>
+"""
+
+import json
+import re
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+MARKER_MAP = {
+    "pending": " ",
+    "in_progress": "~",
+    "completed": "x",
+    "failed": "!",
+    "skipped": ">",
+    "blocked": "#",
+    "cancelled": "-",
+}
+
+SHA_MARKERS = {"x", "!", ">", "#", "-"}
+
+
+def load(track_dir):
+    with open(Path(track_dir) / "track-state.json") as f:
+        return json.load(f)
+
+
+def save(track_dir, state):
+    with open(Path(track_dir) / "track-state.json", "w") as f:
+        json.dump(state, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+
+
+def now_iso():
+    return datetime.now(timezone.utc).isoformat()
+
+
+def out(obj):
+    print(json.dumps(obj, ensure_ascii=False))
+
+
+def target(state, p, t, s=None):
+    task = state["phases"][p]["tasks"][t]
+    if s is not None and "subtasks" in task:
+        return task["subtasks"][s]
+    return task
+
+
+def clean(tgt, keep):
+    for k in ["commit_sha", "completed_at", "retry_count", "last_failure_summary", "skip_analysis"]:
+        if k not in keep:
+            tgt.pop(k, None)
+
+
+def extract_tags(name):
+    return re.findall(r"\[(Explore|Docs|Config|Chore)\]", name)
+
+
+# ── Commands ──────────────────────────────────────────────────────────
+
+
+def cmd_next(track_dir):
+    state = load(track_dir)
+    # Pass 1: in_progress tasks (recovery / dispatch continuation)
+    for pi, phase in enumerate(state["phases"]):
+        for ti, task in enumerate(phase["tasks"]):
+            if task["status"] == "in_progress":
+                subs = task.get("subtasks")
+                if subs:
+                    for si, sub in enumerate(subs):
+                        if sub["status"] in ("in_progress", "pending"):
+                            return out(dict(phase=pi, task=ti, subtask=si,
+                                            name=sub["name"], type="subtask",
+                                            tags=extract_tags(sub["name"])))
+                    return out(dict(phase=pi, task=ti, subtask=None,
+                                    name=task["name"], type="parent-complete", tags=[]))
+                return out(dict(phase=pi, task=ti, subtask=None,
+                                name=task["name"], type="flat",
+                                tags=extract_tags(task["name"])))
+    # Pass 2: pending tasks (new dispatch)
+    for pi, phase in enumerate(state["phases"]):
+        for ti, task in enumerate(phase["tasks"]):
+            if task["status"] == "pending":
+                subs = task.get("subtasks")
+                if subs:
+                    for si, sub in enumerate(subs):
+                        if sub["status"] == "pending":
+                            return out(dict(phase=pi, task=ti, subtask=si,
+                                            name=sub["name"], type="subtask",
+                                            tags=extract_tags(sub["name"])))
+                else:
+                    return out(dict(phase=pi, task=ti, subtask=None,
+                                    name=task["name"], type="flat",
+                                    tags=extract_tags(task["name"])))
+    out(dict(phase=-1, task=-1, subtask=None, name=None, type=None, tags=[]))
+
+
+def cmd_recover(track_dir):
+    state = load(track_dir)
+    pi = state.get("current_phase_index", -1)
+    ti = state.get("current_task_index", -1)
+    si = state.get("current_subtask_index")
+
+    if pi < 0 or ti < 0:
+        return out(dict(status="no_active_task"))
+
+    try:
+        task = state["phases"][pi]["tasks"][ti]
+    except IndexError:
+        return out(dict(status="no_active_task"))
+
+    if si is not None and "subtasks" in task:
+        si = min(si, len(task["subtasks"]) - 1)
+        tgt = task["subtasks"][si]
+        name = tgt["name"]
+        ttype = "subtask"
+    else:
+        tgt = task
+        name = task["name"]
+        ttype = "flat"
+
+    out(dict(
+        status=tgt.get("status", "pending"),
+        phase=pi, task=ti, subtask=si,
+        name=name, type=ttype,
+        retry_count=tgt.get("retry_count", 0),
+        last_failure_summary=tgt.get("last_failure_summary"),
+        tags=extract_tags(name),
+    ))
+
+
+def cmd_lock(track_dir, p, t, s=None):
+    state = load(track_dir)
+    pi, ti = int(p), int(t)
+    si = int(s) if s is not None else None
+
+    tgt = target(state, pi, ti, si)
+    tgt["status"] = "in_progress"
+    clean(tgt, {"status"})
+
+    state["current_phase_index"] = pi
+    state["current_task_index"] = ti
+    if si is not None:
+        state["current_subtask_index"] = si
+        parent = state["phases"][pi]["tasks"][ti]
+        if parent["status"] != "in_progress":
+            parent["status"] = "in_progress"
+    else:
+        state.pop("current_subtask_index", None)
+
+    state["updated_at"] = now_iso()
+    save(track_dir, state)
+    out(dict(ok=True))
+
+
+def cmd_complete(track_dir, p, t, s=None, sha=None):
+    state = load(track_dir)
+    pi, ti = int(p), int(t)
+    si = int(s) if s is not None else None
+
+    tgt = target(state, pi, ti, si)
+    tgt["status"] = "completed"
+    tgt["commit_sha"] = sha or ""
+    tgt["completed_at"] = now_iso()
+    clean(tgt, {"status", "commit_sha", "completed_at"})
+
+    parent_completed = False
+    if si is not None:
+        parent = state["phases"][pi]["tasks"][ti]
+        if all(sub["status"] in ("completed", "skipped") for sub in parent.get("subtasks", [])):
+            parent["status"] = "completed"
+            parent["commit_sha"] = sha or ""
+            parent["completed_at"] = now_iso()
+            clean(parent, {"status", "commit_sha", "completed_at"})
+            parent_completed = True
+
+    state["updated_at"] = now_iso()
+    save(track_dir, state)
+    out(dict(ok=True, parent_completed=parent_completed))
+
+
+def cmd_fail(track_dir, p, t, s=None, summary=""):
+    state = load(track_dir)
+    pi, ti = int(p), int(t)
+    si = int(s) if s is not None else None
+
+    tgt = target(state, pi, ti, si)
+    tgt["status"] = "failed"
+    tgt["retry_count"] = tgt.get("retry_count", -1) + 1
+    tgt["last_failure_summary"] = summary
+    clean(tgt, {"status", "retry_count", "last_failure_summary"})
+
+    state["updated_at"] = now_iso()
+    save(track_dir, state)
+    out(dict(retry_count=tgt["retry_count"]))
+
+
+def cmd_skip(track_dir, p, t, s=None, reason=""):
+    state = load(track_dir)
+    pi, ti = int(p), int(t)
+    si = int(s) if s is not None else None
+
+    tgt = target(state, pi, ti, si)
+    tgt["status"] = "skipped"
+    tgt["skip_analysis"] = reason
+    clean(tgt, {"status", "skip_analysis"})
+
+    state["updated_at"] = now_iso()
+    save(track_dir, state)
+    out(dict(ok=True))
+
+
+def cmd_block(track_dir, p, t, s=None, reason=""):
+    state = load(track_dir)
+    pi, ti = int(p), int(t)
+    si = int(s) if s is not None else None
+
+    tgt = target(state, pi, ti, si)
+    tgt["status"] = "blocked"
+    tgt["skip_analysis"] = reason
+    clean(tgt, {"status", "skip_analysis"})
+
+    state["updated_at"] = now_iso()
+    save(track_dir, state)
+    out(dict(ok=True))
+
+
+def cmd_finalize(track_dir):
+    state = load(track_dir)
+    state["current_phase_index"] = -1
+    state["current_task_index"] = -1
+    state.pop("current_subtask_index", None)
+
+    statuses = []
+    for phase in state["phases"]:
+        for task in phase["tasks"]:
+            statuses.append(task["status"])
+            for sub in task.get("subtasks", []):
+                statuses.append(sub["status"])
+
+    if "blocked" in statuses:
+        state["status"] = "blocked"
+    elif all(s in ("completed", "skipped") for s in statuses):
+        state["status"] = "completed"
+    else:
+        state["status"] = "completed"
+
+    state["updated_at"] = now_iso()
+    save(track_dir, state)
+    out(dict(status=state["status"]))
+
+
+def cmd_phase_done(track_dir, p):
+    state = load(track_dir)
+    phase = state["phases"][int(p)]
+    terminal = {"completed", "skipped", "cancelled", "blocked"}
+    total = 0
+    done = 0
+    for task in phase["tasks"]:
+        total += 1
+        if task["status"] in terminal:
+            done += 1
+        for sub in task.get("subtasks", []):
+            total += 1
+            if sub["status"] in terminal:
+                done += 1
+    out(dict(complete=done == total, terminal=done, total=total))
+
+
+def cmd_sync_plan(track_dir):
+    state = load(track_dir)
+    plan_path = Path(track_dir) / "plan.md"
+
+    with open(plan_path) as f:
+        lines = f.readlines()
+
+    result = []
+    phase_idx = -1
+    task_idx = -1
+    subtask_idx = -1
+    synced = 0
+
+    for line in lines:
+        stripped = line.rstrip("\n")
+
+        # Phase header
+        pm = re.match(r"^##\s+Phase\s+(\d+)", stripped)
+        if pm:
+            phase_idx = int(pm.group(1)) - 1
+            task_idx = -1
+            subtask_idx = -1
+            result.append(stripped)
+            continue
+
+        # Task or subtask line
+        tm = re.match(r"^(\s*)-\s+\[([ x~!>#\-])\]\s+(.*)", stripped)
+        if tm:
+            indent = tm.group(1)
+            rest = tm.group(3)
+            is_subtask = len(indent) > 0
+
+            # Strip existing SHA from end
+            rest_clean = re.sub(r"\s+\[[0-9a-f]{7}\]$", "", rest)
+
+            try:
+                if is_subtask:
+                    subtask_idx += 1
+                    sub = state["phases"][phase_idx]["tasks"][task_idx]["subtasks"][subtask_idx]
+                    marker = MARKER_MAP.get(sub["status"], " ")
+                    sha = sub.get("commit_sha", "")
+                else:
+                    task_idx += 1
+                    subtask_idx = -1
+                    t = state["phases"][phase_idx]["tasks"][task_idx]
+                    marker = MARKER_MAP.get(t["status"], " ")
+                    sha = t.get("commit_sha", "")
+
+                new_line = f"{indent}- [{marker}] {rest_clean}"
+                if sha and marker in SHA_MARKERS:
+                    new_line += f" [{sha}]"
+                result.append(new_line)
+                synced += 1
+                continue
+            except (IndexError, KeyError):
+                result.append(stripped)
+                continue
+
+        result.append(stripped)
+
+    with open(plan_path, "w") as f:
+        f.write("\n".join(result))
+        f.write("\n")
+
+    out(dict(synced=synced))
+
+
+# ── Dispatch ──────────────────────────────────────────────────────────
+
+
+def flag(args, name):
+    for i, a in enumerate(args):
+        if a == name and i + 1 < len(args):
+            return args[i + 1]
+    return None
+
+
+def positional(args):
+    """Extract positional args, skipping flags and their values."""
+    result = []
+    skip = False
+    for a in args:
+        if skip:
+            skip = False
+            continue
+        if a.startswith("--"):
+            skip = True
+            continue
+        result.append(a)
+    return result
+
+
+def main():
+    if len(sys.argv) < 3:
+        print("Usage: track-state <command> <track-dir> [args...]", file=sys.stderr)
+        sys.exit(1)
+
+    cmd = sys.argv[1]
+    track_dir = sys.argv[2]
+    args = sys.argv[3:]
+    pos = positional(args)
+
+    try:
+        if cmd == "next":
+            cmd_next(track_dir)
+        elif cmd == "recover":
+            cmd_recover(track_dir)
+        elif cmd == "lock":
+            cmd_lock(track_dir, pos[0], pos[1], pos[2] if len(pos) > 2 else None)
+        elif cmd == "complete":
+            cmd_complete(track_dir, pos[0], pos[1],
+                         pos[2] if len(pos) > 2 else None,
+                         flag(args, "--sha"))
+        elif cmd == "fail":
+            cmd_fail(track_dir, pos[0], pos[1],
+                     pos[2] if len(pos) > 2 else None,
+                     flag(args, "--summary") or "")
+        elif cmd == "skip":
+            cmd_skip(track_dir, pos[0], pos[1],
+                     pos[2] if len(pos) > 2 else None,
+                     flag(args, "--reason") or "")
+        elif cmd == "block":
+            cmd_block(track_dir, pos[0], pos[1],
+                      pos[2] if len(pos) > 2 else None,
+                      flag(args, "--reason") or "")
+        elif cmd == "sync-plan":
+            cmd_sync_plan(track_dir)
+        elif cmd == "phase-done":
+            cmd_phase_done(track_dir, pos[0])
+        elif cmd == "finalize":
+            cmd_finalize(track_dir)
+        else:
+            print(f"Unknown command: {cmd}", file=sys.stderr)
+            sys.exit(1)
+    except Exception as e:
+        out(dict(error=str(e)))
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
