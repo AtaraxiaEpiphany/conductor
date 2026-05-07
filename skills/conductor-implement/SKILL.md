@@ -49,7 +49,7 @@ CRITICAL: You must validate the success of every tool call. If any tool call fai
    - Tech Stack
    - Workflow Index (`conductor/workflow/index.md`)
 5. **Verify Workflow Integrity:** Read `conductor/workflow/index.md` and confirm the linked workflow files exist:
-   - `conductor/workflow/workflow.md` (the actual workflow definition)
+   - `conductor/workflow/index.md` (links to template.md, task-workflow.md, phase-checkpoint.md)
    - At least one code style guide in `conductor/workflow/code-styleguides/`
    - If any linked file is missing, report the discrepancy.
 6. **Handle Failure:** If ANY file is missing (track files, project context, or workflow links), announce: "Conductor environment incomplete — missing: <file>. Please run `/conductor:setup`." and HALT.
@@ -260,6 +260,12 @@ Then proceed to **Section 4.5** to process the result.
 
 The `conductor-task-executor` subagent executes the TDD workflow Steps 3-9. It already contains the full execution protocol — you only need to provide task assignment parameters.
 
+**Extract AC context before dispatch:**
+1. Read the task line in `plan.md` at the current `(phase_index, task_index)`.
+2. Parse any `<!-- AC-n, TC-n.n, ... -->` annotation on the task line.
+3. Read `spec.md` sections `Acceptance Criteria` and `Test Scenarios`.
+4. Extract only the ACs and TCs listed in the annotation.
+
 **Build the dispatch prompt:**
 
 ```
@@ -273,7 +279,15 @@ The `conductor-task-executor` subagent executes the TDD workflow Steps 3-9. It a
 - MAX_RETRIES: {max_retries}
 - IS_RETRY: {true|false}
 - LAST_FAILURE: {last_failure_summary or N/A}
+
+## Acceptance Criteria (from spec.md)
+{extracted AC text — only the ACs linked to this task via the annotation}
+
+## Test Scenarios (from spec.md)
+{extracted TC rows — only the TCs linked to this task via the annotation}
 ```
+
+If the task line has **no** `<!-- AC -->` annotation, omit both sections and let the task-executor read the full spec as fallback.
 
 **Launch the subagent:**
 1. Use the **Agent tool** with `subagent_type: "conductor-task-executor"`.
@@ -286,8 +300,25 @@ The `conductor-task-executor` subagent executes the TDD workflow Steps 3-9. It a
 
 #### 4.5.A SUCCESS Path
 
-1. Extract `COMMIT_SHA` from the result.
-2. **Update `track-state.json`:**
+1. Extract `COMMIT_SHA`, `TC_COVERAGE`, and `SPEC_DEVIATION` from the result.
+2. **Verify TC Coverage**: Compare `TC_COVERAGE` against the `<!-- AC-n, TC-n.n -->` annotation on the task line in `plan.md`. If any TC is missing from coverage:
+   - Log a warning: "TC coverage gap: expected {TC IDs from annotation}, got {TC_COVERAGE}".
+   - Continue (this is a warning, not a blocker — the task still succeeded).
+3. **Handle Spec Deviations**: If `SPEC_DEVIATION` is not `NONE`:
+   - Append to `{track_dir}/issues.md`:
+     ```markdown
+     ### Spec Deviation: {task_name} | {timestamp}
+
+     **AC**: {AC_ID}
+     **Reason**: {reason}
+     **Suggested Revision**: {suggested revision}
+     **Status**: pending-review
+
+     ---
+     ```
+   - Announce to user: "Task '<task_name>' completed but has spec deviation(s). Review in `issues.md`."
+   - Do NOT block the task — spec deviations are advisory for the user to review.
+4. **Update `track-state.json`:**
    ```json
    {
      "status": "completed",
@@ -296,10 +327,10 @@ The `conductor-task-executor` subagent executes the TDD workflow Steps 3-9. It a
    }
    ```
    Remove `retry_count`, `last_failure_summary` if present.
-3. **Advance indices**: Scan forward for the next `pending` task. Update `current_phase_index` and `current_task_index`. If none found, set both to `-1`.
-4. **Update `updated_at`** to current timestamp.
-5. **Sync `plan.md`:** Change `[~]` → `[x] [<sha>]` for this task.
-6. **Git commit:**
+5. **Advance indices**: Scan forward for the next `pending` task. Update `current_phase_index` and `current_task_index`. If none found, set both to `-1`.
+6. **Update `updated_at`** to current timestamp.
+7. **Sync `plan.md`:** Change `[~]` → `[x] [<sha>]` for this task.
+8. **Git commit:**
    ```
    chore(conductor): Complete task '<task_name>' [<sha>]
    ```
@@ -353,38 +384,6 @@ The `conductor-task-executor` subagent executes the TDD workflow Steps 3-9. It a
 7. **Append SHA to plan.md marker:** Extract SHA via `git log -1 --format="%h"` and update `[!]` → `[!] [<sha>]` in plan.md.
 
 8. **Decision Point:**
-   - If `issues.md` does not exist, create it with the header:
-     ```markdown
-     # Track: {track_id} — Failure Reports
-     ```
-   - Ensure a section exists for the current phase:
-     ```markdown
-     ---
-
-     ## {phase_name}
-
-     ```
-   - Append a structured failure entry:
-     ```markdown
-     ### Task: {task_name} | Attempt: {retry_count}/{max_retries} | {timestamp}
-
-     **What Was Done**
-     - {from subagent report}
-
-     **Failure Reason**
-     - {failure reason}
-
-     **Suggested Next Step**
-     - {from subagent report}
-
-     ---
-     ```
-6. **Git commit:**
-   ```
-   chore(conductor): Task '<task_name>' failed (attempt {n}/3)
-   ```
-
-7. **Decision Point:**
    - If `retry_count < max_retries`: Loop back to **4.3** (re-dispatch with failure context).
    - If `retry_count >= max_retries`: Proceed to **4.5.1 Skip Analysis**.
 

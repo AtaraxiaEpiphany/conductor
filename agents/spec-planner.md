@@ -81,6 +81,16 @@ Structure:
 - AC-1: [measurable criterion]
 - AC-2: [measurable criterion]
 
+## Test Scenarios
+
+Map each AC to concrete test scenarios. These guide the task-executor's TDD Step 3 (Red phase).
+
+| ID | AC Ref | Scenario | Expected Outcome |
+|----|--------|----------|-----------------|
+| TC-1.1 | AC-1 | [test scenario description] | [expected result] |
+| TC-1.2 | AC-1 | [edge case / error scenario] | [expected result] |
+| TC-2.1 | AC-2 | [test scenario description] | [expected result] |
+
 ## Constraints
 - [technical or business constraints]
 
@@ -92,6 +102,8 @@ Structure:
 - Include a `References` section with `*[Ref: path]*` inline citations for every requirement derived from existing docs.
 - Acceptance criteria must be measurable and testable.
 - Keep functional requirements specific and atomic.
+- **Test Scenarios** must cover every AC: happy path + at least one edge case per AC.
+- TC IDs follow the pattern `TC-{AC_NUMBER}.{SCENARIO_INDEX}` for traceability.
 
 ### 4.2 Generate `plan.md`
 
@@ -101,13 +113,13 @@ Structure:
 # Implementation Plan: {Track Description}
 
 ## Phase 1: {Phase Name}
-- [ ] Task: {task description}
-- [ ] Task: {task description}
-- [ ] Task: Conductor - User Manual Verification 'Phase 1' (Protocol in workflow.md)
+- [ ] Task: {task description} <!-- AC-1, TC-1.1, TC-1.2 -->
+- [ ] Task: {task description} <!-- AC-2, TC-2.1 -->
+- [ ] Task: Conductor - User Manual Verification 'Phase 1' (Protocol in task-workflow.md)
 
 ## Phase 2: {Phase Name}
-- [ ] Task: {task description}
-- [ ] Task: Conductor - User Manual Verification 'Phase 2' (Protocol in workflow.md)
+- [ ] Task: {task description} <!-- AC-3, TC-3.1 -->
+- [ ] Task: Conductor - User Manual Verification 'Phase 2' (Protocol in task-workflow.md)
 ```
 
 **Rules:**
@@ -117,6 +129,7 @@ Structure:
 - Phases should follow logical dependency order.
 - Tasks should be atomic and independently testable.
 - Read the workflow file to respect any task-level conventions.
+- **AC Traceability**: Each implementation task MUST have an HTML comment `<!-- AC-n, TC-n.n, ... -->` linking to the acceptance criteria and test scenarios it covers. This enables the orchestrator to pass precise AC context to task-executor subagents.
 
 **Task Type Tags:**
 - `[Explore]` — Code investigation, architecture analysis, dependency mapping. No code changes, no TDD. Use for Phase 1 exploration tasks (understanding codebase before implementation).

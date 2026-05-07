@@ -247,7 +247,7 @@ Conductor prefixes: `conductor(plan)` `conductor(checkpoint)` `chore(conductor)`
 | Product Guidelines | `conductor/overview/product-guidelines.md` |
 | Tech Stack         | `conductor/design/tech-stack.md`           |
 | Tracks Registry    | `conductor/tracks.md`                      |
-| Workflow           | `conductor/workflow/workflow.md`           |
+| Workflow Index     | `conductor/workflow/index.md`              |
 | Code Style Guides  | `conductor/workflow/code-styleguides/`     |
 
 ---

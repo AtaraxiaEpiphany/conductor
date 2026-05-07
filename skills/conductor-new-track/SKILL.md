@@ -1,5 +1,5 @@
 ---
-name: conductor-newTrack
+name: conductor-new-track
 description: Creates a new track with spec, plan, and track-state.json for orchestrator-driven execution
 when_to_use: User wants to create a new feature track, bug fix track, or chore track with specification and plan
 arguments: [track_description]
@@ -30,7 +30,7 @@ CRITICAL: You must validate the success of every tool call. If any tool call fai
    - **Tracks Registry** (to confirm setup completed)
    - **Product Definition**
    - **Tech Stack**
-   - **Workflow** (`conductor/workflow/workflow.md`)
+   - **Workflow Index** (`conductor/workflow/index.md`)
 
 2. **Handle Failure:**
    - If ANY are missing, halt immediately.

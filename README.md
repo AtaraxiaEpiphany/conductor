@@ -190,7 +190,9 @@ your-project/
 │   │   └── tech-stack.md              # Technology stack
 │   ├── workflow/
 │   │   ├── index.md                   # Workflow index
-│   │   ├── workflow.md                # Development workflow
+│   │   ├── template.md                # Full workflow template
+│   │   ├── task-workflow.md           # 11-step task workflow
+│   │   ├── phase-checkpoint.md        # Phase verification protocol
 │   │   └── code-styleguides/          # Selected language guides
 │   ├── tracks.md                      # Tracks registry
 │   └── tracks/

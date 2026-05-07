@@ -38,6 +38,8 @@ The orchestrator supplies these parameters when dispatching you:
 | `MAX_RETRIES` | Maximum retries allowed |
 | `IS_RETRY` | `true` if this is a retry, `false` otherwise |
 | `LAST_FAILURE` | One-line failure summary from previous attempt (only if `IS_RETRY=true`) |
+| `ACCEPTANCE_CRITERIA` | *(Optional)* Pre-extracted AC text from spec.md for this task |
+| `TEST_SCENARIOS` | *(Optional)* Pre-extracted TC rows from spec.md for this task |
 
 ---
 
@@ -97,16 +99,21 @@ Follow Steps 3-9 of the Task Implementation Workflow exactly. No shortcuts.
 
 ### Step 3: Write Failing Tests (Red) 🔴
 
-1. Create a test file for the feature or bug fix.
-2. Write one or more tests that clearly define the expected behavior and acceptance criteria from `spec.md`.
-3. Run the tests. **CONFIRM FAILURE.** Show the failing output.
-4. Do NOT proceed until you have confirmed failing tests.
-5. **Exception**: `[Docs]`, `[Config]`, `[Chore]` tagged tasks skip the TDD gate — proceed directly to implementation.
+1. **Derive test cases from acceptance criteria:**
+   - If `ACCEPTANCE_CRITERIA` and `TEST_SCENARIOS` were provided in dispatch: use them directly as your test plan.
+   - If NOT provided: read `{TRACK_DIR}/spec.md` sections `Acceptance Criteria` and `Test Scenarios`. Extract the ACs and TCs relevant to this task by reading the `<!-- AC-n, TC-n.n -->` annotation on the task line in `plan.md`.
+   - Each TC row becomes one test case. Map `TC-{n}.{m}` to test function names for traceability.
+2. Create a test file for the feature or bug fix.
+3. Write tests that cover every TC from the test plan: happy paths, edge cases, and error scenarios.
+4. Run the tests. **CONFIRM FAILURE.** Show the failing output.
+5. Do NOT proceed until you have confirmed failing tests.
+6. **Exception**: `[Docs]`, `[Config]`, `[Chore]` tagged tasks skip the TDD gate — proceed directly to implementation.
 
 ⚠️ **CHECKPOINT:** Before proceeding to Step 4, verify:
-- [ ] At least one test exists that tests the intended behavior
+- [ ] Every TC from the test plan has a corresponding test function
 - [ ] Running tests produces at least one FAILURE (not pass, not error)
 - [ ] The failing test is separate from any implementation code
+- [ ] TC IDs are traceable from test function names or comments
 
 ### Step 4: Implement to Pass (Green) 🔴
 
@@ -142,6 +149,13 @@ Follow Steps 3-9 of the Task Implementation Workflow exactly. No shortcuts.
    - **STOP implementation.**
    - Update `tech-stack.md` with the change, rationale, and a dated note.
    - Resume implementation.
+
+2. **Spec Deviation Detection**: After implementation, verify the code still satisfies all ACs linked to this task:
+   - Re-read the ACs from the dispatch prompt (or from `spec.md` if not provided).
+   - If the implementation cannot satisfy an AC (e.g., AC was based on incorrect assumptions, technical infeasibility discovered):
+     - Report it as a `SPEC_DEVIATION` in the result block (Section 6.0).
+     - Include: which AC, why it cannot be met, and a suggested AC revision.
+   - Minor implementation differences that still satisfy the AC's intent do NOT need reporting.
 
 ### Step 8: Commit Code Changes
 
@@ -198,7 +212,18 @@ STATUS: SUCCESS
 COMMIT_SHA: <7-char-short-hash>
 FILES_CHANGED: <comma-separated list of created/modified files>
 SUMMARY: <one-line summary of what was implemented>
+TC_COVERAGE: <list of TC IDs covered by tests, e.g., TC-1.1, TC-1.2, TC-2.1>
+SPEC_DEVIATION: <list of ACs that could not be met with suggested revision, or NONE>
 ---END RESULT---
+```
+
+If `SPEC_DEVIATION` is not `NONE`, include after the `---END RESULT---` block:
+```
+---SPEC DEVIATION DETAIL---
+AC_ID: <AC-n>
+REASON: <why this AC cannot be met>
+SUGGESTED_REVISION: <proposed new AC text>
+---END SPEC DEVIATION---
 ```
 
 ### On Failure
