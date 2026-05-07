@@ -109,57 +109,72 @@ Six mandatory pre-action checks. Violating any Critical rule is a terminal error
 
 ### As a Claude Code Plugin
 
-1. Clone this repository to your Claude Code plugins directory:
+1. Install the plugin:
+
+```bash
+claude plugin install <repo-url>
+```
+
+Or clone and install locally:
 
 ```bash
 git clone <repo-url> ~/.claude/plugins/conductor
+claude plugin install ~/.claude/plugins/conductor
 ```
 
-2. Add to your Claude Code settings (`.claude/settings.json` or `.claude/settings.local.json`):
-
-```json
-{
-  "projects": {
-    "/path/to/your/project": {
-      "allowedTools": ["Agent", "Bash", "Read", "Edit", "Write", "Grep", "Glob"]
-    }
-  }
-}
-```
-
-3. In your project, run `/conductor:setup` to initialize the Conductor environment.
+2. In your project, run `/conductor:setup` to initialize the Conductor environment.
 
 ---
 
-## Project Structure
+## Plugin Structure
 
 ```
 conductor-plugin/
+├── .claude-plugin/
+│   └── plugin.json                    # Plugin manifest (name, version, author)
 ├── CLAUDE.md                          # System prompt & orchestration rules
 ├── README.md                          # This file
-├── .claude_plugin/
-│   └── plugin.json                    # Plugin metadata
-├── skills/                            # User-facing commands
-│   ├── setup/SKILL.md                 # Project initialization
-│   ├── implement/SKILL.md             # Track execution orchestrator
-│   ├── newTrack/SKILL.md              # New track creation
-│   ├── status/SKILL.md                # Progress overview
-│   ├── review/SKILL.md                # Code review
-│   └── revert/SKILL.md                # Safe rollback
-├── agents/
-│   └── subagents/                     # Specialized execution agents
-│       ├── conductor:task-executor.md           # TDD implementation (Steps 3-9)
-│       ├── conductor:explorer.md                # Read-only codebase investigation
-│       ├── conductor:spec-planner.md            # Spec & plan generation
-│       ├── conductor:project-analyzer.md        # Brownfield project detection
-│       ├── conductor:code-reviewer.md           # Deep code analysis
-│       └── conductor:skip-analyst.md            # Failure impact analysis
+├── .gitignore
+├── settings.json                      # Default plugin settings
+├── .mcp.json                          # MCP server configurations
+├── .lsp.json                          # LSP server configurations
+│
+├── skills/                            # Skill-based commands (SKILL.md per directory)
+│   ├── setup/SKILL.md                 #   Project initialization
+│   ├── implement/SKILL.md             #   Track execution orchestrator
+│   ├── newTrack/SKILL.md              #   New track creation
+│   ├── status/SKILL.md                #   Progress overview
+│   ├── review/SKILL.md                #   Code review
+│   └── revert/SKILL.md                #   Safe rollback
+│
+├── commands/                          # Flat .md command skills
+│
+├── agents/                            # Subagent definitions (markdown + frontmatter)
+│   ├── task-executor.md               #   TDD implementation (Steps 3-9)
+│   ├── explorer.md                    #   Read-only codebase investigation
+│   ├── spec-planner.md                #   Spec & plan generation
+│   ├── project-analyzer.md            #   Brownfield project detection
+│   ├── code-reviewer.md               #   Deep code analysis
+│   └── skip-analyst.md                #   Failure impact analysis
+│
+├── hooks/
+│   └── hooks.json                     # Hook event configurations
+│
+├── monitors/
+│   └── monitors.json                  # Background monitor definitions
+│
+├── bin/                               # Executables (added to PATH)
+├── scripts/                           # Hook & utility scripts
+├── output-styles/                     # Output formatting styles
+├── themes/                            # Color theme definitions
+│
 ├── templates/                         # Workflow & style guide templates
-│   ├── template.md                    # Full workflow template
-│   ├── task-workflow.md               # 11-step task workflow
-│   ├── phase-checkpoint.md            # Phase verification protocol
-│   ├── index.md                       # Workflow index
-│   └── code-styleguides/              # Language-specific style guides
+│   ├── template.md                    #   Full workflow template
+│   ├── task-workflow.md               #   11-step task workflow
+│   ├── phase-checkpoint.md            #   Phase verification protocol
+│   ├── index.md                       #   Workflow index
+│   ├── dev-commands/                  #   Development command templates
+│   └── code-styleguides/              #   Language-specific style guides
 │       ├── general.md
 │       ├── javascript.md
 │       ├── typescript.md
@@ -169,7 +184,8 @@ conductor-plugin/
 │       ├── csharp.md
 │       ├── dart.md
 │       └── html-css.md
-└── .gitignore
+│
+└── references/                        # Reference documentation (gitignored)
 ```
 
 ---

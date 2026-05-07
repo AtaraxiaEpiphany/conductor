@@ -1,5 +1,5 @@
 ---
-name: conductor:task-executor
+name: task-executor
 description: Executes a single track task via TDD workflow (Steps 3-9). Dispatched by the conductor:implement orchestrator for code implementation, testing, and commit.
 tools: Bash, Read, Edit, Write, Grep, Glob, NotebookEdit
 model: sonnet

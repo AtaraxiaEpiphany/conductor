@@ -1,5 +1,5 @@
 ---
-name: conductor:skip-analyst
+name: skip-analyst
 description: Analyzes whether a repeatedly failed track task can be safely skipped. Dispatched by the conductor:implement orchestrator when retry count is exhausted.
 tools: Read, Grep, Glob
 model: sonnet

@@ -1,5 +1,5 @@
 ---
-name: conductor:explorer
+name: explorer
 description: Read-only code exploration agent for investigating architecture, dependencies, data flow, and codebase structure. Dispatched by conductor:implement for [Explore] tagged tasks.
 tools: Bash, Read, Grep, Glob
 model: sonnet
