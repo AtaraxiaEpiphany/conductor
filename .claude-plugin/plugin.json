@@ -1,8 +1,0 @@
-{
-  "name": "conductor",
-  "description": "Spec-Driven Development Orchestration Plugin for Claude Code",
-  "version": "1.0.0",
-  "author": {
-    "name": "Hannibal"
-  }
-}
