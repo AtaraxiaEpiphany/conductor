@@ -1,5 +1,5 @@
 ---
-name: conductor-explorer
+name: explorer
 description: Read-only code exploration agent for investigating architecture, dependencies, data flow, and codebase structure. Dispatched by conductor:implement for [Explore] tagged tasks.
 tools: Bash, Read, Grep, Glob
 model: sonnet
@@ -26,13 +26,13 @@ CRITICAL: You must validate the success of every tool call. If any tool call fai
 
 The orchestrator supplies these parameters:
 
-| Parameter | Description |
-|---|---|
-| `TRACK_DIR` | Absolute path to the track directory |
-| `TRACK_ID` | Track identifier |
-| `PHASE_INDEX` | Phase index of the exploration task |
-| `TASK_INDEX` | Task index within the phase |
-| `TASK_NAME` | Name of the exploration task |
+| Parameter       | Description                                                                    |
+| --------------- | ------------------------------------------------------------------------------ |
+| `TRACK_DIR`     | Absolute path to the track directory                                           |
+| `TRACK_ID`      | Track identifier                                                               |
+| `PHASE_INDEX`   | Phase index of the exploration task                                            |
+| `TASK_INDEX`    | Task index within the phase                                                    |
+| `TASK_NAME`     | Name of the exploration task                                                   |
 | `EXPLORE_SCOPE` | What to investigate (architecture, dependencies, data flow, API surface, etc.) |
 
 ---

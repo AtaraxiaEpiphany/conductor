@@ -1,5 +1,5 @@
 ---
-name: conductor-project-analyzer
+name: project-analyzer
 description: Analyzes a brownfield project to detect tech stack, architecture, and structure. Dispatched by conductor:setup during brownfield project discovery.
 tools: Bash, Read, Grep, Glob
 model: sonnet
@@ -24,9 +24,9 @@ CRITICAL: You must validate the success of every tool call. If any tool call fai
 
 The orchestrator supplies these parameters:
 
-| Parameter | Description |
-|---|---|
-| `PROJECT_DIR` | Absolute path to the project root |
+| Parameter      | Description                                    |
+| -------------- | ---------------------------------------------- |
+| `PROJECT_DIR`  | Absolute path to the project root              |
 | `PROJECT_NAME` | Name of the project (from directory or config) |
 
 ---
@@ -37,17 +37,17 @@ The orchestrator supplies these parameters:
 
 Scan for known indicators:
 
-| File | Indicates |
-|------|-----------|
-| `package.json` | Node.js / JavaScript / TypeScript |
-| `requirements.txt`, `setup.py`, `pyproject.toml` | Python |
-| `go.mod` | Go |
-| `Cargo.toml` | Rust |
-| `pom.xml`, `build.gradle` | Java |
-| `*.sln`, `*.csproj` | .NET / C# |
-| `pubspec.yaml` | Dart / Flutter |
-| `Gemfile` | Ruby |
-| `composer.json` | PHP |
+| File                                             | Indicates                         |
+| ------------------------------------------------ | --------------------------------- |
+| `package.json`                                   | Node.js / JavaScript / TypeScript |
+| `requirements.txt`, `setup.py`, `pyproject.toml` | Python                            |
+| `go.mod`                                         | Go                                |
+| `Cargo.toml`                                     | Rust                              |
+| `pom.xml`, `build.gradle`                        | Java                              |
+| `*.sln`, `*.csproj`                              | .NET / C#                         |
+| `pubspec.yaml`                                   | Dart / Flutter                    |
+| `Gemfile`                                        | Ruby                              |
+| `composer.json`                                  | PHP                               |
 
 ### 3.2 Detect Languages & Frameworks
 

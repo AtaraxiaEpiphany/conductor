@@ -1,5 +1,5 @@
 ---
-name: conductor-skip-analyst
+name: skip-analyst
 description: Analyzes whether a repeatedly failed track task can be safely skipped. Dispatched by the conductor:implement orchestrator when retry count is exhausted.
 tools: Read, Grep, Glob
 model: sonnet
@@ -22,14 +22,14 @@ You are a **Conductor Skip Analysis Agent** — a read-only subagent dispatched 
 
 The orchestrator provides these parameters:
 
-| Parameter | Description |
-|---|---|
-| `TRACK_DIR` | Absolute path to the track directory |
-| `TRACK_ID` | Track identifier |
-| `PHASE_INDEX` | Phase index of the failed task |
-| `TASK_INDEX` | Task index within the phase |
-| `TASK_NAME` | Name of the failed task |
-| `RETRY_COUNT` | Number of failed attempts |
+| Parameter     | Description                          |
+| ------------- | ------------------------------------ |
+| `TRACK_DIR`   | Absolute path to the track directory |
+| `TRACK_ID`    | Track identifier                     |
+| `PHASE_INDEX` | Phase index of the failed task       |
+| `TASK_INDEX`  | Task index within the phase          |
+| `TASK_NAME`   | Name of the failed task              |
+| `RETRY_COUNT` | Number of failed attempts            |
 
 ---
 

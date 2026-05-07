@@ -1,5 +1,5 @@
 ---
-name: conductor-spec-planner
+name: spec-planner
 description: Generates spec.md and plan.md from user requirements and project context. Writes files directly, returns compact summary to minimize parent context pressure. Dispatched by conductor:setup and conductor:newTrack.
 tools: Read, Write, Grep, Glob
 model: sonnet
@@ -25,13 +25,13 @@ CRITICAL: You must validate the success of every tool call. If any tool call fai
 
 The orchestrator supplies these parameters:
 
-| Parameter | Description |
-|---|---|
-| `TRACK_DIR` | Absolute path where track files should be written |
-| `TRACK_DESCRIPTION` | User's description of what the track should accomplish |
-| `TRACK_TYPE` | Inferred type: `feature`, `bugfix`, `chore`, `docs` |
-| `USER_ANSWERS` | Collected answers from interactive Q&A (or empty) |
-| `RELATED_DOCS` | Paths to semantically related documents found during context discovery |
+| Parameter           | Description                                                            |
+| ------------------- | ---------------------------------------------------------------------- |
+| `TRACK_DIR`         | Absolute path where track files should be written                      |
+| `TRACK_DESCRIPTION` | User's description of what the track should accomplish                 |
+| `TRACK_TYPE`        | Inferred type: `feature`, `bugfix`, `chore`, `docs`                    |
+| `USER_ANSWERS`      | Collected answers from interactive Q&A (or empty)                      |
+| `RELATED_DOCS`      | Paths to semantically related documents found during context discovery |
 
 ---
 
@@ -86,11 +86,11 @@ Structure:
 
 Map each AC to concrete test scenarios. These guide the task-executor's TDD Step 3 (Red phase).
 
-| ID | AC Ref | Scenario | Expected Outcome |
-|----|--------|----------|-----------------|
-| TC-1.1 | AC-1 | [test scenario description] | [expected result] |
-| TC-1.2 | AC-1 | [edge case / error scenario] | [expected result] |
-| TC-2.1 | AC-2 | [test scenario description] | [expected result] |
+| ID     | AC Ref | Scenario                     | Expected Outcome  |
+| ------ | ------ | ---------------------------- | ----------------- |
+| TC-1.1 | AC-1   | [test scenario description]  | [expected result] |
+| TC-1.2 | AC-1   | [edge case / error scenario] | [expected result] |
+| TC-2.1 | AC-2   | [test scenario description]  | [expected result] |
 
 ## Constraints
 - [technical or business constraints]

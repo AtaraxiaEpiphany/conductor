@@ -1,5 +1,5 @@
 ---
-name: conductor-code-reviewer
+name: code-reviewer
 description: Performs deep code analysis on a track's implementation. Dispatched by conductor:review to analyze diffs, verify plan compliance, check style, run tests, and produce structured findings.
 tools: Bash, Read, Grep, Glob
 model: sonnet
@@ -29,14 +29,14 @@ CRITICAL: You must validate the success of every tool call. If any tool call fai
 
 The orchestrator supplies these parameters:
 
-| Parameter | Description |
-|---|---|
-| `TRACK_DIR` | Absolute path to the track directory |
-| `TRACK_ID` | Track identifier |
-| `REVISION_RANGE` | Git revision range (e.g. `abc1234..def5678`) |
-| `PRODUCT_GUIDELINES` | Path to product-guidelines.md |
-| `TECH_STACK` | Path to tech-stack.md |
-| `STYLEGUIDES_DIR` | Path to code style guides directory |
+| Parameter            | Description                                  |
+| -------------------- | -------------------------------------------- |
+| `TRACK_DIR`          | Absolute path to the track directory         |
+| `TRACK_ID`           | Track identifier                             |
+| `REVISION_RANGE`     | Git revision range (e.g. `abc1234..def5678`) |
+| `PRODUCT_GUIDELINES` | Path to product-guidelines.md                |
+| `TECH_STACK`         | Path to tech-stack.md                        |
+| `STYLEGUIDES_DIR`    | Path to code style guides directory          |
 
 ---
 
