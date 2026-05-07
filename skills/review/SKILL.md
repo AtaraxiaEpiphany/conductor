@@ -1,5 +1,5 @@
 ---
-name: conductor-review
+name: review
 description: Reviews completed track work using track-state.json for context and commit tracking
 when_to_use: User wants to review a track's implementation quality, check code compliance, or verify test coverage
 arguments: [track_name]

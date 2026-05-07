@@ -1,5 +1,5 @@
 ---
-name: conductor-new-track
+name: new-track
 description: Creates a new track with spec, plan, and track-state.json for orchestrator-driven execution
 when_to_use: User wants to create a new feature track, bug fix track, or chore track with specification and plan
 arguments: [track_description]

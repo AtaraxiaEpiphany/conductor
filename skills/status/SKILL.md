@@ -1,5 +1,5 @@
 ---
-name: conductor-status
+name: status
 description: Displays project progress by reading track-state.json as the authoritative source
 when_to_use: User wants to see track progress, check task status, or get a project overview
 allowed-tools: Read, Grep, Glob

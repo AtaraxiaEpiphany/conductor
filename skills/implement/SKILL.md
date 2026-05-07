@@ -1,5 +1,5 @@
 ---
-name: conductor-implement
+name: implement
 description: Orchestrates track task execution via subagents with track-state.json synchronization
 when_to_use: User wants to implement a track, execute pending tasks, or run the conductor implementation workflow
 arguments: [track_name]

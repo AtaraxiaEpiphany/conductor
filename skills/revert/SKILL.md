@@ -1,5 +1,5 @@
 ---
-name: conductor-revert
+name: revert
 description: Reverts work with track-state.json state synchronization
 when_to_use: User wants to revert a task, phase, or entire track while keeping state consistent
 arguments: [scope]

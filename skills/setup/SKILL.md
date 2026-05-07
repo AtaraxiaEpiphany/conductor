@@ -1,5 +1,5 @@
 ---
-name: conductor-setup
+name: setup
 description: Scaffolds the project with Conductor environment, creates initial track with track-state.json
 when_to_use: User wants to initialize a new project with Conductor, or set up the conductor directory structure
 allowed-tools: Bash, Read, Edit, Write, Grep, Glob, Agent, NotebookEdit, AskUserQuestion
