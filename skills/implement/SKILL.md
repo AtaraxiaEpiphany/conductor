@@ -27,7 +27,7 @@ You are an AI **orchestrator** agent for the Conductor spec-driven development f
 
 **State Authority**: `track-state.json` is ALWAYS the source of truth. `plan.md` is a synchronized projection. Never derive state from plan.md — always write state first, then project to plan.md.
 
-**Core Protocols:** Execution Firewall, Task Implementation Workflow, Anti-Patterns — all defined in the system prompt.
+**Core Protocols:** Execution Firewall, Anti-Patterns — defined in the system prompt. Workflow protocols — see File Resolution > Workflow Protocols in system prompt.
 
 CRITICAL: You must validate the success of every tool call. If any tool call fails, halt immediately, announce the failure, and await instructions.
 
@@ -98,7 +98,7 @@ Based on the current task's status:
 
 | Current Task Status | Action |
 |---|---|
-| `in_progress` | Session was interrupted. Check git log for a commit after the task started. If committed work found → mark completed, advance. If no commit → re-dispatch as fresh attempt. |
+| `in_progress` | Session interrupted. Check git log for a commit after task started. If found → mark completed, advance. If not → re-dispatch as fresh attempt. |
 | `failed` + `retry_count < max_retries` | Re-dispatch with failure context from `issues.md`. |
 | `failed` + `retry_count >= max_retries` | Dispatch Skip Analysis Agent (Section 4.5.1). |
 | `blocked` | Report to user. Await human intervention. |
@@ -109,21 +109,10 @@ Based on the current task's status:
 
 After recovery, verify consistency between `track-state.json` and `plan.md`:
 
-1. For each task (and subtask) in `track-state.json`, compare its status with the corresponding marker in `plan.md` using the mapping:
-
-   | track-state.json status | plan.md marker                        |
-   |---|---|
-   | `pending` | `[ ]` |
-   | `in_progress` | `[~]` |
-   | `completed` | `[x]` + SHA appended at line end      |
-   | `failed` | `[!]` + SHA appended at line end      |
-   | `skipped` | `[>]` + SHA appended at line end      |
-   | `blocked` | `[#]` + SHA appended at line end      |
-   | `cancelled` | `[-]` + SHA appended at line end      |
-
-2. If mismatch detected: `track-state.json` is authoritative. Re-project all markers (including subtask markers) to `plan.md`.
-3. Log the inconsistency in `issues.md` as a system note.
-4. Commit the fix: `chore(conductor): Fix state consistency after recovery`
+1. For each task/subtask, compare status in `track-state.json` against its marker in `plan.md` using the Task State Model in the system prompt.
+2. If mismatch: `track-state.json` is authoritative. Re-project all markers to `plan.md`.
+3. Log in `issues.md` as a system note.
+4. Commit: `chore(conductor): Fix state consistency after recovery`
 
 ---
 
@@ -131,150 +120,67 @@ After recovery, verify consistency between `track-state.json` and `plan.md`:
 
 **PROTOCOL: Execute tasks by dispatching subagents in a loop until all tasks are done or the track is blocked.**
 
-### 4.0.1 Orchestrator FSM
+### 4.0.1 Orchestrator Flow
 
-```mermaid
-stateDiagram-v2
-    [*] --> RECOVER_STATE
-    RECOVER_STATE --> SELECT_TASK : State loaded\nconsistency verified
-    RECOVER_STATE --> HALT_BLOCKED : Current task = blocked\n(await human)
-
-    SELECT_TASK --> PRE_DISPATCH : Found pending task
-    SELECT_TASK --> PHASE_CHECK : Phase just completed
-    SELECT_TASK --> FINALIZE : No pending tasks remain
-
-    PRE_DISPATCH --> DISPATCH : State updated\nplan synced\nlock committed
-
-    DISPATCH --> PROCESS_SUCCESS : Subagent → SUCCESS
-    DISPATCH --> PROCESS_FAILURE : Subagent → FAILURE
-
-    PROCESS_SUCCESS --> PHASE_BOUNDARY : State → completed\nplan [x] (SHA at line end)
-    PROCESS_SUCCESS --> FINALIZE : No more tasks
-
-    PROCESS_FAILURE --> DISPATCH : retry_count < max_retries\n(re-dispatch with context)
-    PROCESS_FAILURE --> SKIP_ANALYSIS : retry_count ≥ max_retries
-
-    SKIP_ANALYSIS --> PROCESS_SUCCESS : can_skip = true\n(task → skipped)
-    SKIP_ANALYSIS --> HALT_BLOCKED : can_skip = false\n(task → blocked)
-
-    HALT_BLOCKED --> SELECT_TASK : Human resolves\n(reset → pending)
-
-    PHASE_BOUNDARY --> PHASE_CHECKPOINT : All phase tasks terminal
-    PHASE_BOUNDARY --> SELECT_TASK : Phase incomplete
-
-    PHASE_CHECKPOINT --> SELECT_TASK : Checkpoint committed\nuser confirmed
-    PHASE_CHECKPOINT --> HALT_BLOCKED : Tests fail,\ncannot auto-fix
-
-    FINALIZE --> SYNC_DOCS : All tasks terminal
-    SYNC_DOCS --> CLEANUP : Docs committed
-    CLEANUP --> [*]
+```
+RECOVER → SELECT → PRE_DISPATCH → DISPATCH → PROCESS(SUCCESS|FAILURE) → PHASE_BOUNDARY → PHASE_CHECKPOINT → FINALIZE → SYNC_DOCS → CLEANUP
 ```
 
-### 4.0.2 Task Lifecycle FSM
+- `SUCCESS` → `PHASE_BOUNDARY` (phase done) / `SELECT` (incomplete)
+- `FAILURE` → `DISPATCH` (retry < max) / `SKIP_ANALYSIS` (exhausted)
+- `SKIP_ANALYSIS` → `SELECT` (skip) / `HALT_BLOCKED` (block)
+- `HALT_BLOCKED` → `SELECT` (human resolves)
 
-```mermaid
-stateDiagram-v2
-    [*] --> pending
+### 4.0.2 Task Lifecycle
 
-    pending --> in_progress : Orchestrator dispatches
-
-    in_progress --> completed : Subagent SUCCESS
-    in_progress --> failed : Subagent FAILURE
-
-    failed --> in_progress : retry_count < max_retries\n(re-dispatch)
-    failed --> skip_analysis : retry_count ≥ max_retries
-
-    skip_analysis --> skipped : can_skip = true
-    skip_analysis --> blocked : can_skip = false
-
-    blocked --> pending : Human resolves\n(reset retry_count = 0)
-
-    skipped --> [*]
-    completed --> [*]
-    blocked --> cancelled : Track cancelled
-    pending --> cancelled : Track cancelled
-    in_progress --> cancelled : Track cancelled
-    failed --> cancelled : Track cancelled
-
-    cancelled --> [*]
+```
+pending → in_progress → completed | failed → (retry) → in_progress
+                                             → skip_analysis → skipped | blocked
+blocked → pending (human reset) | Any → cancelled
 ```
 
 ### 4.1 Select Next Task
 
 1. Read `track-state.json`.
-2. **Check for in-progress parent task:** If a task has `status: "in_progress"`:
+2. **In-progress parent exists:** If a task has `status: "in_progress"`:
    a. **Has subtasks?** → Find first subtask with `status: "pending"`. Record `(phase_index, task_index, subtask_index)`.
    b. **All subtasks terminal?** → Parent is complete. Process as success, advance.
-   c. **No subtasks?** → Parent IS the leaf task. Continue dispatch (shouldn't reach here — already dispatched).
-3. **No in-progress task:** Scan forward through all phases and tasks for the first task with `status: "pending"`.
-   a. **Has subtasks?** → Record `(phase_index, task_index, subtask_index=0)` (first subtask).
-   b. **No subtasks?** → Record `(phase_index, task_index)`. This is the leaf task.
-4. **If not found** → all tasks in terminal state. Set `current_phase_index = -1`, `current_task_index = -1`. Proceed to **Track Finalization (Section 5.0)**.
+   c. **No subtasks?** → Parent IS the leaf task (shouldn't reach here — already dispatched).
+3. **No in-progress task:** Scan forward for first task with `status: "pending"`.
+   a. **Has subtasks?** → Record `(phase_index, task_index, subtask_index=0)`.
+   b. **No subtasks?** → Record `(phase_index, task_index)`.
+4. **Not found** → all terminal. Set indices to `-1`. Proceed to **Section 5.0**.
 
 ### 4.2 Pre-Dispatch State Update
 
-Before dispatching the subagent, update state:
-
-**For tasks WITHOUT subtasks (flat task):**
-
 1. **Update `track-state.json`:**
-   - `phases[phase_index].tasks[task_index].status = "in_progress"`
-   - `current_phase_index = phase_index`
-   - `current_task_index = task_index`
-   - `updated_at = <current ISO 8601 timestamp>`
+   - Set target unit to `"in_progress"`:
+     - **Flat:** `phases[phase_index].tasks[task_index].status = "in_progress"`
+     - **Hierarchical:** parent `"in_progress"` + `subtasks[subtask_index].status = "in_progress"`
+   - `current_phase_index = phase_index`, `current_task_index = task_index`
+   - Hierarchical only: `current_subtask_index = subtask_index`
+   - `updated_at = <ISO 8601 timestamp>`
 
-2. **Sync `plan.md`:** Change the task's marker from `[ ]` to `[~]`.
+2. **Sync `plan.md`:** `[ ]` → `[~]` for target unit. Hierarchical: also mark parent `[~]` if not already.
 
-3. **Git commit** both files:
-   ```
-   chore(conductor): Start task '<task_name>' [phase_index.task_index]
-   ```
+3. **Git commit:**
+   - Flat: `chore(conductor): Start task '<task_name>' [phase_index.task_index]`
+   - Hierarchical: `chore(conductor): Start subtask '<subtask_name>' of '<task_name>' [phase_index.task_index.subtask_index]`
 
-4. Emit lock statement:
-   `TASK LOCK ACQUIRED: 'Phase <n>: <phase> → Task <m>: <task>'. Only this unit of work exists until completion.`
-
-**For tasks WITH subtasks (hierarchical task):**
-
-1. **Update `track-state.json`:**
-   - `phases[phase_index].tasks[task_index].status = "in_progress"` (parent)
-   - `phases[phase_index].tasks[task_index].subtasks[subtask_index].status = "in_progress"` (child)
-   - `current_phase_index = phase_index`
-   - `current_task_index = task_index`
-   - `current_subtask_index = subtask_index` (if not present, add it)
-   - `updated_at = <current ISO 8601 timestamp>`
-
-2. **Sync `plan.md`:**
-   - Change the parent task's marker from `[ ]` to `[~]`.
-   - Change the child subtask's marker from `[ ]` to `[~]`.
-
-3. **Git commit** both files:
-   ```
-   chore(conductor): Start subtask '<subtask_name>' of '<task_name>' [phase_index.task_index.subtask_index]
-   ```
-
-4. Emit lock statement:
-   `TASK LOCK ACQUIRED: 'Phase <n>: <phase> → Task <m>: <task> → Subtask <s>: <subtask>'. Only this unit of work exists until completion.`
+4. Emit: `TASK LOCK ACQUIRED: 'Phase <n>: <phase> → Task <m>: <task>{ → Subtask <s>: <subtask>}'. Only this unit of work exists until completion.`
 
 ### 4.3 Dispatch Subagent
 
-**Determine dispatch target:**
-
-1. **Check if this is a subtask or flat task:**
-   - If `current_subtask_index` is set → dispatching a subtask.
-   - Otherwise → dispatching a flat parent task.
-
-2. **Determine subagent type by reading the task/subtask in `plan.md`:**
-   - If the task description contains `[Explore]` tag → dispatch `conductor:explorer` (Section 4.3.E).
-   - Otherwise → dispatch `conductor:task-executor` (Section 4.3.T).
-
-3. **For subtasks:** The dispatch prompt should use the subtask's description. The parent task's AC annotation is used for test context.
+1. If `current_subtask_index` is set → dispatching a subtask. Otherwise → flat task.
+2. Read the task/subtask in `plan.md`:
+   - Contains `[Explore]` tag → **Section 4.3.E**.
+   - Otherwise → **Section 4.3.T**.
 
 ### 4.3.E Dispatch Explorer Subagent (`[Explore]` tasks)
 
-The `conductor:explorer` subagent performs read-only code investigation and documents findings. It does NOT write code or run tests.
+**Dispatch:** `Agent` tool, `subagent_type: "conductor:explorer"`. Description: `"Explore task '<task_name>' [{phase_index}.{task_index}]"`.
 
-**Build the dispatch prompt:**
-
+**Prompt:**
 ```
 ## Exploration Input
 - TRACK_DIR: {track_dir}
@@ -282,34 +188,18 @@ The `conductor:explorer` subagent performs read-only code investigation and docu
 - PHASE_INDEX: {phase_index}
 - TASK_INDEX: {task_index}
 - TASK_NAME: {task_name}
-- EXPLORE_SCOPE: {task description from plan.md — what to investigate}
+- EXPLORE_SCOPE: {task description from plan.md}
 ```
 
-**Launch the subagent:**
-1. Use the **Agent tool** with `subagent_type: "conductor:explorer"`.
-2. Description: `"Explore task '<task_name>' [phase_index.task_index]"`.
-3. Pass the dispatch prompt above as the prompt.
-4. Wait for the subagent to complete.
-5. Parse the `---TASK RESULT---` / `---END RESULT---` block from the response.
-
-After the conductor:explorer completes, commit the exploration notes:
-```
-docs(explore): {task_name}
-```
-Then proceed to **Section 4.5** to process the result.
+After completion, commit: `docs(explore): {task_name}`. Proceed to **Section 4.5**.
 
 ### 4.3.T Dispatch Task Executor Subagent (default tasks)
 
-The `conductor:task-executor` subagent executes the TDD workflow Steps 3-9. It already contains the full execution protocol — you only need to provide task assignment parameters.
+**Extract AC context:** Read task line in `plan.md`, parse `<!-- AC-n, TC-n.n -->` annotation. Read corresponding sections from `spec.md`. If no annotation, omit — task-executor reads full spec as fallback.
 
-**Extract AC context before dispatch:**
-1. Read the task line in `plan.md` at the current `(phase_index, task_index)`.
-2. Parse any `<!-- AC-n, TC-n.n, ... -->` annotation on the task line.
-3. Read `spec.md` sections `Acceptance Criteria` and `Test Scenarios`.
-4. Extract only the ACs and TCs listed in the annotation.
+**Dispatch:** `Agent` tool, `subagent_type: "conductor:task-executor"`. Description: `"Execute task '<task_name>' [{phase_index}.{task_index}]"`.
 
-**Build the dispatch prompt:**
-
+**Prompt:**
 ```
 ## Task Assignment
 - TRACK_DIR: {track_dir}
@@ -329,301 +219,96 @@ The `conductor:task-executor` subagent executes the TDD workflow Steps 3-9. It a
 {extracted TC rows — only the TCs linked to this task via the annotation}
 ```
 
-If the task line has **no** `<!-- AC -->` annotation, omit both sections and let the conductor:task-executor read the full spec as fallback.
-
-**Launch the subagent:**
-1. Use the **Agent tool** with `subagent_type: "conductor:task-executor"`.
-2. Description: `"Execute task '<task_name>' [phase_index.task_index]"`.
-3. Pass the dispatch prompt above as the prompt.
-4. Wait for the subagent to complete.
-5. Parse the `---TASK RESULT---` / `---END RESULT---` block from the response.
+If no AC annotation, omit the Acceptance Criteria and Test Scenarios sections.
 
 ### 4.5 Process Subagent Result
 
 #### 4.5.A SUCCESS Path
 
 1. Extract `COMMIT_SHA`, `TC_COVERAGE`, and `SPEC_DEVIATION` from the result.
-2. **Verify TC Coverage**: Compare `TC_COVERAGE` against the `<!-- AC-n, TC-n.n -->` annotation on the task line in `plan.md`. If any TC is missing from coverage:
-   - Log a warning: "TC coverage gap: expected {TC IDs from annotation}, got {TC_COVERAGE}".
-   - Continue (this is a warning, not a blocker — the task still succeeded).
-3. **Handle Spec Deviations**: If `SPEC_DEVIATION` is not `NONE`:
-   - Append to `{track_dir}/issues.md`:
-     ```markdown
-     ### Spec Deviation: {task_name} | {timestamp}
 
-     **AC**: {AC_ID}
-     **Reason**: {reason}
-     **Suggested Revision**: {suggested revision}
-     **Status**: pending-review
+2. **Verify TC Coverage:** Compare `TC_COVERAGE` against the `<!-- AC-n, TC-n.n -->` annotation. Log warning if gap found (not a blocker).
 
-     ---
-     ```
-   - Announce to user: "Task '<task_name>' completed but has spec deviation(s). Review in `issues.md`."
-   - Do NOT block the task — spec deviations are advisory for the user to review.
-
-4. **Determine if this was a subtask or flat task:**
-   - If `current_subtask_index` exists → this is a subtask completion. Go to **Subtask Completion** below.
-   - Otherwise → this is a flat task completion. Go to **Flat Task Completion** below.
-
-**Flat Task Completion:**
-
-5. **Update `track-state.json`:**
-   ```json
-   {
-     "status": "completed",
-     "commit_sha": "<sha>",
-     "completed_at": "<current ISO 8601 timestamp>"
-   }
+3. **Handle Spec Deviations:** If not `NONE`, append to `{track_dir}/issues.md`:
+   ```markdown
+   ### Spec Deviation: {task_name} | {timestamp}
+   **AC**: {AC_ID} | **Reason**: {reason} | **Revision**: {suggested} | **Status**: pending-review
+   ---
    ```
-   Remove `retry_count`, `last_failure_summary` if present.
+   Announce deviation. Do NOT block the task.
 
-6. **Advance indices**: Scan forward for the next `pending` task. Update `current_phase_index` and `current_task_index`. If none found, set both to `-1`.
+4. **Update `track-state.json`:** Completed unit → `"completed"`, set `commit_sha`, `completed_at`. Remove `retry_count`, `last_failure_summary`.
 
-7. **Update `updated_at`** to current timestamp.
+5. **Advance indices:**
+   - **Flat:** Scan forward for next `pending` task. If none, set indices to `-1`.
+   - **Subtask:** Check remaining subtasks in parent:
+     - **Next pending found:** Set `current_subtask_index`. Continue to **4.1**.
+     - **All terminal:** Parent complete. Set parent `"completed"`, parent `commit_sha` = last subtask SHA. Remove `current_subtask_index`. Advance.
 
-8. **Sync `plan.md`:** Change `[~]` → `[x]`. **Append SHA at the END of the task line** (after any HTML comments).
+6. **Update `updated_at`.**
 
-9. **Git commit:**
-   ```
-   chore(conductor): Complete task '<task_name>' [<sha>]
-   ```
+7. **Sync `plan.md`:** `[~]` → `[x]` on completed unit, SHA appended at END of line. If parent also completing: `[~]` → `[x]` with SHA.
 
-**Subtask Completion:**
-
-5. **Update `track-state.json`:**
-   - `phases[phase_index].tasks[task_index].subtasks[subtask_index].status = "completed"`
-   - `phases[phase_index].tasks[task_index].subtasks[subtask_index].commit_sha = "<sha>"`
-   - `phases[phase_index].tasks[task_index].subtasks[subtask_index].completed_at = "<timestamp>"`
-
-6. **Check remaining subtasks:** Find the next `pending` subtask within the same parent.
-   - **If found**: Set `current_subtask_index` to that subtask. Continue to next dispatch loop iteration.
-   - **If none found (all subtasks terminal)**: Parent task is complete.
-     - Set parent `status = "completed"`.
-     - Set parent `commit_sha` to the LAST subtask's commit SHA (or merge all SHAs).
-     - Remove `current_subtask_index`.
-     - Advance `current_phase_index` and `current_task_index` to the next pending task.
-     - In `plan.md`: Change parent `[~]` → `[x]` with SHA appended at end. Change completed subtask `[~]` → `[x]` with SHA appended at end.
-
-7. **Update `updated_at`** to current timestamp.
-
-8. **Sync `plan.md`:**
-   - Change the subtask's `[~]` → `[x]`. **Append SHA at the END of the subtask line**.
-   - If parent also completing: change parent's `[~]` → `[x]`. **Append SHA at the END of the parent line** (after any HTML comments).
-
-9. **Git commit:**
-   ```
-   chore(conductor): Complete subtask '<subtask_name>' of '<task_name>' [<sha>]
-   ```
-   Or if parent also completing:
-   ```
-   chore(conductor): Complete task '<task_name>' (all subtasks done) [<sha>]
-   ```
+8. **Git commit:**
+   - Flat: `chore(conductor): Complete task '<task_name>' [<sha>]`
+   - Subtask only: `chore(conductor): Complete subtask '<subtask_name>' of '<task_name>' [<sha>]`
+   - Parent also completing: `chore(conductor): Complete task '<task_name>' (all subtasks done) [<sha>]`
 
 #### 4.5.B FAILURE Path
 
-1. Extract `FAILURE_DETAIL` from the result.
-2. **Determine target:** If `current_subtask_index` exists, the failed unit is the subtask. Otherwise, it's the flat task.
-3. **Update `track-state.json`:**
-   - For subtask: update `subtasks[subtask_index].status = "failed"`, increment `subtasks[subtask_index].retry_count`.
-   - For flat task: update `tasks[task_index].status = "failed"`, increment `tasks[task_index].retry_count`.
-   - Initialize `retry_count` to 0 before incrementing if not present.
-4. **Update `updated_at`**.
-5. **Sync `plan.md`:** `[~]` → `[!]` on the failed line (subtask or flat task).
-6. **Create/update `issues.md`:**
-   - If `issues.md` does not exist, create it with the header:
-     ```markdown
-     # Track: {track_id} — Failure Reports
-     ```
-   - Ensure a section exists for the current phase:
-     ```markdown
-     ---
-
-     ## {phase_name}
-
-     ```
-   - Append a structured failure entry:
-     ```markdown
-     ### Task: {task_name} | Attempt: {retry_count}/{max_retries} | {timestamp}
-
-     **What Was Done**
-     - {from subagent report}
-
-     **Failure Reason**
-     - {failure reason}
-
-     **Suggested Next Step**
-     - {from subagent report}
-
-     ---
-     ```
-7. **Git commit:**
+1. Extract `FAILURE_DETAIL`. Determine target: subtask or flat task.
+2. **Update `track-state.json`:** Target unit → `"failed"`, increment `retry_count` (init 0 if absent). Update `updated_at`.
+3. **Sync `plan.md`:** `[~]` → `[!]` on failed line.
+4. **Update `issues.md`:** Create if missing (`# Track: {track_id} — Failure Reports`). Ensure phase section exists. Append:
+   ```markdown
+   ### Task: {task_name} | Attempt: {retry_count}/{max_retries} | {timestamp}
+   **What Was Done**: {from subagent}
+   **Failure Reason**: {reason}
+   **Suggested Next Step**: {recommendation}
+   ---
    ```
-   chore(conductor): Task '<task_name>' failed (attempt {n}/3)
-   ```
-8. **Append SHA to plan.md marker:** Extract SHA via `git log -1 --format="%h"` and **append SHA at the END of the line** that has `[!]`.
-
-9. **Decision Point:**
-   - If `retry_count < max_retries`: Loop back to **4.3** (re-dispatch with failure context).
-   - If `retry_count >= max_retries`: Proceed to **4.5.1 Skip Analysis**.
+5. **Git commit:** `chore(conductor): Task '<task_name>' failed (attempt {n}/3)`
+6. **Append SHA to plan.md:** `git log -1 --format="%h"` → END of `[!]` line.
+7. **Decision:**
+   - `retry_count < max_retries` → loop to **4.3** (re-dispatch).
+   - `retry_count >= max_retries` → **4.5.1 Skip Analysis**.
 
 ### 4.5.1 Skip Analysis (Retry Exhausted)
 
-When `retry_count >= max_retries`, dispatch the `conductor:skip-analyst` subagent.
+Dispatch `conductor:skip-analyst` subagent. `Agent` tool, `subagent_type: "conductor:skip-analyst"`. Description: `"Skip analysis for '<task_name>' [{phase_index}.{task_index}]"`. Pass: TRACK_DIR, TRACK_ID, PHASE_INDEX, TASK_INDEX, TASK_NAME, RETRY_COUNT. Parse `---SKIP ANALYSIS---` / `---END ANALYSIS---`.
 
-**Build the dispatch prompt:**
+**IF `can_skip = true`:**
+1. Target unit → `"skipped"`, set `skip_analysis`. Advance indices.
+2. `[!]` → `[>]`, append SHA at END of line.
+3. Append skip verdict to `issues.md`.
+4. Commit: `chore(conductor): Skip task '<task_name>' — safe to skip`
+5. Update SHA in plan.md. Continue to **4.1**.
 
-```
-## Analysis Input
-- TRACK_DIR: {track_dir}
-- TRACK_ID: {track_id}
-- PHASE_INDEX: {phase_index}
-- TASK_INDEX: {task_index}
-- TASK_NAME: {task_name}
-- RETRY_COUNT: {retry_count}
-```
-
-**Launch the subagent:**
-1. Use the **Agent tool** with `subagent_type: "conductor:skip-analyst"`.
-2. Description: `"Skip analysis for task '<task_name>' [phase_index.task_index]"`.
-3. Pass the dispatch prompt above as the prompt.
-4. Wait for the subagent to complete.
-5. Parse the `---SKIP ANALYSIS---` / `---END ANALYSIS---` JSON block from the response.
-
-**Process Skip Analysis Result:**
-
-**IF `can_skip = true` (recommendation: `skip`):**
-1. Update `track-state.json`:
-   - For subtask: `subtasks[subtask_index].status = "skipped"`, set `skip_analysis`.
-   - For flat task: `tasks[task_index].status = "skipped"`, set `skip_analysis`.
-2. Advance indices to next pending task/subtask (or `-1`).
-3. Sync `plan.md`: Replace `[!]` with `[>]` on the target line. **Append new SHA at the END of the line** (replace old SHA if present).
-4. Append to `issues.md`:
-   ```markdown
-   ### Skip Analysis Verdict: {task_name} | {timestamp}
-
-   **Verdict**: Can Skip
-   **Impact**: {impact}
-   **Reasoning**: {reasoning}
-
-   ---
-   ```
-5. Commit: `chore(conductor): Skip task '<task_name>' — safe to skip`
-6. **Update SHA in plan.md:** `git log -1 --format="%h"` → append SHA at the END of the `[>]` line.
-7. Continue to next task (loop back to **4.1**).
-
-**IF `can_skip = false` (recommendation: `pause_and_escalate` or `retry_with_modification`):**
-1. Update `track-state.json`:
-   - For subtask: `subtasks[subtask_index].status = "blocked"`, set `skip_analysis`.
-   - For flat task: `tasks[task_index].status = "blocked"`, set `skip_analysis`.
-2. Sync `plan.md`: Replace `[!]` with `[#]` on the target line. **Append new SHA at the END of the line** (replace old SHA if present).
-3. Append to `issues.md`:
-   ```markdown
-   ### Skip Analysis Verdict: {task_name} | {timestamp}
-
-   **Verdict**: Cannot Skip — {recommendation}
-   **Impact**: {impact}
-   **Reasoning**: {reasoning}
-   **Action Required**: Human intervention needed.
-
-   ---
-   ```
+**IF `can_skip = false`:**
+1. Target unit → `"blocked"`, set `skip_analysis`.
+2. `[!]` → `[#]`, append SHA at END of line.
+3. Append cannot-skip verdict to `issues.md`.
 4. Commit: `chore(conductor): Block task '<task_name>' — requires human intervention`
-5. **Update SHA in plan.md:** `git log -1 --format="%h"` → append SHA at the END of the `[#]` line.
-6. **Announce to user:**
-   > "Task '<task_name>' has failed {retry_count} times and cannot be automatically skipped.
-   >
-   > **Impact**: {impact}
-   > **Recommendation**: {recommendation}
-   > **Reasoning**: {reasoning}
-   >
-   > Awaiting your decision."
-7. **HALT and await user instruction.** Possible user actions:
-   - Reset task to `pending` (fresh retry with modifications)
-   - Skip the task manually
-   - Cancel the track
+5. Update SHA in plan.md.
+6. **Announce to user** and HALT. User actions: reset to pending / manual skip / cancel track.
 
 ### 4.6 Phase Boundary Check
 
-After each successful task completion (**4.5.A**), check if the current phase is fully complete:
+After each SUCCESS (**4.5.A**), check if current phase is fully complete:
 
-1. Read the current phase's tasks from `track-state.json`.
-2. Check if ALL tasks in this phase are in terminal state (`completed` or `skipped`).
-3. **IF phase complete**: Execute **Phase Checkpoint Protocol (Section 4.7)**.
-4. **IF not complete**: Continue to next task (loop back to **4.1**).
+1. Read current phase tasks from `track-state.json`.
+2. ALL tasks terminal (`completed`/`skipped`)? → **Section 4.7**.
+3. Not complete → loop to **4.1**.
 
 ### 4.7 Phase Checkpoint Protocol
 
 **Triggered when all tasks in a phase reach terminal state.**
-**Detailed protocol:** See Phase Checkpoint Protocol in the system prompt.
 
-#### 4.7.1 Announce
+Read and execute: `conductor/workflow/phase-checkpoint.md`
 
-"Phase '<phase_name>' is complete. Running Phase Checkpoint Protocol."
+When the protocol requires creating missing tests or fixing test failures, dispatch a `conductor:task-executor` subagent with appropriate context.
 
-#### 4.7.2 Verify Phase Test Coverage
-
-1. Find the previous phase's checkpoint SHA in `plan.md` (the `[checkpoint: <sha>]` marker). If Phase 1, use the first commit in the repo.
-2. Run `git diff --name-only <previous_checkpoint_sha> HEAD` to list changed files.
-3. Filter out non-code files (`.json`, `.md`, `.yaml`, `.lock`, etc.).
-4. For each remaining code file, verify a corresponding test file exists.
-5. **IF test files are missing**: Dispatch a subagent to create them:
-   ```
-   You are a Conductor Test Creation Agent. Create missing test files for the following source files:
-   {list_of_files_without_tests}
-
-   Context:
-   - Phase tasks (read plan): {track_dir}/plan.md
-   - Test naming convention: Analyze existing test files in the repo.
-   - Testing framework: {inferred from project}
-
-   Create comprehensive tests that validate the functionality described in this phase's tasks.
-   Follow the existing test patterns in the project.
-
-   ---TASK RESULT---
-   STATUS: SUCCESS|FAILURE
-   COMMIT_SHA: <sha-or-N/A>
-   FILES_CHANGED: <list>
-   SUMMARY: <what was done>
-   ---END RESULT---
-   ```
-   Commit the new tests: `test(conductor): Add missing phase tests for '<phase_name>'`
-
-6. **Run the full test suite.** Infer the command from the project.
-   - If tests pass → continue.
-   - If tests fail → dispatch subagent to fix (max 2 attempts). If still failing, halt and report to user.
-
-#### 4.7.3 Manual Verification Plan
-
-1. Analyze `product.md`, `product-guidelines.md`, and the phase's tasks in `plan.md`.
-2. Generate a step-by-step manual verification plan with specific commands and expected outcomes.
-3. Present to user using AskUserQuestion for confirmation.
-
-#### 4.7.4 Await User Confirmation
-
-**PAUSE.** Do not proceed until the user explicitly confirms the phase is acceptable.
-
-#### 4.7.5 Create Checkpoint Commit
-
-```bash
-git add -A
-git commit --allow-empty -m "conductor(checkpoint): Checkpoint end of '<phase_name>'"
-```
-
-#### 4.7.6 Attach Verification Report as Git Note
-
-1. Get the checkpoint commit SHA: `git log -1 --format="%H"`
-2. Draft a verification report including: automated test results, manual verification steps, user confirmation.
-3. Attach: `git notes add -m "<report>" <sha>`
-
-#### 4.7.7 Record Phase Checkpoint
-
-1. Get the 7-char short SHA of the checkpoint commit.
-2. In `plan.md`, append `[checkpoint: <sha>]` to the phase heading.
-3. Commit: `conductor(plan): Mark phase '<phase_name>' as complete`
-
-#### 4.7.8 Announce Completion
-
-"Phase '<phase_name>' checkpoint complete. Verification report attached as git note."
+After completion, return to **Section 4.1** to select the next task.
 
 ---
 
@@ -649,18 +334,13 @@ git commit --allow-empty -m "conductor(checkpoint): Checkpoint end of '<phase_na
 **PROTOCOL: Update project-level documentation based on the completed track.**
 
 1. **Execution Trigger:** Only when a track has reached `[x]` status.
-
 2. **Announce Synchronization.**
-
 3. **Load Track Specification** and **Project Documents** (Product Definition, Tech Stack, Product Guidelines).
-
 4. **Analyze and Update** (each with user confirmation):
    - **Product Definition**: If the completed feature significantly impacts product description.
    - **Tech Stack**: If significant technology changes were made.
    - **Product Guidelines**: ONLY if the track explicitly describes branding/voice/strategy changes. Apply with extreme caution.
-
 5. **Commit** any changes: `docs(conductor): Synchronize docs for track '<track_description>'`
-
 6. **Final Report.**
 
 ---
