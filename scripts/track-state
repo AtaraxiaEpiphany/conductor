@@ -705,13 +705,131 @@ def cmd_start(track_dir):
     out(dict(ok=True, status="in_progress"))
 
 
+def _validate_state_consistency(state, errors, warnings):
+    """Check semantic consistency within track-state.json."""
+    TERMINAL = {"completed", "skipped", "deferred", "blocked", "cancelled"}
+
+    for pi, phase in enumerate(state.get("phases", [])):
+        pname = phase.get("name", f"Phase {pi+1}")
+        tasks = phase.get("tasks", [])
+
+        # Phase has no tasks
+        if not tasks:
+            errors.append(f"{pname}: phase has no tasks")
+            continue
+
+        # All tasks/subtasks terminal but phase not terminal
+        all_terminal = True
+        for task in tasks:
+            if task["status"] not in TERMINAL:
+                all_terminal = False
+            for sub in task.get("subtasks", []):
+                if sub["status"] not in TERMINAL:
+                    all_terminal = False
+        if all_terminal and phase["status"] not in TERMINAL:
+            warnings.append(f"{pname}: all tasks terminal but phase status is '{phase['status']}'")
+
+        # Phase terminal but some tasks not
+        if phase["status"] in TERMINAL and not all_terminal:
+            warnings.append(f"{pname}: phase terminal but tasks still in progress")
+
+        # Multiple in_progress tasks in same phase
+        in_progress = [t.get("name", f"P{pi}.T{ti}")
+                       for ti, t in enumerate(tasks) if t["status"] == "in_progress"]
+        if len(in_progress) > 1:
+            warnings.append(f"{pname}: multiple in_progress tasks ({', '.join(in_progress)})")
+
+        for ti, task in enumerate(tasks):
+            tname = task.get("name", f"P{pi}.T{ti}")
+
+            # Parent completed but subtasks pending
+            if task["status"] in TERMINAL:
+                pending_subs = [s.get("name", f"S{si}")
+                                for si, s in enumerate(task.get("subtasks", []))
+                                if s["status"] in ("pending", "in_progress")]
+                if pending_subs:
+                    warnings.append(
+                        f"{tname}: parent '{task['status']}' but subtasks still pending: "
+                        f"{', '.join(pending_subs)}")
+
+            # Completed task missing SHA
+            if task["status"] == "completed" and not task.get("commit_sha"):
+                warnings.append(f"{tname}: completed but no commit_sha")
+
+
+def _validate_plan_consistency(track_dir, state, errors, warnings):
+    """Cross-check plan.md against track-state.json."""
+    plan_path = Path(track_dir) / "plan.md"
+    if not plan_path.exists():
+        warnings.append("plan.md not found — skipping plan consistency checks")
+        return
+
+    with open(plan_path) as f:
+        lines = f.readlines()
+
+    TERMINAL = {"completed", "skipped", "deferred", "blocked", "cancelled"}
+
+    # Build plan structure: count tasks/subtasks per phase, detect checkpoint markers
+    plan_phases = []  # list of {heading_has_checkpoint: bool, task_count, subtask_counts}
+    current_phase = None
+
+    for line in lines:
+        stripped = line.rstrip("\n")
+
+        pm = re.match(r"^##\s+Phase\s+(\d+)", stripped)
+        if pm:
+            has_checkpoint = bool(re.search(r"\[checkpoint:\s*[0-9a-f]{7}\]", stripped))
+            current_phase = {"has_checkpoint": has_checkpoint, "tasks": 0, "subtasks": 0}
+            plan_phases.append(current_phase)
+            continue
+
+        tm = re.match(r"^(\s*)-\s+\[([ x~!>#\-])\]\s+", stripped)
+        if tm and current_phase is not None:
+            indent = tm.group(1)
+            if len(indent) > 0:
+                current_phase["subtasks"] += 1
+            else:
+                current_phase["tasks"] += 1
+
+    # Cross-check each phase
+    for pi, phase in enumerate(state.get("phases", [])):
+        pname = phase.get("name", f"Phase {pi+1}")
+        tasks = phase.get("tasks", [])
+
+        if pi >= len(plan_phases):
+            warnings.append(f"{pname}: phase heading missing in plan.md")
+            continue
+
+        pp = plan_phases[pi]
+
+        # Count mismatch: tasks
+        state_tasks = len(tasks)
+        if pp["tasks"] != state_tasks:
+            errors.append(f"{pname}: plan.md has {pp['tasks']} tasks, state has {state_tasks}")
+
+        # Count mismatch: subtasks
+        state_subs = sum(len(t.get("subtasks", [])) for t in tasks)
+        if pp["subtasks"] != state_subs:
+            errors.append(f"{pname}: plan.md has {pp['subtasks']} subtasks, state has {state_subs}")
+
+        # Missing checkpoint: all tasks terminal but no checkpoint marker
+        all_terminal = all(
+            t["status"] in TERMINAL and
+            all(s["status"] in TERMINAL for s in t.get("subtasks", []))
+            for t in tasks
+        )
+        if all_terminal and not pp["has_checkpoint"]:
+            warnings.append(f"{pname}: all tasks complete but no checkpoint in plan.md")
+
+
 def cmd_validate(track_dir):
-    """Validate track-state.json against structural rules. No external deps."""
+    """Validate track-state.json and plan.md against structural and semantic rules."""
     errors = []
+    warnings = []
     try:
         state = load(track_dir)
     except Exception as e:
-        out(dict(valid=False, errors=[f"Cannot read track-state.json: {e}"]))
+        out(dict(valid=False, errors=[f"Cannot read track-state.json: {e}"], warnings=[]))
         return
 
     # Top-level required fields
@@ -721,7 +839,7 @@ def cmd_validate(track_dir):
             errors.append(f"Missing required field: {field}")
 
     if errors:
-        out(dict(valid=False, errors=errors))
+        out(dict(valid=False, errors=errors, warnings=[]))
         return
 
     # Enum checks
@@ -774,10 +892,11 @@ def cmd_validate(track_dir):
             if sha is not None and sha != "" and (not isinstance(sha, str) or len(sha) > 7):
                 errors.append(f"{tname}: commit_sha must be empty or 1-7 hex chars")
 
-    if errors:
-        out(dict(valid=False, errors=errors))
-    else:
-        out(dict(valid=True, errors=[]))
+    # Semantic consistency checks
+    _validate_state_consistency(state, errors, warnings)
+    _validate_plan_consistency(track_dir, state, errors, warnings)
+
+    out(dict(valid=len(errors) == 0, errors=errors, warnings=warnings))
 
 
 def cmd_shas(track_dir):
