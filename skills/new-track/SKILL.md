@@ -9,16 +9,22 @@ model: sonnet
 
 # Conductor NewTrack
 
-## 0.0 LOAD REFERENCE LAYER
+## 0.0 RESOLVE PATHS
 
-Read and internalize `${CLAUDE_PLUGIN_ROOT}/conductor-reference.md` for file resolution rules.
+Key paths (resolve via `conductor/index.md` if non-default):
+- Product: `conductor/overview/product.md`
+- Tech Stack: `conductor/design/tech-stack.md`
+- Tracks Registry: `conductor/tracks.md`
+- Workflow Index: `conductor/workflow/index.md`
 
 ## 1.0 SETUP CHECK
 
 1. Verify via project CLAUDE.md TOC: Tracks Registry, Product Definition, Tech Stack, Workflow Index.
 2. If ANY missing → halt: `"Conductor environment incomplete — missing: <files>. Run /conductor:setup."`
 
-**Subagent:** `conductor:spec-planner` — generates spec.md and plan.md.
+**Subagents:**
+- `conductor:spec-planner` — generates spec.md and plan.md.
+- `conductor:spec-reviewer` — interactive review (keeps full files out of orchestrator context).
 
 CRITICAL: Validate every tool call. On failure → halt → announce.
 
@@ -31,11 +37,13 @@ CRITICAL: Validate every tool call. On failure → halt → announce.
 1. Get description from `$ARGUMENTS` or `AskUserQuestion`.
 2. Infer track type (feature/bugfix/chore) — do NOT ask user.
 
-### 2.2 Context Discovery
+### 2.2 Context Discovery (Paths Only)
 
-1. **Scan & Match:** Search for files semantically related to track's goal.
-2. **Found relevant docs** → read + synthesize, skip questioning. Collect paths for subagent.
-3. **Not found** → ask user: interactive Q&A (2-5 questions sequentially), manual context, or correct paths.
+1. **Scan & Match:** Search `conductor/index.md` for file paths semantically related to track's goal.
+2. **Found relevant docs** → collect paths only (do NOT read contents). Pass paths to spec-planner as `RELATED_DOCS`.
+3. **Not found** → ask user: interactive Q&A (2-5 questions sequentially), manual context, or correct paths. Pass answers as `USER_ANSWERS`.
+
+> Context content is loaded by spec-planner itself. The orchestrator handles only paths and summaries.
 
 ### 2.3 Dispatch Spec-Planner
 
@@ -51,24 +59,34 @@ RELATED_DOCS={paths or N/A}
 
 Parse `---SPEC PLAN RESULT---` block. Extract `PLAN_STRUCTURE`. Files are on disk.
 
-### 2.4 Review Artifacts
+### 2.4 Dispatch Spec-Reviewer
 
-1. Read spec.md → present for review → revise until confirmed.
-2. Read plan.md → present for review → revise until confirmed.
+`Agent` tool, `subagent_type: "conductor:spec-reviewer"`. Description: `"Review spec/plan for '<desc>'"`.
+
+```
+TRACK_DIR={track_dir}
+```
+
+Parse `---REVIEW RESULT---` block. If `STATUS: CANCELLED` → halt. If `STRUCTURE_CHANGED: true` → note for init.
+
+> Full file review happens in the subagent. The orchestrator only sees the compact result.
 
 ### 2.5 Create State Artifacts
 
 1. **Check uniqueness:** List existing track dirs. If name matches → halt → suggest alternatives.
 2. **Track ID:** Format `shortname_YYYYMMDD`.
-3. **track-state.json:** Generate from `PLAN_STRUCTURE`. Schema:
-   ```json
-   {"track_id":"...", "type":"...", "status":"new", "description":"...",
-    "current_phase_index":0, "current_task_index":0,
-    "phases":[{"name":"...", "status":"pending",
-      "tasks":[{"name":"...", "status":"pending",
-        "subtasks":[{"name":"...", "status":"pending"}]}]}]}
+3. **Initialize track:**
+   ```bash
+   track-state init "<track_dir>" \
+     --plan-structure '<PLAN_STRUCTURE json>' \
+     --track-id <id> \
+     --type <type> \
+     --description '<desc>'
    ```
-   Tasks with `subtasks` key → include subtasks array. Without → flat task.
-4. **Track index:** Read `${CLAUDE_PLUGIN_ROOT}/templates/track-index.md`, replace `{TRACK_ID}`, write to `<track_dir>/index.md`.
-5. **Update Tracks Registry:** Append entry to `conductor/tracks.md`.
+   This creates `track-state.json` and `index.md` in one call.
+4. **Update Tracks Registry:** Append entry to `conductor/tracks.md`.
+5. **Commit:**
+   ```bash
+   git add -A && git commit -m "conductor(track): Add track '<track_id>'"
+   ```
 6. Announce: `"New track '<track_id>' created. Run /conductor:implement."`

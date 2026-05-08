@@ -26,6 +26,7 @@ RECOVER → SELECT → PRE_DISPATCH → DISPATCH → PROCESS → PHASE_BOUNDARY 
 | `conductor:doc-syncer` | on track completion | Project documentation sync |
 | `conductor:code-reviewer` | on track completion (auto-review) | Deep code review with diff analysis |
 | `conductor:spec-planner` | setup/newTrack | spec.md and plan.md generation |
+| `conductor:spec-reviewer` | setup/newTrack | Interactive spec/plan review (keeps full files out of orchestrator context) |
 | `conductor:project-analyzer` | setup | Brownfield project analysis |
 
 ### Execution Modes

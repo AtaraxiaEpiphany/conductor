@@ -18,9 +18,11 @@ Usage:
     track-state phase-done <track-dir> <phase>
     track-state finalize <track-dir>
     track-state process-result <track-dir>
+    track-state init <track-dir> --plan-structure <json> --track-id <id> --type <type> --description <desc>
 """
 
 import json
+import os
 import re
 import sys
 from datetime import datetime, timezone
@@ -642,6 +644,67 @@ def cmd_process_result(track_dir):
         out(dict(error=f"Unknown status: {status}"))
 
 
+# ── Init (Track Creation) ────────────────────────────────────────────
+
+
+def cmd_init(track_dir, plan_structure_json, track_id, track_type, description):
+    """Create track-state.json and index.md from PLAN_STRUCTURE.
+    Returns compact result — eliminates duplicate JSON generation in orchestrator."""
+    plan = json.loads(plan_structure_json)
+    track_path = Path(track_dir)
+    track_path.mkdir(parents=True, exist_ok=True)
+
+    # Build track-state.json from PLAN_STRUCTURE
+    phases = []
+    for phase in plan.get("phases", []):
+        tasks = []
+        for task in phase.get("tasks", []):
+            entry = {"name": task["name"], "status": "pending"}
+            if "subtasks" in task:
+                entry["subtasks"] = [{"name": st, "status": "pending"} for st in task["subtasks"]]
+            tasks.append(entry)
+        phases.append({"name": phase["name"], "status": "pending", "tasks": tasks})
+
+    state = {
+        "track_id": track_id,
+        "type": track_type,
+        "status": "new",
+        "description": description,
+        "current_phase_index": 0,
+        "current_task_index": 0,
+        "updated_at": now_iso(),
+        "phases": phases,
+    }
+
+    with open(track_path / "track-state.json", "w") as f:
+        json.dump(state, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+
+    # Create index.md from template
+    plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT", "")
+    template_path = Path(plugin_root) / "templates" / "track-index.md" if plugin_root else None
+    index_content = None
+    if template_path and template_path.exists():
+        index_content = template_path.read_text().replace("{TRACK_ID}", track_id)
+
+    if index_content:
+        with open(track_path / "index.md", "w") as f:
+            f.write(index_content)
+    else:
+        # Fallback: minimal index
+        with open(track_path / "index.md", "w") as f:
+            f.write(f"# Track {track_id} Context\n\n")
+            f.write("> Paths are relative to this track directory.\n\n")
+            f.write("## Track Files\n")
+            f.write("- [Specification](./spec.md)\n")
+            f.write("- [Implementation Plan](./plan.md)\n")
+            f.write("- [Track State](./track-state.json)\n")
+            f.write("- [Issues Log](./issues.md) (created lazily on first failure)\n")
+
+    task_count = sum(len(p.get("tasks", [])) for p in phases)
+    out(dict(ok=True, track_id=track_id, phases=len(phases), tasks=task_count))
+
+
 # ── Dispatch ─────────────────────────────────────────────────────────
 
 
@@ -720,6 +783,12 @@ def main():
             cmd_finalize(track_dir)
         elif cmd == "process-result":
             cmd_process_result(track_dir)
+        elif cmd == "init":
+            cmd_init(track_dir,
+                     flag(args, "--plan-structure") or "{}",
+                     flag(args, "--track-id") or "track",
+                     flag(args, "--type") or "feature",
+                     flag(args, "--description") or "")
         else:
             print(f"Unknown command: {cmd}", file=sys.stderr)
             sys.exit(1)

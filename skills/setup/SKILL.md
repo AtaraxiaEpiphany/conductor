@@ -8,9 +8,13 @@ model: sonnet
 
 # Conductor Setup
 
-## 0.0 LOAD REFERENCE LAYER
+## 0.0 RESOLVE PATHS
 
-Read and internalize `${CLAUDE_PLUGIN_ROOT}/conductor-reference.md` for file resolution rules.
+Key paths (resolve via `conductor/index.md` if non-default):
+- Product: `conductor/overview/product.md`
+- Tech Stack: `conductor/design/tech-stack.md`
+- Tracks Registry: `conductor/tracks.md`
+- Workflow Index: `conductor/workflow/index.md`
 
 ## 1.0 RESUME CHECK
 
@@ -22,6 +26,7 @@ Read and internalize `${CLAUDE_PLUGIN_ROOT}/conductor-reference.md` for file res
 **Subagents:**
 - `conductor:project-analyzer` — brownfield project analysis
 - `conductor:spec-planner` — spec.md and plan.md generation
+- `conductor:spec-reviewer` — interactive spec/plan review
 
 CRITICAL: Validate every tool call. On failure → halt → announce.
 
@@ -110,23 +115,31 @@ RELATED_DOCS={paths or N/A}
 
 Parse `---SPEC PLAN RESULT---` block. Extract `PLAN_STRUCTURE`. Files are on disk.
 
-### 3.4 Create State Artifacts
+### 3.4 Dispatch Spec-Reviewer
+
+`Agent` tool, `subagent_type: "conductor:spec-reviewer"`. Description: `"Review spec/plan for '<desc>'"`.
+
+```
+TRACK_DIR={track_dir}
+```
+
+Parse `---REVIEW RESULT---` block. If `STATUS: CANCELLED` → halt. If `STRUCTURE_CHANGED: true` → note for init.
+
+### 3.5 Create State Artifacts
 
 1. **Tracks Registry:** Create `conductor/tracks.md` if missing.
-2. **track-state.json:** Generate from `PLAN_STRUCTURE`. Schema:
-   ```json
-   {"track_id":"...", "type":"...", "status":"new", "description":"...",
-    "current_phase_index":0, "current_task_index":0,
-    "phases":[{"name":"...", "status":"pending",
-      "tasks":[{"name":"...", "status":"pending",
-        "subtasks":[{"name":"...", "status":"pending"}]}]}]}
+2. **Initialize track:**
+   ```bash
+   track-state init "<track_dir>" \
+     --plan-structure '<PLAN_STRUCTURE json>' \
+     --track-id <id> \
+     --type <type> \
+     --description '<desc>'
    ```
-   Tasks with `subtasks` key → include subtasks array. Without → flat task.
-3. **Track index:** Read `${CLAUDE_PLUGIN_ROOT}/templates/track-index.md`, replace `{TRACK_ID}`, write to `<track_dir>/index.md`.
-4. **Update Tracks Registry:** Append new entry.
-5. Save state: `3.4_track_artifacts_created`.
+3. **Update Tracks Registry:** Append new entry.
+4. Save state: `3.4_track_artifacts_created`.
 
-### 3.5 Final Commit
+### 3.6 Final Commit
 
 ```bash
 git add -A && git commit -m "conductor(setup): Add conductor setup files"

@@ -37,13 +37,19 @@ The orchestrator supplies these parameters:
 
 ## 3.0 LOAD CONTEXT
 
-### 3.1 Always Read
+### 3.1 Context Discovery (Self-Load)
+
+The orchestrator provides file paths only — you read and synthesize all content yourself. This keeps business docs out of the orchestrator context.
 
 1. **Project Index** — Read `conductor/index.md` to discover all available documentation paths and categories.
 2. **Global Docs** — Read the Global Docs listed in `conductor/index.md`:
    - Product Definition
    - Tech Stack
-3. **Related Documents** — Read each file in `{RELATED_DOCS}`. These are scoped docs discovered by the orchestrator via the index match strategies.
+3. **Semantic Scan** — If `RELATED_DOCS` is `N/A`, scan the project for files semantically related to `TRACK_DESCRIPTION`:
+   - Use Glob to search for relevant file patterns.
+   - Use Grep to search for keywords from the description.
+   - Read and synthesize discovered docs.
+4. **Related Documents** — If `RELATED_DOCS` contains paths, read each file. These are scoped docs discovered by the orchestrator.
 
 ### 3.2 Understand the Requirements
 

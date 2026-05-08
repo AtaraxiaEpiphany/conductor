@@ -19,7 +19,7 @@ Conductor is a Claude Code plugin built on **Spec-Driven Development** and **Sub
             ▼                 ▼                    ▼
    ┌────────────┐    ┌────────────┐      ┌────────────┐
    │   Skills   │    │  Subagents │      │ Templates  │
-   │  (6 cmds)  │    │  (8 agents)│      │  + Styles  │
+   │  (6 cmds)  │    │  (9 agents)│      │  + Styles  │
    └────────────┘    └────────────┘      └────────────┘
 ```
 
@@ -55,7 +55,8 @@ Conductor is a Claude Code plugin built on **Spec-Driven Development** and **Sub
 |----------|------|---------------|
 | **conductor:task-executor** | TDD workflow execution (Steps 3-9): write tests, implement code, verify coverage, commit | `implement` |
 | **conductor:explorer** | Read-only code exploration: architecture analysis, dependency mapping, codebase investigation | `implement` (for `[Explore]` tasks) |
-| **conductor:spec-planner** | Generate spec.md and plan.md: transform requirements into specifications and implementation plans | `newTrack` |
+| **conductor:spec-planner** | Generate spec.md and plan.md: transform requirements into specifications and implementation plans | `setup`, `newTrack` |
+| **conductor:spec-reviewer** | Interactive spec/plan review: presents summaries, handles revisions, keeps full files out of orchestrator context | `setup`, `newTrack` |
 | **conductor:project-analyzer** | Brownfield project analysis: detect tech stack, architecture patterns, project structure | `setup` |
 | **conductor:code-reviewer** | Deep code review: diff analysis, plan compliance, style check, test execution | `review` |
 | **conductor:skip-analyst** | Failed task analysis: evaluate whether a task can be safely skipped and assess downstream impact | `implement` (retry exhausted) |
@@ -156,6 +157,7 @@ conductor-plugin/
 │   ├── task-executor.md               #   TDD implementation (Steps 3-9)
 │   ├── explorer.md                    #   Read-only codebase investigation
 │   ├── spec-planner.md                #   Spec & plan generation
+│   ├── spec-reviewer.md               #   Interactive spec/plan review
 │   ├── project-analyzer.md            #   Brownfield project detection
 │   ├── code-reviewer.md               #   Deep code analysis
 │   ├── skip-analyst.md                #   Failure impact analysis
@@ -173,8 +175,9 @@ conductor-plugin/
 │   ├── session-start                  #   SessionStart hook (injects conductor-core.md)
 │   └── track-state                    #   State management CLI (Python 3)
 │       # Commands: next, recover, lock, complete,
-│       #   fail, skip, block, sync-plan,
-│       #   phase-done, finalize, process-result
+│       #   fail, skip, block, defer, sync-plan,
+│       #   phase-done, finalize, process-result,
+│       #   init, shas, deferred-report
 ├── output-styles/                     # Output formatting styles
 ├── themes/                            # Color theme definitions
 │
@@ -256,10 +259,11 @@ Setup wizard will:
 ```
 
 Interactive workflow:
-1. Scans for related documents in your project
+1. Scans for related document paths in your project (content loaded by subagent)
 2. Collects requirements through guided Q&A
 3. Dispatches `conductor:spec-planner` to generate spec.md and plan.md
-4. Creates `track-state.json` with full task hierarchy
+4. Dispatches `conductor:spec-reviewer` for interactive review (keeps full files out of main session)
+5. Creates `track-state.json` via `track-state init` and commits all artifacts
 
 ### 3. Implement
 
@@ -377,10 +381,14 @@ track-state <command> <track-dir> [options]
 | `fail <p> <t> [<s>] --summary <text>` | Set task to failed, increment retry_count | `{retry_count}` |
 | `skip <p> <t> [<s>] --reason <text>` | Set task to skipped | `{ok}` |
 | `block <p> <t> [<s>] --reason <text>` | Set task to blocked | `{ok}` |
+| `defer <p> <t> [<s>] --reason <text>` | Set task to deferred | `{ok, parent_deferred}` |
 | `sync-plan` | Re-project all markers to plan.md from state | `{synced}` |
 | `phase-done <p>` | Check if all tasks in phase are terminal | `{complete, terminal, total}` |
 | `finalize` | Set indices to -1, compute track-level status | `{status}` |
 | `process-result` | Read `.conductor/result.json`, update state + plan + issues.md in one call | `{status, sha, parent_completed, deviations}` or `{status, retry_count, summary}` |
+| `init --plan-structure <json> --track-id <id> --type <type> --description <desc>` | Create track-state.json + index.md from plan structure in one call | `{ok, track_id, phases, tasks}` |
+| `shas` | List all commit SHAs for a track | `{shas, first, last, count}` |
+| `deferred-report` | List all deferred tasks for verification | `{deferred, count}` |
 
 ---
 
