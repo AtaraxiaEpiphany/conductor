@@ -131,9 +131,8 @@ Present the manual verification plan to the user via `AskUserQuestion`:
 ### Step 8: Update Plan
 
 1. Get the 7-char short SHA: `git log -1 --format="%h"`
-2. Read `plan.md`. Find the heading for the completed phase.
-3. Append `[checkpoint: <sha>]` to the phase heading line.
-4. Write the updated `plan.md`.
+2. Run: `track-state add-checkpoint {TRACK_DIR} {PHASE_INDEX} {sha}`
+3. Verify the command succeeded (check JSON output contains `ok: true`).
 
 ### Step 9: Commit Plan Update
 

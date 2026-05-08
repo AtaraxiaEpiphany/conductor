@@ -16,6 +16,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 - **`track-state` invocation**: Changed `bash` to `python3` in `implement` and `review` SKILLs — the script is Python but was being executed as bash ([be83cdd](https://github.com/anthropics/conductor-plugin/commit/be83cdd))
+- **`track-state sync-plan` marker cleanup**: Fixed regex pattern to correctly remove duplicate trailing markers (`[sha] [sha]`, `[N/A] [N/A]`, `[verified]`) while preserving inline markers like `<!-- AC-1 -->` and `[TC-x]`. Changed from single-pass regex to iterative cleaning that handles multiple consecutive markers. Also added `track-state add-checkpoint <phase> <sha>` command for manually adding phase checkpoint SHAs to plan.md
+- **`track-state` sha validation**: Added strict 7-char hex validation when appending commit SHAs, preventing empty `[]` or invalid markers from being added to plan.md
 
 ### Changed
 

@@ -19,6 +19,7 @@ Usage:
     track-state start <track-dir>
     track-state validate <track-dir>
     track-state phase-done <track-dir> <phase>
+    track-state add-checkpoint <track-dir> <phase> <sha>
     track-state finalize <track-dir>
     track-state process-result <track-dir>
     track-state init <track-dir> --plan-structure <json> --track-id <id> --type <type> --description <desc>
@@ -162,6 +163,14 @@ def _do_complete(track_dir, p, t, s=None, sha=None):
             parent["completed_at"] = now_iso()
             clean(parent, {"status", "commit_sha", "completed_at"})
             parent_completed = True
+    elif "subtasks" in tgt:
+        # When completing a task directly (no subtask specified),
+        # auto-complete all remaining non-terminal subtasks
+        for sub in tgt["subtasks"]:
+            if sub["status"] not in ("completed", "skipped", "deferred", "blocked", "cancelled"):
+                sub["status"] = "completed"
+                sub["commit_sha"] = sha or ""
+                sub["completed_at"] = now_iso()
 
     state["updated_at"] = now_iso()
     save(track_dir, state)
@@ -195,6 +204,12 @@ def _do_skip(track_dir, p, t, s=None, reason=""):
     tgt["skip_analysis"] = reason
     clean(tgt, {"status", "skip_analysis"})
 
+    if si is None and "subtasks" in tgt:
+        for sub in tgt["subtasks"]:
+            if sub["status"] not in ("completed", "skipped", "deferred", "blocked", "cancelled"):
+                sub["status"] = "skipped"
+                sub["skip_analysis"] = reason
+
     state["updated_at"] = now_iso()
     save(track_dir, state)
 
@@ -208,6 +223,12 @@ def _do_block(track_dir, p, t, s=None, reason=""):
     tgt["status"] = "blocked"
     tgt["skip_analysis"] = reason
     clean(tgt, {"status", "skip_analysis"})
+
+    if si is None and "subtasks" in tgt:
+        for sub in tgt["subtasks"]:
+            if sub["status"] not in ("completed", "skipped", "deferred", "blocked", "cancelled"):
+                sub["status"] = "blocked"
+                sub["skip_analysis"] = reason
 
     state["updated_at"] = now_iso()
     save(track_dir, state)
@@ -231,6 +252,11 @@ def _do_defer(track_dir, p, t, s=None, reason=""):
             parent["defer_reason"] = "All subtasks deferred or completed"
             clean(parent, {"status", "defer_reason"})
             parent_deferred = True
+    elif "subtasks" in tgt:
+        for sub in tgt["subtasks"]:
+            if sub["status"] not in ("completed", "skipped", "deferred", "blocked", "cancelled"):
+                sub["status"] = "deferred"
+                sub["defer_reason"] = reason
 
     state["updated_at"] = now_iso()
     save(track_dir, state)
@@ -268,14 +294,33 @@ def _do_sync_plan(track_dir):
             rest = tm.group(3)
             is_subtask = len(indent) > 0
 
-            rest_clean = re.sub(r"(\s+\[[0-9a-f]{7}\])+$", "", rest)
+            # Clean trailing markers: [sha], [sha1,sha2,...], [N/A], [verified]
+            # while preserving [AC-x], [TC-x]
+            # Iteratively remove trailing markers to handle multiple consecutive markers
+            def clean_trailing_markers(text):
+                single_marker = r'\s*\[(?:N/A|verified|[0-9a-f]{7}(?:\s*,\s*[0-9a-f]{7})*)\]\s*$'
+                prev = text
+                while True:
+                    cleaned = re.sub(single_marker, '', prev)
+                    if cleaned == prev:
+                        break
+                    prev = cleaned
+                return prev
+
+            rest_clean = clean_trailing_markers(rest)
 
             try:
                 if is_subtask:
                     subtask_idx += 1
                     sub = state["phases"][phase_idx]["tasks"][task_idx]["subtasks"][subtask_idx]
-                    marker = MARKER_MAP.get(sub["status"], " ")
-                    sha = sub.get("commit_sha", "")
+                    parent_task = state["phases"][phase_idx]["tasks"][task_idx]
+                    # If parent is completed, subtasks inherit completed status
+                    if parent_task["status"] in ("completed",):
+                        marker = MARKER_MAP["completed"]
+                        sha = parent_task.get("commit_sha", "")
+                    else:
+                        marker = MARKER_MAP.get(sub["status"], " ")
+                        sha = sub.get("commit_sha", "")
                 else:
                     task_idx += 1
                     subtask_idx = -1
@@ -284,7 +329,8 @@ def _do_sync_plan(track_dir):
                     sha = t.get("commit_sha", "")
 
                 new_line = f"{indent}- [{marker}] {rest_clean}"
-                if sha and marker in SHA_MARKERS:
+                # Only append sha if it's a valid non-empty 7-char hex string
+                if sha and marker in SHA_MARKERS and re.match(r"^[0-9a-f]{7}$", sha):
                     new_line += f" [{sha}]"
                 result.append(new_line)
                 synced += 1
@@ -755,6 +801,52 @@ def cmd_shas(track_dir):
     ))
 
 
+def cmd_add_checkpoint(track_dir, p, sha):
+    """Add or update checkpoint SHA for a phase in plan.md."""
+    plan_path = Path(track_dir) / "plan.md"
+
+    if not plan_path.exists():
+        out(dict(error="plan.md not found"))
+        return
+
+    # Validate sha format
+    if not re.match(r"^[0-9a-f]{7}$", sha):
+        out(dict(error="Invalid SHA format: must be 7 hex characters"))
+        return
+
+    with open(plan_path) as f:
+        lines = f.readlines()
+
+    result = []
+    phase_num = int(p) + 1  # Convert to 1-based for heading match
+    found = False
+
+    for line in lines:
+        stripped = line.rstrip("\n")
+        # Match phase heading: ## Phase 1: ... or ## Phase 1
+        pm = re.match(rf"^##\s+Phase\s+{phase_num}\b", stripped)
+        if pm:
+            # Remove existing checkpoint if present
+            base = re.sub(r"\s+\[checkpoint:\s*[0-9a-f]+\]$", "", stripped)
+            # Add new checkpoint
+            updated = f"{base} [checkpoint: {sha}]"
+            result.append(updated)
+            found = True
+        else:
+            result.append(stripped)
+
+    if not found:
+        out(dict(error=f"Phase {p} heading not found in plan.md"))
+        return
+
+    with open(plan_path, "w") as f:
+        f.write("\n".join(result))
+        if result and not result[-1].endswith("\n"):
+            f.write("\n")
+
+    out(dict(ok=True, phase=p, sha=sha))
+
+
 def cmd_process_result(track_dir):
     """Read .conductor/result.json, update state, sync plan, manage issues.
     Outputs minimal JSON summary. Deletes result file after processing."""
@@ -960,6 +1052,11 @@ def main():
             cmd_phase_done(track_dir, pos[0])
         elif cmd == "shas":
             cmd_shas(track_dir)
+        elif cmd == "add-checkpoint":
+            if len(pos) < 2:
+                out(dict(error="Missing phase or sha argument"))
+                sys.exit(1)
+            cmd_add_checkpoint(track_dir, pos[0], pos[1])
         elif cmd == "finalize":
             cmd_finalize(track_dir)
         elif cmd == "process-result":
