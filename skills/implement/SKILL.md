@@ -62,7 +62,10 @@ Run these verifications. Announce failures tersely and HALT.
 
 ## 3.0 STATE RECOVERY
 
-1. Run: `track-state recover "<track_dir>"`
+1. Run: `track-state validate "<track_dir>"`
+   - If `valid == false` → run `track-state validate "<track_dir>" --fix` → if still invalid → announce errors → HALT.
+   - If `warnings` exist → announce tersely, continue (warnings are non-fatal).
+2. Run: `track-state recover "<track_dir>"`
 2. Route by `status`:
 
 | Recovery Status | Action |

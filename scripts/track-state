@@ -822,14 +822,56 @@ def _validate_plan_consistency(track_dir, state, errors, warnings):
             warnings.append(f"{pname}: all tasks complete but no checkpoint in plan.md")
 
 
-def cmd_validate(track_dir):
+def _auto_fix(state):
+    """Auto-fix repairable inconsistencies. Returns list of fixes applied."""
+    TERMINAL = {"completed", "skipped", "deferred", "blocked", "cancelled"}
+    fixes = []
+
+    for pi, phase in enumerate(state.get("phases", [])):
+        tasks = phase.get("tasks", [])
+        if not tasks:
+            continue
+
+        # Fix: propagate parent status to non-terminal subtasks
+        for ti, task in enumerate(tasks):
+            if task["status"] in TERMINAL and "subtasks" in task:
+                for sub in task["subtasks"]:
+                    if sub["status"] not in TERMINAL:
+                        old = sub["status"]
+                        sub["status"] = task["status"]
+                        fixes.append(
+                            f"P{pi}.T{ti}.{sub.get('name', '?')}: "
+                            f"subtask '{old}' → '{task['status']}' (parent propagation)")
+
+        # Fix: all tasks terminal but phase not terminal
+        all_terminal = all(
+            t["status"] in TERMINAL and
+            all(s["status"] in TERMINAL for s in t.get("subtasks", []))
+            for t in tasks
+        )
+        if all_terminal and phase["status"] not in TERMINAL:
+            # Pick the most common terminal status among tasks
+            from collections import Counter
+            task_statuses = [t["status"] for t in tasks]
+            best = Counter(task_statuses).most_common(1)[0][0]
+            old = phase["status"]
+            phase["status"] = best
+            fixes.append(f"Phase {pi+1} '{phase.get('name', '?')}': '{old}' → '{best}' (all tasks terminal)")
+
+    if fixes:
+        state["updated_at"] = now_iso()
+
+    return fixes
+
+
+def cmd_validate(track_dir, fix=False):
     """Validate track-state.json and plan.md against structural and semantic rules."""
     errors = []
     warnings = []
     try:
         state = load(track_dir)
     except Exception as e:
-        out(dict(valid=False, errors=[f"Cannot read track-state.json: {e}"], warnings=[]))
+        out(dict(valid=False, errors=[f"Cannot read track-state.json: {e}"], warnings=[], fixes=[]))
         return
 
     # Top-level required fields
@@ -839,7 +881,7 @@ def cmd_validate(track_dir):
             errors.append(f"Missing required field: {field}")
 
     if errors:
-        out(dict(valid=False, errors=errors, warnings=[]))
+        out(dict(valid=False, errors=errors, warnings=[], fixes=[]))
         return
 
     # Enum checks
@@ -896,7 +938,15 @@ def cmd_validate(track_dir):
     _validate_state_consistency(state, errors, warnings)
     _validate_plan_consistency(track_dir, state, errors, warnings)
 
-    out(dict(valid=len(errors) == 0, errors=errors, warnings=warnings))
+    # Auto-fix if requested
+    fixes = []
+    if fix and warnings:
+        fixes = _auto_fix(state)
+        if fixes:
+            save(track_dir, state)
+            _do_sync_plan(track_dir)
+
+    out(dict(valid=len(errors) == 0, errors=errors, warnings=warnings, fixes=fixes))
 
 
 def cmd_shas(track_dir):
@@ -1098,7 +1148,7 @@ def flag(args, name):
     return None
 
 
-_BOOL_FLAGS = {"--compact"}
+_BOOL_FLAGS = {"--compact", "--fix"}
 
 
 def positional(args):
@@ -1166,7 +1216,7 @@ def main():
         elif cmd == "start":
             cmd_start(track_dir)
         elif cmd == "validate":
-            cmd_validate(track_dir)
+            cmd_validate(track_dir, fix="--fix" in args)
         elif cmd == "phase-done":
             cmd_phase_done(track_dir, pos[0])
         elif cmd == "shas":
