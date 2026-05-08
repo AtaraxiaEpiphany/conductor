@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# PostToolUse hook for task-executor (Bash matcher):
+# After any test command runs, verify exit code consistency.
+# Non-blocking — just logs and provides additionalContext on failure.
+set -euo pipefail
+
+INPUT=$(cat)
+
+TOOL_INPUT=$(echo "$INPUT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('tool_input',{}).get('command',''))" 2>/dev/null || echo "")
+EXIT_CODE=$(echo "$INPUT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('tool_result',{}).get('exitCode',0))" 2>/dev/null || echo "0")
+
+LOG_DIR="${CLAUDE_PLUGIN_DATA:-${CLAUDE_PLUGIN_ROOT}/.data}/logs"
+mkdir -p "$LOG_DIR"
+
+# Check if this was a test command
+IS_TEST=0
+case "$TOOL_INPUT" in
+  *test*|*pytest*|*jest*|*vitest*|*go\ test*|*cargo\ test*|*dotnet\ test*)
+    IS_TEST=1
+    ;;
+esac
+
+if [[ "$IS_TEST" == "1" ]]; then
+  TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  echo "${TIMESTAMP} test_command=\"${TOOL_INPUT}\" exit_code=${EXIT_CODE}" >> "${LOG_DIR}/test-results.log"
+
+  if [[ "$EXIT_CODE" != "0" ]]; then
+    python3 -c "
+import json
+print(json.dumps({'additionalContext': '[Conductor TDD] Test command exited with code ${EXIT_CODE}. If this is the Red phase (Step 3), failure is expected. If this is the Green phase (Step 4), fix the implementation.'}))
+"
+    exit 0
+  fi
+fi
+
+echo '{}'

@@ -3,6 +3,12 @@ name: phase-checker
 description: Executes phase checkpoint verification protocol in isolated context. Handles test coverage verification, missing test creation, test execution, manual verification plan, and checkpoint commit.
 tools: Bash, Read, Edit, Write, Grep, Glob, AskUserQuestion
 model: sonnet
+hooks:
+  Stop:
+    - matcher: ""
+      hooks:
+        - type: command
+          command: "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/on-phase-checkpoint-stop\""
 ---
 
 # Conductor Phase Checker

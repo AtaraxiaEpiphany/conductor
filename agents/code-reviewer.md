@@ -3,6 +3,12 @@ name: code-reviewer
 description: Performs deep code analysis on a track's implementation. Dispatched by conductor:review to analyze diffs, verify plan compliance, check style, run tests, and produce structured findings.
 tools: Bash, Read, Grep, Glob
 model: sonnet
+hooks:
+  Stop:
+    - matcher: ""
+      hooks:
+        - type: command
+          command: "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/on-review-stop\""
 ---
 
 # Conductor Code Reviewer

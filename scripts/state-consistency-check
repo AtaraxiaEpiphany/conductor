@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# Stop hook for conductor:implement skill:
+# Verifies track-state.json and plan.md markers are consistent.
+# Returns additionalContext with warning if inconsistencies found.
+# Non-blocking — only warns, does not halt.
+set -euo pipefail
+
+INPUT=$(cat)
+
+CWD=$(echo "$INPUT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('cwd',''))" 2>/dev/null || echo "")
+
+# Find track-state.json files
+ISSUES=""
+
+if [[ -d "${CWD}/conductor" ]]; then
+  # Look for tracks registry
+  TRACKS_FILE="${CWD}/conductor/tracks.md"
+  if [[ -f "$TRACKS_FILE" ]]; then
+    # Extract track dirs from registry
+    TRACK_DIRS=$(grep -oP '\[.*?\]\(([^)]+)\)' "$TRACKS_FILE" 2>/dev/null | grep -oP '(?<=\().*?(?=\))' || true)
+
+    for TRACK_DIR in $TRACK_DIRS; do
+      FULL_DIR="${CWD}/${TRACK_DIR}"
+      STATE_FILE="${FULL_DIR}/track-state.json"
+      PLAN_FILE="${FULL_DIR}/plan.md"
+
+      if [[ -f "$STATE_FILE" ]] && [[ -f "$PLAN_FILE" ]]; then
+        # Check for in_progress tasks that shouldn't be (stale locks)
+        STALE_LOCKS=$(python3 -c "
+import json, sys
+try:
+    with open('${STATE_FILE}') as f:
+        state = json.load(f)
+    stale = []
+    for pi, phase in enumerate(state.get('phases', [])):
+        for ti, task in enumerate(phase.get('tasks', [])):
+            if task.get('status') == 'in_progress':
+                stale.append(f'Phase {pi+1} Task {ti+1}: {task.get(\"name\", \"\")}')
+            for si, sub in enumerate(task.get('subtasks', [])):
+                if sub.get('status') == 'in_progress':
+                    stale.append(f'Phase {pi+1} Task {ti+1}.{si+1}: {sub.get(\"name\", \"\")}')
+    if stale:
+        print('; '.join(stale))
+    else:
+        print('')
+except Exception:
+    print('')
+" 2>/dev/null || echo "")
+
+        if [[ -n "$STALE_LOCKS" ]]; then
+          ISSUES="${ISSUES}[Conductor] Stale in_progress tasks found in ${TRACK_DIR}: ${STALE_LOCKS}. "
+        fi
+      fi
+    done
+  fi
+fi
+
+if [[ -n "$ISSUES" ]]; then
+  python3 -c "
+import json
+print(json.dumps({'additionalContext': '''${ISSUES}Consider running /conductor:implement to recover state, or /conductor:status to inspect.'''}))
+"
+else
+  echo '{}'
+fi

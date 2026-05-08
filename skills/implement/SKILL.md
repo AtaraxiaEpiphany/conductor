@@ -5,6 +5,13 @@ when_to_use: User wants to implement a track, execute pending tasks, or run the 
 argument-hint: "[track_name]"
 allowed-tools: Bash, Read, Edit, Write, Grep, Glob, Agent, NotebookEdit, AskUserQuestion
 model: sonnet
+hooks:
+  Stop:
+    - matcher: ""
+      hooks:
+        - type: command
+          command: "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/state-consistency-check\""
+          timeout: 10
 ---
 
 # Conductor Implement — Thin Orchestrator

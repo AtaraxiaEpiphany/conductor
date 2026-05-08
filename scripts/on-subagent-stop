@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# SubagentStop hook: log subagent completion and inject post-processing context
+# Async by default — does not block the orchestrator.
+set -euo pipefail
+
+INPUT=$(cat)
+
+AGENT_TYPE=$(echo "$INPUT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('agent_type',''))" 2>/dev/null || echo "")
+SESSION_ID=$(echo "$INPUT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('session_id',''))" 2>/dev/null || echo "")
+
+LOG_DIR="${CLAUDE_PLUGIN_DATA:-${CLAUDE_PLUGIN_ROOT}/.data}/logs"
+mkdir -p "$LOG_DIR"
+
+TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+echo "${TIMESTAMP} session=${SESSION_ID} agent=${AGENT_TYPE} event=subagent_stop" >> "${LOG_DIR}/subagent-lifecycle.log"
+
+echo '{}'

@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# TaskCreated / TaskCompleted hook: log task lifecycle events
+set -euo pipefail
+
+INPUT=$(cat)
+
+HOOK_EVENT=$(echo "$INPUT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('hook_event_name',''))" 2>/dev/null || echo "")
+SESSION_ID=$(echo "$INPUT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('session_id',''))" 2>/dev/null || echo "")
+
+LOG_DIR="${CLAUDE_PLUGIN_DATA:-${CLAUDE_PLUGIN_ROOT}/.data}/logs"
+mkdir -p "$LOG_DIR"
+
+TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+echo "${TIMESTAMP} session=${SESSION_ID} event=${HOOK_EVENT}" >> "${LOG_DIR}/task-lifecycle.log"
+
+echo '{}'

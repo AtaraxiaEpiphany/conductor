@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# SubagentStart hook: inject execution reminders into subagent context
+# Reads hook input from stdin, outputs JSON with additionalContext.
+set -euo pipefail
+
+INPUT=$(cat)
+
+AGENT_TYPE=$(echo "$INPUT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('agent_type',''))" 2>/dev/null || echo "")
+
+REMINDER=""
+
+case "$AGENT_TYPE" in
+  task-executor)
+    REMINDER="[Conductor] You are a task-executor. Follow TDD: Red → Green → Refactor. Validate every tool call. Report in ---TASK RESULT--- format."
+    ;;
+  code-reviewer)
+    REMINDER="[Conductor] You are a code-reviewer. You are READ-ONLY for application code. Report in ---REVIEW RESULT--- format."
+    ;;
+  explorer)
+    REMINDER="[Conductor] You are an explorer. You are READ-ONLY. Produce exploration.md as file-bridge. Report in ---TASK RESULT--- format."
+    ;;
+  phase-checker)
+    REMINDER="[Conductor] You are a phase-checker. Execute full checkpoint protocol. Report in ---CHECKPOINT RESULT--- format."
+    ;;
+  doc-syncer)
+    REMINDER="[Conductor] You are a doc-syncer. Only targeted updates with user confirmation. Report in ---DOC SYNC RESULT--- format."
+    ;;
+  skip-analyst)
+    REMINDER="[Conductor] You are a skip-analyst. You are READ-ONLY. Be conservative — when in doubt, recommend pause_and_escalate."
+    ;;
+  spec-planner)
+    REMINDER="[Conductor] You are a spec-planner. Write spec.md and plan.md. Return compact summary in ---SPEC PLAN RESULT--- format."
+    ;;
+  project-analyzer)
+    REMINDER="[Conductor] You are a project-analyzer. You are READ-ONLY. Return analysis in ---ANALYSIS RESULT--- format."
+    ;;
+esac
+
+if [[ -n "$REMINDER" ]]; then
+  python3 -c "
+import json
+print(json.dumps({'additionalContext': '''$REMINDER'''}))
+"
+else
+  echo '{}'
+fi
