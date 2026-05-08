@@ -83,7 +83,7 @@ Run these verifications. Announce failures tersely and HALT.
 ### 4.1 Select Next Task
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/track-state" next "<track_dir>"
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/track-state" next "<track_dir>"
 ```
 
 - `phase == -1` → all terminal → **Section 5.0**.
