@@ -33,8 +33,8 @@ RECOVER → SELECT → PRE_DISPATCH → DISPATCH → PROCESS → PHASE_BOUNDARY 
 
 | Mode | Key | Behavior |
 |------|-----|----------|
-| `continuous` | `"execution_mode": "continuous"` | Auto-defers `[Manual]` tasks, auto-proceeds through checkpoints. |
-| `interactive` | `"execution_mode": "interactive"` | Pauses for user confirmation at manual checkpoints. |
+| `continuous` | `"execution_mode": "continuous"` | Auto-proceeds through checkpoints. `[Manual]` tasks are always auto-deferred. |
+| `interactive` | `"execution_mode": "interactive"` | Pauses for user confirmation at checkpoints. `[Manual]` tasks are always auto-deferred. |
 
 ### Task Lifecycle
 

@@ -51,6 +51,12 @@ Run these verifications. Announce failures tersely and HALT.
    - Multiple → present via `AskUserQuestion`.
    - None → `"No active tracks. Use /conductor:new-track."` → HALT.
 4. Verify: `track-state recover "<track_dir>"` — if error → HALT.
+5. **Mark Active:** If track `status == "new"` → run:
+   ```bash
+   track-state start "<track_dir>"
+   track-state registry-update "<track_dir>" "conductor/tracks.md"
+   git add -A && git commit -m "chore(conductor): Activate track '<desc>'"
+   ```
 
 ---
 
@@ -84,8 +90,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/track-state" next "<track_dir>"
 - `type == "parent-complete"` → `track-state complete "<track_dir>" <p> <t> --sha ""` → re-run `next`.
 - Route by tags:
   - `Explore` → **4.3.E**
-  - `Manual` + continuous → **4.3.M**
-  - `Manual` + interactive → `AskUserQuestion` defer or execute
+  - `Manual` → **4.3.M** (always auto-defer)
   - default → **4.3.T**
 
 ### 4.2 Pre-Dispatch
@@ -118,7 +123,7 @@ After → commit `docs(explore): {name}` → **Section 4.5**.
 ### 4.3.M Auto-Defer Manual Tasks
 
 ```bash
-track-state defer "<track_dir>" <p> <t> --reason 'Deferred: manual task in continuous mode'
+track-state defer "<track_dir>" <p> <t> --reason 'Deferred: manual task requires human verification'
 track-state sync-plan "<track_dir>"
 git commit -m "chore(conductor): Defer manual task '<name>'"
 ```
@@ -193,9 +198,10 @@ Parse result. FAILED → announce + HALT. Otherwise → **4.1**.
 ```bash
 track-state finalize "<track_dir>"
 track-state sync-plan "<track_dir>"
+track-state registry-update "<track_dir>" "conductor/tracks.md"
 ```
 
-Update Tracks Registry: `[~]` → `[x]`. Commit: `chore(conductor): Complete track '<desc>'`.
+Commit: `chore(conductor): Complete track '<desc>'`.
 
 ---
 

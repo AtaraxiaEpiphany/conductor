@@ -15,6 +15,9 @@ Usage:
     track-state block <track-dir> <phase> <task> [<subtask>] --reason <text>
     track-state deferred-report <track-dir>
     track-state sync-plan <track-dir>
+    track-state registry-update <track-dir> <tracks-md-path>
+    track-state start <track-dir>
+    track-state validate <track-dir>
     track-state phase-done <track-dir> <phase>
     track-state finalize <track-dir>
     track-state process-result <track-dir>
@@ -562,6 +565,175 @@ def cmd_sync_plan(track_dir):
     out(dict(synced=synced))
 
 
+def cmd_registry_update(track_dir, tracks_md_path):
+    """Update a track's entry in the Tracks Registry (tracks.md) based on track-state.json status.
+
+    Handles two formats:
+    1. Section-based: ### TrackID ... - **Status:** value ... - **Path:** [link](dir/)
+    2. Checkbox: - [marker] description (path/)
+    """
+    state = load(track_dir)
+    track_dir_path = Path(track_dir).resolve()
+    track_status = state.get("status", "new")
+    track_id = state.get("track_id", "")
+
+    registry_path = Path(tracks_md_path)
+    if not registry_path.exists():
+        out(dict(error=f"Tracks registry not found: {tracks_md_path}"))
+        return
+
+    content = registry_path.read_text()
+    track_dir_name = track_dir_path.name
+
+    status_to_marker = {
+        "new": " ",
+        "in_progress": "~",
+        "completed": "x",
+        "blocked": "#",
+        "cancelled": "-",
+    }
+    new_marker = status_to_marker.get(track_status, " ")
+
+    lines = content.split("\n")
+    updated = False
+    in_track_section = False
+
+    for i, line in enumerate(lines):
+        # Detect track section start: ### heading containing track dir name or track_id
+        if re.match(r"^###\s+", line):
+            in_track_section = track_dir_name in line or track_id in line
+
+        # Format 1: Section-based — **Status:** value
+        if in_track_section and re.match(r"^\s*-\s+\*\*Status:\*\*\s+", line):
+            old_status = re.sub(r"^\s*-\s+\*\*Status:\*\*\s+", "", line).strip()
+            if old_status != track_status:
+                lines[i] = f"- **Status:** {track_status}"
+                updated = True
+            continue
+
+        # Format 2: Checkbox — [marker] ... (path/)
+        m = re.match(r"^(\s*-\s+\[)([ x~!>#\-])(\]\s+.*?\()([^)]*)(\).*)$", line)
+        if m:
+            prefix, old_marker, mid, link_path, suffix = m.groups()
+            if track_dir_name in link_path or str(track_dir_path) in link_path:
+                if old_marker != new_marker:
+                    lines[i] = f"{prefix}{new_marker}{mid}{link_path}{suffix}"
+                    updated = True
+                break
+
+    # Also update table row if present: | id | type | status | desc |
+    for i, line in enumerate(lines):
+        if re.match(r"^\|", line) and (track_id in line or track_dir_name in line):
+            parts = [p.strip() for p in line.split("|")]
+            # Find the status column (typically 3rd, index 3 after split)
+            if len(parts) >= 4:
+                new_line = line
+                # Replace status in table — status is 3rd data column
+                new_line = re.sub(
+                    r"\|\s*(new|in_progress|completed|blocked|cancelled)\s*\|",
+                    f"| {track_status} |",
+                    new_line,
+                    count=1,
+                )
+                if new_line != line:
+                    lines[i] = new_line
+                    updated = True
+
+    if updated:
+        registry_path.write_text("\n".join(lines))
+        out(dict(updated=True, marker=new_marker, status=track_status))
+    else:
+        out(dict(updated=False, status=track_status))
+
+
+def cmd_start(track_dir):
+    """Transition a track from 'new' to 'in_progress'."""
+    state = load(track_dir)
+    if state.get("status") != "new":
+        out(dict(ok=True, status=state.get("status"), message="already started"))
+        return
+
+    state["status"] = "in_progress"
+    state["updated_at"] = now_iso()
+    save(track_dir, state)
+    out(dict(ok=True, status="in_progress"))
+
+
+def cmd_validate(track_dir):
+    """Validate track-state.json against structural rules. No external deps."""
+    errors = []
+    try:
+        state = load(track_dir)
+    except Exception as e:
+        out(dict(valid=False, errors=[f"Cannot read track-state.json: {e}"]))
+        return
+
+    # Top-level required fields
+    for field in ["track_id", "type", "status", "description", "current_phase_index",
+                   "current_task_index", "updated_at", "phases"]:
+        if field not in state:
+            errors.append(f"Missing required field: {field}")
+
+    if errors:
+        out(dict(valid=False, errors=errors))
+        return
+
+    # Enum checks
+    if state["type"] not in ("feature", "bugfix", "chore", "docs"):
+        errors.append(f"Invalid type: {state['type']}")
+    if state["status"] not in ("new", "in_progress", "completed", "blocked", "cancelled"):
+        errors.append(f"Invalid track status: {state['status']}")
+
+    # Index checks
+    cpi = state["current_phase_index"]
+    cti = state["current_task_index"]
+    if cpi < -1 or cpi >= len(state.get("phases", [])):
+        errors.append(f"current_phase_index {cpi} out of range")
+    if cti < -1:
+        errors.append(f"current_task_index {cti} out of range")
+
+    # Phase validation
+    TASK_STATUSES = {"pending", "in_progress", "completed", "failed", "skipped",
+                     "deferred", "blocked", "cancelled"}
+    for pi, phase in enumerate(state.get("phases", [])):
+        pname = phase.get("name", f"Phase {pi+1}")
+        if "name" not in phase:
+            errors.append(f"Phase {pi}: missing name")
+        if "status" not in phase:
+            errors.append(f"{pname}: missing status")
+        elif phase["status"] not in TASK_STATUSES:
+            errors.append(f"{pname}: invalid status '{phase['status']}'")
+        if "tasks" not in phase:
+            errors.append(f"{pname}: missing tasks array")
+            continue
+
+        for ti, task in enumerate(phase["tasks"]):
+            tname = task.get("name", f"P{pi}.T{ti}")
+            if "name" not in task:
+                errors.append(f"Phase {pi} Task {ti}: missing name")
+            if "status" not in task:
+                errors.append(f"{tname}: missing status")
+            elif task["status"] not in TASK_STATUSES:
+                errors.append(f"{tname}: invalid status '{task['status']}'")
+
+            for si, sub in enumerate(task.get("subtasks", [])):
+                sname = sub.get("name", f"P{pi}.T{ti}.S{si}")
+                if "status" not in sub:
+                    errors.append(f"{sname}: missing status")
+                elif sub["status"] not in TASK_STATUSES:
+                    errors.append(f"{sname}: invalid status '{sub['status']}'")
+
+            # Validate optional fields
+            sha = task.get("commit_sha")
+            if sha is not None and sha != "" and (not isinstance(sha, str) or len(sha) > 7):
+                errors.append(f"{tname}: commit_sha must be empty or 1-7 hex chars")
+
+    if errors:
+        out(dict(valid=False, errors=errors))
+    else:
+        out(dict(valid=True, errors=[]))
+
+
 def cmd_shas(track_dir):
     """Extract all commit SHAs from completed tasks. Returns first/last for revision range."""
     state = load(track_dir)
@@ -775,6 +947,15 @@ def main():
             cmd_deferred_report(track_dir)
         elif cmd == "sync-plan":
             cmd_sync_plan(track_dir)
+        elif cmd == "registry-update":
+            if len(pos) < 1:
+                out(dict(error="Missing tracks-md-path argument"))
+                sys.exit(1)
+            cmd_registry_update(track_dir, pos[0])
+        elif cmd == "start":
+            cmd_start(track_dir)
+        elif cmd == "validate":
+            cmd_validate(track_dir)
         elif cmd == "phase-done":
             cmd_phase_done(track_dir, pos[0])
         elif cmd == "shas":

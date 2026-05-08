@@ -1,0 +1,97 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Conductor Track State",
+  "description": "Authoritative state file for a Conductor track. Managed exclusively by the track-state CLI.",
+  "type": "object",
+  "required": ["track_id", "type", "status", "description", "current_phase_index", "current_task_index", "updated_at", "phases"],
+  "additionalProperties": false,
+  "properties": {
+    "track_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9_]+_\\d{8}$",
+      "description": "Format: shortname_YYYYMMDD"
+    },
+    "type": {
+      "type": "string",
+      "enum": ["feature", "bugfix", "chore", "docs"]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["new", "in_progress", "completed", "blocked", "cancelled"]
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1
+    },
+    "current_phase_index": {
+      "type": "integer",
+      "minimum": -1
+    },
+    "current_task_index": {
+      "type": "integer",
+      "minimum": -1
+    },
+    "current_subtask_index": {
+      "type": ["integer", "null"],
+      "minimum": -1
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "phases": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/phase" }
+    }
+  },
+  "$defs": {
+    "phase": {
+      "type": "object",
+      "required": ["name", "status", "tasks"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "status": { "$ref": "#/$defs/task_status" },
+        "tasks": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/task" }
+        }
+      }
+    },
+    "task": {
+      "type": "object",
+      "required": ["name", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "status": { "$ref": "#/$defs/task_status" },
+        "commit_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{0,7}$"
+        },
+        "completed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "retry_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "last_failure_summary": { "type": "string" },
+        "skip_analysis": { "type": "string" },
+        "defer_reason": { "type": "string" },
+        "subtasks": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/task" }
+        }
+      }
+    },
+    "task_status": {
+      "type": "string",
+      "enum": ["pending", "in_progress", "completed", "failed", "skipped", "deferred", "blocked", "cancelled"]
+    }
+  }
+}
