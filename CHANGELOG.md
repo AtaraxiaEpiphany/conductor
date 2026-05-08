@@ -21,6 +21,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`track-state` comma-separated SHA cleanup**: `clean_trailing_markers` now handles `[sha1, sha2, sha3]` format, preventing duplicate markers like `[560e936, 0686ec3] [560e936]` ([dc25272](https://github.com/anthropics/conductor-plugin/commit/dc25272))
 - **`track-state` parent→child status propagation**: When a parent task is completed/skipped/deferred/blocked directly (not via subtask iteration), all non-terminal subtasks now inherit the same status. Fixes `phase-done` incorrectly reporting incomplete phases, which prevented phase checkpoints from triggering ([dc25272](https://github.com/anthropics/conductor-plugin/commit/dc25272))
 - **`track-state sync-plan` subtask inheritance**: Subtasks now inherit parent's completed status during plan rendering when parent is completed, preventing `[x]` parent with `[ ]` subtasks in plan.md ([dc25272](https://github.com/anthropics/conductor-plugin/commit/dc25272))
+- **SessionStart hook context injection**: Changed output format from top-level `additionalContext` to nested `hookSpecificOutput.additionalContext` — the top-level format is parsed but not injected into model context ([aded7ff](https://github.com/anthropics/conductor-plugin/commit/aded7ff))
 
 ### Added
 
