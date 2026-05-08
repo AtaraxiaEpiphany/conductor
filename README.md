@@ -176,8 +176,11 @@ conductor-plugin/
 │   └── track-state                    #   State management CLI (Python 3)
 │       # Commands: next, recover, lock, complete,
 │       #   fail, skip, block, defer, sync-plan,
+│       #   registry-update, start, validate,
 │       #   phase-done, finalize, process-result,
 │       #   init, shas, deferred-report
+├── schemas/                           # JSON Schema definitions
+│   └── track-state.schema.json        #   track-state.json schema (documentation reference)
 ├── output-styles/                     # Output formatting styles
 ├── themes/                            # Color theme definitions
 │
@@ -308,6 +311,7 @@ Tasks in `plan.md` can be annotated with type tags that modify workflow behavior
 |-----|----------|-------------|
 | (none) | **Required** | Standard TDD workflow: Red → Green → Refactor → Coverage → Commit |
 | `[Explore]` | N/A | Read-only code investigation. Dispatched to `conductor:explorer` subagent |
+| `[Manual]` | Skipped | Human verification tasks. Always auto-deferred, verified at track finalization |
 | `[Docs]` | Skipped | Documentation-only changes |
 | `[Config]` | Skipped | Configuration file changes |
 | `[Chore]` | Skipped | Maintenance tasks (dependencies, tooling) |
@@ -383,6 +387,9 @@ track-state <command> <track-dir> [options]
 | `block <p> <t> [<s>] --reason <text>` | Set task to blocked | `{ok}` |
 | `defer <p> <t> [<s>] --reason <text>` | Set task to deferred | `{ok, parent_deferred}` |
 | `sync-plan` | Re-project all markers to plan.md from state | `{synced}` |
+| `registry-update <tracks-md>` | Update track entry in tracks.md based on track-state.json status (handles section and checkbox formats) | `{updated, marker, status}` |
+| `start` | Transition track from `new` to `in_progress` | `{ok, status}` |
+| `validate` | Validate track-state.json structural integrity (no external deps) | `{valid, errors}` |
 | `phase-done <p>` | Check if all tasks in phase are terminal | `{complete, terminal, total}` |
 | `finalize` | Set indices to -1, compute track-level status | `{status}` |
 | `process-result` | Read `.conductor/result.json`, update state + plan + issues.md in one call | `{status, sha, parent_completed, deviations}` or `{status, retry_count, summary}` |
