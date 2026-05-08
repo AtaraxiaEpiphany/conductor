@@ -29,6 +29,7 @@ import json
 import os
 import re
 import sys
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -44,6 +45,12 @@ MARKER_MAP = {
 }
 
 SHA_MARKERS = {"x", "!", ">", "#", "-", "d"}
+
+TERMINAL_STATUSES = {"completed", "skipped", "deferred", "blocked", "cancelled"}
+
+_RE_TRAILING_MARKER = re.compile(
+    r'\s*\[(?:N/A|verified|[0-9a-f]{7}(?:\s*,\s*[0-9a-f]{7})*)\]\s*$'
+)
 
 
 # ── Utilities ─────────────────────────────────────────────────────────
@@ -114,6 +121,37 @@ def conductor_dir(track_dir):
     return d
 
 
+def _propagate_to_subtasks(tgt, status, reason_key, reason_value):
+    """Propagate status to non-terminal subtasks when parent enters terminal state."""
+    if "subtasks" not in tgt:
+        return
+    for sub in tgt["subtasks"]:
+        if sub["status"] not in TERMINAL_STATUSES:
+            sub["status"] = status
+            sub[reason_key] = reason_value
+
+
+def _clean_trailing_markers(text):
+    """Iteratively remove trailing [sha], [sha1,sha2,...], [N/A], [verified] markers."""
+    prev = text
+    while True:
+        cleaned = _RE_TRAILING_MARKER.sub('', prev)
+        if cleaned == prev:
+            return prev
+        prev = cleaned
+
+
+def _is_phase_terminal(phase):
+    """Check if all tasks and subtasks in a phase are in terminal status."""
+    for task in phase.get("tasks", []):
+        if task["status"] not in TERMINAL_STATUSES:
+            return False
+        for sub in task.get("subtasks", []):
+            if sub["status"] not in TERMINAL_STATUSES:
+                return False
+    return True
+
+
 # ── Internal State Operations ────────────────────────────────────────
 # These perform state mutations without printing output.
 # Used by both public commands and process-result.
@@ -167,7 +205,7 @@ def _do_complete(track_dir, p, t, s=None, sha=None):
         # When completing a task directly (no subtask specified),
         # auto-complete all remaining non-terminal subtasks
         for sub in tgt["subtasks"]:
-            if sub["status"] not in ("completed", "skipped", "deferred", "blocked", "cancelled"):
+            if sub["status"] not in TERMINAL_STATUSES:
                 sub["status"] = "completed"
                 sub["commit_sha"] = sha or ""
                 sub["completed_at"] = now_iso()
@@ -204,11 +242,8 @@ def _do_skip(track_dir, p, t, s=None, reason=""):
     tgt["skip_analysis"] = reason
     clean(tgt, {"status", "skip_analysis"})
 
-    if si is None and "subtasks" in tgt:
-        for sub in tgt["subtasks"]:
-            if sub["status"] not in ("completed", "skipped", "deferred", "blocked", "cancelled"):
-                sub["status"] = "skipped"
-                sub["skip_analysis"] = reason
+    if si is None:
+        _propagate_to_subtasks(tgt, "skipped", "skip_analysis", reason)
 
     state["updated_at"] = now_iso()
     save(track_dir, state)
@@ -224,11 +259,8 @@ def _do_block(track_dir, p, t, s=None, reason=""):
     tgt["skip_analysis"] = reason
     clean(tgt, {"status", "skip_analysis"})
 
-    if si is None and "subtasks" in tgt:
-        for sub in tgt["subtasks"]:
-            if sub["status"] not in ("completed", "skipped", "deferred", "blocked", "cancelled"):
-                sub["status"] = "blocked"
-                sub["skip_analysis"] = reason
+    if si is None:
+        _propagate_to_subtasks(tgt, "blocked", "skip_analysis", reason)
 
     state["updated_at"] = now_iso()
     save(track_dir, state)
@@ -252,20 +284,18 @@ def _do_defer(track_dir, p, t, s=None, reason=""):
             parent["defer_reason"] = "All subtasks deferred or completed"
             clean(parent, {"status", "defer_reason"})
             parent_deferred = True
-    elif "subtasks" in tgt:
-        for sub in tgt["subtasks"]:
-            if sub["status"] not in ("completed", "skipped", "deferred", "blocked", "cancelled"):
-                sub["status"] = "deferred"
-                sub["defer_reason"] = reason
+    elif si is None:
+        _propagate_to_subtasks(tgt, "deferred", "defer_reason", reason)
 
     state["updated_at"] = now_iso()
     save(track_dir, state)
     return parent_deferred
 
 
-def _do_sync_plan(track_dir):
+def _do_sync_plan(track_dir, state=None):
     """Sync plan.md markers from state. Returns synced count."""
-    state = load(track_dir)
+    if state is None:
+        state = load(track_dir)
     plan_path = Path(track_dir) / "plan.md"
 
     with open(plan_path) as f:
@@ -294,30 +324,19 @@ def _do_sync_plan(track_dir):
             rest = tm.group(3)
             is_subtask = len(indent) > 0
 
-            # Clean trailing markers: [sha], [sha1,sha2,...], [N/A], [verified]
-            # while preserving [AC-x], [TC-x]
-            # Iteratively remove trailing markers to handle multiple consecutive markers
-            def clean_trailing_markers(text):
-                single_marker = r'\s*\[(?:N/A|verified|[0-9a-f]{7}(?:\s*,\s*[0-9a-f]{7})*)\]\s*$'
-                prev = text
-                while True:
-                    cleaned = re.sub(single_marker, '', prev)
-                    if cleaned == prev:
-                        break
-                    prev = cleaned
-                return prev
-
-            rest_clean = clean_trailing_markers(rest)
+            rest_clean = _clean_trailing_markers(rest)
 
             try:
                 if is_subtask:
                     subtask_idx += 1
                     sub = state["phases"][phase_idx]["tasks"][task_idx]["subtasks"][subtask_idx]
                     parent_task = state["phases"][phase_idx]["tasks"][task_idx]
-                    # If parent is completed, subtasks inherit completed status
-                    if parent_task["status"] in ("completed",):
+                    if parent_task["status"] == "completed":
                         marker = MARKER_MAP["completed"]
-                        sha = parent_task.get("commit_sha", "")
+                        # Show subtask's own SHA only if it differs from parent's
+                        sub_sha = sub.get("commit_sha", "")
+                        parent_sha = parent_task.get("commit_sha", "")
+                        sha = sub_sha if sub_sha and sub_sha != parent_sha else ""
                     else:
                         marker = MARKER_MAP.get(sub["status"], " ")
                         sha = sub.get("commit_sha", "")
@@ -707,33 +726,21 @@ def cmd_start(track_dir):
 
 def _validate_state_consistency(state, errors, warnings):
     """Check semantic consistency within track-state.json."""
-    TERMINAL = {"completed", "skipped", "deferred", "blocked", "cancelled"}
 
     for pi, phase in enumerate(state.get("phases", [])):
         pname = phase.get("name", f"Phase {pi+1}")
         tasks = phase.get("tasks", [])
 
-        # Phase has no tasks
         if not tasks:
             errors.append(f"{pname}: phase has no tasks")
             continue
 
-        # All tasks/subtasks terminal but phase not terminal
-        all_terminal = True
-        for task in tasks:
-            if task["status"] not in TERMINAL:
-                all_terminal = False
-            for sub in task.get("subtasks", []):
-                if sub["status"] not in TERMINAL:
-                    all_terminal = False
-        if all_terminal and phase["status"] not in TERMINAL:
+        all_terminal = _is_phase_terminal(phase)
+        if all_terminal and phase["status"] not in TERMINAL_STATUSES:
             warnings.append(f"{pname}: all tasks terminal but phase status is '{phase['status']}'")
-
-        # Phase terminal but some tasks not
-        if phase["status"] in TERMINAL and not all_terminal:
+        if phase["status"] in TERMINAL_STATUSES and not all_terminal:
             warnings.append(f"{pname}: phase terminal but tasks still in progress")
 
-        # Multiple in_progress tasks in same phase
         in_progress = [t.get("name", f"P{pi}.T{ti}")
                        for ti, t in enumerate(tasks) if t["status"] == "in_progress"]
         if len(in_progress) > 1:
@@ -742,8 +749,7 @@ def _validate_state_consistency(state, errors, warnings):
         for ti, task in enumerate(tasks):
             tname = task.get("name", f"P{pi}.T{ti}")
 
-            # Parent completed but subtasks pending
-            if task["status"] in TERMINAL:
+            if task["status"] in TERMINAL_STATUSES:
                 pending_subs = [s.get("name", f"S{si}")
                                 for si, s in enumerate(task.get("subtasks", []))
                                 if s["status"] in ("pending", "in_progress")]
@@ -752,7 +758,6 @@ def _validate_state_consistency(state, errors, warnings):
                         f"{tname}: parent '{task['status']}' but subtasks still pending: "
                         f"{', '.join(pending_subs)}")
 
-            # Completed task missing SHA
             if task["status"] == "completed" and not task.get("commit_sha"):
                 warnings.append(f"{tname}: completed but no commit_sha")
 
@@ -767,10 +772,7 @@ def _validate_plan_consistency(track_dir, state, errors, warnings):
     with open(plan_path) as f:
         lines = f.readlines()
 
-    TERMINAL = {"completed", "skipped", "deferred", "blocked", "cancelled"}
-
-    # Build plan structure: count tasks/subtasks per phase, detect checkpoint markers
-    plan_phases = []  # list of {heading_has_checkpoint: bool, task_count, subtask_counts}
+    plan_phases = []
     current_phase = None
 
     for line in lines:
@@ -791,7 +793,6 @@ def _validate_plan_consistency(track_dir, state, errors, warnings):
             else:
                 current_phase["tasks"] += 1
 
-    # Cross-check each phase
     for pi, phase in enumerate(state.get("phases", [])):
         pname = phase.get("name", f"Phase {pi+1}")
         tasks = phase.get("tasks", [])
@@ -802,29 +803,20 @@ def _validate_plan_consistency(track_dir, state, errors, warnings):
 
         pp = plan_phases[pi]
 
-        # Count mismatch: tasks
         state_tasks = len(tasks)
         if pp["tasks"] != state_tasks:
             errors.append(f"{pname}: plan.md has {pp['tasks']} tasks, state has {state_tasks}")
 
-        # Count mismatch: subtasks
         state_subs = sum(len(t.get("subtasks", [])) for t in tasks)
         if pp["subtasks"] != state_subs:
             errors.append(f"{pname}: plan.md has {pp['subtasks']} subtasks, state has {state_subs}")
 
-        # Missing checkpoint: all tasks terminal but no checkpoint marker
-        all_terminal = all(
-            t["status"] in TERMINAL and
-            all(s["status"] in TERMINAL for s in t.get("subtasks", []))
-            for t in tasks
-        )
-        if all_terminal and not pp["has_checkpoint"]:
+        if _is_phase_terminal(phase) and not pp["has_checkpoint"]:
             warnings.append(f"{pname}: all tasks complete but no checkpoint in plan.md")
 
 
 def _auto_fix(state):
     """Auto-fix repairable inconsistencies. Returns list of fixes applied."""
-    TERMINAL = {"completed", "skipped", "deferred", "blocked", "cancelled"}
     fixes = []
 
     for pi, phase in enumerate(state.get("phases", [])):
@@ -832,26 +824,17 @@ def _auto_fix(state):
         if not tasks:
             continue
 
-        # Fix: propagate parent status to non-terminal subtasks
         for ti, task in enumerate(tasks):
-            if task["status"] in TERMINAL and "subtasks" in task:
+            if task["status"] in TERMINAL_STATUSES and "subtasks" in task:
                 for sub in task["subtasks"]:
-                    if sub["status"] not in TERMINAL:
+                    if sub["status"] not in TERMINAL_STATUSES:
                         old = sub["status"]
                         sub["status"] = task["status"]
                         fixes.append(
                             f"P{pi}.T{ti}.{sub.get('name', '?')}: "
                             f"subtask '{old}' → '{task['status']}' (parent propagation)")
 
-        # Fix: all tasks terminal but phase not terminal
-        all_terminal = all(
-            t["status"] in TERMINAL and
-            all(s["status"] in TERMINAL for s in t.get("subtasks", []))
-            for t in tasks
-        )
-        if all_terminal and phase["status"] not in TERMINAL:
-            # Pick the most common terminal status among tasks
-            from collections import Counter
+        if _is_phase_terminal(phase) and phase["status"] not in TERMINAL_STATUSES:
             task_statuses = [t["status"] for t in tasks]
             best = Counter(task_statuses).most_common(1)[0][0]
             old = phase["status"]
@@ -944,7 +927,7 @@ def cmd_validate(track_dir, fix=False):
         fixes = _auto_fix(state)
         if fixes:
             save(track_dir, state)
-            _do_sync_plan(track_dir)
+            _do_sync_plan(track_dir, state)
 
     out(dict(valid=len(errors) == 0, errors=errors, warnings=warnings, fixes=fixes))
 
