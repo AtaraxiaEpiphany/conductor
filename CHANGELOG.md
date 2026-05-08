@@ -13,6 +13,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **newTrack commit step**: Added `git commit` after track artifact creation, aligning with `setup`'s behavior ([521f56e](https://github.com/anthropics/conductor-plugin/commit/521f56e))
 - **spec-planner self-discovery**: When `RELATED_DOCS` is not provided by the orchestrator, spec-planner now scans the project for relevant files itself using Glob/Grep, removing the need for the orchestrator to read business documents during context discovery ([521f56e](https://github.com/anthropics/conductor-plugin/commit/521f56e))
 
+### Fixed
+
+- **`track-state` invocation**: Changed `bash` to `python3` in `implement` and `review` SKILLs — the script is Python but was being executed as bash ([be83cdd](https://github.com/anthropics/conductor-plugin/commit/be83cdd))
+
 ### Changed
 
 - **Reference layer inlined**: Replaced `conductor-reference.md` Read call in `new-track` and `setup` SKILLs with inline path resolution rules (~5 lines). Saves one Read call and ~26 lines of context per invocation ([521f56e](https://github.com/anthropics/conductor-plugin/commit/521f56e))
