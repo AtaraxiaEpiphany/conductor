@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 # PostToolUse hook for task-executor (Bash matcher):
-# After any test command runs, verify exit code consistency.
-# Non-blocking — just logs and provides additionalContext on failure.
+# After any test command runs, log and provide additionalContext on failure.
 set -euo pipefail
 
 INPUT=$(cat)
 
 TOOL_INPUT=$(echo "$INPUT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('tool_input',{}).get('command',''))" 2>/dev/null || echo "")
-EXIT_CODE=$(echo "$INPUT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('tool_result',{}).get('exitCode',0))" 2>/dev/null || echo "0")
+TOOL_RESPONSE=$(echo "$INPUT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(json.dumps(d.get('tool_response',{})))" 2>/dev/null || echo "{}")
 
 LOG_DIR="${CLAUDE_PLUGIN_DATA:-${CLAUDE_PLUGIN_ROOT}/.data}/logs"
 mkdir -p "$LOG_DIR"
@@ -22,15 +21,38 @@ esac
 
 if [[ "$IS_TEST" == "1" ]]; then
   TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-  echo "${TIMESTAMP} test_command=\"${TOOL_INPUT}\" exit_code=${EXIT_CODE}" >> "${LOG_DIR}/test-results.log"
+  STDOUT=$(echo "$TOOL_RESPONSE" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('stdout',''))" 2>/dev/null || echo "")
+  STDERR=$(echo "$TOOL_RESPONSE" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('stderr',''))" 2>/dev/null || echo "")
+  INTERRUPTED=$(echo "$TOOL_RESPONSE" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('interrupted',False))" 2>/dev/null || echo "False")
 
-  if [[ "$EXIT_CODE" != "0" ]]; then
-    python3 -c "
-import json
-print(json.dumps({'additionalContext': '[Conductor TDD] Test command exited with code ${EXIT_CODE}. If this is the Red phase (Step 3), failure is expected. If this is the Green phase (Step 4), fix the implementation.'}))
-"
-    exit 0
+  LOG_MSG="${TIMESTAMP} test_command=\"${TOOL_INPUT}\""
+
+  # Detect failure from stderr content or interruption
+  HAS_FAILURE=0
+  if [[ "$INTERRUPTED" == "True" ]]; then
+    HAS_FAILURE=1
+    LOG_MSG="${LOG_MSG} result=interrupted"
+  elif echo "$STDERR" | grep -qiE 'fail|error|failed|FAILURES|FAILED'; then
+    HAS_FAILURE=1
+    LOG_MSG="${LOG_MSG} result=failed"
+  else
+    LOG_MSG="${LOG_MSG} result=passed"
   fi
-fi
 
-echo '{}'
+  echo "$LOG_MSG" >> "${LOG_DIR}/test-results.log"
+
+  if [[ "$HAS_FAILURE" == "1" ]]; then
+    python3 -c "
+import json, sys
+content = sys.stdin.read()
+print(json.dumps({
+    'hookSpecificOutput': {
+        'hookEventName': 'PostToolUse',
+        'additionalContext': content
+    }
+}))
+" <<< "[Conductor TDD] Test command produced errors. If this is the Red phase (Step 3), failure is expected. If this is the Green phase (Step 4), fix the implementation."
+  fi
+else
+  echo '{}'
+fi

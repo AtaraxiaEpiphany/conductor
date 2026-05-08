@@ -56,10 +56,17 @@ except Exception:
 fi
 
 if [[ -n "$ISSUES" ]]; then
+  MSG="${ISSUES}Consider running /conductor:implement to recover state, or /conductor:status to inspect."
   python3 -c "
-import json
-print(json.dumps({'additionalContext': '''${ISSUES}Consider running /conductor:implement to recover state, or /conductor:status to inspect.'''}))
-"
+import json, sys
+content = sys.stdin.read()
+print(json.dumps({
+    'hookSpecificOutput': {
+        'hookEventName': 'Stop',
+        'additionalContext': content
+    }
+}))
+" <<< "$MSG"
 else
   echo '{}'
 fi

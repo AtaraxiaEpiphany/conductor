@@ -38,9 +38,15 @@ esac
 
 if [[ -n "$REMINDER" ]]; then
   python3 -c "
-import json
-print(json.dumps({'additionalContext': '''$REMINDER'''}))
-"
+import json, sys
+content = sys.stdin.read()
+print(json.dumps({
+    'hookSpecificOutput': {
+        'hookEventName': 'SubagentStart',
+        'additionalContext': content
+    }
+}))
+" <<< "$REMINDER"
 else
   echo '{}'
 fi
