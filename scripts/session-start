@@ -1,21 +1,26 @@
 #!/usr/bin/env bash
-# SessionStart hook: inject conductor-core.md as additionalContext
-# Only the Core layer is injected at session start to minimize context footprint.
-# Orchestration and Reference layers are loaded on-demand by individual skills.
+# SessionStart hook: inject conductor-core.md into session context.
 set -euo pipefail
 
 INSTRUCTIONS="${CLAUDE_PLUGIN_ROOT}/conductor-core.md"
 
 if [[ ! -f "$INSTRUCTIONS" ]]; then
-  echo '{"additionalContext":""}'
+  echo '{}'
   exit 0
 fi
 
 CONTENT=$(cat "$INSTRUCTIONS")
 
 # Use python for safe JSON encoding (handles quotes, newlines, etc.)
+# Claude Code requires hookSpecificOutput.additionalContext (nested format),
+# NOT top-level additionalContext.
 python3 -c "
 import json, sys
 content = sys.stdin.read()
-print(json.dumps({'additionalContext': content}))
+print(json.dumps({
+    'hookSpecificOutput': {
+        'hookEventName': 'SessionStart',
+        'additionalContext': content
+    }
+}))
 " <<< "$CONTENT"
