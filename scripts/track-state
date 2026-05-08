@@ -195,7 +195,7 @@ def _do_complete(track_dir, p, t, s=None, sha=None):
     parent_completed = False
     if si is not None:
         parent = state["phases"][pi]["tasks"][ti]
-        if all(sub["status"] in ("completed", "skipped", "deferred") for sub in parent.get("subtasks", [])):
+        if all(sub["status"] in TERMINAL_STATUSES for sub in parent.get("subtasks", [])):
             parent["status"] = "completed"
             parent["commit_sha"] = sha or ""
             parent["completed_at"] = now_iso()
@@ -279,7 +279,7 @@ def _do_defer(track_dir, p, t, s=None, reason=""):
     parent_deferred = False
     if si is not None:
         parent = state["phases"][pi]["tasks"][ti]
-        if all(sub["status"] in ("completed", "skipped", "deferred") for sub in parent.get("subtasks", [])):
+        if all(sub["status"] in TERMINAL_STATUSES for sub in parent.get("subtasks", [])):
             parent["status"] = "deferred"
             parent["defer_reason"] = "All subtasks deferred or completed"
             clean(parent, {"status", "defer_reason"})
@@ -318,7 +318,7 @@ def _do_sync_plan(track_dir, state=None):
             result.append(stripped)
             continue
 
-        tm = re.match(r"^(\s*)-\s+\[([ x~!>#\-])\]\s+(.*)", stripped)
+        tm = re.match(r"^(\s*)-\s+\[([ x~!>#\-d])\]\s+(.*)", stripped)
         if tm:
             indent = tm.group(1)
             rest = tm.group(3)
@@ -785,7 +785,7 @@ def _validate_plan_consistency(track_dir, state, errors, warnings):
             plan_phases.append(current_phase)
             continue
 
-        tm = re.match(r"^(\s*)-\s+\[([ x~!>#\-])\]\s+", stripped)
+        tm = re.match(r"^(\s*)-\s+\[([ x~!>#\-d])\]\s+", stripped)
         if tm and current_phase is not None:
             indent = tm.group(1)
             if len(indent) > 0:

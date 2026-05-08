@@ -36,6 +36,7 @@ CRITICAL: Validate every tool call. On failure → halt → report FAILURE.
 | `TRACK_DIR` | Absolute path to track directory |
 | `PHASE` | Phase index |
 | `TASK` | Task index within phase |
+| `SUBTASK` | Subtask index within task, or `null` for flat tasks |
 | `NAME` | Human-readable task name |
 | `ATTEMPT` | Current attempt (1=fresh, 2+=retry) |
 | `MAX_RETRIES` | Maximum retries |
@@ -159,7 +160,7 @@ Write to `{TRACK_DIR}/.conductor/result.json`:
   "spec_deviation_detail": [],
   "phase": PHASE,
   "task": TASK,
-  "subtask": null,
+  "subtask": SUBTASK,
   "task_name": "NAME",
   "attempt": ATTEMPT,
   "max_retries": MAX_RETRIES,
@@ -181,7 +182,7 @@ Write to `{TRACK_DIR}/.conductor/result.json`:
   },
   "phase": PHASE,
   "task": TASK,
-  "subtask": null,
+  "subtask": SUBTASK,
   "task_name": "NAME",
   "attempt": ATTEMPT,
   "max_retries": MAX_RETRIES,

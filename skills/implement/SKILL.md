@@ -141,6 +141,7 @@ Emit: `DEFERRED: P{p}.T{t} '<name>'` → **Section 4.6**.
 TRACK_DIR={track_dir}
 PHASE={phase}
 TASK={task}
+SUBTASK={subtask}
 NAME={name}
 ATTEMPT={attempt}
 MAX_RETRIES={max_retries}
@@ -188,7 +189,8 @@ Dispatch `conductor:phase-checker`. Prompt:
 
 ```
 TRACK_DIR={track_dir}
-PHASE={phase}
+TRACK_ID={track_id}
+PHASE_INDEX={phase}
 EXECUTION_MODE={mode}
 ```
 

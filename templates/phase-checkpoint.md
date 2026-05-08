@@ -56,9 +56,9 @@
     -   **Step 7.2: Attach Note:** Use the `git notes` command and the full commit hash from the previous step to attach the full report to the checkpoint commit.
 
 8.  **Get and Record Phase Checkpoint SHA:**
-    -   **Step 8.1: Get Commit Hash:** Obtain the hash of the *just-created checkpoint commit* (`git log -1 --format="%H"`).
-    -   **Step 8.2: Update Plan:** Read `plan.md`, find the heading for the completed phase, and append the first 7 characters of the commit hash in the format `[checkpoint: <sha>]`.
-    -   **Step 8.3: Write Plan:** Write the updated content back to `plan.md`.
+    -   **Step 8.1: Get Commit Hash:** Obtain the 7-char short hash of the *just-created checkpoint commit* (`git log -1 --format="%h"`).
+    -   **Step 8.2: Update Plan:** Run `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/track-state" add-checkpoint {TRACK_DIR} {PHASE_INDEX} {sha}` to update the phase heading in `plan.md` with `[checkpoint: <sha>]`.
+    -   **Step 8.3: Verify:** Confirm the command output contains `ok: true`.
 
 9.  **Commit Plan Update:**
     - **Action:** Stage the modified `plan.md` file.

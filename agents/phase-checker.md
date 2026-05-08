@@ -34,9 +34,8 @@ CRITICAL: You must validate the success of every tool call. If any tool call fai
 | Parameter         | Description                                                         |
 | ----------------- | ------------------------------------------------------------------- |
 | `TRACK_DIR`       | Absolute path to the track directory                                |
-| `TRACK_ID`        | Track identifier                                                    |
+| `TRACK_ID`        | Track identifier (from dispatch or derivable from track-state.json) |
 | `PHASE_INDEX`     | Phase index (0-based)                                               |
-| `PHASE_NAME`      | Human-readable phase name                                           |
 | `EXECUTION_MODE`  | `"continuous"` (default) or `"interactive"`                         |
 
 ---
@@ -131,7 +130,7 @@ Present the manual verification plan to the user via `AskUserQuestion`:
 ### Step 8: Update Plan
 
 1. Get the 7-char short SHA: `git log -1 --format="%h"`
-2. Run: `track-state add-checkpoint {TRACK_DIR} {PHASE_INDEX} {sha}`
+2. Run: `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/track-state" add-checkpoint {TRACK_DIR} {PHASE_INDEX} {sha}`
 3. Verify the command succeeded (check JSON output contains `ok: true`).
 
 ### Step 9: Commit Plan Update
