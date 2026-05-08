@@ -389,6 +389,10 @@ track-state <command> <track-dir> [options]
 
 ---
 
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for a complete history of changes.
+
 ## License
 
 MIT
