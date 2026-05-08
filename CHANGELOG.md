@@ -8,17 +8,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- **`spec-reviewer` subagent**: Interactive review of spec.md and plan.md in isolated context. Presents summaries, handles revisions, returns compact result. Keeps full file contents out of the orchestrator context, saving ~200-500 lines of main session context per track creation
-- **`track-state init` command**: One-call track initialization — creates `track-state.json` and `index.md` from PLAN_STRUCTURE. Eliminates duplicate JSON generation logic in `new-track` and `setup` SKILLs
-- **newTrack commit step**: Added `git commit` after track artifact creation, aligning with `setup`'s behavior
-- **spec-planner self-discovery**: When `RELATED_DOCS` is not provided by the orchestrator, spec-planner now scans the project for relevant files itself using Glob/Grep, removing the need for the orchestrator to read business documents during context discovery
+- **`spec-reviewer` subagent**: Interactive review of spec.md and plan.md in isolated context. Presents summaries, handles revisions, returns compact result. Keeps full file contents out of the orchestrator context, saving ~200-500 lines of main session context per track creation ([521f56e](https://github.com/anthropics/conductor-plugin/commit/521f56e))
+- **`track-state init` command**: One-call track initialization — creates `track-state.json` and `index.md` from PLAN_STRUCTURE. Eliminates duplicate JSON generation logic in `new-track` and `setup` SKILLs ([521f56e](https://github.com/anthropics/conductor-plugin/commit/521f56e))
+- **newTrack commit step**: Added `git commit` after track artifact creation, aligning with `setup`'s behavior ([521f56e](https://github.com/anthropics/conductor-plugin/commit/521f56e))
+- **spec-planner self-discovery**: When `RELATED_DOCS` is not provided by the orchestrator, spec-planner now scans the project for relevant files itself using Glob/Grep, removing the need for the orchestrator to read business documents during context discovery ([521f56e](https://github.com/anthropics/conductor-plugin/commit/521f56e))
 
 ### Changed
 
-- **Reference layer inlined**: Replaced `conductor-reference.md` Read call in `new-track` and `setup` SKILLs with inline path resolution rules (~5 lines). Saves one Read call and ~26 lines of context per invocation
-- **Context discovery simplified**: `new-track` Section 2.2 now collects file paths only (no content reads). All business document content is loaded by subagents. Estimated saving: 50-200 lines of orchestrator context per track creation
-- **Review delegated to subagent**: `new-track` and `setup` now dispatch `spec-reviewer` instead of reading spec.md/plan.md directly. Full file contents never enter the orchestrator context
-- **State artifact creation via CLI**: Both `new-track` and `setup` now use `track-state init` instead of manually building `track-state.json` JSON. Removes ~20 lines of duplicate schema definitions across both SKILLs
+- **Reference layer inlined**: Replaced `conductor-reference.md` Read call in `new-track` and `setup` SKILLs with inline path resolution rules (~5 lines). Saves one Read call and ~26 lines of context per invocation ([521f56e](https://github.com/anthropics/conductor-plugin/commit/521f56e))
+- **Context discovery simplified**: `new-track` Section 2.2 now collects file paths only (no content reads). All business document content is loaded by subagents. Estimated saving: 50-200 lines of orchestrator context per track creation ([521f56e](https://github.com/anthropics/conductor-plugin/commit/521f56e))
+- **Review delegated to subagent**: `new-track` and `setup` now dispatch `spec-reviewer` instead of reading spec.md/plan.md directly. Full file contents never enter the orchestrator context ([521f56e](https://github.com/anthropics/conductor-plugin/commit/521f56e))
+- **State artifact creation via CLI**: Both `new-track` and `setup` now use `track-state init` instead of manually building `track-state.json` JSON. Removes ~20 lines of duplicate schema definitions across both SKILLs ([521f56e](https://github.com/anthropics/conductor-plugin/commit/521f56e))
 
 ### Added (Previous)
 
