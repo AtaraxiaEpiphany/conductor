@@ -33,7 +33,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Manual task auto-defer**: `[Manual]` tasks now always auto-defer regardless of execution mode. Removed the interactive/continuous mode split that caused the orchestrator to ask the user for every manual task instead of deferring ([580d729](https://github.com/anthropics/conductor-plugin/commit/580d729))
+- **Track registry sync**: `tracks.md` now stays in sync with `track-state.json`. New `track-state start` and `track-state registry-update` commands ensure track status is updated both at activation (`[ ]` → `[~]`) and finalization (`[~]` → `[x]`) ([580d729](https://github.com/anthropics/conductor-plugin/commit/580d729))
 - **Path Resolution**: Fixed `project-index.md` paths from `./` to `conductor/` for correct CWD resolution; added path resolution notes to `track-index.md` ([7563d4a](https://github.com/anthropics/conductor-plugin/commit/7563d4a))
+
+### Added
+
+- **`track-state start` command**: Transitions a track from `new` to `in_progress` status ([580d729](https://github.com/anthropics/conductor-plugin/commit/580d729))
+- **`track-state registry-update` command**: Syncs track status from `track-state.json` to `tracks.md`. Supports both section-based (`**Status:**` field) and checkbox (`[marker]`) formats, plus table row updates ([580d729](https://github.com/anthropics/conductor-plugin/commit/580d729))
+- **`track-state validate` command**: Structural validation of `track-state.json` — checks required fields, enum values, index ranges, and task statuses. Zero external dependencies ([580d729](https://github.com/anthropics/conductor-plugin/commit/580d729))
+- **JSON Schema for track-state.json**: Formal schema at `schemas/track-state.schema.json` for documentation and external tooling reference ([580d729](https://github.com/anthropics/conductor-plugin/commit/580d729))
 
 ### Removed
 
