@@ -18,6 +18,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`track-state` invocation**: Changed `bash` to `python3` in `implement` and `review` SKILLs — the script is Python but was being executed as bash ([be83cdd](https://github.com/anthropics/conductor-plugin/commit/be83cdd))
 - **`track-state sync-plan` marker cleanup**: Fixed regex pattern to correctly remove duplicate trailing markers (`[sha] [sha]`, `[N/A] [N/A]`, `[verified]`) while preserving inline markers like `<!-- AC-1 -->` and `[TC-x]`. Changed from single-pass regex to iterative cleaning that handles multiple consecutive markers. Also added `track-state add-checkpoint <phase> <sha>` command for manually adding phase checkpoint SHAs to plan.md
 - **`track-state` sha validation**: Added strict 7-char hex validation when appending commit SHAs, preventing empty `[]` or invalid markers from being added to plan.md
+- **`track-state` comma-separated SHA cleanup**: `clean_trailing_markers` now handles `[sha1, sha2, sha3]` format, preventing duplicate markers like `[560e936, 0686ec3] [560e936]` ([dc25272](https://github.com/anthropics/conductor-plugin/commit/dc25272))
+- **`track-state` parent→child status propagation**: When a parent task is completed/skipped/deferred/blocked directly (not via subtask iteration), all non-terminal subtasks now inherit the same status. Fixes `phase-done` incorrectly reporting incomplete phases, which prevented phase checkpoints from triggering ([dc25272](https://github.com/anthropics/conductor-plugin/commit/dc25272))
+- **`track-state sync-plan` subtask inheritance**: Subtasks now inherit parent's completed status during plan rendering when parent is completed, preventing `[x]` parent with `[ ]` subtasks in plan.md ([dc25272](https://github.com/anthropics/conductor-plugin/commit/dc25272))
+
+### Added
+
+- **`track-state validate` semantic checks**: Extended validate command with two new validation layers ([c0bef59](https://github.com/anthropics/conductor-plugin/commit/c0bef59))
+  - **State consistency**: parent-completed with pending subtasks, phase/task status mismatches, empty phases, completed tasks missing commit_sha, multiple in_progress tasks in same phase
+  - **Plan cross-checks**: missing checkpoint markers for completed phases, task/subtask count mismatches between plan.md and track-state.json, missing phase headings
+  - Output now includes `warnings` (non-fatal) alongside `errors` (fatal)
 
 ### Changed
 
