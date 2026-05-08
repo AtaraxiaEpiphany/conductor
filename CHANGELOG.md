@@ -28,6 +28,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - **State consistency**: parent-completed with pending subtasks, phase/task status mismatches, empty phases, completed tasks missing commit_sha, multiple in_progress tasks in same phase
   - **Plan cross-checks**: missing checkpoint markers for completed phases, task/subtask count mismatches between plan.md and track-state.json, missing phase headings
   - Output now includes `warnings` (non-fatal) alongside `errors` (fatal)
+- **`track-state validate --fix`**: Auto-repair flag for validate command. Propagates parent status to orphaned subtasks and syncs phase status when all tasks are terminal. `implement` skill now retries validation with `--fix` before halting ([d35d1d6](https://github.com/anthropics/conductor-plugin/commit/d35d1d6))
+- **`implement` pre-dispatch validation**: Section 3.0 now runs `track-state validate` before entering the dispatch loop, catching state inconsistencies early ([d35d1d6](https://github.com/anthropics/conductor-plugin/commit/d35d1d6))
 
 ### Changed
 

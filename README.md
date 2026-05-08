@@ -389,7 +389,7 @@ track-state <command> <track-dir> [options]
 | `sync-plan` | Re-project all markers to plan.md from state | `{synced}` |
 | `registry-update <tracks-md>` | Update track entry in tracks.md based on track-state.json status (handles section and checkbox formats) | `{updated, marker, status}` |
 | `start` | Transition track from `new` to `in_progress` | `{ok, status}` |
-| `validate` | Validate track-state.json structural + semantic integrity and cross-check plan.md consistency (no external deps) | `{valid, errors, warnings}` |
+| `validate [--fix]` | Validate track-state.json structural + semantic integrity and cross-check plan.md consistency. `--fix` auto-repairs: parent→subtask status propagation, phase status sync | `{valid, errors, warnings, fixes}` |
 | `phase-done <p>` | Check if all tasks in phase are terminal | `{complete, terminal, total}` |
 | `add-checkpoint <p> <sha>` | Add or update checkpoint SHA for a phase in plan.md | `{ok, phase, sha}` |
 | `finalize` | Set indices to -1, compute track-level status | `{status}` |
