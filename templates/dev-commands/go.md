@@ -1,5 +1,11 @@
 ## Development Commands (Go)
 
+### Environment
+```bash
+export GOCACHE="/tmp/.go-build-cache"
+```
+> Redirects Go build cache to `/tmp/`. The test binary cache (`go test -c`) is also stored here.
+
 ### Setup
 ```bash
 go mod tidy

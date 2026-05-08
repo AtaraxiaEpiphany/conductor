@@ -29,7 +29,7 @@
 
 1. **Select Task** – per the **Task Selection Protocol** above.
 2. **Mark In Progress** – change `[ ]` to `[~]` in `plan.md`.
-3. **Write Failing Tests (Red)** – create test file, run it, **confirm failure**; show the failing output.
+3. **Write Failing Tests (Red)** – create test file in the project's designated test directory (typically `tests/`), following the naming and placement conventions in the loaded code styleguide. Run it, **confirm failure**; show the failing output.
 4. **Implement to Pass Tests (Green)** – write **minimal** code to make the tests pass; confirm pass.
 5. **Refactor (optional)** – improve code under the safety of passing tests.
 6. **Verify Coverage** – run coverage tool, **must be >80%**. If not, add tests until the threshold is met. **Do not commit if coverage is below 80%**.

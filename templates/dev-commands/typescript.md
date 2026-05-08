@@ -1,5 +1,11 @@
 ## Development Commands (TypeScript)
 
+### Environment
+```bash
+export NODE_OPTIONS="--max-old-space-size=4096"
+```
+> Keep build/test artifacts out of source: add `coverage/`, `.nyc_output/`, and `*.tsbuildinfo` to `.gitignore`.
+
 ### Setup
 ```bash
 npm install

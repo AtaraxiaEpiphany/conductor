@@ -230,6 +230,10 @@ This guide summarizes key recommendations from the official Effective Dart docum
 - **AVOID** defining custom equality for mutable classes.
 - **DON'T** make the parameter to `==` nullable.
 
+## 5. Testing
+
+Follow the project's test file placement and naming conventions defined in `conductor/workflow/testing/strategy.md`.
+
 _Sources:_
 
 - [Effective Dart: Style](https://dart.dev/effective-dart/style)

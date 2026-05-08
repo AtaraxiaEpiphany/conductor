@@ -45,4 +45,8 @@ This document summarizes key rules and best practices from the official "Effecti
 - **Explicit Error Handling:** Do not discard errors with the blank identifier (`_`). Check for errors explicitly.
 - **`panic`:** Reserved for truly exceptional, unrecoverable situations. Generally, libraries should not panic.
 
+## 9. Testing
+
+Follow the project's test file placement and naming conventions defined in `conductor/workflow/testing/strategy.md`.
+
 *Source: [Effective Go](https://go.dev/doc/effective_go)*

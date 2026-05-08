@@ -1,5 +1,11 @@
 ## Development Commands (JavaScript)
 
+### Environment
+```bash
+export NODE_OPTIONS="--max-old-space-size=4096"
+```
+> Keep test artifacts and coverage reports out of source: add `coverage/` and `.nyc_output/` to `.gitignore`.
+
 ### Setup
 ```bash
 npm install

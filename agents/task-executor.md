@@ -64,6 +64,7 @@ Read `{TRACK_DIR}/spec.md`. Using AC IDs from Layer 1:
 ### Layer 3: Workflow + Style (READ BEFORE Step 3)
 
 Read `conductor/workflow/task-workflow.md` — Steps 3-9 section only (skip Steps 1-2, 10-11).
+Read `conductor/workflow/testing/strategy.md` — test file placement policy and naming conventions.
 Read the relevant style guide from `conductor/workflow/code-styleguides/`.
 
 ### Layer 3.R: Retry Context (ONLY if IS_RETRY=true)

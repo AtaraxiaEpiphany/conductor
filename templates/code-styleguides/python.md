@@ -32,6 +32,10 @@ This document summarizes key rules and best practices from the Google Python Sty
 ## 4. Main
 - All executable files should have a `main()` function that contains the main logic, called from a `if __name__ == '__main__':` block.
 
+## 5. Testing
+
+Follow the project's test file placement and naming conventions defined in `conductor/workflow/testing/strategy.md`.
+
 **BE CONSISTENT.** When editing code, match the existing style.
 
 *Source: [Google Python Style Guide](https://google.github.io/styleguide/pyguide.html)*

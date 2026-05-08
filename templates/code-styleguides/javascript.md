@@ -48,4 +48,8 @@ This document summarizes key rules and best practices from the Google JavaScript
 - Use `@param`, `@return`, `@override`, `@deprecated`.
 - Type annotations are enclosed in braces (e.g., `/** @param {string} userName */`).
 
+## 8. Testing
+
+Follow the project's test file placement and naming conventions defined in `conductor/workflow/testing/strategy.md`.
+
 *Source: [Google JavaScript Style Guide](https://google.github.io/styleguide/jsguide.html)*

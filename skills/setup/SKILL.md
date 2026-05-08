@@ -73,8 +73,9 @@ Save state: `2.3_tech_stack_styleguides`.
 1. Copy `${CLAUDE_PLUGIN_ROOT}/templates/template.md` → `conductor/workflow/template.md`
 2. Inject dev commands: for each language, append `${CLAUDE_PLUGIN_ROOT}/templates/dev-commands/<lang>.md` into the `## Development Commands` section.
 3. Copy `task-workflow.md` and `phase-checkpoint.md` from templates.
-4. Generate `conductor/workflow/index.md` listing all created files.
-5. Verify all referenced files exist.
+4. **Testing strategy:** Copy `${CLAUDE_PLUGIN_ROOT}/templates/testing/strategy.md` → `conductor/workflow/testing/strategy.md`. Replace `{TEST_ROOT}` with the detected test directory (scan project for `tests/`, `__tests__/`, `test/`; default: `tests/`).
+5. Generate `conductor/workflow/index.md` listing all created files.
+6. Verify all referenced files exist.
 Save state: `2.4_workflow`.
 
 ### 2.5 Finalization

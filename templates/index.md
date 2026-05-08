@@ -9,6 +9,7 @@ Table of contents for all workflow resources. This file is the single entry poin
 | Workflow Template | [template.md](./template.md) | Full workflow: guiding principles, task workflow, quality gates, commit guidelines |
 | Task Workflow | [task-workflow.md](./task-workflow.md) | 11-step standard task workflow with task selection protocol |
 | Phase Checkpoint | [phase-checkpoint.md](./phase-checkpoint.md) | Phase completion verification and checkpointing protocol |
+| Testing Strategy | [testing/strategy.md](./testing/strategy.md) | Test file placement policy, naming conventions, coverage thresholds |
 
 ## Code Style Guides
 

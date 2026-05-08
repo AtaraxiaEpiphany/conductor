@@ -7,7 +7,7 @@ allowed-tools: Read, Grep, Glob
 model: haiku
 ---
 
-# Conductor Status V2
+# Conductor Status
 
 ## 1.0 SYSTEM DIRECTIVE
 

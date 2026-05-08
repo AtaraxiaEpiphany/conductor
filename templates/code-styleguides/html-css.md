@@ -33,7 +33,11 @@ This document summarizes key rules and best practices from the Google HTML/CSS S
 - **Hexadecimal Notation:** Use 3-character hex notation where possible (e.g., `#fff`).
 - **`!important`:** Avoid using `!important`.
 
-## 5. CSS Formatting Rules
+## 5. Testing
+
+Follow the project's test file placement and naming conventions defined in `conductor/workflow/testing/strategy.md`.
+
+## 6. CSS Formatting Rules
 - **Declaration Order:** Alphabetize declarations within a rule.
 - **Indentation:** Indent all block content.
 - **Semicolons:** Use a semicolon after every declaration.

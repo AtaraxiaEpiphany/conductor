@@ -110,4 +110,8 @@
 
 **BE CONSISTENT.** Follow existing code style.
 
+## 9. Testing
+
+Follow the project's test file placement and naming conventions defined in `conductor/workflow/testing/strategy.md`.
+
 *Source: [Google C++ Style Guide](https://google.github.io/styleguide/cppguide.html)*

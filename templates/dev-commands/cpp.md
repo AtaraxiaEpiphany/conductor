@@ -1,5 +1,11 @@
 ## Development Commands (C++)
 
+### Environment
+```bash
+export CMAKE_BUILD_DIR="build"
+```
+> Keep build artifacts isolated in the `build/` directory. Never compile in-source. Add `build/` to `.gitignore`.
+
 ### Setup
 ```bash
 cmake -B build && cmake --build build

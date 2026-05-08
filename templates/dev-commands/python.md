@@ -1,5 +1,11 @@
 ## Development Commands (Python)
 
+### Environment
+```bash
+export PYTHONPYCACHEPREFIX="/tmp/.pycache_$(pwd)"
+```
+> Redirects all `__pycache__/` to `/tmp/` to keep the project tree clean during TDD cycles.
+
 ### Setup
 ```bash
 pip install -e ".[dev]"

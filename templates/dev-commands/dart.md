@@ -1,5 +1,11 @@
 ## Development Commands (Dart)
 
+### Environment
+```bash
+export PUB_CACHE="${HOME}/.pub-cache"
+```
+> Keep `.dart_tool/` and `build/` out of version control. Add both to `.gitignore`.
+
 ### Setup
 ```bash
 dart pub get

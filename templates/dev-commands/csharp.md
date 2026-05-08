@@ -1,5 +1,11 @@
 ## Development Commands (C#)
 
+### Environment
+```bash
+export DOTNET_BUILD_OUTPUTS_DIR="/tmp/.dotnet-build"
+```
+> Keep `bin/` and `obj/` artifacts isolated. Add both to `.gitignore`.
+
 ### Setup
 ```bash
 dotnet restore

@@ -112,4 +112,8 @@ Class member ordering:
 
 **BE CONSISTENT.** When editing code, follow the existing style in the codebase.
 
+## 8. Testing
+
+Follow the project's test file placement and naming conventions defined in `conductor/workflow/testing/strategy.md`.
+
 *Source: [Google C# Style Guide](https://google.github.io/styleguide/csharp-style.html)*
