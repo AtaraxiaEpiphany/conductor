@@ -8,6 +8,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Testing Placement Strategy**: Language-specific test file placement policies, naming conventions, coverage thresholds, and cache management via `templates/testing/strategy.md` ([7563d4a](https://github.com/anthropics/conductor-plugin/commit/7563d4a))
+  - `testing/strategy.md` template: test directory conventions for JavaScript, TypeScript, Python, Go, C++, C#, and Dart with naming patterns and coverage thresholds
+  - Environment sections in all 7 dev-command templates for cache/artifact directory redirection
+  - Testing references in all 9 code-styleguides linking to `testing/strategy.md`
+  - `task-executor` Layer 3 updated to load `testing/strategy.md` before Step 3
+  - `task-workflow.md` Step 3 enhanced with explicit test directory guidance
+  - Setup skill updated to deploy testing strategy with `test_root` detection
+  - Testing strategy entry added to workflow index
+
+### Fixed
+
+- **Path Resolution**: Fixed `project-index.md` paths from `./` to `conductor/` for correct CWD resolution; added path resolution notes to `track-index.md` ([7563d4a](https://github.com/anthropics/conductor-plugin/commit/7563d4a))
+
+### Removed
+
+- **Stale V2 Tags**: Removed stale V2 tags from `status` and `revert` skills ([7563d4a](https://github.com/anthropics/conductor-plugin/commit/7563d4a))
+
+---
+
+## [0.1.1] - 2026-05-08
+
+### Added
+
 - **Hooks ↔ Skills ↔ Subagents Integration**: Cross-cutting lifecycle monitoring connecting all three plugin components ([83834b3](https://github.com/anthropics/conductor-plugin/commit/83834b3))
   - `SubagentStart` hook in `hooks.json`: injects role-specific execution reminders (TDD protocol, read-only constraints, result format requirements) into every subagent at dispatch time
   - `SubagentStop` hook in `hooks.json`: async logging of subagent completions to `logs/subagent-lifecycle.log`
@@ -123,5 +146,6 @@ Initial release of the Conductor plugin — a Spec-Driven Development orchestrat
 - **Old Plugin Config**: Removed plugin config files, keeping only the references directory for documentation ([214335d](https://github.com/anthropics/conductor-plugin/commit/214335d))
 - **Conductor- Prefix**: Removed redundant `conductor-` prefix from skill directory names and agent filenames for cleaner filesystem layout. Namespaced `conductor:` prefix in subagent frontmatter remains ([2041025](https://github.com/anthropics/conductor-plugin/commit/2041025), [7777fd0](https://github.com/anthropics/conductor-plugin/commit/7777fd0), [ce756d5](https://github.com/anthropics/conductor-plugin/commit/ce756d5))
 
-[Unreleased]: https://github.com/anthropics/conductor-plugin/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/anthropics/conductor-plugin/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/anthropics/conductor-plugin/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/anthropics/conductor-plugin/releases/tag/v0.1.0

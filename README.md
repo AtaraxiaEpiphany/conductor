@@ -184,6 +184,8 @@ conductor-plugin/
 │   ├── phase-checkpoint.md            #   Phase verification protocol
 │   ├── index.md                       #   Workflow index
 │   ├── dev-commands/                  #   Development command templates
+│   ├── testing/
+│   │   └── strategy.md               #   Test placement & naming conventions
 │   └── code-styleguides/              #   Language-specific style guides
 │       ├── general.md
 │       ├── javascript.md
@@ -219,6 +221,7 @@ your-project/
 │   │   ├── template.md                # Full workflow template
 │   │   ├── task-workflow.md           # 11-step task workflow
 │   │   ├── phase-checkpoint.md        # Phase verification protocol
+│   │   ├── testing/strategy.md        # Test placement & naming conventions
 │   │   └── code-styleguides/          # Selected language guides
 │   ├── tracks.md                      # Tracks registry
 │   └── tracks/
