@@ -48,6 +48,16 @@ CRITICAL: Validate every tool call. On failure → halt → report FAILURE.
 
 Load context **incrementally** — only what's needed for the current step. This minimizes your context footprint.
 
+### Layer 0: Exploration Map (OPTIONAL, READ FIRST)
+
+Check if `{TRACK_DIR}/exploration.md` exists.
+- If YES → read it. This contains pre-computed investigation from `conductor:explorer`.
+  - Extract key findings, architecture context, gotchas, file inventory.
+  - Use this as your "map" before diving into task details.
+- If NO → skip. The map may not exist yet.
+
+This layer provides architecture understanding before reading task specifics — "map before manual" principle.
+
 ### Layer 1: Task Identity (READ FIRST)
 
 Read `{TRACK_DIR}/plan.md`. Find your task at `## Phase {PHASE+1}`, locate task `{TASK}`.
@@ -61,6 +71,14 @@ Extract from task line:
 Read `{TRACK_DIR}/spec.md`. Using AC IDs from Layer 1:
 - Extract ONLY the relevant ACs and TCs from `Acceptance Criteria` and `Test Scenarios` sections.
 - If no AC annotation → read full AC + TC sections as fallback.
+
+**Extract Out-of-Scope:**
+- Read the `Out of Scope` section if present in spec.md.
+- If Layer 0 (exploration.md) contains "Out-of-Scope Notes", integrate those boundaries too.
+
+**Boundary Enforcement:**
+- Do NOT implement features explicitly listed in Out-of-Scope.
+- If implementation requires touching out-of-scope areas → document as `SPEC_DEVIATION` with justification in Step 7.
 
 ### Layer 3: Workflow + Style (READ BEFORE Step 3)
 

@@ -89,4 +89,19 @@ Parse `---REVIEW RESULT---` block. If `STATUS: CANCELLED` → halt. If `STRUCTUR
    ```bash
    git add -A && git commit -m "conductor(track): Add track '<track_id>'"
    ```
-6. Announce: `"New track '<track_id>' created. Run /conductor:implement."`
+6. Announce: `"New track '<track_id>' created at <track_dir>."`
+
+### 2.6 Offer Auto-Start
+
+After announcing track creation, offer to start implementation:
+
+**Interactive mode:** Use `AskUserQuestion`:
+> "Track '<track_id>' is ready. Start implementation now?"
+
+Options:
+- "Yes, start implementation" → invoke `/conductor:implement <track_id>`
+- "No, start later" → end skill. User can manually call `/conductor:implement` later.
+
+**Continuous mode** (if execution_mode is "continuous"): Auto-start `/conductor:implement <track_id>` without asking.
+
+This provides seamless handoff while preserving user control in interactive mode.

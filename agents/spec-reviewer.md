@@ -50,6 +50,7 @@ Present a **structured summary** of spec.md to the user:
 **Requirements**: {count} functional, {count} non-functional
 **Acceptance Criteria**: {count} criteria
 **Test Scenarios**: {count} scenarios
+**References**: {count} documents cited
 
 ### Key Requirements
 - FR-1: {summary}
@@ -63,6 +64,12 @@ Present a **structured summary** of spec.md to the user:
 
 ### Constraints
 - {constraint summary}
+
+### Out of Scope (if present)
+- {exclusion summary}
+
+### References (if present)
+- {category}: {document links}
 ```
 
 Ask user: `"Review spec.md — Approve, Request Changes, or Read Full?"`

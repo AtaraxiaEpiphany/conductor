@@ -92,9 +92,11 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/track-state" next "<track_dir>"
 - `phase == -1` → all terminal → **Section 5.0**.
 - `type == "parent-complete"` → `track-state complete "<track_dir>" <p> <t> --sha ""` → re-run `next`.
 - Route by tags:
-  - `Explore` → **4.3.E**
+  - `Explore` → **4.3.E** (explorer required)
   - `Manual` → **4.3.M** (always auto-defer)
-  - default → **4.3.T**
+  - default → **4.3.T** (task-executor; will read exploration.md as Layer 0 if exists)
+
+**Note:** For default (implementation) tasks, explorer is OPTIONAL. If `exploration.md` exists from a prior [Explore] task, task-executor reads it as Layer 0 context. No automatic two-phase dispatch — keeps latency minimal while enabling context accumulation.
 
 ### 4.2 Pre-Dispatch
 

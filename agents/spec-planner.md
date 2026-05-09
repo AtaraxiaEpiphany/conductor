@@ -51,13 +51,23 @@ The orchestrator provides file paths only — you read and synthesize all conten
    - Read and synthesize discovered docs.
 4. **Related Documents** — If `RELATED_DOCS` contains paths, read each file. These are scoped docs discovered by the orchestrator.
 
-### 3.2 Understand the Requirements
+### 3.2 Understand the Requirements (includes Out-of-Scope Inference)
 
 Synthesize:
 - What the user described (`TRACK_DESCRIPTION`)
-- What the user answered (`USER_ANSWERS`)
+- What the user answered (`USER_ANSWERS`) — look for explicit exclusions
 - What existing docs reveal (`RELATED_DOCS`)
 - What the project context implies (product, tech stack)
+
+**Out-of-Scope Inference:**
+- Look for explicit exclusions in USER_ANSWERS (e.g., "deferred", "not now", "out of scope", "later")
+- If spec describes a focused feature, infer related but out-of-bounds items
+- Keep minimal but clear — only items that would reasonably be in question
+- Examples of exclusions to document:
+  - Features deferred to future tracks
+  - Technologies/patterns the team decided against
+  - Edge cases that are explicitly out of bounds
+  - Integration points not yet in scope
 
 ---
 
@@ -79,8 +89,13 @@ Structure:
 ## Requirements
 
 ### Functional Requirements
-- FR-1: [requirement]
+- FR-1: [requirement] [(ref)](path/to/doc)
 - FR-2: [requirement]
+
+**Inline citations (optional but recommended for traceability):**
+- Use Markdown links: `FR-1: User must be able to [reset password via email](conductor/design/api-specs/auth.md)`
+- Or append reference: `FR-1: Password reset flow (see [Auth Design](conductor/design/api-specs/auth.md))`
+- Keep inline citations lightweight — detailed derivation goes in References section.
 
 ### Non-Functional Requirements
 - NFR-1: [requirement]
@@ -102,12 +117,39 @@ Map each AC to concrete test scenarios. These guide the conductor:task-executor'
 ## Constraints
 - [technical or business constraints]
 
+## Out of Scope
+- [features, technologies, or use cases explicitly excluded from this track]
+  Examples:
+  - [Feature X] deferred to future Track ID-YYYYMMDD
+  - [Technology Y] — team standardized on [Alternative Z]
+  - [Edge case] — not supported in this iteration
+
 ## References
-*[Ref: path/to/doc]* — [what was derived from this document]
+
+(For 3+ references, group by category)
+
+### Project Context
+- [Tech Stack](conductor/design/tech-stack.md) — Framework choices, language decisions
+- [Product Guidelines](conductor/overview/product-guidelines.md) — UX requirements, brand voice
+
+### Related Design Docs (if applicable)
+- [System Architecture](conductor/design/architecture/system-architecture.md) — Component boundaries
+- [API Specs](conductor/design/api-specs/index.md) — Endpoint patterns
+
+### Prior Track Context (if building on existing work)
+- [Track: auth-flow](conductor/tracks/auth-flow_20250115/spec.md) — Reusable auth components
+
+(For minimal references, use flat format below)
+- [Tech Stack](conductor/design/tech-stack.md) — Framework choices
+- [Product Guidelines](conductor/overview/product-guidelines.md) — UX voice
 ```
 
 **Rules:**
-- Include a `References` section with `*[Ref: path]*` inline citations for every requirement derived from existing docs.
+- Use standard Markdown link syntax for all references (clickable, traceable).
+- Group by category when 3+ references exist for better scanability.
+- Keep descriptions concise — state what was derived, not the full content.
+- All paths are relative to project root.
+- **Only include** documents that actively informed this spec's requirements.
 - Acceptance criteria must be measurable and testable.
 - Keep functional requirements specific and atomic.
 - **Test Scenarios** must cover every AC: happy path + at least one edge case per AC.
@@ -144,11 +186,10 @@ These rules are **non-negotiable**. Violating any rule will break the orchestrat
 
 1. **Status Markers**: Every task and subtask gets a `[ ]` status marker. Indented subtasks use two-space indentation under their parent.
 2. **Manual Verification**: Append a manual verification task at the end of each phase. Tag it with `[Manual]` so the orchestrator can auto-defer it in continuous mode.
-3. **Skill Annotation**: If a matching skill exists for a task, annotate with `> MUST use skill **<skill-name>** to complete the task`.
-4. **Phase Order**: Phases should follow logical dependency order.
-5. **Atomic Tasks**: Tasks should be atomic and independently testable.
-6. **Workflow Conventions**: Read the workflow file to respect any task-level conventions.
-7. **AC Traceability**: Each implementation task MUST have an HTML comment `<!-- AC-n, TC-n.n, ... -->` linking to the acceptance criteria and test scenarios it covers. This enables the orchestrator to pass precise AC context to conductor:task-executor subagents. **Only the parent task carries the AC annotation** — subtasks inherit AC context from their parent.
+3. **Phase Order**: Phases should follow logical dependency order.
+4. **Atomic Tasks**: Tasks should be atomic and independently testable.
+5. **Workflow Conventions**: Read the workflow file to respect any task-level conventions.
+6. **AC Traceability**: Each implementation task MUST have an HTML comment `<!-- AC-n, TC-n.n, ... -->` linking to the acceptance criteria and test scenarios it covers. This enables the orchestrator to pass precise AC context to conductor:task-executor subagents. **Only the parent task carries the AC annotation** — subtasks inherit AC context from their parent.
 
 **</rules>**
 
@@ -162,14 +203,14 @@ These rules are **non-negotiable**. Violating any rule will break the orchestrat
 
 Prepend the tag BEFORE the task description. Tag determines whether TDD is required.
 
-| Tag | Meaning | TDD Required | When to Use |
-|-----|---------|-------------|-------------|
-| `[Explore]` | Code investigation, architecture analysis, dependency mapping | **NO** | Phase 1 exploration — understanding codebase before implementation. Examples: "Explore the authentication module architecture", "Map API endpoints and their handlers" |
-| `[Docs]` | Documentation-only changes | **NO** | Writing or updating docs. No code changes. |
-| `[Config]` | Configuration file changes | **NO** | .env, .yaml, .json config files. No business logic. |
-| `[Chore]` | Maintenance tasks | **NO** | Dependencies, tooling, CI/CD. No feature code. |
-| `[Manual]` | Requires human verification, cannot be automated | **NO** | Tasks that need human eyes/hands: manual UI testing, cross-browser checks, staging deployment verification, email delivery confirmation, accessibility audit. These tasks are auto-deferred in continuous mode. |
-| *(no tag)* | Standard implementation task | **YES** | Default. Full TDD workflow: Red → Green → Refactor. |
+| Tag         | Meaning                                                       | TDD Required | When to Use                                                                                                                                                                                                     |
+| ----------- | ------------------------------------------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `[Explore]` | Code investigation, architecture analysis, dependency mapping | **NO**       | Phase 1 exploration — understanding codebase before implementation. Examples: "Explore the authentication module architecture", "Map API endpoints and their handlers"                                          |
+| `[Docs]`    | Documentation-only changes                                    | **NO**       | Writing or updating docs. No code changes.                                                                                                                                                                      |
+| `[Config]`  | Configuration file changes                                    | **NO**       | .env, .yaml, .json config files. No business logic.                                                                                                                                                             |
+| `[Chore]`   | Maintenance tasks                                             | **NO**       | Dependencies, tooling, CI/CD. No feature code.                                                                                                                                                                  |
+| `[Manual]`  | Requires human verification, cannot be automated              | **NO**       | Tasks that need human eyes/hands: manual UI testing, cross-browser checks, staging deployment verification, email delivery confirmation, accessibility audit. These tasks are auto-deferred in continuous mode. |
+| *(no tag)*  | Standard implementation task                                  | **YES**      | Default. Full TDD workflow: Red → Green → Refactor.                                                                                                                                                             |
 
 **Important**: Subtasks inherit the parent's task type tag. Do NOT tag subtasks individually.
 
