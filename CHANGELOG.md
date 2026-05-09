@@ -8,11 +8,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- **Structured git notes audit system** ([06e7844](https://github.com/anthropics/conductor-plugin/commit/06e7844))
-  - JSON-based audit trail for task-executor commits with metadata, requirements traceability, implementation statistics
-  - `on-task-executor-stop` hook enriches notes asynchronously — zero subagent overhead
-  - `enrich-git-notes` script combines result.json, track-state.json, and git diff statistics
-  - `git-notes-query` tool for retrieving audit data with `--sha`, `--track`, `--session`, `--coverage-trend`, `--files`, `--deviations` filters
 - **handoff.md system** ([a6bcbac](https://github.com/anthropics/conductor-plugin/commit/a6bcbac))
   - Replaced issues.md with indexed handoff system for better context management
   - `track-state get-handoff`, `sync-handoff`, `append-handoff` commands
@@ -45,6 +40,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Git notes audit trail moved from agent to CLI** ([efc2b14](https://github.com/anthropics/conductor-plugin/commit/efc2b14))
+  - `track-state process-result` now writes human-readable git notes after consuming result.json
+  - task-executor Step 9 removed — agent no longer writes git notes, reducing context pressure
+  - `result.json` gains `coverage_pct` and `coverage_tool` fields for audit completeness
+  - `track-state recover` adds best-effort git notes recovery: full note if result.json exists, basic note from git + track-state.json otherwise
+  - result.json lifecycle: created by agent, consumed by process-result, deleted after processing
 - **explorer file-bridge structure** ([ed1f7b1](https://github.com/anthropics/conductor-plugin/commit/ed1f7b1))
   - Enhanced with `Out-of-Scope Notes`, `Related Docs`, detailed `Architecture` section
 - **Reference layer inlined** ([521f56e](https://github.com/anthropics/conductor-plugin/commit/521f56e))
@@ -63,6 +64,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **track-state command not found** ([74542da](https://github.com/anthropics/conductor-plugin/commit/74542da))
+  - Added `bin/track-state` wrapper so bare command resolves via plugin PATH
+  - Normalized all invocations to bare `track-state` across skills and agents
 - **track-state invocation** ([be83cdd](https://github.com/anthropics/conductor-plugin/commit/be83cdd))
   - Changed `bash` to `python3` for Python script
 - **track-state sync-plan marker cleanup** ([afdf535](https://github.com/anthropics/conductor-plugin/commit/afdf535))
@@ -91,6 +95,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Removed
 
+- **Enrichment pipeline** ([74542da](https://github.com/anthropics/conductor-plugin/commit/74542da))
+  - Removed `on-task-executor-stop` hook, `enrich-git-notes` script, and Stop hook from task-executor
+  - The two-phase "marker → async enrichment" pattern was fragile: result.json is never committed so git diff cannot discover it, and the information is redundant since task-executor already has all context at Step 9
 - **Stale V2 Tags** ([7563d4a](https://github.com/anthropics/conductor-plugin/commit/7563d4a))
   - Removed from `status` and `revert` skills
 - **Old Plugin Config** ([214335d](https://github.com/anthropics/conductor-plugin/commit/214335d))

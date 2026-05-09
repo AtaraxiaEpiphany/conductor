@@ -28,10 +28,10 @@ Conductor is a Claude Code plugin built on **Spec-Driven Development** and **Sub
 | Principle | Description |
 |-----------|-------------|
 | **Orchestrator-Subagent Pattern** | The orchestrator manages state and dispatches tasks; subagents focus on single-responsibility execution |
-| **Context Isolation** | State mutations via CLI scripts; subagents self-extract ACs/specs; phase checkpoints and doc sync run in isolated subagent context. Step logs write to files, results via `process-result`. Main session context stays minimal |
+| **Context Isolation** | State mutations via CLI scripts; subagents self-extract ACs/specs; phase checkpoints and doc sync run in isolated subagent context. Git notes written by `process-result` (not agents). Step logs write to files, results via `process-result`. Main session context stays minimal |
 | **TDD Enforcement** | Mandatory Red-Green-Refactor cycle — no implementation code without a failing test |
 | **Single State Lock** | Only one task may be `in_progress` globally, eliminating concurrent conflicts |
-| **Audit Trail** | Every task commit includes structured JSON git notes with metadata, requirements traceability, implementation statistics, and verification status. Notes are enriched asynchronously via Stop hooks — zero subagent overhead |
+| **Audit Trail** | Every task commit gets a human-readable git note with quality gate evidence (coverage %, spec deviations, TC coverage). Written by `track-state process-result` — zero agent context cost. Best-effort recovery on interruption via `track-state recover` |
 | **Spec-Driven** | From PRD to spec.md to plan.md — specifications drive every line of implementation code |
 
 ---
