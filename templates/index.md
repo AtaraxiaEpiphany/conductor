@@ -10,6 +10,7 @@ Table of contents for all workflow resources. This file is the single entry poin
 | Task Workflow | [task-workflow.md](./task-workflow.md) | 11-step standard task workflow with task selection protocol |
 | Phase Checkpoint | [phase-checkpoint.md](./phase-checkpoint.md) | Phase completion verification and checkpointing protocol |
 | Testing Strategy | [testing/strategy.md](./testing/strategy.md) | Test file placement policy, naming conventions, coverage thresholds |
+| Post-Loop Phases | [post-loop.md](./post-loop.md) | Finalization, deferred verification, doc sync, auto-review, cleanup and archive |
 
 ## Code Style Guides
 

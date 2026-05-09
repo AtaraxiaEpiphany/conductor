@@ -135,7 +135,7 @@ track-state phase-done "<track_dir>" <phase>
 
 ## 4.0 POST-LOOP
 
-Read `${CLAUDE_PLUGIN_ROOT}/skills/implement/post-loop.md` and execute sections 5.0–8.0.
+Read `conductor/workflow/post-loop.md` and execute sections 5.0–8.0.
 
 ---
 

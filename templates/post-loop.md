@@ -1,6 +1,6 @@
-# Conductor Implement — Post-Loop Phases
+# Post-Loop Phases
 
-Loaded by implement SKILL.md when dispatch loop exits (action=finalize).
+Loaded by implement orchestrator when dispatch loop exits (action=finalize).
 
 ---
 
