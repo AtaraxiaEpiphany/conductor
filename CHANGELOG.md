@@ -8,6 +8,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Track archive system** ([3b9450f](https://github.com/anthropics/conductor-plugin/commit/3b9450f))
+  - `track-state archive` command: transitions completed tracks to `archived` status with `archived_at` timestamp
+  - `archived` status added to track-state schema with `[@]` marker in tracks.md
+  - Full archive/keep active/delete cleanup flow in implement skill Section 8.0
+  - Archived tracks grouped separately in status report
+  - Review skill cleanup options reference `track-state archive`
+- **Execution mode selection** ([3b9450f](https://github.com/anthropics/conductor-plugin/commit/3b9450f))
+  - `execution_mode` field (interactive/continuous) in track-state.json schema
+  - Mode selection UI in new-track skill before track init
+  - `track-state init --execution-mode` flag
+  - Mode propagation: recover/next output → implement → phase-checker dispatch
+  - Documented storage location and lifecycle in conductor-orchestration.md
+- **Session handoff file** ([3b9450f](https://github.com/anthropics/conductor-plugin/commit/3b9450f))
+  - `state-consistency-check` Stop hook writes `session-handoff.md` with active track positions
+  - `session-start` injects previous session state for cross-session recovery
+- **Boundary enforcement linter** ([3b9450f](https://github.com/anthropics/conductor-plugin/commit/3b9450f))
+  - `scripts/lint-track-state`: mechanically enforces F1 (State Lock) + F4 (SHA) + state consistency
+  - Error messages include remediation instructions (Harness Engineering principle)
+- **Garbage collection** ([3b9450f](https://github.com/anthropics/conductor-plugin/commit/3b9450f))
+  - `track-state gc` command: cleans orphaned result.json, detects stale in_progress tasks (>24h)
+  - `--health`/`--gc` flags in status skill for health check reporting
+- **Enhanced validation messages** ([3b9450f](https://github.com/anthropics/conductor-plugin/commit/3b9450f))
+  - `track-state validate` error messages now include remediation guidance
+
+### Changed
+
 - **handoff.md system** ([a6bcbac](https://github.com/anthropics/conductor-plugin/commit/a6bcbac))
   - Replaced issues.md with indexed handoff system for better context management
   - `track-state get-handoff`, `sync-handoff`, `append-handoff` commands

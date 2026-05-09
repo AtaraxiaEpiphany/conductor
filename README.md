@@ -83,15 +83,22 @@ Every task follows a strict 11-step lifecycle with a finite state machine:
           │        ▼        ▼        ▼           │
           │   ┌─────────┐ ┌──────┐ ┌─────────┐  │
           │   │completed│ │failed│ │cancelled│  │
-          │   └─────────┘ └──┬───┘ └─────────┘  │
-          │                  │                    │
-          │         ┌────────┼────────┐          │
-          │         ▼                  ▼          │
-          │    ┌──────────┐     ┌─────────┐      │
-          │    │  skipped  │     │ blocked │──────┘
-          │    └──────────┘     └─────────┘
-          │                           │
-          └───────────────────────────┘
+          │   └────┬────┘ └──┬───┘ └─────────┘  │
+          │        │         │                    │
+          │        │  ┌──────┼────────┐          │
+          │        │  ▼      ▼        ▼          │
+          │        │ ┌──────┐ ┌─────────┐        │
+          │        │ │skipped│ │ blocked │────────┘
+          │        │ └──────┘ └─────────┘
+          │        │
+          │        ▼
+          │   ┌─────────┐
+          │   │ deferred │ (auto, by [Manual] tag)
+          │   └─────────┘
+          │
+          └─── ┌─────────┐
+              │ archived │ (after completed, via cleanup)
+              └─────────┘
 ```
 
 ### Execution Firewall
@@ -188,7 +195,9 @@ conductor-plugin/
 │       #   registry-update, start, validate,
 │       #   phase-done, add-checkpoint, finalize,
 │       #   process-result, init, shas, deferred-report,
-│       #   get-handoff, sync-handoff, append-handoff
+│       #   get-handoff, sync-handoff, append-handoff,
+│       #   archive, gc
+│   └── lint-track-state               #   Boundary enforcement linter (F1/F4/state)
 ├── schemas/                           # JSON Schema definitions
 │   └── track-state.schema.json        #   track-state.json schema (documentation reference)
 ├── output-styles/                     # Output formatting styles
@@ -277,7 +286,8 @@ Interactive workflow:
 2. Collects requirements through guided Q&A
 3. Dispatches `conductor:spec-planner` to generate spec.md and plan.md
 4. Dispatches `conductor:spec-reviewer` for interactive review (keeps full files out of main session)
-5. Creates `track-state.json` via `track-state init` and commits all artifacts
+5. Select execution mode (interactive or continuous)
+6. Creates `track-state.json` via `track-state init --execution-mode` and commits all artifacts
 
 ### 3. Implement
 
@@ -297,15 +307,24 @@ The orchestrator:
 
 All state mutations are performed by the `track-state` CLI script — the orchestrator never reads or edits `track-state.json` directly. Subagents self-extract ACs from spec.md and write step logs to files, keeping orchestrator context minimal.
 
+### 4. Archive & Cleanup
+
+After implementation, the orchestrator offers cleanup options:
+- **Archive** (recommended) — marks track as archived, keeps files for reference
+- **Keep Active** — leaves track in completed status
+- **Delete** — removes track files entirely (irreversible)
+
+### 5. Monitor Progress
+
 ### 4. Monitor Progress
 
 ```
 > /conductor:status
 ```
 
-Outputs a comprehensive status report with track progress, phase status, task-level details, and issue highlights.
+Outputs a comprehensive status report with track progress, phase status, task-level details, issue highlights, and archived track grouping. Supports `--health` flag for garbage collection and stale state detection.
 
-### 5. Review & Cleanup
+### 6. Review & Rollback
 
 ```
 > /conductor:review
@@ -356,6 +375,24 @@ Conductor prefixes: `conductor(plan)`, `conductor(checkpoint)`, `chore(conductor
 ## State Authority Model
 
 `track-state.json` is **always** the source of truth. `plan.md` is a synchronized human-readable projection.
+
+### Track Status Lifecycle
+
+| Status | Marker | Description |
+|--------|--------|-------------|
+| `new` | `[ ]` | Track created, not yet started |
+| `in_progress` | `[~]` | Track actively being implemented |
+| `completed` | `[x]` | All tasks finished, review done |
+| `archived` | `[@]` | Track archived for reference |
+| `blocked` | `[#]` | Track has unresolvable blockers |
+| `cancelled` | `[-]` | Track cancelled |
+
+### Execution Modes
+
+| Mode | Behavior |
+|------|----------|
+| `interactive` (default) | Pauses for user confirmation at phase checkpoints |
+| `continuous` | Auto-proceeds through all phases, only stops on failures |
 
 ```
 track-state.json          plan.md
