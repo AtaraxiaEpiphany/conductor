@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Wrapper: delegates to the real track-state CLI in scripts/
+exec python3 "${CLAUDE_PLUGIN_ROOT}/scripts/track-state" "$@"

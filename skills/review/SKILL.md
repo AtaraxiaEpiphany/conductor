@@ -40,7 +40,7 @@ CRITICAL: Validate every tool call. On failure → halt → announce.
 
 1. **Get SHA range:**
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/track-state" shas "<track_dir>"
+track-state shas "<track_dir>"
 ```
 Parse output: `first` and `last` SHAs define the revision range.
 

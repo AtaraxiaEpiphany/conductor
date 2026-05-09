@@ -86,7 +86,7 @@ Run these verifications. Announce failures tersely and HALT.
 ### 4.1 Select Next Task
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/track-state" next "<track_dir>"
+track-state next "<track_dir>"
 ```
 
 - `phase == -1` → all terminal → **Section 5.0**.
@@ -223,7 +223,7 @@ track-state deferred-report "<track_dir>"
 - "Skip" → `track-state skip --reason 'User verified not needed'`
 - "Defer" → no action
 
-After → `sync-plan` + commit.
+After → `track-state sync-plan "<track_dir>"` + commit.
 
 ---
 

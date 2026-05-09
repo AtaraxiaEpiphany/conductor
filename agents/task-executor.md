@@ -9,12 +9,6 @@ hooks:
       hooks:
         - type: command
           command: "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/on-test-run\""
-  Stop:
-    - matcher: ""
-      hooks:
-        - type: command
-          command: "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/on-task-executor-stop\""
-          async: true
 ---
 
 # Conductor Task Executor
@@ -148,15 +142,37 @@ Stage + commit: `<type>(<scope>): <description>`
 
 ### Step 9: Git Notes
 
-Write a minimal marker note. The Stop hook will enrich it with full audit data.
+Write a human-readable audit note. Record quality gate evidence (F3 coverage, spec deviations) that exists only at runtime and has no other persistent record.
 
 ```bash
 SHA=$(git log -1 --format="%H")
-TRACK_DIR_REL=$(echo "$TRACK_DIR" | sed "s|^$PWD/||")
-git notes add -m "TASK-RESULT: ${TRACK_DIR_REL}/.conductor/result.json | TRACK_DIR: ${TRACK_DIR_REL}" "$SHA"
+git notes add -m "[Conductor] {NAME} (P{PHASE}.T{TASK})
+Summary: {one-line summary of what was implemented}
+Files: {comma-separated changed files}
+Coverage: {percentage}% — {tool used}
+TCs: {TC IDs}
+Spec deviations: {NONE | list deviations}" "$SHA"
 ```
 
-**Note:** The marker format allows the Stop hook to locate and enrich this note without loading business context into the agent.
+**Example:**
+```
+[Conductor] Add JWT validation middleware (P1.T2)
+Summary: Implemented token verification with HS256 signing and expiry check
+Files: src/auth/middleware.ts, src/auth/types.ts, tests/auth/middleware.test.ts
+Coverage: 94% — jest --coverage
+TCs: TC-2.1, TC-2.2, TC-2.3
+Spec deviations: NONE
+```
+
+**With deviation:**
+```
+[Conductor] Add JWT validation middleware (P1.T2)
+Summary: Implemented token verification with HS256 signing
+Files: src/auth/middleware.ts, tests/auth/middleware.test.ts
+Coverage: 87% — jest --coverage
+TCs: TC-2.1, TC-2.2
+Spec deviations: TC-2.3 (edge case for expired tokens deferred — requires clock mocking not in tech stack)
+```
 
 ---
 
