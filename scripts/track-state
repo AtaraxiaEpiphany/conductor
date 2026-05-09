@@ -355,10 +355,8 @@ def _do_sync_plan(track_dir, state=None):
                     parent_task = state["phases"][phase_idx]["tasks"][task_idx]
                     if parent_task["status"] == "completed":
                         marker = MARKER_MAP["completed"]
-                        # Show subtask's own SHA only if it differs from parent's
-                        sub_sha = sub.get("commit_sha", "")
-                        parent_sha = parent_task.get("commit_sha", "")
-                        sha = sub_sha if sub_sha and sub_sha != parent_sha else ""
+                        # Show subtask's own SHA if it has one (even if same as parent)
+                        sha = sub.get("commit_sha", "")
                     else:
                         marker = MARKER_MAP.get(sub["status"], " ")
                         sha = sub.get("commit_sha", "")
