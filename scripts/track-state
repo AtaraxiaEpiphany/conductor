@@ -777,9 +777,8 @@ def _append_deviation_legacy(track_dir, task_name, dev):
 # ── Public Commands ──────────────────────────────────────────────────
 
 
-def cmd_next(track_dir, compact=False):
-    state = load(track_dir)
-    execution_mode = state.get("execution_mode", "interactive")
+def _find_next_task(state):
+    """Find the next task to execute. Returns result dict or None."""
     result = None
     # Pass 1: in_progress tasks (recovery / dispatch continuation)
     for pi, phase in enumerate(state["phases"]):
@@ -828,6 +827,13 @@ def cmd_next(track_dir, compact=False):
                 break
     if not result:
         result = dict(phase=-1, task=-1, subtask=None, name=None, type=None, tags=[])
+    return result
+
+
+def cmd_next(track_dir, compact=False):
+    state = load(track_dir)
+    execution_mode = state.get("execution_mode", "interactive")
+    result = _find_next_task(state)
     result["execution_mode"] = execution_mode
     if compact:
         out_compact(result)
@@ -842,53 +848,10 @@ def cmd_dispatch_next(track_dir):
     state = load(track_dir)
     execution_mode = state.get("execution_mode", "interactive")
 
-    # Find next task (same logic as cmd_next)
-    result = None
-    for pi, phase in enumerate(state["phases"]):
-        for ti, task in enumerate(phase["tasks"]):
-            if task["status"] == "in_progress":
-                subs = task.get("subtasks")
-                if subs:
-                    for si, sub in enumerate(subs):
-                        if sub["status"] in ("in_progress", "pending"):
-                            result = dict(phase=pi, task=ti, subtask=si,
-                                          name=sub["name"], type="subtask",
-                                          tags=_inherit_tags(extract_tags(sub["name"]), task["name"]))
-                            break
-                    if not result:
-                        result = dict(phase=pi, task=ti, subtask=None,
-                                      name=task["name"], type="parent-complete",
-                                      tags=extract_tags(task["name"]))
-                else:
-                    result = dict(phase=pi, task=ti, subtask=None,
-                                  name=task["name"], type="flat",
-                                  tags=extract_tags(task["name"]))
-                break
-        if result:
-            break
-    if not result:
-        for pi, phase in enumerate(state["phases"]):
-            for ti, task in enumerate(phase["tasks"]):
-                if task["status"] == "pending":
-                    subs = task.get("subtasks")
-                    if subs:
-                        for si, sub in enumerate(subs):
-                            if sub["status"] == "pending":
-                                result = dict(phase=pi, task=ti, subtask=si,
-                                              name=sub["name"], type="subtask",
-                                              tags=_inherit_tags(extract_tags(sub["name"]), task["name"]))
-                                break
-                        if not result:
-                            continue
-                    else:
-                        result = dict(phase=pi, task=ti, subtask=None,
-                                      name=task["name"], type="flat",
-                                      tags=extract_tags(task["name"]))
-                    break
-            if result:
-                break
+    # Find next task
+    result = _find_next_task(state)
 
-    if not result:
+    if result.get("phase", -1) < 0:
         out(dict(action="finalize"))
         return
 
