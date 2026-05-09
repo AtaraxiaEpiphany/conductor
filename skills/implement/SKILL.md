@@ -57,10 +57,16 @@ Route by recover `status`:
 | `failed` + retry < max | Re-dispatch. |
 | `failed` + retry >= max | Dispatch `conductor:skip-analyst`. |
 | `blocked` | Report → HALT. |
-| `completed`/`skipped`/`no_active_task` | → **Section 3.0**. |
+| `completed`/`skipped`/`no_active_task` | Check `phase_checkpoint_pending`. If set → dispatch `conductor:phase-checker`. Otherwise → **Section 3.0**. |
 
 Store `execution_mode` from recover output. Default `"interactive"`.
 If state changed → commit: `chore(conductor): Fix state consistency after recovery`
+
+### 2.1 Resume Phase Checkpoint
+
+If recover output contains `phase_checkpoint_pending: <phase_index>`:
+- Dispatch `conductor:phase-checker` with `TRACK_DIR TRACK_ID PHASE=<phase_index> EXECUTION_MODE`
+- After return → **Section 3.6** (Phase Boundary)
 
 ---
 
@@ -136,10 +142,3 @@ track-state phase-done "<track_dir>" <phase>
 Read `conductor/workflow/post-loop.md` and execute sections 5.0–8.0.
 
 ---
-
-## COMPRESSION PRIORITY
-
-When context is compressed (PreCompact hook injects instructions automatically):
-1. **KEEP**: Sections 3.0–3.7 (active dispatch loop) + last track-state output + last subagent result
-2. **COMPRESS**: completed iteration outputs → record via `track-state record-summary "<track_dir>" <<< '{"phase":p,"task":t,"sha":"...","status":"...","summary":"..."}'`
-3. **DISCARD**: Sections 1.0–2.0 (one-time setup, re-read from disk) and Section 4.0 (re-read from workflow file)

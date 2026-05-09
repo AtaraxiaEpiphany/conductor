@@ -850,6 +850,12 @@ def cmd_dispatch_next(track_dir):
     result = _find_next_task(state)
 
     if result.get("phase", -1) < 0:
+        # No more tasks — check if any phase needs a checkpoint before finalizing
+        checkpoint_pending = _any_phase_needs_checkpoint(track_dir, state)
+        if checkpoint_pending is not None:
+            out(dict(action="dispatch_phase_checker", phase=checkpoint_pending,
+                     execution_mode=execution_mode))
+            return
         out(dict(action="finalize"))
         return
 
@@ -887,6 +893,10 @@ def cmd_recover(track_dir, compact=False):
 
     if pi < 0 or ti < 0:
         result = dict(status="no_active_task")
+        # Check if any phase needs a checkpoint (scan all phases)
+        checkpoint_pending = _any_phase_needs_checkpoint(track_dir, state)
+        if checkpoint_pending is not None:
+            result["phase_checkpoint_pending"] = checkpoint_pending
         if compact:
             print("NO_ACTIVE_TASK")
         else:
@@ -897,6 +907,10 @@ def cmd_recover(track_dir, compact=False):
         task = state["phases"][pi]["tasks"][ti]
     except IndexError:
         result = dict(status="no_active_task")
+        # Check if any phase needs a checkpoint (scan all phases)
+        checkpoint_pending = _any_phase_needs_checkpoint(track_dir, state)
+        if checkpoint_pending is not None:
+            result["phase_checkpoint_pending"] = checkpoint_pending
         if compact:
             print("NO_ACTIVE_TASK")
         else:
@@ -930,10 +944,66 @@ def cmd_recover(track_dir, compact=False):
         tags=sub_tags,
         execution_mode=state.get("execution_mode", "interactive"),
     )
+
+    # Check if we need to resume a phase checkpoint (only for terminal task states)
+    if tgt.get("status") in ("completed", "skipped", "cancelled"):
+        checkpoint_pending = _phase_needs_checkpoint(track_dir, state, pi)
+        if checkpoint_pending is not None:
+            result["phase_checkpoint_pending"] = checkpoint_pending
+
     if compact:
         out_compact(result)
     else:
         out(result)
+
+
+def _phase_needs_checkpoint(track_dir, state, phase_index):
+    """Check if a phase needs a checkpoint (all tasks done, no checkpoint in plan.md).
+
+    Returns phase index if checkpoint is needed, None otherwise."""
+    # Skip invalid phase indices
+    if phase_index < 0:
+        return None
+
+    try:
+        phase = state["phases"][phase_index]
+    except (IndexError, KeyError):
+        return None
+
+    # Check if all tasks in phase are in terminal state
+    terminal = {"completed", "skipped", "cancelled", "blocked", "deferred"}
+    for task in phase.get("tasks", []):
+        if task.get("status") not in terminal:
+            return None
+        for sub in task.get("subtasks", []):
+            if sub.get("status") not in terminal:
+                return None
+
+    # Check if checkpoint exists in plan.md
+    plan_path = Path(track_dir) / "plan.md"
+    if not plan_path.exists():
+        return phase_index  # No plan, needs checkpoint
+
+    try:
+        content = plan_path.read_text()
+    except Exception:
+        return phase_index
+
+    # Check for checkpoint marker: [checkpoint: <sha>]
+    phase_num = phase_index + 1  # Convert to 1-based for heading match
+    pattern = rf"^##\s+Phase\s+{phase_num}\b.*\[checkpoint:\s*[0-9a-f]+\]"
+    if re.search(pattern, content, re.MULTILINE):
+        return None  # Checkpoint exists
+
+    return phase_index  # Phase done but no checkpoint
+
+
+def _any_phase_needs_checkpoint(track_dir, state):
+    """Check if any phase needs a checkpoint. Returns first phase index that needs one, or None."""
+    for pi in range(len(state.get("phases", []))):
+        if _phase_needs_checkpoint(track_dir, state, pi) is not None:
+            return pi
+    return None
 
 
 def _recover_git_notes(track_dir, state):
