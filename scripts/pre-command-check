@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+# PreToolUse hook: real-time state protection for git and track-state operations.
+# Validates commands before execution, blocks suspicious operations.
+# Exit 2 = block with reason. Exit 0 = allow.
+set -euo pipefail
+
+INPUT=$(cat)
+
+TOOL_NAME=$(echo "$INPUT" | python3 -c "
+import json, sys
+try:
+    data = json.load(sys.stdin)
+    print(data.get('tool_name', ''))
+except:
+    print('')
+" 2>/dev/null || echo "")
+
+CWD=$(echo "$INPUT" | python3 -c "
+import json, sys
+try:
+    data = json.load(sys.stdin)
+    print(data.get('cwd', ''))
+except:
+    print('')
+" 2>/dev/null || echo "")
+
+# Only check Bash tool
+if [[ "$TOOL_NAME" != "Bash" ]]; then
+    echo '{}'
+    exit 0
+fi
+
+# Extract command from tool input
+COMMAND=$(echo "$INPUT" | python3 -c "
+import json, sys
+try:
+    data = json.load(sys.stdin)
+    tool_input = data.get('tool_input', {})
+    print(tool_input.get('command', ''))
+except:
+    print('')
+" 2>/dev/null || echo "")
+
+# Check for dangerous git operations
+if [[ "$COMMAND" =~ git\ +(reset|rebase|clean|filter-branch) ]]; then
+    python3 -c "
+import json, sys
+print(json.dumps({
+    'hookSpecificOutput': {
+        'hookEventName': 'PreToolUse',
+        'additionalContext': '[Conductor] DANGER: Git history-modifying command detected (${BASH_REMATCH[1]}). This may break state consistency. Run /conductor:revert if needed.',
+        'permissionDecision': 'ask',
+        'permissionDecisionReason': 'Git history-modifying operations can break conductor state tracking. Confirm with /conductor:revert workflow instead.'
+    }
+}))
+"
+    exit 2
+fi
+
+# Check for track-state lock violations
+if [[ "$COMMAND" =~ track-state ]]; then
+    # Detect operations that shouldn't run during in_progress state
+    if [[ -d "${CWD}/conductor" ]]; then
+        # Find tracks with in_progress tasks
+        IN_PROGRESS=$(python3 -c "
+import json, os, re
+
+try:
+    tracks_file = '${CWD}/conductor/tracks.md'
+    if not os.path.exists(tracks_file):
+        print('')
+        sys.exit(0)
+
+    with open(tracks_file) as f:
+        content = f.read()
+
+    dirs = re.findall(r'\[.*?\]\(([^)]+)\)', content)
+    violations = []
+
+    for d in dirs:
+        state_file = '${CWD}/' + d + '/track-state.json'
+        if os.path.exists(state_file):
+            with open(state_file) as sf:
+                state = json.load(sf)
+            status = state.get('status', '')
+
+            # Check for in_progress tasks
+            has_in_progress = False
+            for phase in state.get('phases', []):
+                for task in phase.get('tasks', []):
+                    if task.get('status') == 'in_progress':
+                        has_in_progress = True
+                        break
+                for task in phase.get('tasks', []):
+                    for sub in task.get('subtasks', []):
+                        if sub.get('status') == 'in_progress':
+                            has_in_progress = True
+                            break
+
+            # Detect violations
+            cmd_lower = '${COMMAND}'.lower()
+
+            if has_in_progress:
+                # Check for dangerous operations during in_progress
+                if 'rm ' in cmd_lower or 'delete' in cmd_lower:
+                    violations.append(f'{d}: in_progress task + deletion command')
+                elif ' mv ' in cmd_lower or 'move' in cmd_lower:
+                    violations.append(f'{d}: in_progress task + move operation')
+
+    if violations:
+        print('; '.join(violations))
+    else:
+        print('')
+except:
+    print('')
+" 2>/dev/null || echo "")
+
+        if [[ -n "$IN_PROGRESS" ]]; then
+            python3 -c "
+import json, sys
+print(json.dumps({
+    'hookSpecificOutput': {
+        'hookEventName': 'PreToolUse',
+        'additionalContext': '[Conductor] State lock violation detected: ${IN_PROGRESS}. Complete or revert the in_progress task before modifying track files.',
+        'permissionDecision': 'ask',
+        'permissionDecisionReason': 'Track has in_progress task. Complete or revert first to maintain state consistency.'
+    }
+}))
+"
+            exit 2
+        fi
+    fi
+fi
+
+# Check for direct modifications to track-state.json
+if [[ "$COMMAND" =~ (rm|mv|git\ rm).*track-state\.json ]] || [[ "$COMMAND" =~ sed.*track-state ]] || [[ "$COMMAND" =~ python.*track-state.*write ]]; then
+    python3 -c "
+import json, sys
+print(json.dumps({
+    'hookSpecificOutput': {
+        'hookEventName': 'PreToolUse',
+        'additionalContext': '[Conductor] Direct track-state.json modification detected. Use track-state CLI commands instead to maintain consistency.',
+        'permissionDecision': 'ask',
+        'permissionDecisionReason': 'Direct modification of track-state.json bypasses state machine. Use /conductor:revert or track-state CLI.'
+    }
+}))
+"
+    exit 2
+fi
+
+# Allow all other commands
+echo '{}'
+exit 0
