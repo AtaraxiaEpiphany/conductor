@@ -31,10 +31,14 @@ RECOVER → SELECT → PRE_DISPATCH → DISPATCH → PROCESS → PHASE_BOUNDARY 
 
 ### Execution Modes
 
-| Mode | Key | Behavior |
-|------|-----|----------|
-| `continuous` | `"execution_mode": "continuous"` | Auto-proceeds through checkpoints. `[Manual]` tasks are always auto-deferred. |
-| `interactive` | `"execution_mode": "interactive"` | Pauses for user confirmation at checkpoints. `[Manual]` tasks are always auto-deferred. |
+| Mode | Storage | Behavior |
+|------|---------|----------|
+| `interactive` | `track-state.json` `execution_mode` field (default) | Pauses for user confirmation at checkpoints. `[Manual]` tasks are always auto-deferred. |
+| `continuous` | `track-state.json` `execution_mode` field | Auto-proceeds through checkpoints. `[Manual]` tasks are always auto-deferred. |
+
+**Default:** If `execution_mode` field is absent from `track-state.json`, the implement skill defaults to `interactive`.
+**Set during:** `/conductor:new-track` Section 2.5 (mode selection before state init).
+**Read during:** `/conductor:implement` Section 3.0 (extracted from `track-state recover` output).
 
 ### Task Lifecycle
 

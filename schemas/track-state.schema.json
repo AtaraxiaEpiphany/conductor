@@ -17,7 +17,17 @@
     },
     "status": {
       "type": "string",
-      "enum": ["new", "in_progress", "completed", "blocked", "cancelled"]
+      "enum": ["new", "in_progress", "completed", "archived", "blocked", "cancelled"]
+    },
+    "execution_mode": {
+      "type": "string",
+      "enum": ["interactive", "continuous"],
+      "description": "Execution mode for implement skill. Interactive pauses at checkpoints; continuous auto-proceeds."
+    },
+    "archived_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp when track was archived. Only present when status is 'archived'."
     },
     "description": {
       "type": "string",

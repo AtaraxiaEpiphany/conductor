@@ -71,7 +71,21 @@ Parse `---REVIEW RESULT---` block. If `STATUS: CANCELLED` → halt. If `STRUCTUR
 
 > Full file review happens in the subagent. The orchestrator only sees the compact result.
 
-### 2.5 Create State Artifacts
+### 2.5 Execution Mode Selection
+
+Before creating state artifacts, let the user choose execution mode.
+
+Use `AskUserQuestion`:
+
+> "Choose execution mode for this track:"
+
+Options:
+- **Interactive** (recommended) — pauses for your confirmation at phase checkpoints. Best for complex or high-risk work.
+- **Continuous** — auto-proceeds through all phases without pausing. Only stops on failures or blocked tasks.
+
+Store the user's choice as `$EXECUTION_MODE` for use in Section 2.6.
+
+### 2.6 Create State Artifacts
 
 1. **Check uniqueness:** List existing track dirs. If name matches → halt → suggest alternatives.
 2. **Track ID:** Format `shortname_YYYYMMDD`.
@@ -81,7 +95,8 @@ Parse `---REVIEW RESULT---` block. If `STATUS: CANCELLED` → halt. If `STRUCTUR
      --plan-structure '<PLAN_STRUCTURE json>' \
      --track-id <id> \
      --type <type> \
-     --description '<desc>'
+     --description '<desc>' \
+     --execution-mode <interactive|continuous>
    ```
    This creates `track-state.json` and `index.md` in one call.
 4. **Update Tracks Registry:** Append entry to `conductor/tracks.md`.
@@ -89,19 +104,19 @@ Parse `---REVIEW RESULT---` block. If `STATUS: CANCELLED` → halt. If `STRUCTUR
    ```bash
    git add -A && git commit -m "conductor(track): Add track '<track_id>'"
    ```
-6. Announce: `"New track '<track_id>' created at <track_dir>."`
+6. Announce: `"New track '<track_id>' created at <track_dir> (mode: $EXECUTION_MODE)."`
 
-### 2.6 Offer Auto-Start
+### 2.7 Offer Auto-Start
 
 After announcing track creation, offer to start implementation:
 
-**Interactive mode:** Use `AskUserQuestion`:
+**If `$EXECUTION_MODE` is "interactive":** Use `AskUserQuestion`:
 > "Track '<track_id>' is ready. Start implementation now?"
 
 Options:
 - "Yes, start implementation" → invoke `/conductor:implement <track_id>`
 - "No, start later" → end skill. User can manually call `/conductor:implement` later.
 
-**Continuous mode** (if execution_mode is "continuous"): Auto-start `/conductor:implement <track_id>` without asking.
+**If `$EXECUTION_MODE` is "continuous":** Auto-start `/conductor:implement <track_id>` without asking.
 
 This provides seamless handoff while preserving user control in interactive mode.

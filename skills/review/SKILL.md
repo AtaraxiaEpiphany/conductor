@@ -99,4 +99,7 @@ Parse `---REVIEW RESULT---` block.
 ## 3.0 COMPLETION
 
 1. If user chose "Apply Fixes" → dispatch task-executor for each fix.
-2. Offer archive/delete/skip for track cleanup.
+2. Offer cleanup options via `AskUserQuestion`:
+   - **Archive** (recommended): `track-state archive "<track_dir>"` + `registry-update` + commit
+   - **Keep Active**: no action
+   - **Delete**: confirm then `rm -rf "<track_dir>"` + remove from tracks.md + commit

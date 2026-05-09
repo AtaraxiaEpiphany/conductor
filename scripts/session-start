@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SessionStart hook: inject conductor-core.md into session context.
+# SessionStart hook: inject conductor-core.md + session handoff into session context.
 set -euo pipefail
 
 INSTRUCTIONS="${CLAUDE_PLUGIN_ROOT}/conductor-core.md"
@@ -11,9 +11,14 @@ fi
 
 CONTENT=$(cat "$INSTRUCTIONS")
 
+# Check for session handoff file from previous session
+HANDOFF_FILE="${CLAUDE_PLUGIN_DATA:-${CLAUDE_PLUGIN_ROOT}/.data}/session-handoff.md"
+HANDOFF_CTX=""
+if [[ -f "$HANDOFF_FILE" ]]; then
+  HANDOFF_CTX=$'\n\n--- Previous Session Handoff ---\n'"$(cat "$HANDOFF_FILE")"
+fi
+
 # Use python for safe JSON encoding (handles quotes, newlines, etc.)
-# Claude Code requires hookSpecificOutput.additionalContext (nested format),
-# NOT top-level additionalContext.
 python3 -c "
 import json, sys
 content = sys.stdin.read()
@@ -23,4 +28,4 @@ print(json.dumps({
         'additionalContext': content
     }
 }))
-" <<< "$CONTENT"
+" <<< "${CONTENT}${HANDOFF_CTX}"

@@ -77,7 +77,8 @@ Run these verifications. Announce failures tersely and HALT.
 | `completed`/`skipped`/`no_active_task` | → **Section 4.1 Select Next**. |
 
 3. `track-state sync-plan "<track_dir>"`
-4. If state changed → commit: `chore(conductor): Fix state consistency after recovery`
+4. Extract `execution_mode` from recover output. Default to `"interactive"` if absent. Store as `$EXECUTION_MODE` for use in dispatch prompts (Section 4.7).
+5. If state changed → commit: `chore(conductor): Fix state consistency after recovery`
 
 ---
 
@@ -193,7 +194,7 @@ Dispatch `conductor:phase-checker`. Prompt:
 TRACK_DIR={track_dir}
 TRACK_ID={track_id}
 PHASE_INDEX={phase}
-EXECUTION_MODE={mode}
+EXECUTION_MODE={execution_mode}
 ```
 
 Parse result. FAILED → announce + HALT. Otherwise → **4.1**.
@@ -263,6 +264,41 @@ STYLEGUIDES_DIR={resolved_path}
 
 ---
 
-## 8.0 CLEANUP
+## 8.0 CLEANUP & ARCHIVE
 
-Present options: A) Archive, B) Delete, C) Skip.
+After auto-review completes, present cleanup options to the user.
+
+### 8.1 Present Options
+
+Use `AskUserQuestion`:
+
+> "Track '<track_id>' is complete. Choose cleanup action:"
+
+Options:
+- **Archive** (recommended) — marks track as archived, keeps files for reference
+- **Keep Active** — leaves track in completed status
+- **Delete** — removes track files entirely (irreversible)
+
+### 8.2 Execute Archive
+
+If user chose "Archive":
+
+```bash
+track-state archive "<track_dir>"
+track-state registry-update "<track_dir>" "conductor/tracks.md"
+git add -A && git commit -m "chore(conductor): Archive track '<track_id>'"
+```
+
+Announce: `ARCHIVED: '<track_id>'`
+
+### 8.3 Execute Keep Active
+
+No action. Announce: `COMPLETED: '<track_id>' remains active.`
+
+### 8.4 Execute Delete
+
+1. Confirm via `AskUserQuestion`: "This will permanently delete all track files. Continue?"
+2. Remove track directory: `rm -rf "<track_dir>"`
+3. Remove entry from `conductor/tracks.md`
+4. Commit: `git add -A && git commit -m "chore(conductor): Delete track '<track_id>'"`
+5. Announce: `DELETED: '<track_id>'`

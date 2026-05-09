@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Stop hook for conductor:implement skill:
-# Verifies track-state.json and plan.md markers are consistent.
+# 1. Verifies track-state.json and plan.md markers are consistent.
+# 2. Writes session handoff file for next session recovery.
 # Returns additionalContext with warning if inconsistencies found.
 # Non-blocking — only warns, does not halt.
 set -euo pipefail
@@ -11,6 +12,10 @@ CWD=$(echo "$INPUT" | python3 -c "import json,sys; d=json.load(sys.stdin); print
 
 # Find track-state.json files
 ISSUES=""
+HANDOFF_DATA=""
+
+DATA_DIR="${CLAUDE_PLUGIN_DATA:-${CLAUDE_PLUGIN_ROOT}/.data}"
+mkdir -p "$DATA_DIR"
 
 if [[ -d "${CWD}/conductor" ]]; then
   # Look for tracks registry
@@ -50,9 +55,42 @@ except Exception:
         if [[ -n "$STALE_LOCKS" ]]; then
           ISSUES="${ISSUES}[Conductor] Stale in_progress tasks found in ${TRACK_DIR}: ${STALE_LOCKS}. "
         fi
+
+        # Collect handoff data: active tracks with status and position
+        TRACK_INFO=$(python3 -c "
+import json, sys
+try:
+    with open('${STATE_FILE}') as f:
+        state = json.load(f)
+    status = state.get('status', 'unknown')
+    track_id = state.get('track_id', 'unknown')
+    if status not in ('completed', 'archived', 'cancelled'):
+        pi = state.get('current_phase_index', -1)
+        ti = state.get('current_task_index', -1)
+        mode = state.get('execution_mode', 'interactive')
+        print(f'- Track {track_id}: status={status}, position=P{pi}.T{ti}, mode={mode}')
+except Exception:
+    pass
+" 2>/dev/null || echo "")
+        if [[ -n "$TRACK_INFO" ]]; then
+          HANDOFF_DATA="${HANDOFF_DATA}${TRACK_INFO}"$'\n'
+        fi
       fi
     done
   fi
+fi
+
+# Write session handoff file for next session
+HANDOFF_FILE="${DATA_DIR}/session-handoff.md"
+TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+if [[ -n "$HANDOFF_DATA" ]]; then
+  echo "Last session ended: ${TIMESTAMP}" > "$HANDOFF_FILE"
+  echo "Active tracks:" >> "$HANDOFF_FILE"
+  echo "$HANDOFF_DATA" >> "$HANDOFF_FILE"
+  echo "Run /conductor:implement to continue, or /conductor:status for overview." >> "$HANDOFF_FILE"
+elif [[ -f "$HANDOFF_FILE" ]]; then
+  # Clean up stale handoff if no active tracks
+  rm -f "$HANDOFF_FILE"
 fi
 
 if [[ -n "$ISSUES" ]]; then

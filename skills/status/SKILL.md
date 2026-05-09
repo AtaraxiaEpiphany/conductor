@@ -53,6 +53,7 @@ For each track with a state file, compute status from task aggregation:
 
 | Condition | Track Status |
 |---|---|
+| `track-state.json` has `status: "archived"` | `archived` |
 | All tasks `cancelled` | `cancelled` |
 | Any task `blocked` and no `in_progress`/`failed` | `blocked` |
 | Any task `in_progress` or `failed` | `in_progress` |
@@ -71,9 +72,16 @@ Generated: <current timestamp>
 
 ## Summary
 - Total Tracks: <n>
-- Completed: <n> | In Progress: <n> | Blocked: <n> | New: <n>
+- Completed: <n> | In Progress: <n> | Blocked: <n> | New: <n> | Archived: <n>
 - Overall Progress: <completed_tasks>/<total_tasks> (<percentage>%)
 - Deferred: <deferred_count> tasks awaiting manual verification
+
+## Active Tracks
+[... track details for non-archived tracks ...]
+
+## Archived Tracks
+[... track names + archived_at timestamps, grouped at bottom ...]
+```
 
 ---
 
@@ -133,4 +141,21 @@ Recommend the next action based on current state:
 - If tracks are `in_progress`: "Run `/conductor:implement` to continue."
 - If tracks are `blocked`: "Resolve blocked tasks before continuing."
 - If all tracks `completed`: "All tracks complete. Run `/conductor:review` or create new tracks."
+- If tracks are `archived`: "No action needed. Archived tracks are kept for reference."
 - If tracks are `new`: "Run `/conductor:implement` to start."
+
+### 2.6 Health Check
+
+If `$ARGUMENTS` contains `--health` or `--gc`, run a health check:
+
+1. Run `track-state gc "<track_dir>"` for each active track to clean orphaned artifacts.
+2. Scan for stale `in_progress` tasks across all tracks (state updated >24h ago).
+3. Count orphaned `.conductor/result.json` files.
+4. Report:
+
+```
+## Health Check
+- Orphaned artifacts cleaned: <n>
+- Stale in_progress tasks: <n> (across <n> tracks)
+- Active tracks with warnings: <n>
+```

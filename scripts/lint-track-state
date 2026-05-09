@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+# lint-track-state — Boundary enforcement linter for Conductor tracks.
+# Verifies Execution Firewall rules F1, F4, and state consistency.
+# Can be run as CI check or pre-commit hook.
+# Exit 0 on pass, 1 on failure.
+set -euo pipefail
+
+CWD="${1:-$(pwd)}"
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+TRACKS_FILE="${CWD}/conductor/tracks.md"
+
+if [[ ! -f "$TRACKS_FILE" ]]; then
+  echo "No conductor/tracks.md found. Nothing to lint."
+  exit 0
+fi
+
+ERRORS=0
+WARNINGS=0
+
+# Extract track dirs
+TRACK_DIRS=$(grep -oP '\[.*?\]\(([^)]+)\)' "$TRACKS_FILE" 2>/dev/null | grep -oP '(?<=\().*?(?=\))' || true)
+
+for TRACK_DIR in $TRACK_DIRS; do
+  FULL_DIR="${CWD}/${TRACK_DIR}"
+  STATE_FILE="${FULL_DIR}/track-state.json"
+
+  if [[ ! -f "$STATE_FILE" ]]; then
+    continue
+  fi
+
+  TRACK_ID=$(python3 -c "
+import json
+try:
+    with open('${STATE_FILE}') as f:
+        print(json.load(f).get('track_id', 'unknown'))
+except: print('unknown')
+" 2>/dev/null || echo "unknown")
+
+  # F1: Global State Lock — only ONE in_progress task allowed
+  F1_RESULT=$(python3 -c "
+import json
+try:
+    with open('${STATE_FILE}') as f:
+        state = json.load(f)
+    active = []
+    for pi, phase in enumerate(state.get('phases', [])):
+        for ti, task in enumerate(phase.get('tasks', [])):
+            if task.get('status') == 'in_progress':
+                active.append(f'P{pi}.T{ti}')
+            for si, sub in enumerate(task.get('subtasks', [])):
+                if sub.get('status') == 'in_progress':
+                    active.append(f'P{pi}.T{ti}.S{si}')
+    if len(active) > 2:
+        print(f'VIOLATION: {len(active)} in_progress tasks (max 2 allowed). Tasks: {', '.join(active)}')
+    elif len(active) == 0:
+        print('')
+    else:
+        print('')
+except Exception as e:
+    print(f'ERROR: {e}')
+" 2>/dev/null || echo "ERROR: failed to check F1")
+
+  if [[ "$F1_RESULT" == VIOLATION* ]]; then
+    echo "[F1 ERROR] Track '${TRACK_ID}': ${F1_RESULT}"
+    echo "  Fix: Run track-state recover to reset stale locks."
+    ERRORS=$((ERRORS + 1))
+  fi
+
+  # F4: SHA Must Exist — non-transient markers need commit_sha
+  F4_RESULT=$(python3 -c "
+import json
+try:
+    with open('${STATE_FILE}') as f:
+        state = json.load(f)
+    missing = []
+    for pi, phase in enumerate(state.get('phases', [])):
+        for ti, task in enumerate(phase.get('tasks', [])):
+            if task.get('status') in ('completed', 'failed', 'skipped', 'blocked', 'cancelled', 'deferred'):
+                if not task.get('commit_sha'):
+                    missing.append(f'P{pi}.T{ti}: {task.get(\"name\", \"?\")}')
+            for si, sub in enumerate(task.get('subtasks', [])):
+                if sub.get('status') in ('completed', 'failed', 'skipped', 'blocked', 'cancelled', 'deferred'):
+                    if not sub.get('commit_sha'):
+                        missing.append(f'P{pi}.T{ti}.S{si}: {sub.get(\"name\", \"?\")}')
+    if missing:
+        print('VIOLATION: ' + '; '.join(missing))
+    else:
+        print('')
+except Exception as e:
+    print(f'ERROR: {e}')
+" 2>/dev/null || echo "ERROR: failed to check F4")
+
+  if [[ "$F4_RESULT" == VIOLATION* ]]; then
+    echo "[F4 ERROR] Track '${TRACK_ID}': Missing commit SHAs for terminal tasks."
+    echo "  ${F4_RESULT}"
+    echo "  Fix: Run git log to find SHAs, then track-state complete <dir> <p> <t> --sha <sha>."
+    ERRORS=$((ERRORS + 1))
+  fi
+
+  # State consistency: run track-state validate
+  VALIDATE_RESULT=$(python3 "${PLUGIN_ROOT}/scripts/track-state" validate "$FULL_DIR" 2>/dev/null || echo '{"valid":false,"errors":["validate failed"]}')
+  IS_VALID=$(echo "$VALIDATE_RESULT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('valid', False))" 2>/dev/null || echo "False")
+
+  if [[ "$IS_VALID" != "True" ]]; then
+    VAL_ERRORS=$(echo "$VALIDATE_RESULT" | python3 -c "import json,sys; print('; '.join(json.load(sys.stdin).get('errors', [])))" 2>/dev/null || echo "unknown")
+    echo "[STATE ERROR] Track '${TRACK_ID}': ${VAL_ERRORS}"
+    echo "  Fix: Run track-state validate <dir> --fix to auto-repair, or check track-state.json manually."
+    ERRORS=$((ERRORS + 1))
+  fi
+
+  # Warnings: check for stale state (>24h with in_progress)
+  AGE_RESULT=$(python3 -c "
+import json
+from datetime import datetime, timezone
+try:
+    with open('${STATE_FILE}') as f:
+        state = json.load(f)
+    updated = datetime.fromisoformat(state.get('updated_at', datetime.now(timezone.utc).isoformat()))
+    age_hours = (datetime.now(timezone.utc) - updated).total_seconds() / 3600
+    has_active = False
+    for phase in state.get('phases', []):
+        for task in phase.get('tasks', []):
+            if task.get('status') == 'in_progress':
+                has_active = True
+    if has_active and age_hours > 24:
+        print(f'WARNING: Stale state ({age_hours:.0f}h old) with in_progress tasks')
+except: pass
+" 2>/dev/null || echo "")
+
+  if [[ "$AGE_RESULT" == WARNING* ]]; then
+    echo "[WARNING] Track '${TRACK_ID}': ${AGE_RESULT}"
+    echo "  Hint: Run /conductor:implement to recover, or /conductor:revert to roll back."
+    WARNINGS=$((WARNINGS + 1))
+  fi
+
+done
+
+echo ""
+echo "Lint complete: ${ERRORS} errors, ${WARNINGS} warnings."
+
+if [[ $ERRORS -gt 0 ]]; then
+  exit 1
+fi
+exit 0

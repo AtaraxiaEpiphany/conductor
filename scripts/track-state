@@ -760,6 +760,7 @@ def _append_deviation_legacy(track_dir, task_name, dev):
 
 def cmd_next(track_dir, compact=False):
     state = load(track_dir)
+    execution_mode = state.get("execution_mode", "interactive")
     result = None
     # Pass 1: in_progress tasks (recovery / dispatch continuation)
     for pi, phase in enumerate(state["phases"]):
@@ -807,6 +808,7 @@ def cmd_next(track_dir, compact=False):
                 break
     if not result:
         result = dict(phase=-1, task=-1, subtask=None, name=None, type=None, tags=[])
+    result["execution_mode"] = execution_mode
     if compact:
         out_compact(result)
     else:
@@ -857,6 +859,7 @@ def cmd_recover(track_dir, compact=False):
         retry_count=tgt.get("retry_count", 0),
         last_failure_summary=tgt.get("last_failure_summary"),
         tags=extract_tags(name),
+        execution_mode=state.get("execution_mode", "interactive"),
     )
     if compact:
         out_compact(result)
@@ -1004,6 +1007,55 @@ def cmd_finalize(track_dir):
     out(dict(status=state["status"]))
 
 
+def cmd_archive(track_dir):
+    """Transition a completed track to archived status."""
+    state = load(track_dir)
+    current = state.get("status", "")
+    if current != "completed":
+        out(dict(ok=False, error=f"Cannot archive track with status '{current}'. Only 'completed' tracks can be archived.",
+                 hint="Run track-state finalize first."))
+        return
+
+    state["status"] = "archived"
+    state["archived_at"] = now_iso()
+    state["updated_at"] = now_iso()
+    save(track_dir, state)
+    out(dict(ok=True, status="archived"))
+
+
+def cmd_gc(track_dir):
+    """Garbage collection: clean orphaned artifacts and detect stale state."""
+    track_path = Path(track_dir)
+    cond_dir = track_path / ".conductor"
+    fixes = []
+
+    # Clean orphaned result.json files (left from crashed sessions)
+    result_file = cond_dir / "result.json"
+    if result_file.exists():
+        result_file.unlink()
+        fixes.append("Removed orphaned .conductor/result.json")
+
+    # Detect stale in_progress tasks (older than 24h)
+    state = load(track_dir)
+    now = datetime.now(timezone.utc)
+    updated = datetime.fromisoformat(state.get("updated_at", now.isoformat()))
+    age_hours = (now - updated).total_seconds() / 3600
+
+    stale_tasks = []
+    for pi, phase in enumerate(state.get("phases", [])):
+        for ti, task in enumerate(phase.get("tasks", [])):
+            if task.get("status") == "in_progress":
+                stale_tasks.append(f"P{pi}.T{ti}: {task.get('name', '?')}")
+            for si, sub in enumerate(task.get("subtasks", [])):
+                if sub.get("status") == "in_progress":
+                    stale_tasks.append(f"P{pi}.T{ti}.S{si}: {sub.get('name', '?')}")
+
+    if stale_tasks and age_hours > 24:
+        fixes.append(f"Stale in_progress tasks detected ({age_hours:.0f}h old): {'; '.join(stale_tasks)}")
+
+    out(dict(fixes=fixes, stale_count=len(stale_tasks), age_hours=round(age_hours, 1)))
+
+
 def cmd_phase_done(track_dir, p):
     state = load(track_dir)
     phase = state["phases"][int(p)]
@@ -1050,6 +1102,7 @@ def cmd_registry_update(track_dir, tracks_md_path):
         "new": " ",
         "in_progress": "~",
         "completed": "x",
+        "archived": "@",
         "blocked": "#",
         "cancelled": "-",
     }
@@ -1265,9 +1318,15 @@ def cmd_validate(track_dir, fix=False):
 
     # Enum checks
     if state["type"] not in ("feature", "bugfix", "chore", "docs"):
-        errors.append(f"Invalid type: {state['type']}")
-    if state["status"] not in ("new", "in_progress", "completed", "blocked", "cancelled"):
-        errors.append(f"Invalid track status: {state['status']}")
+        errors.append(
+            f"Invalid type: '{state['type']}'. Valid types: feature, bugfix, chore, docs. "
+            f"Run track-state init to recreate the track."
+        )
+    if state["status"] not in ("new", "in_progress", "completed", "archived", "blocked", "cancelled"):
+        errors.append(
+            f"Invalid track status: '{state['status']}'. Valid statuses: new, in_progress, completed, archived, blocked, cancelled. "
+            f"Run track-state start/finalize/archive to transition."
+        )
 
     # Index checks
     cpi = state["current_phase_index"]
@@ -1588,7 +1647,7 @@ def cmd_process_result(track_dir):
 # ── Init (Track Creation) ────────────────────────────────────────────
 
 
-def cmd_init(track_dir, plan_structure_json, track_id, track_type, description):
+def cmd_init(track_dir, plan_structure_json, track_id, track_type, description, execution_mode=None):
     """Create track-state.json and index.md from PLAN_STRUCTURE.
     Returns compact result — eliminates duplicate JSON generation in orchestrator."""
     plan = json.loads(plan_structure_json)
@@ -1616,6 +1675,8 @@ def cmd_init(track_dir, plan_structure_json, track_id, track_type, description):
         "updated_at": now_iso(),
         "phases": phases,
     }
+    if execution_mode:
+        state["execution_mode"] = execution_mode
 
     with open(track_path / "track-state.json", "w") as f:
         json.dump(state, f, indent=2, ensure_ascii=False)
@@ -1889,6 +1950,10 @@ def main():
             cmd_add_checkpoint(track_dir, pos[0], pos[1])
         elif cmd == "finalize":
             cmd_finalize(track_dir)
+        elif cmd == "archive":
+            cmd_archive(track_dir)
+        elif cmd == "gc":
+            cmd_gc(track_dir)
         elif cmd == "process-result":
             cmd_process_result(track_dir)
         elif cmd == "init":
@@ -1896,7 +1961,8 @@ def main():
                      flag(args, "--plan-structure") or "{}",
                      flag(args, "--track-id") or "track",
                      flag(args, "--type") or "feature",
-                     flag(args, "--description") or "")
+                     flag(args, "--description") or "",
+                     flag(args, "--execution-mode"))
         elif cmd == "get-handoff":
             # Get handoff content for a specific task/subtask
             # Usage: track-state get-handoff <track-dir> <phase> <task> [--subtask <n>]
