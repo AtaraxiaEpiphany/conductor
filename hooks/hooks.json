@@ -1,5 +1,28 @@
 {
   "hooks": {
+    "InstructionsLoaded": [
+      {
+        "matcher": "conductor",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/enhance-conductor-context\"",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "PostToolBatch": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/on-batch-complete\"",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Bash",
@@ -50,13 +73,24 @@
     ],
     "SubagentStop": [
       {
-        "matcher": "task-executor|code-reviewer|explorer|phase-checker|doc-syncer|skip-analyst|spec-planner|spec-reviewer|project-analyzer",
+        "matcher": "task-executor|explorer|phase-checker",
         "hooks": [
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/on-subagent-stop\"",
-            "timeout": 5,
-            "async": true
+            "asyncRewake": true,
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "code-reviewer|doc-syncer|skip-analyst|spec-planner|spec-reviewer|project-analyzer",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/on-subagent-stop\"",
+            "async": true,
+            "timeout": 5
           }
         ]
       }
@@ -95,6 +129,30 @@
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/session-end\"",
             "timeout": 5
+          }
+        ]
+      }
+    ],
+    "ConfigChange": [
+      {
+        "matcher": "hooks|project_settings",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/on-config-change\"",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "CwdChanged": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/on-cwd-change\"",
+            "timeout": 2
           }
         ]
       }

@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# InstructionsLoaded hook: dynamically enhance conductor context based on loaded file.
+# Progressive disclosure: inject track-specific info when conductor-core.md loads.
+set -euo pipefail
+
+INPUT=$(cat)
+
+FILE_PATH=$(echo "$INPUT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('file_path',''))" 2>/dev/null || echo "")
+LOAD_REASON=$(echo "$INPUT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('load_reason',''))" 2>/dev/null || echo "")
+CWD=$(echo "$INPUT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('cwd',''))" 2>/dev/null || echo "")
+
+# Only enhance conductor-related files
+if [[ "$FILE_PATH" != *"conductor"* ]] && [[ "$FILE_PATH" != *"conductor-core"* ]]; then
+    echo '{}'
+    exit 0
+fi
+
+# Get current track context if available
+TRACK_CONTEXT=""
+
+if [[ -d "${CWD}/conductor" ]]; then
+    TRACKS_FILE="${CWD}/conductor/tracks.md"
+
+    if [[ -f "$TRACKS_FILE" ]]; then
+        TRACK_CONTEXT=$(python3 -c "
+import json, re, os
+
+try:
+    with open('${TRACKS_FILE}') as f:
+        content = f.read()
+
+    # Find all tracks
+    tracks = re.findall(r'\[([^\]]+)\]\(([^)]+)\)', content)
+
+    active = []
+    for name, path in tracks[:3]:  # Limit to 3 for context
+        state_file = '${CWD}/' + path + '/track-state.json'
+        if os.path.exists(state_file):
+            with open(state_file) as sf:
+                state = json.load(sf)
+            status = state.get('status', 'unknown')
+            if status not in ('completed', 'archived', 'cancelled'):
+                phase_idx = state.get('current_phase_index', 0)
+                task_idx = state.get('current_task_index', 0)
+                active.append(f'- {name}: {status} (P{phase_idx+1}.T{task_idx+1})')
+
+    if active:
+        print('Active tracks:\\n' + '\\n'.join(active))
+    else:
+        print('')
+except:
+    print('')
+" 2>/dev/null || echo "")
+    fi
+fi
+
+# Inject enhanced context
+if [[ -n "$TRACK_CONTEXT" ]]; then
+    python3 -c "
+import json, sys
+
+context = '''## Quick Reference
+
+''' + '''${TRACK_CONTEXT}''' + '''
+
+Run /conductor:status for full overview.'''
+
+print(json.dumps({
+    'hookSpecificOutput': {
+        'hookEventName': 'InstructionsLoaded',
+        'additionalContext': context
+    }
+}))
+"
+else
+    echo '{}'
+fi
+exit 0

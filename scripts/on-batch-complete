@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+# PostToolBatch hook: batch-level validation after parallel tool calls resolve.
+# Checks for state consistency issues across multiple operations.
+set -euo pipefail
+
+INPUT=$(cat)
+
+CWD=$(echo "$INPUT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('cwd',''))" 2>/dev/null || echo "")
+
+# Analyze the batch of tool calls
+TOOL_CALLS=$(echo "$INPUT" | python3 -c "
+import json, sys, re
+
+try:
+    data = json.load(sys.stdin)
+    tool_calls = data.get('tool_calls', [])
+
+    git_ops = []
+    track_state_ops = []
+    agent_calls = []
+
+    for tc in tool_calls:
+        tool_name = tc.get('tool_name', '')
+        tool_input = tc.get('tool_input', {})
+
+        if tool_name == 'Bash':
+            cmd = tool_input.get('command', '')
+            if cmd:
+                if re.match(r'^git\s', cmd):
+                    git_ops.append(cmd[:100])
+                if 'track-state' in cmd:
+                    track_state_ops.append(cmd[:100])
+
+        elif tool_name == 'Agent':
+            agent_calls.append(tool_input.get('description', 'unknown'))
+
+    # Check for patterns that suggest state drift
+    issues = []
+
+    # Pattern: multiple git commits without track-state update
+    git_commits = [c for c in git_ops if 'commit' in c]
+    if len(git_commits) >= 2 and not track_state_ops:
+        issues.append('multiple_git_commits_without_state_update')
+
+    # Pattern: git operations during active subagent
+    if agent_calls and git_commits:
+        issues.append('git_ops_during_subagent')
+
+    print(json.dumps({
+        'git_ops': git_ops,
+        'track_state_ops': track_state_ops,
+        'agent_calls': agent_calls,
+        'issues': issues,
+        'total_tools': len(tool_calls)
+    }))
+except Exception as e:
+    print(json.dumps({'error': str(e)}))
+" 2>/dev/null || echo '{}')
+
+GIT_COUNT=$(echo "$TOOL_CALLS" | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d.get('git_ops',[])))" 2>/dev/null || echo "0")
+TRACK_STATE_COUNT=$(echo "$TOOL_CALLS" | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d.get('track_state_ops',[])))" 2>/dev/null || echo "0")
+ISSUES=$(echo "$TOOL_CALLS" | python3 -c "import json,sys; d=json.load(sys.stdin); print(','.join(d.get('issues',[])))" 2>/dev/null || echo "")
+
+# Log batch metrics
+DATA_DIR="${CLAUDE_PLUGIN_DATA:-${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}/.data}"
+LOG_DIR="${DATA_DIR}/logs"
+mkdir -p "$LOG_DIR"
+
+TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+SESSION_ID=$(echo "$INPUT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('session_id',''))" 2>/dev/null || echo "")
+
+echo "${TIMESTAMP} session=${SESSION_ID} git_ops=${GIT_COUNT} track_state_ops=${TRACK_STATE_COUNT}" >> "${LOG_DIR}/batch-metrics.log"
+
+# Issue-based context injection
+if [[ -n "$ISSUES" ]]; then
+    CONTEXT_MSG=""
+    if [[ "$ISSUES" == *"multiple_git_commits_without_state_update"* ]]; then
+        CONTEXT_MSG="[Conductor] Batch analysis: Multiple git commits detected without track-state update. Consider running track-state sync."
+    elif [[ "$ISSUES" == *"git_ops_during_subagent"* ]]; then
+        CONTEXT_MSG="[Conductor] Batch analysis: Git operations detected during active subagent. Verify state consistency after subagent completes."
+    fi
+
+    if [[ -n "$CONTEXT_MSG" ]]; then
+        python3 -c "
+import json, sys
+print(json.dumps({
+    'hookSpecificOutput': {
+        'hookEventName': 'PostToolBatch',
+        'additionalContext': '${CONTEXT_MSG}'
+    }
+}))
+"
+        exit 0
+    fi
+fi
+
+echo '{}'
+exit 0

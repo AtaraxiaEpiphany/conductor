@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SessionEnd hook: cleanup, consistency validation, and metrics logging.
 # Runs on session termination: clear, resume, logout, prompt_input_exit, bypass_permissions_disabled, other.
-set -euo pipefail
+set -eo pipefail
 
 INPUT=$(cat)
 
@@ -9,7 +9,9 @@ SESSION_ID=$(echo "$INPUT" | python3 -c "import json,sys; d=json.load(sys.stdin)
 CWD=$(echo "$INPUT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('cwd',''))" 2>/dev/null || echo "")
 END_REASON=$(echo "$INPUT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('reason',''))" 2>/dev/null || echo "")
 
-DATA_DIR="${CLAUDE_PLUGIN_DATA:-${CLAUDE_PLUGIN_ROOT}/.data}"
+# Fallback for plugin root when not set (e.g., during testing)
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+DATA_DIR="${CLAUDE_PLUGIN_DATA:-$PLUGIN_ROOT/.data}"
 LOG_DIR="${DATA_DIR}/logs"
 mkdir -p "$LOG_DIR"
 

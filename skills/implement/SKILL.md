@@ -12,6 +12,9 @@ hooks:
         - type: command
           command: "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/state-consistency-check\""
           timeout: 10
+        - type: prompt
+          prompt: "You are a conductor state auditor. Review the last assistant message and any additionalContext from the state-consistency-check hook. Check for: (1) stale in_progress tasks, (2) uncommitted changes that should be tracked, (3) state inconsistencies between track-state.json and plan.md. Return JSON: {\"ok\": true/false, \"reason\": \"brief issue description or 'OK'\"}"
+          model: haiku
 ---
 
 # Conductor Implement — Thin Orchestrator
