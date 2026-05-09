@@ -31,7 +31,7 @@ Conductor is a Claude Code plugin built on **Spec-Driven Development** and **Sub
 | **Context Isolation** | State mutations via CLI scripts; subagents self-extract ACs/specs; phase checkpoints and doc sync run in isolated subagent context. Step logs write to files, results via `process-result`. Main session context stays minimal |
 | **TDD Enforcement** | Mandatory Red-Green-Refactor cycle — no implementation code without a failing test |
 | **Single State Lock** | Only one task may be `in_progress` globally, eliminating concurrent conflicts |
-| **Audit Trail** | Every state transition is accompanied by a git commit + git note for full traceability |
+| **Audit Trail** | Every task commit includes structured JSON git notes with metadata, requirements traceability, implementation statistics, and verification status. Notes are enriched asynchronously via Stop hooks — zero subagent overhead |
 | **Spec-Driven** | From PRD to spec.md to plan.md — specifications drive every line of implementation code |
 
 ---
@@ -173,12 +173,22 @@ conductor-plugin/
 ├── bin/                               # Executables (added to PATH)
 ├── scripts/                           # Hook & utility scripts
 │   ├── session-start                  #   SessionStart hook (injects conductor-core.md)
+│   ├── on-subagent-start              #   SubagentStart hook (injects agent reminders)
+│   ├── on-subagent-stop               #   SubagentStop hook (logs lifecycle events)
+│   ├── on-task-executor-stop          #   task-executor Stop hook (enriches git notes)
+│   ├── on-test-run                    #   PostToolUse hook for test monitoring
+│   ├── enrich-git-notes               #   Generates structured JSON git notes
+│   ├── git-notes-query                #   Query tool for audit data
+│   ├── on-review-stop                 #   code-reviewer Stop hook (logs review events)
+│   ├── on-phase-checkpoint-stop       #   phase-checker Stop hook (logs checkpoint events)
+│   ├── state-consistency-check        #   implement Stop hook (detects stale locks)
 │   └── track-state                    #   State management CLI (Python 3)
 │       # Commands: next, recover, lock, complete,
 │       #   fail, skip, block, defer, sync-plan,
 │       #   registry-update, start, validate,
 │       #   phase-done, add-checkpoint, finalize,
-│       #   process-result, init, shas, deferred-report
+│       #   process-result, init, shas, deferred-report,
+│       #   get-handoff, sync-handoff, append-handoff
 ├── schemas/                           # JSON Schema definitions
 │   └── track-state.schema.json        #   track-state.json schema (documentation reference)
 ├── output-styles/                     # Output formatting styles
@@ -366,6 +376,93 @@ Status marker mapping:
 | `skipped` | `[>] ... [sha]` (SHA appended at line end) |
 | `blocked` | `[#] ... [sha]` (SHA appended at line end) |
 | `cancelled` | `[-] ... [sha]` (SHA appended at line end) |
+
+---
+
+## Git Notes Audit System
+
+Every task-executor commit includes structured JSON git notes for comprehensive auditability. The system uses a **marker + enrich** pattern to minimize subagent overhead.
+
+### Note Structure
+
+```json
+{
+  "conductor": {
+    "version": "1.0",
+    "timestamp": "2026-05-09T12:34:56Z",
+    "session_id": "abc123",
+    "track_id": "user-login",
+    "track_dir": "conductor/tracks/user-login"
+  },
+  "task": {
+    "phase": 0,
+    "task": 1,
+    "subtask": null,
+    "name": "Implement login form",
+    "attempt": 1,
+    "tags": []
+  },
+  "requirements": {
+    "tc_implemented": ["TC-1.1", "TC-1.2", "TC-2.1"],
+    "spec_deviation": "NONE"
+  },
+  "implementation": {
+    "commit_sha": "a1b2c3d",
+    "summary": "Implemented user login",
+    "diff_stats": "3 files changed, 127 insertions(+), 5 deletions(-)",
+    "files_added": ["test/login.test.ts", "src/login.ts"],
+    "files_modified": ["src/index.ts"],
+    "files_deleted": [],
+    "lines_added": 127,
+    "lines_deleted": 5
+  }
+}
+```
+
+### How It Works
+
+1. **task-executor Step 9**: Writes minimal marker note
+   ```bash
+   git notes add -m "TASK-RESULT: <path> | TRACK_DIR: <path>" $SHA
+   ```
+
+2. **Stop Hook (async)**: `on-task-executor-stop` detects marker via `TASK-RESULT:` prefix
+
+3. **Enrichment**: `enrich-git-notes` combines:
+   - `.conductor/result.json` (task-executor output)
+   - `track-state.json` (task metadata)
+   - `git diff` statistics (file changes, line counts)
+
+4. **Final Note**: Structured JSON overwrites the marker
+
+### Query Tool
+
+```bash
+# View audit data for a specific commit
+git-notes-query --sha <commit-hash>
+
+# View all commits for a track
+git-notes-query --track <track-id>
+
+# View all activity in a session
+git-notes-query --session <session-id>
+
+# Show test coverage trend
+git-notes-query --coverage-trend
+
+# Show all changed files
+git-notes-query --files
+
+# Show specification deviations
+git-notes-query --deviations
+```
+
+### Benefits
+
+- **Zero subagent overhead**: task-executor only writes a marker
+- **Queryable**: Structured JSON enables post-hoc analysis
+- **Complete traceability**: Links commits to requirements, tests, and state
+- **Session tracking**: All work in a session can be reconstructed
 
 ---
 
