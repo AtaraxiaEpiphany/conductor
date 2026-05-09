@@ -196,7 +196,11 @@ def _do_complete(track_dir, p, t, s=None, sha=None):
 
     tgt = target(state, pi, ti, si)
     tgt["status"] = "completed"
-    tgt["commit_sha"] = sha or ""
+    # For parent-complete (si=None) with empty sha, inherit from last subtask
+    resolved_sha = sha or ""
+    if not resolved_sha and si is None and "subtasks" in tgt:
+        resolved_sha = _last_subtask_sha(tgt)
+    tgt["commit_sha"] = resolved_sha
     tgt["completed_at"] = now_iso()
     clean(tgt, {"status", "commit_sha", "completed_at"})
 
