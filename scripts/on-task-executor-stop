@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# task-executor Stop hook: Enriches git notes with full audit data.
+# Runs async to avoid blocking the orchestrator.
+set -euo pipefail
+
+INPUT=$(cat)
+CWD=$(echo "$INPUT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('cwd',''))" 2>/dev/null || echo "")
+SESSION_ID=$(echo "$INPUT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('session_id',''))" 2>/dev/null || echo "")
+
+if [[ -z "$CWD" ]]; then
+  echo '{}'
+  exit 0
+fi
+
+# Get the most recent commit SHA
+SHA=$(git -C "$CWD" log -1 --format="%H" 2>/dev/null || echo "")
+
+if [[ -z "$SHA" ]]; then
+  echo '{}'
+  exit 0
+fi
+
+# Check if this commit has the task-executor marker
+EXISTING_NOTE=$(git -C "$CWD" notes show "$SHA" 2>/dev/null || echo "")
+
+if ! echo "$EXISTING_NOTE" | grep -q "TASK-RESULT:"; then
+  # Not a task-executor commit, skip
+  echo '{}'
+  exit 0
+fi
+
+# Extract TRACK_DIR from the marker
+TRACK_DIR_REL=$(echo "$EXISTING_NOTE" | grep -oP 'TRACK_DIR:\s*\K[^\s|]+' || echo "")
+TRACK_DIR="${CWD}/${TRACK_DIR_REL}"
+
+if [[ ! -f "${TRACK_DIR}/.conductor/result.json" ]]; then
+  echo '{}'
+  exit 0
+fi
+
+# Call the enrich script
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/enrich-git-notes" \
+    --sha "$SHA" \
+    --track-dir "$TRACK_DIR" \
+    --cwd "$CWD" \
+    --session "$SESSION_ID" || true
+
+echo '{}'

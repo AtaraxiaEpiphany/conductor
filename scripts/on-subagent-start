@@ -31,6 +31,9 @@ case "$AGENT_TYPE" in
   spec-planner)
     REMINDER="[Conductor] You are a spec-planner. Write spec.md and plan.md. Return compact summary in ---SPEC PLAN RESULT--- format."
     ;;
+  spec-reviewer)
+    REMINDER="[Conductor] You are a spec-reviewer. Present summaries, handle revisions, keep full files out of orchestrator context. Report in ---REVIEW RESULT--- format."
+    ;;
   project-analyzer)
     REMINDER="[Conductor] You are a project-analyzer. You are READ-ONLY. Return analysis in ---ANALYSIS RESULT--- format."
     ;;

@@ -8,6 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Structured git notes audit system**: Enhanced git notes with JSON-based audit trail for task-executor commits. Includes metadata (timestamp, session_id, track_id), task details, requirements traceability (TC coverage, spec deviations), implementation statistics (files added/modified/deleted, line counts), and verification status. Zero subagent overhead — task-executor writes minimal marker, Stop hook enriches asynchronously
+- **`on-task-executor-stop` hook**: New script triggered when task-executor stops. Detects task-executor commits via marker note, calls enrich-git-notes to add full audit data without impacting agent context
+- **`enrich-git-notes` script**: Generates structured JSON git notes by combining result.json, track-state.json, and git diff statistics. Computes file changes, line counts, and builds queryable audit trail
+- **`git-notes-query` script**: Query tool for retrieving audit data. Supports `--sha`, `--track`, `--session`, `--coverage-trend`, `--files`, and `--deviations` filters. Enables post-hoc analysis of implementation patterns
+- **spec-reviewer hook coverage**: Added spec-reviewer to SubagentStart/SubagentStop matchers in hooks.json, ensuring consistent lifecycle logging across all subagents
+- **task-executor Step 9 marker format**: Changed git notes from free-text to structured marker format (`TASK-RESULT: <path> | TRACK_DIR: <path>`) for Stop hook detection and enrichment
+
 - **handoff.md system**: Replaced issues.md with indexed handoff system for better context management. New structure includes `handoff.md` index file and per-task handoff files in `.conductor/handoff/`. Provides task-level isolation, subtask sections, and support for exploration notes, technical decisions, and risk tracking
 - **`track-state get-handoff` command**: Retrieve handoff content for specific task/subtask with optional `--subtask` filter for minimal context loading
 - **`track-state sync-handoff` command**: Sync handoff.md index with current track state

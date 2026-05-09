@@ -9,6 +9,12 @@ hooks:
       hooks:
         - type: command
           command: "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/on-test-run\""
+  Stop:
+    - matcher: ""
+      hooks:
+        - type: command
+          command: "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/on-task-executor-stop\""
+          async: true
 ---
 
 # Conductor Task Executor
@@ -142,10 +148,15 @@ Stage + commit: `<type>(<scope>): <description>`
 
 ### Step 9: Git Notes
 
+Write a minimal marker note. The Stop hook will enrich it with full audit data.
+
 ```bash
 SHA=$(git log -1 --format="%H")
-git notes add -m "{name}: {summary}. Files: {files}" $SHA
+TRACK_DIR_REL=$(echo "$TRACK_DIR" | sed "s|^$PWD/||")
+git notes add -m "TASK-RESULT: ${TRACK_DIR_REL}/.conductor/result.json | TRACK_DIR: ${TRACK_DIR_REL}" "$SHA"
 ```
+
+**Note:** The marker format allows the Stop hook to locate and enrich this note without loading business context into the agent.
 
 ---
 

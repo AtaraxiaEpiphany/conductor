@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+# enrich-git-notes: Adds detailed audit data to git notes.
+# Called by on-task-executor-stop hook after task-executor completes.
+set -euo pipefail
+
+SHA=""
+TRACK_DIR=""
+CWD=""
+SESSION_ID=""
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --sha) SHA="$2"; shift 2 ;;
+    --track-dir) TRACK_DIR="$2"; shift 2 ;;
+    --cwd) CWD="$2"; shift 2 ;;
+    --session) SESSION_ID="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+
+if [[ -z "$SHA" ]] || [[ -z "$TRACK_DIR" ]]; then
+  exit 1
+fi
+
+# Default CWD to TRACK_DIR parent if not provided
+if [[ -z "$CWD" ]]; then
+  CWD=$(dirname "$TRACK_DIR")
+fi
+
+# Read result.json
+RESULT_FILE="${TRACK_DIR}/.conductor/result.json"
+if [[ ! -f "$RESULT_FILE" ]]; then
+  exit 1
+fi
+
+RESULT_JSON=$(cat "$RESULT_FILE")
+
+# Read track-state.json for task metadata
+STATE_FILE="${TRACK_DIR}/track-state.json"
+if [[ -f "$STATE_FILE" ]]; then
+  PHASE=$(echo "$RESULT_JSON" | jq -r '.phase')
+  TASK=$(echo "$RESULT_JSON" | jq -r '.task')
+  SUBTASK=$(echo "$RESULT_JSON" | jq -r '.subtask // "null"')
+
+  # Extract task info from track-state.json
+  if [[ "$SUBTASK" == "null" ]] || [[ -z "$SUBTASK" ]]; then
+    TASK_INFO=$(jq -c ".phases[$PHASE].tasks[$TASK]" "$STATE_FILE" 2>/dev/null || echo '{}')
+  else
+    TASK_INFO=$(jq -c ".phases[$PHASE].tasks[$TASK].subtasks[$SUBTASK]" "$STATE_FILE" 2>/dev/null || echo '{}')
+  fi
+
+  TASK_NAME=$(echo "$TASK_INFO" | jq -r '.name // ""')
+  TASK_TAGS=$(echo "$TASK_INFO" | jq -r '.tags // []')
+  ATTEMPT=$(echo "$TASK_INFO" | jq -r '.retry_count // 0')
+else
+  TASK_NAME=$(echo "$RESULT_JSON" | jq -r '.task_name // ""')
+  TASK_TAGS="[]"
+  ATTEMPT=$(echo "$RESULT_JSON" | jq -r '.attempt // 0')
+fi
+
+# Extract TC coverage
+TC_COVERAGE=$(echo "$RESULT_JSON" | jq -r '.tc_coverage // ""')
+SPEC_DEVIATION=$(echo "$RESULT_JSON" | jq -r '.spec_deviation // "NONE"')
+
+# Get git diff statistics
+PARENT_SHA="${SHA}~1"
+DIFF_STATS=$(git -C "$CWD" diff --shortstat "$PARENT_SHA" "$SHA" 2>/dev/null || echo "")
+
+# Get file lists
+FILES_ADDED=$(git -C "$CWD" diff --name-only --diff-filter=A "$PARENT_SHA" "$SHA" 2>/dev/null | tr '\n' '|' | sed 's/|$//')
+FILES_MODIFIED=$(git -C "$CWD" diff --name-only --diff-filter=M "$PARENT_SHA" "$SHA" 2>/dev/null | tr '\n' '|' | sed 's/|$//')
+FILES_DELETED=$(git -C "$CWD" diff --name-only --diff-filter=D "$PARENT_SHA" "$SHA" 2>/dev/null | tr '\n' '|' | sed 's/|$//')
+
+# Get line counts
+LINES_STATS=$(git -C "$CWD" diff --numstat "$PARENT_SHA" "$SHA" 2>/dev/null | awk '{
+    add += $1;
+    del += $2;
+  } END {
+    print add "," del;
+  }' || echo "0,0")
+
+LINES_ADDED=$(echo "$LINES_STATS" | cut -d, -f1)
+LINES_DELETED=$(echo "$LINES_STATS" | cut -d, -f2)
+
+# Determine track ID from TRACK_DIR
+TRACK_ID=$(basename "$TRACK_DIR")
+
+# Get timestamp
+TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+# Build the structured note JSON
+NOTE_JSON=$(jq -n \
+  --arg version "1.0" \
+  --arg timestamp "$TIMESTAMP" \
+  --arg session_id "${SESSION_ID:-unknown}" \
+  --arg track_id "$TRACK_ID" \
+  --arg track_dir "$TRACK_DIR" \
+  --arg phase "$(echo "$RESULT_JSON" | jq -r '.phase // 0')" \
+  --arg task "$(echo "$RESULT_JSON" | jq -r '.task // 0')" \
+  --arg subtask "$(echo "$RESULT_JSON" | jq -r '.subtask // "null"')" \
+  --arg task_name "$TASK_NAME" \
+  --arg attempt "$ATTEMPT" \
+  --arg tc_coverage "$TC_COVERAGE" \
+  --arg spec_deviation "$SPEC_DEVIATION" \
+  --arg diff_stats "$DIFF_STATS" \
+  --arg files_added "$FILES_ADDED" \
+  --arg files_modified "$FILES_MODIFIED" \
+  --arg files_deleted "$FILES_DELETED" \
+  --arg lines_added "$LINES_ADDED" \
+  --arg lines_deleted "$LINES_DELETED" \
+  --arg commit_sha "$(echo "$RESULT_JSON" | jq -r '.commit_sha // ""')" \
+  --arg summary "$(echo "$RESULT_JSON" | jq -r '.summary // ""')" \
+  --argjson tags "$TASK_TAGS" \
+  '{
+    conductor: {
+      version: $version,
+      timestamp: $timestamp,
+      session_id: $session_id,
+      track_id: $track_id,
+      track_dir: $track_dir
+    },
+    task: {
+      phase: ($phase | tonumber),
+      task: ($task | tonumber),
+      subtask: (if $subtask == "null" then null else ($subtask | tonumber) end),
+      name: $task_name,
+      attempt: ($attempt | tonumber),
+      tags: $tags
+    },
+    requirements: {
+      tc_implemented: ($tc_coverage | split(",") | map(select(length > 0))),
+      spec_deviation: $spec_deviation
+    },
+    implementation: {
+      commit_sha: $commit_sha,
+      summary: $summary,
+      diff_stats: $diff_stats,
+      files_added: (if $files_added == "" then [] else ($files_added | split("|")) end),
+      files_modified: (if $files_modified == "" then [] else ($files_modified | split("|")) end),
+      files_deleted: (if $files_deleted == "" then [] else ($files_deleted | split("|")) end),
+      lines_added: ($lines_added | tonumber),
+      lines_deleted: ($lines_deleted | tonumber)
+    }
+  }')
+
+# Write the enriched note (replace the marker)
+git -C "$CWD" notes add "$SHA" -m "$NOTE_JSON" -f 2>/dev/null || true
+
+exit 0
