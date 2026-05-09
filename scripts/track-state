@@ -847,6 +847,9 @@ def cmd_recover(track_dir, compact=False):
         name = task["name"]
         ttype = "flat"
 
+    # Best-effort: recover missing git notes for completed tasks
+    _recover_git_notes(track_dir, state)
+
     result = dict(
         status=tgt.get("status", "pending"),
         phase=pi, task=ti, subtask=si,
@@ -859,6 +862,69 @@ def cmd_recover(track_dir, compact=False):
         out_compact(result)
     else:
         out(result)
+
+
+def _recover_git_notes(track_dir, state):
+    """Best-effort: write git notes for completed tasks that are missing them.
+    Scans track-state.json for completed tasks with commit SHAs,
+    checks if each commit has a git note, writes one if missing."""
+    try:
+        import subprocess
+        for pi, phase in enumerate(state.get("phases", [])):
+            for ti, task in enumerate(phase.get("tasks", [])):
+                # Check flat task
+                if task.get("status") == "completed" and task.get("commit_sha"):
+                    _ensure_note(track_dir, state, pi, ti, None, task)
+
+                # Check subtasks
+                for si, sub in enumerate(task.get("subtasks", [])):
+                    if sub.get("status") == "completed" and sub.get("commit_sha"):
+                        _ensure_note(track_dir, state, pi, ti, si, sub)
+    except Exception:
+        pass
+
+
+def _ensure_note(track_dir, state, pi, ti, si, tgt):
+    """Check if a commit has a git note. If not, try to write one."""
+    sha = tgt.get("commit_sha", "")
+    if not sha:
+        return
+
+    try:
+        import subprocess
+        full_sha = subprocess.run(
+            ["git", "rev-parse", sha],
+            capture_output=True, text=True, cwd=track_dir, timeout=5
+        ).stdout.strip()
+        if not full_sha:
+            return
+
+        # Check if note already exists
+        existing = subprocess.run(
+            ["git", "notes", "show", full_sha],
+            capture_output=True, text=True, cwd=track_dir, timeout=5
+        )
+        if existing.returncode == 0 and existing.stdout.strip():
+            return  # Note exists, nothing to do
+
+        # No note — try full recovery from result.json, then basic from state
+        result_path = Path(track_dir) / ".conductor" / "result.json"
+        if result_path.exists():
+            try:
+                with open(result_path) as f:
+                    r = json.load(f)
+                rp, rt = r.get("phase"), r.get("task")
+                rs = r.get("subtask")
+                if str(rp) == str(pi) and str(rt) == str(ti) and (rs is None and si is None or str(rs) == str(si)):
+                    _write_git_note(track_dir, r, state)
+                    return
+            except Exception:
+                pass
+
+        # Fall back to basic note from track-state.json + git
+        _write_git_note_basic(track_dir, sha, state, pi, ti, si)
+    except Exception:
+        pass
 
 
 def cmd_lock(track_dir, p, t, s=None):
@@ -1329,9 +1395,126 @@ def cmd_add_checkpoint(track_dir, p, sha):
     out(dict(ok=True, phase=p, sha=sha))
 
 
+def _write_git_note(track_dir, result_data, state):
+    """Write human-readable git note for the task's commit.
+    Best-effort: silently skips on any error (no SHA, git unavailable, etc.)."""
+    sha = result_data.get("commit_sha", "")
+    if not sha or sha == "N/A":
+        return
+
+    task_name = result_data.get("task_name", "unknown")
+    phase = result_data.get("phase", "?")
+    task = result_data.get("task", "?")
+    subtask = result_data.get("subtask")
+    summary = result_data.get("summary", "")
+    files = result_data.get("files_changed", "")
+    tc_ids = result_data.get("tc_coverage", "")
+    cov_pct = result_data.get("coverage_pct")
+    cov_tool = result_data.get("coverage_tool", "")
+    deviations = result_data.get("spec_deviation_detail", [])
+
+    loc = f"P{phase}.T{task}"
+    if subtask is not None:
+        loc += f".S{subtask}"
+
+    lines = [f"[Conductor] {task_name} ({loc})"]
+    lines.append(f"Summary: {summary}")
+    if files:
+        lines.append(f"Files: {files}")
+    if cov_pct is not None:
+        lines.append(f"Coverage: {cov_pct}%{' — ' + cov_tool if cov_tool else ''}")
+    if tc_ids:
+        lines.append(f"TCs: {tc_ids}")
+    if deviations:
+        dev_texts = [d.get("description", str(d)) if isinstance(d, dict) else str(d) for d in deviations]
+        lines.append(f"Spec deviations: {'; '.join(dev_texts)}")
+    else:
+        lines.append("Spec deviations: NONE")
+
+    note = "\n".join(lines)
+
+    try:
+        import subprocess
+        # Resolve full SHA (result may have 7-char short form)
+        full_sha = subprocess.run(
+            ["git", "rev-parse", sha],
+            capture_output=True, text=True, cwd=track_dir, timeout=5
+        ).stdout.strip()
+        if not full_sha:
+            return
+        subprocess.run(
+            ["git", "notes", "add", "-m", note, full_sha],
+            capture_output=True, text=True, cwd=track_dir, timeout=5
+        )
+    except Exception:
+        pass
+
+
+def _write_git_note_basic(track_dir, sha, state, pi, ti, si=None):
+    """Write a basic git note from track-state.json + git when result.json is unavailable.
+    Used during recovery. Best-effort: silently skips on any error."""
+    if not sha:
+        return
+
+    try:
+        tgt = state["phases"][pi]["tasks"][ti]
+        if si is not None:
+            tgt = tgt["subtasks"][si]
+        task_name = tgt.get("name", "unknown")
+    except (IndexError, KeyError):
+        task_name = "unknown"
+
+    loc = f"P{pi}.T{ti}"
+    if si is not None:
+        loc += f".S{si}"
+
+    # Get files from git diff
+    files = ""
+    try:
+        import subprocess
+        diff_out = subprocess.run(
+            ["git", "diff", "--name-only", f"{sha}~1", sha],
+            capture_output=True, text=True, cwd=track_dir, timeout=5
+        )
+        if diff_out.returncode == 0 and diff_out.stdout.strip():
+            files = ", ".join(diff_out.stdout.strip().split("\n"))
+    except Exception:
+        pass
+
+    lines = [f"[Conductor] {task_name} ({loc})"]
+    lines.append("Summary: (recovered — no runtime data available)")
+    if files:
+        lines.append(f"Files: {files}")
+    lines.append("Coverage: (not recovered)")
+    lines.append("Spec deviations: (not recovered)")
+
+    note = "\n".join(lines)
+
+    try:
+        import subprocess
+        full_sha = subprocess.run(
+            ["git", "rev-parse", sha],
+            capture_output=True, text=True, cwd=track_dir, timeout=5
+        ).stdout.strip()
+        if not full_sha:
+            return
+        # Only write if no note exists
+        existing = subprocess.run(
+            ["git", "notes", "show", full_sha],
+            capture_output=True, text=True, cwd=track_dir, timeout=5
+        )
+        if existing.returncode != 0:
+            subprocess.run(
+                ["git", "notes", "add", "-m", note, full_sha],
+                capture_output=True, text=True, cwd=track_dir, timeout=5
+            )
+    except Exception:
+        pass
+
+
 def cmd_process_result(track_dir):
     """Read .conductor/result.json, update state, sync plan, manage handoff.
-    Outputs minimal JSON summary. Deletes result file after processing."""
+    Writes git notes audit trail. Deletes result file after processing."""
     result_path = conductor_dir(track_dir) / "result.json"
 
     if not result_path.exists():
@@ -1364,6 +1547,9 @@ def cmd_process_result(track_dir):
         deviations = r.get("spec_deviation_detail", [])
         for dev in deviations:
             _append_deviation_legacy(track_dir, task_name, dev)
+
+        # Write git notes audit trail
+        _write_git_note(track_dir, r, state)
 
         # Clean up
         result_path.unlink(missing_ok=True)

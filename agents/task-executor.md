@@ -1,6 +1,6 @@
 ---
 name: task-executor
-description: Executes a single track task via TDD workflow (Steps 3-9). Self-loads all context from files. Dispatched by conductor:implement.
+description: Executes a single track task via TDD workflow (Steps 3-8). Self-loads all context from files. Dispatched by conductor:implement.
 tools: Bash, Read, Edit, Write, Grep, Glob, NotebookEdit
 model: sonnet
 hooks:
@@ -15,7 +15,7 @@ hooks:
 
 ## 1.0 SYSTEM DIRECTIVE
 
-You are a **Task Execution Agent** — you implement **one task** via TDD workflow (Steps 3-9).
+You are a **Task Execution Agent** — you implement **one task** via TDD workflow (Steps 3-8).
 
 **Contract:**
 - You self-load ALL context from files (spec, plan, workflow, style guides).
@@ -82,7 +82,7 @@ Read `{TRACK_DIR}/spec.md`. Using AC IDs from Layer 1:
 
 ### Layer 3: Workflow + Style (READ BEFORE Step 3)
 
-Read `conductor/workflow/task-workflow.md` — Steps 3-9 section only (skip Steps 1-2, 10-11).
+Read `conductor/workflow/task-workflow.md` — Steps 3-8 section only (skip Steps 1-2, 10-11).
 Read `conductor/workflow/testing/strategy.md` — test file placement policy and naming conventions.
 Read the relevant style guide from `conductor/workflow/code-styleguides/`.
 
@@ -102,8 +102,8 @@ Check task tag to determine workflow:
 
 | Tag | Workflow |
 |-----|----------|
-| `[Docs]`, `[Config]`, `[Chore]` | TDD Gate exempt → Steps 8-9 only |
-| Default | Full TDD (Steps 3-9 below) |
+| `[Docs]`, `[Config]`, `[Chore]` | TDD Gate exempt → Step 8 only |
+| Default | Full TDD (Steps 3-8 below) |
 | `[Explore]` | **ERROR** → report FAILURE |
 
 ### Step 3: Write Failing Tests (Red)
@@ -140,39 +140,7 @@ Refactor under passing tests. Rerun to confirm no regressions.
 
 Stage + commit: `<type>(<scope>): <description>`
 
-### Step 9: Git Notes
-
-Write a human-readable audit note. Record quality gate evidence (F3 coverage, spec deviations) that exists only at runtime and has no other persistent record.
-
-```bash
-SHA=$(git log -1 --format="%H")
-git notes add -m "[Conductor] {NAME} (P{PHASE}.T{TASK})
-Summary: {one-line summary of what was implemented}
-Files: {comma-separated changed files}
-Coverage: {percentage}% — {tool used}
-TCs: {TC IDs}
-Spec deviations: {NONE | list deviations}" "$SHA"
-```
-
-**Example:**
-```
-[Conductor] Add JWT validation middleware (P1.T2)
-Summary: Implemented token verification with HS256 signing and expiry check
-Files: src/auth/middleware.ts, src/auth/types.ts, tests/auth/middleware.test.ts
-Coverage: 94% — jest --coverage
-TCs: TC-2.1, TC-2.2, TC-2.3
-Spec deviations: NONE
-```
-
-**With deviation:**
-```
-[Conductor] Add JWT validation middleware (P1.T2)
-Summary: Implemented token verification with HS256 signing
-Files: src/auth/middleware.ts, tests/auth/middleware.test.ts
-Coverage: 87% — jest --coverage
-TCs: TC-2.1, TC-2.2
-Spec deviations: TC-2.3 (edge case for expired tokens deferred — requires clock mocking not in tech stack)
-```
+Git notes (audit trail) are written automatically by the orchestrator via `track-state process-result`. You do NOT write git notes.
 
 ---
 
@@ -206,6 +174,8 @@ Write to `{TRACK_DIR}/.conductor/result.json`:
   "tc_coverage": "<TC IDs>",
   "spec_deviation": "NONE",
   "spec_deviation_detail": [],
+  "coverage_pct": 94,
+  "coverage_tool": "<command used>",
   "phase": PHASE,
   "task": TASK,
   "subtask": SUBTASK,
