@@ -88,8 +88,11 @@ Read the relevant style guide from `conductor/workflow/code-styleguides/`.
 
 ### Layer 3.R: Retry Context (ONLY if IS_RETRY=true)
 
-Read `{TRACK_DIR}/issues.md` — ALL failure entries for current phase.
-Do NOT repeat the same approach. Focus on "Suggested Next Step".
+Run: `track-state get-handoff {TRACK_DIR} {PHASE} {TASK}` to retrieve your task's handoff content.
+If `SUBTASK` is not null, append: `--subtask {SUBTASK}`.
+
+Read the returned `content` field — it contains ONLY your task/subtask's execution history.
+Do NOT repeat the same approach. Focus on "Suggested Next Step" from previous attempts.
 
 ---
 

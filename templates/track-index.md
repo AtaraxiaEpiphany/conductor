@@ -6,4 +6,5 @@
 - [Specification](./spec.md)
 - [Implementation Plan](./plan.md)
 - [Track State](./track-state.json)
-- [Issues Log](./issues.md) (created lazily on first failure)
+- [Handoff Index](./handoff.md) (task handoff logs, created on first execution)
+- [Handoff Details](./.conductor/handoff/) (per-task handoff files)

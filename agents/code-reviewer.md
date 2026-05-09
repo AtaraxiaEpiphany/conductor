@@ -63,8 +63,9 @@ Read these files unconditionally:
    - Extract commit SHAs for each task.
    - Verify state consistency with plan.md markers.
 
-4. **Issues Log** — `{TRACK_DIR}/issues.md` (if exists)
-   - Review any failure entries and skip analysis verdicts.
+4. **Handoff Index** — `{TRACK_DIR}/handoff.md` (if exists)
+   - Review the execution summary for quick overview of issues, skipped tasks, and risks.
+   - For detailed failure entries or skip analysis, read individual task handoff files listed in the index.
 
 5. **Product Guidelines** — `{PRODUCT_GUIDELINES}`
 6. **Tech Stack** — `{TECH_STACK}`
@@ -120,7 +121,8 @@ Execute each verification:
    - Estimate coverage for changed files.
 
 6. **Skipped/Blocked Tasks**
-   - Read `issues.md` for all skip analysis verdicts.
+   - Read `handoff.md` index for skipped/blocked tasks summary.
+   - For skip analysis details, read individual task handoff files (e.g., `.conductor/handoff/P{N}T{M}.md`).
    - Assess: was each skip justified? What is the downstream risk?
 
 7. **Design Doc Consistency** (if scoped docs loaded)

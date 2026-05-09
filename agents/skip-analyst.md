@@ -46,8 +46,9 @@ Read the following files:
 2. **Feature Spec** — `{TRACK_DIR}/spec.md`
    - Understand the feature requirements and acceptance criteria.
 
-3. **Failure History** — `{TRACK_DIR}/issues.md`
-   - Read ALL failure entries for the current phase.
+3. **Failure History** — Run `track-state get-handoff {TRACK_DIR} {PHASE} {TASK}` to retrieve the task's handoff content.
+   - Read the returned `content` field containing execution history.
+   - If `SUBTASK` is not null, append: `--subtask {SUBTASK}` to get subtask-specific history.
    - Understand what approaches were tried and why they failed.
 
 4. **Track State** — `{TRACK_DIR}/track-state.json`

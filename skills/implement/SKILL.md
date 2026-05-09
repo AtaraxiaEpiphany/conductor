@@ -34,7 +34,7 @@ CRITICAL: You are a **thin orchestrator** — a pure state machine that routes b
 Run these verifications. Announce failures tersely and HALT.
 
 1. **Locate Track**: Resolve track directory from Tracks Registry (`conductor/tracks.md`).
-2. **Verify Core Files**: Confirm `spec.md`, `plan.md`, `track-state.json` exist in track dir. Skip `issues.md` (lazy-created).
+2. **Verify Core Files**: Confirm `spec.md`, `plan.md`, `track-state.json` exist in track dir. Skip `handoff.md` (created on first execution).
 3. **Verify Workflow**: Confirm `conductor/workflow/index.md` exists and links are valid.
 4. **Missing Files**: If ANY file missing → announce: `"Conductor environment incomplete — missing: <file>. Please run /conductor:setup."` → HALT.
 
@@ -71,7 +71,7 @@ Run these verifications. Announce failures tersely and HALT.
 | Recovery Status | Action |
 |---|---|
 | `in_progress` | Check `git log` for post-start commit. Found → `complete --sha <sha>`. Not found → re-dispatch. |
-| `failed` + `retry < max` | Re-dispatch (failure context from `issues.md` loaded by subagent). |
+| `failed` + `retry < max` | Re-dispatch (failure context from handoff loaded by subagent via `get-handoff`). |
 | `failed` + `retry >= max` | → **Section 4.5.1 Skip Analysis**. |
 | `blocked` | Report to user → HALT. |
 | `completed`/`skipped`/`no_active_task` | → **Section 4.1 Select Next**. |

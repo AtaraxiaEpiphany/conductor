@@ -8,6 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **handoff.md system**: Replaced issues.md with indexed handoff system for better context management. New structure includes `handoff.md` index file and per-task handoff files in `.conductor/handoff/`. Provides task-level isolation, subtask sections, and support for exploration notes, technical decisions, and risk tracking
+- **`track-state get-handoff` command**: Retrieve handoff content for specific task/subtask with optional `--subtask` filter for minimal context loading
+- **`track-state sync-handoff` command**: Sync handoff.md index with current track state
+- **`track-state append-handoff` command**: Append exploration notes, decisions, risks, or deviations to task handoff files
+- **exploration notes integration**: Handoff files now support exploration notes section for explorer → task-executor handoff
+- **technical decisions tracking**: Handoff files support recording technical decisions with options, reasoning, and tradeoffs
+- **risk tracking**: Handoff files support risk notes with impact assessment and mitigation strategies
+- **backward compatibility**: Legacy `_append_failure_legacy` and `_append_deviation_legacy` functions maintain compatibility with existing issues.md files
+
 - **SDD Layer 0 context loading**: task-executor now reads `exploration.md` as Layer 0 context ("map before manual" principle from Harness Engineering). Provides pre-computed investigation from `conductor:explorer` before diving into task details ([ed1f7b1](https://github.com/anthropics/conductor-plugin/commit/ed1f7b1))
 - **Out-of-Scope support**: spec-planner adds `Out of Scope` section to spec.md template; task-executor enforces boundaries and reports deviations when touching excluded areas ([ed1f7b1](https://github.com/anthropics/conductor-plugin/commit/ed1f7b1))
 - **explorer Out-of-Scope discovery**: explorer now contributes `Out-of-Scope Notes` to exploration.md, enabling boundary findings during investigation phase ([ed1f7b1](https://github.com/anthropics/conductor-plugin/commit/ed1f7b1))

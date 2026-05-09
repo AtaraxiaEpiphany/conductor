@@ -236,7 +236,8 @@ your-project/
 │           ├── spec.md                # Feature specification
 │           ├── plan.md                # Implementation plan
 │           ├── track-state.json       # Authoritative state
-│           └── issues.md              # Failure reports (lazy)
+│           ├── handoff.md             # Handoff index (created on first execution)
+│           └── .conductor/handoff/    # Per-task handoff files
 ```
 
 ---
@@ -280,7 +281,7 @@ The orchestrator:
 3. Dispatches appropriate subagent:
    - `[Explore]` tasks → `conductor:explorer` (read-only investigation)
    - Default tasks → `conductor:task-executor` (TDD workflow, self-extracts ACs from spec.md)
-4. Processes result via `track-state process-result` (state update + plan sync + issues.md)
+4. Processes result via `track-state process-result` (state update + plan sync + handoff)
 5. Dispatches `conductor:phase-checker` at phase boundaries
 6. Dispatches `conductor:doc-syncer` upon track completion
 
@@ -393,10 +394,13 @@ track-state <command> <track-dir> [options]
 | `phase-done <p>` | Check if all tasks in phase are terminal | `{complete, terminal, total}` |
 | `add-checkpoint <p> <sha>` | Add or update checkpoint SHA for a phase in plan.md | `{ok, phase, sha}` |
 | `finalize` | Set indices to -1, compute track-level status | `{status}` |
-| `process-result` | Read `.conductor/result.json`, update state + plan + issues.md in one call | `{status, sha, parent_completed, deviations}` or `{status, retry_count, summary}` |
-| `init --plan-structure <json> --track-id <id> --type <type> --description <desc>` | Create track-state.json + index.md from plan structure in one call | `{ok, track_id, phases, tasks}` |
+| `process-result` | Read `.conductor/result.json`, update state + plan + handoff in one call | `{status, sha, parent_completed, deviations}` or `{status, retry_count, summary}` |
+| `init --plan-structure <json> --track-id <id> --type <type> --description <desc>` | Create track-state.json + index.md + handoff.md from plan structure in one call | `{ok, track_id, phases, tasks}` |
 | `shas` | List all commit SHAs for a track | `{shas, first, last, count}` |
 | `deferred-report` | List all deferred tasks for verification | `{deferred, count}` |
+| `get-handoff <p> <t> [--subtask <s>]` | Get handoff content for a specific task/subtask | `{content, path}` |
+| `sync-handoff` | Sync handoff.md index with current state | `{ok, updated}` |
+| `append-handoff <p> <t> --type <explore|decision|risk|deviation> --content <json> [--subtask <s>]` | Append content to a task's handoff file | `{ok, type, handoff_file}` |
 
 ---
 
