@@ -118,6 +118,11 @@ def extract_tags(name):
     return re.findall(r"\[(Explore|Docs|Config|Chore|Manual)\]", name)
 
 
+def _inherit_tags(sub_tags, parent_name):
+    """Return sub_tags if non-empty, otherwise inherit from parent task name."""
+    return sub_tags if sub_tags else extract_tags(parent_name)
+
+
 def conductor_dir(track_dir):
     d = Path(track_dir) / ".conductor"
     d.mkdir(exist_ok=True)
@@ -199,8 +204,10 @@ def _do_complete(track_dir, p, t, s=None, sha=None):
     if si is not None:
         parent = state["phases"][pi]["tasks"][ti]
         if all(sub["status"] in TERMINAL_STATUSES for sub in parent.get("subtasks", [])):
+            # Inherit SHA from last completed subtask if parent SHA is empty
+            parent_sha = sha or _last_subtask_sha(parent)
             parent["status"] = "completed"
-            parent["commit_sha"] = sha or ""
+            parent["commit_sha"] = parent_sha
             parent["completed_at"] = now_iso()
             clean(parent, {"status", "commit_sha", "completed_at"})
             parent_completed = True
@@ -210,12 +217,20 @@ def _do_complete(track_dir, p, t, s=None, sha=None):
         for sub in tgt["subtasks"]:
             if sub["status"] not in TERMINAL_STATUSES:
                 sub["status"] = "completed"
-                sub["commit_sha"] = sha or ""
                 sub["completed_at"] = now_iso()
 
     state["updated_at"] = now_iso()
     save(track_dir, state)
     return parent_completed
+
+
+def _last_subtask_sha(task):
+    """Return the commit_sha of the last completed subtask, or empty string."""
+    for sub in reversed(task.get("subtasks", [])):
+        sha = sub.get("commit_sha", "")
+        if sha:
+            return sha
+    return ""
 
 
 def _do_fail(track_dir, p, t, s=None, summary=""):
@@ -772,11 +787,12 @@ def cmd_next(track_dir, compact=False):
                         if sub["status"] in ("in_progress", "pending"):
                             result = dict(phase=pi, task=ti, subtask=si,
                                           name=sub["name"], type="subtask",
-                                          tags=extract_tags(sub["name"]))
+                                          tags=_inherit_tags(extract_tags(sub["name"]), task["name"]))
                             break
                     if not result:
                         result = dict(phase=pi, task=ti, subtask=None,
-                                      name=task["name"], type="parent-complete", tags=[])
+                                      name=task["name"], type="parent-complete",
+                                      tags=extract_tags(task["name"]))
                 else:
                     result = dict(phase=pi, task=ti, subtask=None,
                                   name=task["name"], type="flat",
@@ -795,7 +811,7 @@ def cmd_next(track_dir, compact=False):
                             if sub["status"] == "pending":
                                 result = dict(phase=pi, task=ti, subtask=si,
                                               name=sub["name"], type="subtask",
-                                              tags=extract_tags(sub["name"]))
+                                              tags=_inherit_tags(extract_tags(sub["name"]), task["name"]))
                                 break
                         if not result:
                             continue
@@ -813,6 +829,88 @@ def cmd_next(track_dir, compact=False):
         out_compact(result)
     else:
         out(result)
+
+
+def cmd_dispatch_next(track_dir):
+    """One-call dispatch decision: next + parent-complete resolution + tag routing.
+    Returns action enum for orchestrator to switch on."""
+    state = load(track_dir)
+    execution_mode = state.get("execution_mode", "interactive")
+
+    # Find next task (same logic as cmd_next)
+    result = None
+    for pi, phase in enumerate(state["phases"]):
+        for ti, task in enumerate(phase["tasks"]):
+            if task["status"] == "in_progress":
+                subs = task.get("subtasks")
+                if subs:
+                    for si, sub in enumerate(subs):
+                        if sub["status"] in ("in_progress", "pending"):
+                            result = dict(phase=pi, task=ti, subtask=si,
+                                          name=sub["name"], type="subtask",
+                                          tags=_inherit_tags(extract_tags(sub["name"]), task["name"]))
+                            break
+                    if not result:
+                        result = dict(phase=pi, task=ti, subtask=None,
+                                      name=task["name"], type="parent-complete",
+                                      tags=extract_tags(task["name"]))
+                else:
+                    result = dict(phase=pi, task=ti, subtask=None,
+                                  name=task["name"], type="flat",
+                                  tags=extract_tags(task["name"]))
+                break
+        if result:
+            break
+    if not result:
+        for pi, phase in enumerate(state["phases"]):
+            for ti, task in enumerate(phase["tasks"]):
+                if task["status"] == "pending":
+                    subs = task.get("subtasks")
+                    if subs:
+                        for si, sub in enumerate(subs):
+                            if sub["status"] == "pending":
+                                result = dict(phase=pi, task=ti, subtask=si,
+                                              name=sub["name"], type="subtask",
+                                              tags=_inherit_tags(extract_tags(sub["name"]), task["name"]))
+                                break
+                        if not result:
+                            continue
+                    else:
+                        result = dict(phase=pi, task=ti, subtask=None,
+                                      name=task["name"], type="flat",
+                                      tags=extract_tags(task["name"]))
+                    break
+            if result:
+                break
+
+    if not result:
+        out(dict(action="finalize"))
+        return
+
+    # Resolve action from type + tags
+    rtype = result["type"]
+    tags = result["tags"]
+
+    if rtype == "parent-complete":
+        # Auto-complete parent, resolve SHA from subtasks, then recurse
+        parent_task = state["phases"][result["phase"]]["tasks"][result["task"]]
+        sha = _last_subtask_sha(parent_task)
+        _do_complete(track_dir, result["phase"], result["task"], None, sha)
+        _do_sync_plan(track_dir, state)
+        cmd_dispatch_next(track_dir)
+        return
+
+    # Route by tags
+    if "Manual" in tags:
+        action = "defer_manual"
+    elif "Explore" in tags:
+        action = "dispatch_explorer"
+    else:
+        action = "dispatch_executor"
+
+    result["action"] = action
+    result["execution_mode"] = execution_mode
+    out(result)
 
 
 def cmd_recover(track_dir, compact=False):
@@ -852,13 +950,18 @@ def cmd_recover(track_dir, compact=False):
     # Best-effort: recover missing git notes for completed tasks
     _recover_git_notes(track_dir, state)
 
+    # For subtasks, inherit parent tags when subtask has none
+    sub_tags = extract_tags(name)
+    if ttype == "subtask" and not sub_tags:
+        sub_tags = extract_tags(task["name"])
+
     result = dict(
         status=tgt.get("status", "pending"),
         phase=pi, task=ti, subtask=si,
         name=name, type=ttype,
         retry_count=tgt.get("retry_count", 0),
         last_failure_summary=tgt.get("last_failure_summary"),
-        tags=extract_tags(name),
+        tags=sub_tags,
         execution_mode=state.get("execution_mode", "interactive"),
     )
     if compact:
@@ -1902,6 +2005,8 @@ def main():
     try:
         if cmd == "next":
             cmd_next(track_dir, compact="--compact" in args)
+        elif cmd == "dispatch-next":
+            cmd_dispatch_next(track_dir)
         elif cmd == "recover":
             cmd_recover(track_dir, compact="--compact" in args)
         elif cmd == "lock":

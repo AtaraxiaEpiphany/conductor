@@ -16,117 +16,89 @@ hooks:
 
 # Conductor Implement — Thin Orchestrator
 
-## 0.0 LOAD ORCHESTRATION LAYER
+## ORCHESTRATOR CONTRACT
 
-Read and internalize `${CLAUDE_PLUGIN_ROOT}/conductor-orchestration.md`. This provides the dispatch loop, subagent registry, and execution mode definitions.
-
-CRITICAL: You are a **thin orchestrator** — a pure state machine that routes between subagents. Your context budget is precious. Follow these rules:
+You are a **thin state machine** that routes between subagents. Context budget is precious.
 
 1. **NEVER read `spec.md` or `plan.md`** — subagents self-load all business context.
-2. **ONLY parse `status`, `sha`, `deviations`, `retry_count`** from track-state outputs.
+2. **ONLY parse `action`, `status`, `sha`, `deviations`, `retry_count`** from track-state outputs.
 3. **Keep dispatch prompts minimal** — task identity + file paths only (~100 tokens).
 4. **Announce actions tersely** — one line per action, no narrative.
 
----
+Dispatch loop: `RECOVER → DISPATCH → PROCESS → PHASE_BOUNDARY → (repeat) → FINALIZE`
 
-## 1.0 SETUP CHECK
-
-Run these verifications. Announce failures tersely and HALT.
-
-1. **Locate Track**: Resolve track directory from Tracks Registry (`conductor/tracks.md`).
-2. **Verify Core Files**: Confirm `spec.md`, `plan.md`, `track-state.json` exist in track dir. Skip `handoff.md` (created on first execution).
-3. **Verify Workflow**: Confirm `conductor/workflow/index.md` exists and links are valid.
-4. **Missing Files**: If ANY file missing → announce: `"Conductor environment incomplete — missing: <file>. Please run /conductor:setup."` → HALT.
+Tag inheritance: subtasks inherit dispatch tags from parent when subtask name has none.
 
 ---
 
-## 2.0 TRACK SELECTION
+## 1.0 SETUP + TRACK SELECTION
 
-1. Check `$ARGUMENTS` for user-provided track name.
-2. Parse Tracks Registry for track entries.
-3. **Selection Logic:**
-   - Provided name → exact match → confirm via `AskUserQuestion`.
-   - No name → find `[~]` track → if one → auto-select.
-   - No `[~]` → find `[ ]` tracks → if one → auto-select.
-   - Multiple → present via `AskUserQuestion`.
-   - None → `"No active tracks. Use /conductor:new-track."` → HALT.
-4. Verify: `track-state recover "<track_dir>"` — if error → HALT.
-5. **Mark Active:** If track `status == "new"` → run:
-   ```bash
-   track-state start "<track_dir>"
-   track-state registry-update "<track_dir>" "conductor/tracks.md"
-   git add -A && git commit -m "chore(conductor): Activate track '<desc>'"
-   ```
+1. Locate track from `conductor/tracks.md` — resolve `$ARGUMENTS` or auto-select `[~]`/`[ ]`.
+2. Verify core files exist: `spec.md`, `plan.md`, `track-state.json`, `conductor/workflow/index.md`.
+   Missing → `"Conductor environment incomplete. Run /conductor:setup."` → HALT.
+3. `track-state recover "<track_dir>"` — if error → HALT.
+4. If `status == "new"` → `track-state start` + `registry-update` + commit.
 
 ---
 
-## 3.0 STATE RECOVERY
-
-1. Run: `track-state validate "<track_dir>"`
-   - If `valid == false` → run `track-state validate "<track_dir>" --fix` → if still invalid → announce errors → HALT.
-   - If `warnings` exist → announce tersely, continue (warnings are non-fatal).
-2. Run: `track-state recover "<track_dir>"`
-2. Route by `status`:
-
-| Recovery Status | Action |
-|---|---|
-| `in_progress` | Check `git log` for post-start commit. Found → `complete --sha <sha>`. Not found → re-dispatch. |
-| `failed` + `retry < max` | Re-dispatch (failure context from handoff loaded by subagent via `get-handoff`). |
-| `failed` + `retry >= max` | → **Section 4.5.1 Skip Analysis**. |
-| `blocked` | Report to user → HALT. |
-| `completed`/`skipped`/`no_active_task` | → **Section 4.1 Select Next**. |
-
-3. `track-state sync-plan "<track_dir>"`
-4. Extract `execution_mode` from recover output. Default to `"interactive"` if absent. Store as `$EXECUTION_MODE` for use in dispatch prompts (Section 4.7).
-5. If state changed → commit: `chore(conductor): Fix state consistency after recovery`
-
----
-
-## 4.0 DISPATCH LOOP
-
-### 4.1 Select Next Task
+## 2.0 STATE RECOVERY
 
 ```bash
-track-state next "<track_dir>"
+track-state validate "<track_dir>"          # --fix if invalid
+track-state recover "<track_dir>"
+track-state sync-plan "<track_dir>"
 ```
 
-- `phase == -1` → all terminal → **Section 5.0**.
-- `type == "parent-complete"` → `track-state complete "<track_dir>" <p> <t> --sha ""` → re-run `next`.
-- Route by tags:
-  - `Explore` → **4.3.E** (explorer required)
-  - `Manual` → **4.3.M** (always auto-defer)
-  - default → **4.3.T** (task-executor; will read exploration.md as Layer 0 if exists)
+Route by recover `status`:
 
-**Note:** For default (implementation) tasks, explorer is OPTIONAL. If `exploration.md` exists from a prior [Explore] task, task-executor reads it as Layer 0 context. No automatic two-phase dispatch — keeps latency minimal while enabling context accumulation.
+| Status | Action |
+|---|---|
+| `in_progress` | `git log` for post-start commit. Found → `complete --sha <sha>`. Not found → re-dispatch. |
+| `failed` + retry < max | Re-dispatch. |
+| `failed` + retry >= max | Dispatch `conductor:skip-analyst`. |
+| `blocked` | Report → HALT. |
+| `completed`/`skipped`/`no_active_task` | → **Section 3.0**. |
 
-### 4.2 Pre-Dispatch
+Store `execution_mode` from recover output. Default `"interactive"`.
+If state changed → commit: `chore(conductor): Fix state consistency after recovery`
+
+---
+
+## 3.0 DISPATCH LOOP
+
+### 3.1 Get Next Action
 
 ```bash
-track-state lock "<track_dir>" <phase> <task> [<subtask>]
+track-state dispatch-next "<track_dir>"
+```
+
+Returns `action` enum — switch on it:
+
+### 3.2 Action: `dispatch_explorer`
+
+```bash
+track-state lock "<track_dir>" <p> <t> [<s>]
 track-state sync-plan "<track_dir>"
 git add -A && git commit -m "chore(conductor): Start task '<name>' [<p>.<t>]"
 ```
 
-Emit: `LOCKED: P{p}.T{t} '<name>'`
+Dispatch `conductor:explorer`. Prompt: `TRACK_DIR={td} PHASE={p} TASK={t} NAME={name}`
 
-### 4.3 Dispatch (Compact Prompt)
+After return: commit artifacts → `git rev-parse --short HEAD` → `track-state complete "<track_dir>" <p> <t> --sha "<sha>"` → `sync-plan` → **Section 3.6**.
 
-All dispatch prompts use this template — **never include business context**:
+### 3.3 Action: `dispatch_executor`
 
-### 4.3.E Explorer Dispatch
-
-`Agent` tool, `subagent_type: "conductor:explorer"`, description: `"Explore P{p}.T{t}"`.
-
-```
-TRACK_DIR={track_dir}
-PHASE={phase}
-TASK={task}
-NAME={name}
+```bash
+track-state lock "<track_dir>" <p> <t> [<s>]
+track-state sync-plan "<track_dir>"
+git add -A && git commit -m "chore(conductor): Start task '<name>' [<p>.<t>]"
 ```
 
-After → commit `docs(explore): {name}` → **Section 4.5**.
+Dispatch `conductor:task-executor`. Prompt: `TRACK_DIR={td} PHASE={p} TASK={t} SUBTASK={s} NAME={name} ATTEMPT={n} MAX_RETRIES={m} IS_RETRY={bool}`
 
-### 4.3.M Auto-Defer Manual Tasks
+After return → **Section 3.5**.
+
+### 3.4 Action: `defer_manual`
 
 ```bash
 track-state defer "<track_dir>" <p> <t> --reason 'Deferred: manual task requires human verification'
@@ -134,171 +106,42 @@ track-state sync-plan "<track_dir>"
 git commit -m "chore(conductor): Defer manual task '<name>'"
 ```
 
-Emit: `DEFERRED: P{p}.T{t} '<name>'` → **Section 4.6**.
+Emit: `DEFERRED: P{p}.T{t} '<name>'` → **Section 3.6**.
 
-### 4.3.T Task Executor Dispatch
-
-`Agent` tool, `subagent_type: "conductor:task-executor"`, description: `"Execute P{p}.T{t}"`.
-
-```
-TRACK_DIR={track_dir}
-PHASE={phase}
-TASK={task}
-SUBTASK={subtask}
-NAME={name}
-ATTEMPT={attempt}
-MAX_RETRIES={max_retries}
-IS_RETRY={is_retry}
-```
-
-### 4.5 Process Result
+### 3.5 Process Result (after task-executor)
 
 ```bash
 track-state process-result "<track_dir>"
 ```
 
-Parse output. Only these fields matter:
+**SUCCESS**: commit `chore(conductor): Complete '<name>' [<sha>]`. Deviations > 0 → announce. → **Section 3.6**.
 
-**SUCCESS** (`status: "success"`):
-- `sha` → commit: `chore(conductor): Complete '<name>' [<sha>]`
-- `deviations > 0` → announce spec deviations
-- → **Section 4.6**
+**FAILURE**: commit `chore(conductor): '<name>' failed (attempt {n})`. retry < max → re-dispatch (Section 3.1). retry >= max → dispatch `conductor:skip-analyst`. Skip-analyst result: `can_skip` → `track-state skip` or `block` → `sync-plan` → commit → Section 3.1 or HALT.
 
-**FAILURE** (`status: "failure"`):
-- `retry_count` + `summary`
-- commit: `chore(conductor): '<name>' failed (attempt {n})`
-- `retry < max` → re-dispatch (**4.3**)
-- `retry >= max` → **4.5.1**
-
-### 4.5.1 Skip Analysis
-
-Dispatch `conductor:skip-analyst`. Pass: TRACK_DIR, PHASE, TASK, NAME, RETRY_COUNT.
-
-- `can_skip=true` → `track-state skip` → `sync-plan` → commit → **4.1**
-- `can_skip=false` → `track-state block` → `sync-plan` → commit → announce + HALT
-
-### 4.6 Phase Boundary
+### 3.6 Phase Boundary
 
 ```bash
 track-state phase-done "<track_dir>" <phase>
 ```
 
-- `complete=true` → **Section 4.7**
-- `complete=false` → **Section 4.1**
+`complete=true` → dispatch `conductor:phase-checker` with `TRACK_DIR TRACK_ID PHASE_INDEX EXECUTION_MODE`. FAILED → HALT. Otherwise → Section 3.1.
+`complete=false` → Section 3.1.
 
-### 4.7 Phase Checkpoint
+### 3.7 Action: `finalize`
 
-Dispatch `conductor:phase-checker`. Prompt:
-
-```
-TRACK_DIR={track_dir}
-TRACK_ID={track_id}
-PHASE_INDEX={phase}
-EXECUTION_MODE={execution_mode}
-```
-
-Parse result. FAILED → announce + HALT. Otherwise → **4.1**.
+→ **Section 4.0**.
 
 ---
 
-## 5.0 FINALIZATION
+## 4.0 POST-LOOP
 
-```bash
-track-state finalize "<track_dir>"
-track-state sync-plan "<track_dir>"
-track-state registry-update "<track_dir>" "conductor/tracks.md"
-```
-
-Commit: `chore(conductor): Complete track '<desc>'`.
+Read `${CLAUDE_PLUGIN_ROOT}/skills/implement/post-loop.md` and execute sections 5.0–8.0.
 
 ---
 
-## 5.5 DEFERRED VERIFICATION
+## COMPRESSION PRIORITY
 
-```bash
-track-state deferred-report "<track_dir>"
-```
-
-`count == 0` → skip. Otherwise present each deferred task via `AskUserQuestion`:
-- "Verify completed" → `track-state complete --sha ""`
-- "Skip" → `track-state skip --reason 'User verified not needed'`
-- "Defer" → no action
-
-After → `track-state sync-plan "<track_dir>"` + commit.
-
----
-
-## 6.0 DOC SYNC
-
-Dispatch `conductor:doc-syncer`. Prompt: `TRACK_DIR={track_dir} TRACK_ID={track_id}`.
-
----
-
-## 7.0 AUTO-REVIEW
-
-Automatically dispatch code review after track completion.
-
-1. Get SHA range:
-```bash
-track-state shas "<track_dir>"
-```
-Parse output: `first` and `last` SHAs. If `count == 0` → skip review (no commits to review).
-
-2. Dispatch `conductor:code-reviewer`. Description: `"Auto-review track '<desc>'"`.
-
-```
-TRACK_DIR={track_dir}
-TRACK_ID={track_id}
-REVISION_RANGE={first}..{last}
-PRODUCT_GUIDELINES={resolved_path}
-TECH_STACK={resolved_path}
-STYLEGUIDES_DIR={resolved_path}
-```
-
-3. Parse `---REVIEW RESULT---` block. Present findings:
-   - Critical/High → **CHANGES REQUESTED** → offer to apply fixes or halt for manual fix.
-   - Medium/Low only → **APPROVE WITH COMMENTS** → present, continue.
-   - No issues → **APPROVE**.
-
-4. If user chooses "Apply Fixes" → dispatch a fresh `conductor:task-executor` for each fix. Process results normally.
-
----
-
-## 8.0 CLEANUP & ARCHIVE
-
-After auto-review completes, present cleanup options to the user.
-
-### 8.1 Present Options
-
-Use `AskUserQuestion`:
-
-> "Track '<track_id>' is complete. Choose cleanup action:"
-
-Options:
-- **Archive** (recommended) — marks track as archived, keeps files for reference
-- **Keep Active** — leaves track in completed status
-- **Delete** — removes track files entirely (irreversible)
-
-### 8.2 Execute Archive
-
-If user chose "Archive":
-
-```bash
-track-state archive "<track_dir>"
-track-state registry-update "<track_dir>" "conductor/tracks.md"
-git add -A && git commit -m "chore(conductor): Archive track '<track_id>'"
-```
-
-Announce: `ARCHIVED: '<track_id>'`
-
-### 8.3 Execute Keep Active
-
-No action. Announce: `COMPLETED: '<track_id>' remains active.`
-
-### 8.4 Execute Delete
-
-1. Confirm via `AskUserQuestion`: "This will permanently delete all track files. Continue?"
-2. Remove track directory: `rm -rf "<track_dir>"`
-3. Remove entry from `conductor/tracks.md`
-4. Commit: `git add -A && git commit -m "chore(conductor): Delete track '<track_id>'"`
-5. Announce: `DELETED: '<track_id>'`
+When context is compressed:
+1. **KEEP**: Sections 3.0–3.6 (active dispatch loop) + last track-state output
+2. **COMPRESS**: completed iteration outputs (keep only sha + status per task)
+3. **DISCARD**: Sections 1.0–2.0 (one-time setup) and Section 4.0 (post-loop, re-read when needed)

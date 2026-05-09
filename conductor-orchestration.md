@@ -17,6 +17,8 @@ RECOVER → SELECT → PRE_DISPATCH → DISPATCH → PROCESS → PHASE_BOUNDARY 
 
 ### Subagent Registry
 
+Tag inheritance: subtasks inherit dispatch tags from their parent task when the subtask name has no tags of its own.
+
 | Subagent | Dispatch Tag | Purpose |
 |----------|-------------|---------|
 | `conductor:task-executor` | default | TDD implementation (Steps 3-9) |
