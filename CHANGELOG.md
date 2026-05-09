@@ -8,6 +8,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **SDD Layer 0 context loading**: task-executor now reads `exploration.md` as Layer 0 context ("map before manual" principle from Harness Engineering). Provides pre-computed investigation from `conductor:explorer` before diving into task details ([ed1f7b1](https://github.com/anthropics/conductor-plugin/commit/ed1f7b1))
+- **Out-of-Scope support**: spec-planner adds `Out of Scope` section to spec.md template; task-executor enforces boundaries and reports deviations when touching excluded areas ([ed1f7b1](https://github.com/anthropics/conductor-plugin/commit/ed1f7b1))
+- **explorer Out-of-Scope discovery**: explorer now contributes `Out-of-Scope Notes` to exploration.md, enabling boundary findings during investigation phase ([ed1f7b1](https://github.com/anthropics/conductor-plugin/commit/ed1f7b1))
+- **new-track auto-start**: new-track skill offers to auto-start `/conductor:implement` after track creation, with interactive mode confirmation and continuous mode auto-proceed ([ed1f7b1](https://github.com/anthropics/conductor-plugin/commit/ed1f7b1))
+- **Markdown reference links**: spec-planner template replaced `*[Ref: path]*` with clickable Markdown links, grouped by category for better scanability ([ed1f7b1](https://github.com/anthropics/conductor-plugin/commit/ed1f7b1))
+- **Harness Engineering reference**: Added `references/Harness-engineering.md` — comprehensive guide on building AI agent harnesses based on Anthropic, OpenAI, and Martin Fowler's best practices ([ed1f7b1](https://github.com/anthropics/conductor-plugin/commit/ed1f7b1))
+
+### Changed
+
+- **explorer file-bridge structure**: Enhanced exploration.md with `Out-of-Scope Notes`, `Related Docs` column, and more detailed `Architecture` section including dependency graphs and data flow ([ed1f7b1](https://github.com/anthropics/conductor-plugin/commit/ed1f7b1))
+- **spec-planner inference guidance**: Added `Out-of-Scope Inference` section guiding spec-planner to detect explicit exclusions from user answers ([ed1f7b1](https://github.com/anthropics/conductor-plugin/commit/ed1f7b1))
+- **implement dispatch documentation**: Clarified optional explorer dispatch pattern — exploration.md is consumed when available, no mandatory two-phase dispatch ([ed1f7b1](https://github.com/anthropics/conductor-plugin/commit/ed1f7b1))
+
+### Added
+
 - **`spec-reviewer` subagent**: Interactive review of spec.md and plan.md in isolated context. Presents summaries, handles revisions, returns compact result. Keeps full file contents out of the orchestrator context, saving ~200-500 lines of main session context per track creation ([521f56e](https://github.com/anthropics/conductor-plugin/commit/521f56e))
 - **`track-state init` command**: One-call track initialization — creates `track-state.json` and `index.md` from PLAN_STRUCTURE. Eliminates duplicate JSON generation logic in `new-track` and `setup` SKILLs ([521f56e](https://github.com/anthropics/conductor-plugin/commit/521f56e))
 - **newTrack commit step**: Added `git commit` after track artifact creation, aligning with `setup`'s behavior ([521f56e](https://github.com/anthropics/conductor-plugin/commit/521f56e))
