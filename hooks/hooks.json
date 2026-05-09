@@ -12,6 +12,18 @@
         ]
       }
     ],
+    "PostToolUse": [
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/filter-subagent-output\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
     "SubagentStart": [
       {
         "matcher": "task-executor|code-reviewer|explorer|phase-checker|doc-syncer|skip-analyst|spec-planner|spec-reviewer|project-analyzer",

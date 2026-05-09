@@ -2,7 +2,9 @@
 name: skip-analyst
 description: Analyzes whether a repeatedly failed track task can be safely skipped. Dispatched by the conductor:implement orchestrator when retry count is exhausted.
 tools: Read, Grep, Glob
-model: sonnet
+model: haiku
+effort: low
+maxTurns: 15
 ---
 
 # Conductor Skip Analysis Agent

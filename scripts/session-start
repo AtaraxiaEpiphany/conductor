@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # SessionStart hook: inject conductor-core.md + session handoff into session context.
+# On compact events, inject a compact summary to reduce context pressure.
 set -euo pipefail
 
 INSTRUCTIONS="${CLAUDE_PLUGIN_ROOT}/conductor-core.md"
@@ -9,7 +10,24 @@ if [[ ! -f "$INSTRUCTIONS" ]]; then
   exit 0
 fi
 
-CONTENT=$(cat "$INSTRUCTIONS")
+# Detect source: on compact, inject compact version
+# Hook input comes via stdin; tee to preserve it for later use
+INPUT=$(cat)
+SOURCE=$(echo "$INPUT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('source','startup'))" 2>/dev/null || echo "startup")
+
+if [[ "$SOURCE" == "compact" ]]; then
+  # Compact version: state model + commit format + firewall reference only
+  CONTENT="## Conductor Core (compact)
+
+Task State: | [ ] pending | [~] in_progress | [x] completed [sha] | [!] failed [sha] | [>] skipped [sha] | [d] deferred [sha] | [#] blocked [sha] | [-] cancelled [sha] |
+
+Commit: <type>(<scope>): <description>
+
+Firewall: F1(state lock) F2(TDD) F3(coverage) F4(SHA) F5(checkpoint) F6(context guard)
+Anti-patterns: V1-V11. Violation → STOP → WORKFLOW VIOLATION: <code> → revert."
+else
+  CONTENT=$(cat "$INSTRUCTIONS")
+fi
 
 # Check for session handoff file from previous session
 HANDOFF_FILE="${CLAUDE_PLUGIN_DATA:-${CLAUDE_PLUGIN_ROOT}/.data}/session-handoff.md"

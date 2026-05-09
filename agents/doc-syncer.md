@@ -2,7 +2,9 @@
 name: doc-syncer
 description: Synchronizes all project documentation after track completion. Analyzes spec.md against product docs, design docs, API specs, database schema, architecture, and resource files — proposes targeted updates for each affected document.
 tools: Bash, Read, Edit, Write, Grep, Glob, AskUserQuestion
-model: sonnet
+model: haiku
+effort: medium
+maxTurns: 40
 ---
 
 # Conductor Doc Syncer

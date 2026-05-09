@@ -2,7 +2,9 @@
 name: spec-planner
 description: Generates spec.md and plan.md from user requirements and project context. Writes files directly, returns compact summary to minimize parent context pressure. Dispatched by conductor:setup and conductor:newTrack.
 tools: Read, Write, Grep, Glob
-model: sonnet
+model: haiku
+effort: medium
+maxTurns: 30
 ---
 
 # Conductor Spec & Plan Generator

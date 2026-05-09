@@ -3,6 +3,8 @@ name: phase-checker
 description: Executes phase checkpoint verification protocol in isolated context. Handles test coverage verification, missing test creation, test execution, manual verification plan, and checkpoint commit.
 tools: Bash, Read, Edit, Write, Grep, Glob, AskUserQuestion
 model: sonnet
+effort: high
+maxTurns: 30
 hooks:
   Stop:
     - matcher: ""

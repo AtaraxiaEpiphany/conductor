@@ -3,12 +3,21 @@ name: task-executor
 description: Executes a single track task via TDD workflow (Steps 3-8). Self-loads all context from files. Dispatched by conductor:implement.
 tools: Bash, Read, Edit, Write, Grep, Glob, NotebookEdit
 model: sonnet
+effort: high
+maxTurns: 50
+permissionMode: acceptEdits
 hooks:
   PostToolUse:
     - matcher: "Bash"
       hooks:
         - type: command
           command: "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/on-test-run\""
+  PreCompact:
+    - matcher: "auto"
+    - hooks:
+        - type: command
+          command: "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/on-compact\""
+          timeout: 5
 ---
 
 # Conductor Task Executor

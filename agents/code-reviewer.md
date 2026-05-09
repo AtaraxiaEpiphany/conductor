@@ -3,6 +3,8 @@ name: code-reviewer
 description: Performs deep code analysis on a track's implementation. Dispatched by conductor:review to analyze diffs, verify plan compliance, check style, run tests, and produce structured findings.
 tools: Bash, Read, Grep, Glob
 model: sonnet
+effort: xhigh
+maxTurns: 30
 hooks:
   Stop:
     - matcher: ""
@@ -134,43 +136,51 @@ Execute each verification:
 
 ## 4.0 OUTPUT FORMAT
 
-Return **exactly** this block. The orchestrator parses it to generate the final report.
+Dual output: result file + terse stdout.
+
+### 4.1 Result File
+
+Write full review to `{TRACK_DIR}/.conductor/review-result.json` via Bash:
+
+```bash
+mkdir -p "{TRACK_DIR}/.conductor"
+cat > "{TRACK_DIR}/.conductor/review-result.json" << 'EOF'
+{
+  "status": "SUCCESS",
+  "summary": "<single sentence>",
+  "checks": {
+    "plan_compliance": "Yes|No|Partial",
+    "state_consistency": "Consistent|Inconsistent",
+    "style_compliance": "Pass|Fail",
+    "design_doc_consistency": "Yes|No|N/A",
+    "new_tests": "Yes|No",
+    "test_coverage": "Yes|No|Partial",
+    "test_results": "Passed|Failed|Not_Run",
+    "skipped_tasks": "None|N_skipped"
+  },
+  "findings": [
+    {"severity": "Critical|High|Medium|Low", "title": "...", "file": "path", "lines": "L1-L2", "context": "why", "suggestion": "fix"}
+  ],
+  "state_issues": "None|<description>",
+  "stats": {"critical": 0, "high": 0, "medium": 0, "low": 0}
+}
+EOF
+```
+
+### 4.2 Stdout (terse — parsed by orchestrator)
 
 ```
 ---REVIEW RESULT---
-## Summary
-[Single sentence overall quality assessment]
-
-## Verification Checks
-- PLAN_COMPLIANCE: Yes|No|Partial
-- STATE_CONSISTENCY: Consistent|Inconsistent
-- STYLE_COMPLIANCE: Pass|Fail
-- DESIGN_DOC_CONSISTENCY: Yes|No|N/A
-- NEW_TESTS: Yes|No
-- TEST_COVERAGE: Yes|No|Partial
-- TEST_RESULTS: Passed|Failed|Not_Run
-- SKIPPED_TASKS: None|N_tasks_skipped
-
-## Findings
-
-### [Critical|High|Medium|Low] <description>
-- FILE: path/to/file (Lines L<Start>-L<End>)
-- CONTEXT: why this is an issue
-- SUGGESTION:
-```diff
-- old_code
-+ new_code
-```
-
-[Repeat for each finding]
-
-## State Issues
-[List any track-state.json vs plan.md mismatches, or "None"]
+STATUS: APPROVE|APPROVE_WITH_COMMENTS|CHANGES_REQUESTED
+CRITICAL: 0 | HIGH: 0 | MEDIUM: 0 | LOW: 0
+SUMMARY: <single sentence>
 ---END REVIEW RESULT---
 ```
 
+`---REVIEW RESULT---` / `---END REVIEW RESULT---` delimiters are mandatory.
+
 **Guidelines:**
-- Be specific: include file paths, line numbers, and code suggestions.
+- Full findings go in the JSON file only.
+- Stdout must be exactly 4 lines (the terse summary).
+- Be specific in JSON: include file paths, line numbers, and code suggestions.
 - Prioritize by severity: Critical > High > Medium > Low.
-- If no issues found, omit the Findings section entirely.
-- Always include all verification check results, even if all pass.

@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# on-compact — PreCompact hook.
+# Injects compression priority instructions to preserve dispatch loop state.
+set -euo pipefail
+
+echo '{"hookSpecificOutput":{"hookEventName":"PreCompact","additionalContext":"COMPRESSION PRIORITY:\n[KEEP] Sections 3.0-3.7 (active dispatch loop) + last track-state output + last subagent result\n[COMPRESS] All completed task results to: task_name=sha,status (one line each)\n[DISCARD] Sections 1.0-2.0 (one-time setup, re-read from disk if needed)\n[DISCARD] All intermediate CLI outputs (lock, sync-plan, phase-done details)\n[DISCARD] Section 4.0 post-loop (re-read from workflow file when needed)\n\nCRITICAL: After compression, re-read conductor/workflow/post-loop.md only when entering Section 4.0."}}'

@@ -1967,6 +1967,136 @@ def cmd_append_handoff(track_dir, phase, task, entry_type, content_json, subtask
     out(dict(ok=True, type=entry_type, handoff_file=str(_get_handoff_file(track_dir, phase, task))))
 
 
+# ── Dispatch Composite Commands ──────────────────────────────────────
+
+
+def cmd_dispatch_prepare(track_dir):
+    """Lock + sync-plan + return commit message template. Reduces CLI round trips."""
+    nxt = cmd_next(track_dir)
+    if nxt.get("phase", -1) < 0:
+        out(dict(action="done", next=nxt))
+        return
+    pi, ti = nxt["phase"], nxt["task"]
+    si = nxt.get("subtask")
+    name = nxt.get("name", "?")
+    tags = nxt.get("tags", [])
+
+    # Route
+    if nxt.get("type") == "parent-complete":
+        sha = _last_subtask_sha_from_state(track_dir, pi, ti)
+        action = "parent-complete"
+    elif "Manual" in tags:
+        action = "defer"
+    elif "Explore" in tags:
+        action = "explore"
+    else:
+        action = "execute"
+
+    if action == "parent-complete":
+        out(dict(action=action, phase=pi, task=ti, name=name,
+                 sha=sha, next=nxt))
+        return
+    if action == "defer":
+        # Auto-defer: lock not needed
+        out(dict(action="defer", phase=pi, task=ti, name=name,
+                 reason="Deferred: manual task requires human verification",
+                 next=nxt))
+        return
+
+    # Lock + sync-plan for explore/execute
+    _do_lock(track_dir, pi, ti, si)
+    synced = _do_sync_plan(track_dir)
+    commit_msg = f"chore(conductor): Start task '{name}' [{pi}.{ti}]"
+
+    out(dict(action=action, phase=pi, task=ti, subtask=si, name=name,
+             tags=tags, sync_count=synced, commit_msg=commit_msg,
+             execution_mode=nxt.get("execution_mode", "interactive"),
+             next=nxt))
+
+
+def _last_subtask_sha_from_state(track_dir, pi, ti):
+    """Get last completed subtask SHA for parent-complete."""
+    state = load(track_dir)
+    try:
+        parent = state["phases"][pi]["tasks"][ti]
+        return _last_subtask_sha(parent)
+    except (IndexError, KeyError):
+        return ""
+
+
+def cmd_dispatch_finalize(track_dir):
+    """Process result + sync-plan + return commit message. Reduces CLI round trips."""
+    result_path = conductor_dir(track_dir) / "result.json"
+    if not result_path.exists():
+        out(dict(error="No result file at .conductor/result.json"))
+        return
+
+    with open(result_path) as f:
+        r = json.load(f)
+
+    status = r.get("status", "").upper()
+    p = str(r.get("phase", ""))
+    t = str(r.get("task", ""))
+    s = r.get("subtask")
+    if s is not None:
+        s = str(s)
+    task_name = r.get("task_name", "unknown")
+
+    state = load(track_dir)
+
+    if status == "SUCCESS":
+        sha = r.get("commit_sha", "")
+        parent_completed = _do_complete(track_dir, p, t, s, sha)
+        synced = _do_sync_plan(track_dir, state)
+        _append_execution_record(track_dir, p, t, s, r, state)
+        for dev in r.get("spec_deviation_detail", []):
+            _append_deviation_legacy(track_dir, task_name, dev)
+        _write_git_note(track_dir, r, state)
+        result_path.unlink(missing_ok=True)
+
+        commit_msg = f"chore(conductor): Complete '{task_name}' [{sha}]"
+        out(dict(status="success", sha=sha, parent_completed=parent_completed,
+                 deviations=len(r.get("spec_deviation_detail", [])),
+                 sync_count=synced, commit_msg=commit_msg))
+
+    elif status == "FAILURE":
+        summary = r.get("summary", "")
+        retry_count = _do_fail(track_dir, p, t, s, summary)
+        synced = _do_sync_plan(track_dir, state)
+        _append_execution_record(track_dir, p, t, s, r, state)
+        _append_failure_legacy(track_dir, r)
+        result_path.unlink(missing_ok=True)
+
+        commit_msg = f"chore(conductor): '{task_name}' failed (attempt {retry_count})"
+        out(dict(status="failure", retry_count=retry_count, summary=summary,
+                 sync_count=synced, commit_msg=commit_msg))
+
+    else:
+        out(dict(error=f"Unknown status: {status}"))
+
+
+def cmd_record_summary(track_dir):
+    """Record a compact task summary for context recovery after compaction."""
+    summaries_path = conductor_dir(track_dir) / "task-summaries.json"
+    # Read from stdin: JSON with {phase, task, sha, status, summary}
+    data = json.loads(sys.stdin.read() if not sys.stdin.isatty() else "{}")
+    p, t = data.get("phase", "?"), data.get("task", "?")
+    sha = data.get("sha", "")
+    status = data.get("status", "?")
+    summary = data.get("summary", "")
+
+    summaries = {}
+    if summaries_path.exists():
+        try:
+            summaries = json.loads(summaries_path.read_text())
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    summaries[f"P{p}.T{t}"] = {"sha": sha, "status": status, "summary": summary}
+    summaries_path.write_text(json.dumps(summaries, indent=2))
+    out(dict(ok=True, recorded=f"P{p}.T{t}"))
+
+
 # ── Dispatch ─────────────────────────────────────────────────────────
 
 
@@ -2065,6 +2195,12 @@ def main():
             cmd_gc(track_dir)
         elif cmd == "process-result":
             cmd_process_result(track_dir)
+        elif cmd == "dispatch-prepare":
+            cmd_dispatch_prepare(track_dir)
+        elif cmd == "dispatch-finalize":
+            cmd_dispatch_finalize(track_dir)
+        elif cmd == "record-summary":
+            cmd_record_summary(track_dir)
         elif cmd == "init":
             cmd_init(track_dir,
                      flag(args, "--plan-structure") or "{}",

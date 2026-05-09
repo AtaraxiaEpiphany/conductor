@@ -2,7 +2,9 @@
 name: spec-reviewer
 description: Interactive reviewer for spec.md and plan.md. Presents summaries to user, handles revisions, and returns compact result. Keeps full file contents out of the orchestrator context.
 tools: Read, Edit, Write, AskUserQuestion
-model: sonnet
+model: haiku
+effort: medium
+maxTurns: 30
 ---
 
 # Conductor Spec & Plan Reviewer

@@ -77,21 +77,19 @@ Returns `action` enum — switch on it:
 ### 3.2 Action: `dispatch_explorer`
 
 ```bash
-track-state lock "<track_dir>" <p> <t> [<s>]
-track-state sync-plan "<track_dir>"
-git add -A && git commit -m "chore(conductor): Start task '<name>' [<p>.<t>]"
+track-state dispatch-prepare "<track_dir>"
+git add -A && git commit -m "<commit_msg from dispatch-prepare>"
 ```
 
 Dispatch `conductor:explorer`. Prompt: `TRACK_DIR={td} PHASE={p} TASK={t} NAME={name}`
 
-After return: commit artifacts → `git rev-parse --short HEAD` → `track-state complete "<track_dir>" <p> <t> --sha "<sha>"` → `sync-plan` → **Section 3.6**.
+After return: commit exploration artifacts (`git add -A && git commit -m "docs(explore): {name}"`) → get SHA (`git rev-parse --short HEAD`) → update `commit_sha` in `.conductor/result.json` → **Section 3.5**.
 
 ### 3.3 Action: `dispatch_executor`
 
 ```bash
-track-state lock "<track_dir>" <p> <t> [<s>]
-track-state sync-plan "<track_dir>"
-git add -A && git commit -m "chore(conductor): Start task '<name>' [<p>.<t>]"
+track-state dispatch-prepare "<track_dir>"
+git add -A && git commit -m "<commit_msg from dispatch-prepare>"
 ```
 
 Dispatch `conductor:task-executor`. Prompt: `TRACK_DIR={td} PHASE={p} TASK={t} SUBTASK={s} NAME={name} ATTEMPT={n} MAX_RETRIES={m} IS_RETRY={bool}`
@@ -111,12 +109,12 @@ Emit: `DEFERRED: P{p}.T{t} '<name>'` → **Section 3.6**.
 ### 3.5 Process Result (after task-executor)
 
 ```bash
-track-state process-result "<track_dir>"
+track-state dispatch-finalize "<track_dir>"
 ```
 
-**SUCCESS**: commit `chore(conductor): Complete '<name>' [<sha>]`. Deviations > 0 → announce. → **Section 3.6**.
+**SUCCESS**: commit using `commit_msg` from dispatch-finalize. Deviations > 0 → announce. → **Section 3.6**.
 
-**FAILURE**: commit `chore(conductor): '<name>' failed (attempt {n})`. retry < max → re-dispatch (Section 3.1). retry >= max → dispatch `conductor:skip-analyst`. Skip-analyst result: `can_skip` → `track-state skip` or `block` → `sync-plan` → commit → Section 3.1 or HALT.
+**FAILURE**: commit using `commit_msg` from dispatch-finalize. retry < max → re-dispatch (Section 3.1). retry >= max → dispatch `conductor:skip-analyst`. Skip-analyst result: `can_skip` → `track-state skip` or `block` → `sync-plan` → commit → Section 3.1 or HALT.
 
 ### 3.6 Phase Boundary
 
@@ -141,7 +139,7 @@ Read `conductor/workflow/post-loop.md` and execute sections 5.0–8.0.
 
 ## COMPRESSION PRIORITY
 
-When context is compressed:
-1. **KEEP**: Sections 3.0–3.6 (active dispatch loop) + last track-state output
-2. **COMPRESS**: completed iteration outputs (keep only sha + status per task)
-3. **DISCARD**: Sections 1.0–2.0 (one-time setup) and Section 4.0 (post-loop, re-read when needed)
+When context is compressed (PreCompact hook injects instructions automatically):
+1. **KEEP**: Sections 3.0–3.7 (active dispatch loop) + last track-state output + last subagent result
+2. **COMPRESS**: completed iteration outputs → record via `track-state record-summary "<track_dir>" <<< '{"phase":p,"task":t,"sha":"...","status":"...","summary":"..."}'`
+3. **DISCARD**: Sections 1.0–2.0 (one-time setup, re-read from disk) and Section 4.0 (re-read from workflow file)

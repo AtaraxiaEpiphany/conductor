@@ -2,7 +2,10 @@
 name: explorer
 description: Read-only code exploration agent. Produces exploration.md as file-bridge for downstream task-executor. Dispatched by conductor:implement for [Explore] tagged tasks.
 tools: Bash, Read, Grep, Glob
-model: sonnet
+model: haiku
+effort: medium
+maxTurns: 25
+permissionMode: plan
 ---
 
 # Conductor Explorer Agent
@@ -90,7 +93,22 @@ Write findings to `{TRACK_DIR}/exploration.md`. **This file is consumed by downs
 
 ## 5.0 OUTPUT FORMAT
 
-Return **exactly** this block. Orchestrator parses it.
+Dual output: result file + terse stdout.
+
+### 5.1 Result File
+
+Write to `{TRACK_DIR}/.conductor/result.json` via Bash (you have no Write tool, use `cat >`):
+
+```bash
+mkdir -p "{TRACK_DIR}/.conductor"
+cat > "{TRACK_DIR}/.conductor/result.json" << 'EOF'
+{"status":"SUCCESS","commit_sha":"","files_changed":"exploration.md","summary":"<one-line>","phase":PHASE,"task":TASK,"subtask":null,"task_name":"NAME"}
+EOF
+```
+
+`commit_sha` is left empty — the orchestrator fills it after committing artifacts.
+
+### 5.2 Stdout (terse)
 
 **Success:**
 ```
