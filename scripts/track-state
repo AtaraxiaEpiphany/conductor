@@ -833,6 +833,7 @@ def cmd_next(track_dir, compact=False):
         out_compact(result)
     else:
         out(result)
+    return result
 
 
 def cmd_dispatch_next(track_dir):
