@@ -8,6 +8,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Test script for all Python hooks** ([7158b06](https://github.com/anthropics/conductor-plugin/commit/7158b06))
+  - `scripts/test-all.py`: validates all 18 hook scripts with automated test cases
+  - Tests hook input/output, CLI commands, and expected behavior
+  - Ensures migration completeness and correctness
+
+### Changed
+
+- **All hooks migrated from Bash to pure Python** ([7158b06](https://github.com/anthropics/conductor-plugin/commit/7158b06), [785a2bb](https://github.com/anthropics/conductor-plugin/commit/785a2bb))
+  - 18 scripts converted from Bash to Python with shebang `#!/usr/bin/env python3`
+  - Eliminated 40% duplicate code through shared library architecture
+  - Original Bash scripts backed up to `scripts/.backup/bash-originals/`
+  - Full IDE support, type checking, and testability now available
+  - All hook configurations updated in `hooks/hooks.json`, skills, and agents
+  - Shared library modules (`scripts/lib/`):
+    - `hook_io.py`: Hook JSON input/output handling
+    - `logging.py`: Log directory initialization and entry writing
+    - `env.py`: Environment variable utilities
+    - `json_utils.py`: JSON loading/saving with safe defaults
+    - `path_utils.py`: Path and directory operations
+    - `validation.py`: Validation functions
+    - `git_utils.py`: Git operation utilities
+
+### Added
+
 - **Feature Verification File (feature-checklist.json)** (Harness Engineering P1)
   - Generated during `track-state init` with one entry per task/subtask, all `passes: false`
   - Updated to `passes: true` by `track-state process-result` on task success, with coverage and SHA evidence
