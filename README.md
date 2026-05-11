@@ -91,6 +91,21 @@ Critical subagents (`task-executor`, `explorer`, `phase-checker`) use `asyncRewa
 
 ---
 
+## Documentation
+
+Complete documentation is organized by audience:
+
+| Audience | Location | Contents |
+|----------|----------|----------|
+| **Users** | `docs/user/` | Getting Started, User Guide, Commands, Troubleshooting |
+| **Reference** | `docs/reference/` | Hook Reference, Subagent Reference, CLI Reference, Quality Gates, Git Notes, Harness Engineering |
+| **Developers** | `developer/` | Architecture Overview, Interaction Mechanism, Interaction Flow, State Model, Extending Hooks |
+| **Runtime** | `runtime/` | Core Contract, Orchestration Specification, Reference Paths |
+
+For a complete index, see [INDEX.md](INDEX.md).
+
+---
+
 ## Task Lifecycle
 
 Every task follows a strict 11-step lifecycle with a finite state machine:

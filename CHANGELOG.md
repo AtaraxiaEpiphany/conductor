@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Documentation reorganization** ([ebcbec3](https://github.com/anthropics/conductor-plugin/commit/ebcbec3))
+  - Restructured documentation based on audience segmentation
+  - New directory structure: `docs/user/`, `docs/reference/`, `developer/`, `runtime/`
+  - Standard frontmatter added to all documentation files (title, audience, status, related docs)
+  - Created `developer/REORGANIZATION.md` for migration notes
+
 - **Comprehensive interaction mechanism documentation** ([a347c9d](https://github.com/anthropics/conductor-plugin/commit/a347c9d))
   - `INTERACTION_MECHANISM.md`: Core architecture with sequence diagrams, component definitions, communication flows, message formats, state authority, error recovery, and quality gate enforcement
   - `INTERACTION_FLOW.md`: 8 visual flowcharts covering master flow, hook lifecycle, subagent isolation, state authority, recovery scenarios, quality gates, hook communication, async/sync patterns, and timeline
@@ -95,6 +101,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Documentation directory structure** ([ebcbec3](https://github.com/anthropics/conductor-plugin/commit/ebcbec3))
+  - `internal/` → `runtime/` (clearer intent for injected content)
+  - `architecture/` → `developer/architecture/` (developer documentation)
+  - `docs/` → `docs/user/` (user-facing documentation)
+  - `reference/` → `docs/reference/` (consolidated reference manuals)
+  - 21 files renamed with git history preserved
+- **Runtime injection paths** ([ebcbec3](https://github.com/anthropics/conductor-plugin/commit/ebcbec3))
+  - `session-start.py`: `internal/conductor-core.md` → `runtime/core-contract.md`
+  - `test-all.py`: `internal/conductor-core.md` → `runtime/core-contract.md`
+  - `task-executor.md`: `internal/conductor-core.md` → `runtime/core-contract.md`
+  - All internal documentation links updated to reflect new structure
 - **Hook configuration centralized** ([b6a604f](https://github.com/anthropics/conductor-plugin/commit/b6a604f))
   - All hooks now registered in `hooks/hooks.json` (skill-scoped Stop hook remains in SKILL.md frontmatter)
   - `SubagentStop` split: critical agents (task-executor, explorer, phase-checker) use `asyncRewake`, others use `async`
