@@ -11,12 +11,12 @@ hooks:
     - matcher: "Bash"
       hooks:
         - type: command
-          command: "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/on-test-run\""
+          command: "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/on-test-run.py\""
   PreCompact:
     - matcher: "auto"
     - hooks:
         - type: command
-          command: "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/on-compact\""
+          command: "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/on-compact.py\""
           timeout: 5
 ---
 

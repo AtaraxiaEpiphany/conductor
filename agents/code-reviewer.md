@@ -10,7 +10,7 @@ hooks:
     - matcher: ""
       hooks:
         - type: command
-          command: "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/on-review-stop\""
+          command: "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/on-review-stop.py\""
 ---
 
 # Conductor Code Reviewer

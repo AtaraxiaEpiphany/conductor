@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/enhance-conductor-context\"",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/enhance-conductor-context.py\"",
             "timeout": 3
           }
         ]
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/on-batch-complete\"",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/on-batch-complete.py\"",
             "timeout": 3
           }
         ]
@@ -29,7 +29,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/pre-command-check\"",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/pre-command-check.py\"",
             "timeout": 3
           }
         ]
@@ -41,7 +41,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/session-start\"",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/session-start.py\"",
             "timeout": 10
           }
         ]
@@ -53,7 +53,17 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/filter-subagent-output\"",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/filter-subagent-output.py\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/on-test-run.py\"",
             "timeout": 5
           }
         ]
@@ -65,7 +75,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/on-subagent-start\"",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/on-subagent-start.py\"",
             "timeout": 5
           }
         ]
@@ -77,7 +87,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/on-subagent-stop\"",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/on-subagent-stop.py\"",
             "asyncRewake": true,
             "timeout": 30
           }
@@ -88,7 +98,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/on-subagent-stop\"",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/on-subagent-stop.py\"",
             "async": true,
             "timeout": 5
           }
@@ -97,11 +107,10 @@
     ],
     "TaskCreated": [
       {
-        "matcher": "",
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/on-task-event\"",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/on-task-event.py\"",
             "timeout": 3,
             "async": true
           }
@@ -110,11 +119,10 @@
     ],
     "TaskCompleted": [
       {
-        "matcher": "",
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/on-task-event\"",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/on-task-event.py\"",
             "timeout": 3,
             "async": true
           }
@@ -123,11 +131,10 @@
     ],
     "SessionEnd": [
       {
-        "matcher": "",
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/session-end\"",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/session-end.py\"",
             "timeout": 5
           }
         ]
@@ -139,7 +146,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/on-config-change\"",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/on-config-change.py\"",
             "timeout": 3
           }
         ]
@@ -147,12 +154,34 @@
     ],
     "CwdChanged": [
       {
-        "matcher": "",
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/on-cwd-change\"",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/on-cwd-change.py\"",
             "timeout": 2
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "auto",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/on-compact.py\"",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/state-consistency-check.py\"",
+            "timeout": 5
           }
         ]
       }
