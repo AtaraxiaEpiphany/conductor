@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Comprehensive interaction mechanism documentation** ([a347c9d](https://github.com/anthropics/conductor-plugin/commit/a347c9d))
+  - `INTERACTION_MECHANISM.md`: Core architecture with sequence diagrams, component definitions, communication flows, message formats, state authority, error recovery, and quality gate enforcement
+  - `INTERACTION_FLOW.md`: 8 visual flowcharts covering master flow, hook lifecycle, subagent isolation, state authority, recovery scenarios, quality gates, hook communication, async/sync patterns, and timeline
+  - `INTERACTION_REFERENCE.md`: Quick reference guide with component interaction matrix, hook event table, subagent dispatch formats, track-state CLI reference, hook decisions, context injection points, state marker mapping, firewall violations, recovery scenarios, performance, troubleshooting, extension points, and best practices
+  - Updated `README.md` with new Documentation section linking to all three interaction mechanism documents
+
 - **Test script for all Python hooks** ([7158b06](https://github.com/anthropics/conductor-plugin/commit/7158b06))
   - `scripts/test-all.py`: validates all 18 hook scripts with automated test cases
   - Tests hook input/output, CLI commands, and expected behavior
