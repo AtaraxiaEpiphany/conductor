@@ -586,6 +586,54 @@ track-state <command> <track-dir> [options]
 
 ---
 
+## Documentation
+
+- **[Core README](README.md)** — This file, plugin overview and usage
+- **[Interaction Mechanism](INTERACTION_MECHANISM.md)** — Deep dive into Skills, Subagents, and Hooks communication
+- **[Interaction Flow](INTERACTION_FLOW.md)** — Visual flowcharts showing interaction patterns
+- **[Interaction Reference](INTERACTION_REFERENCE.md)** — Quick reference for all interaction points
+- **[CHANGELOG.md](CHANGELOG.md)** — Complete history of changes
+
+### In-Depth Architecture
+
+For detailed understanding of the three-tier interaction model:
+
+1. **[INTERACTION_MECHANISM.md](INTERACTION_MECHANISM.md)** — Comprehensive documentation covering:
+   - System architecture with Mermaid diagrams
+   - Component definitions and responsibilities
+   - Communication flows (5 phases with sequence diagrams)
+   - Message formats and schemas
+   - State authority model
+   - Error recovery mechanisms
+   - Quality gate enforcement
+
+2. **[INTERACTION_FLOW.md](INTERACTION_FLOW.md)** — Visual reference with 8 flowcharts:
+   - Master flow from user command to task completion
+   - Detailed hook flow (tool execution lifecycle)
+   - Subagent isolation patterns
+   - State authority architecture
+   - Recovery flow diagrams
+   - Quality gate enforcement flow
+   - Hook communication protocol
+   - Async vs sync execution patterns
+   - Complete implementation timeline
+
+3. **[INTERACTION_REFERENCE.md](INTERACTION_REFERENCE.md)** — Quick reference guide:
+   - Component interaction matrix
+   - Complete hook event reference (20+ events)
+   - Subagent dispatch formats and output schemas
+   - track-state CLI command reference
+   - Hook decision matrix and exit codes
+   - Context injection points
+   - State marker mapping (plan.md ↔ track-state.json)
+   - Firewall violation detection
+   - Recovery scenarios
+   - Performance characteristics
+   - Troubleshooting guide
+   - Extension points and best practices
+
+---
+
 ## Requirements
 
 - [Claude Code](https://claude.ai/code) CLI or IDE extension
