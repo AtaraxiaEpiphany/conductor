@@ -13,6 +13,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - New directory structure: `docs/user/`, `docs/reference/`, `developer/`, `runtime/`
   - Standard frontmatter added to all documentation files (title, audience, status, related docs)
   - Created `developer/REORGANIZATION.md` for migration notes
+- **Documentation simplification** ([55c47d3](https://github.com/anthropics/conductor-plugin/commit/55c47d3))
+  - Moved internal implementation docs to `developer/reference/`: INTERACTION_REFERENCE.md, git-notes.md, track-state-cli.md
+  - Simplified user-facing reference docs to core essentials only (~1,168 lines removed)
+  - `harness-engineering.md` moved to `developer/reference/` and gitignored (local developer reference only)
+  - Docs/code ratio improved from 3:1 to 2.8:1
 
 - **Comprehensive interaction mechanism documentation** ([a347c9d](https://github.com/anthropics/conductor-plugin/commit/a347c9d))
   - `INTERACTION_MECHANISM.md`: Core architecture with sequence diagrams, component definitions, communication flows, message formats, state authority, error recovery, and quality gate enforcement
