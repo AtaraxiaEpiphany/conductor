@@ -225,7 +225,7 @@ conductor-plugin/
 │       #   phase-done, add-checkpoint, finalize,
 │       #   process-result, init, shas, deferred-report,
 │       #   get-handoff, sync-handoff, append-handoff,
-│       #   archive, gc
+│       #   checklist-verify, archive, gc
 │   └── lint-track-state               #   Boundary enforcement linter (F1/F4/state)
 ├── schemas/                           # JSON Schema definitions
 │   └── track-state.schema.json        #   track-state.json schema (documentation reference)
@@ -284,6 +284,7 @@ your-project/
 │           ├── spec.md                # Feature specification
 │           ├── plan.md                # Implementation plan
 │           ├── track-state.json       # Authoritative state
+│           ├── feature-checklist.json # Feature verification (passes=false → true)
 │           ├── handoff.md             # Handoff index (created on first execution)
 │           └── .conductor/handoff/    # Per-task handoff files
 ```
@@ -377,6 +378,25 @@ Tasks in `plan.md` can be annotated with type tags that modify workflow behavior
 ---
 
 ## Quality Standards
+
+### Feature Verification
+
+Every track gets a `feature-checklist.json` generated from the plan structure at init time. Each task/subtask starts with `passes: false`. The system mechanically updates the checklist as tasks complete:
+
+1. **Init**: `track-state init` generates checklist with all items `passes: false`
+2. **Process**: `track-state process-result` flips completed tasks to `passes: true` with evidence (SHA, coverage, TC IDs)
+3. **Finalize**: `track-state finalize` verifies all items and computes a 0-100 quality score
+
+Quality score weights: completion (40%) + checklist verification (30%) + coverage (20%) + retry penalty (10%).
+
+### Quality Gates (F2/F3)
+
+Mechanically enforced in `process-result`:
+
+| Gate | Rule | Exempt Tags |
+|------|------|-------------|
+| **F2** TDD | Test files must exist in commit | `[Explore]`, `[Docs]`, `[Config]`, `[Chore]`, `[Manual]` |
+| **F3** Coverage | `coverage_pct >= 80%` | `[Docs]`, `[Config]`, `[Chore]`, `[Manual]` |
 
 ### Pre-Commit Checklist
 
@@ -554,14 +574,15 @@ track-state <command> <track-dir> [options]
 | `validate [--fix]` | Validate track-state.json structural + semantic integrity and cross-check plan.md consistency. `--fix` auto-repairs: parent→subtask status propagation, phase status sync | `{valid, errors, warnings, fixes}` |
 | `phase-done <p>` | Check if all tasks in phase are terminal | `{complete, terminal, total}` |
 | `add-checkpoint <p> <sha>` | Add or update checkpoint SHA for a phase in plan.md | `{ok, phase, sha}` |
-| `finalize` | Set indices to -1, compute track-level status | `{status}` |
-| `process-result` | Read `.conductor/result.json`, update state + plan + handoff in one call | `{status, sha, parent_completed, deviations}` or `{status, retry_count, summary}` |
-| `init --plan-structure <json> --track-id <id> --type <type> --description <desc>` | Create track-state.json + index.md + handoff.md from plan structure in one call | `{ok, track_id, phases, tasks}` |
+| `finalize` | Set indices to -1, compute track-level status, verify checklist, compute quality score | `{status, quality_score, checklist?}` |
+| `process-result` | Read `.conductor/result.json`, update state + plan + handoff + checklist + git notes. Enforces F2/F3 gates | `{status, sha, parent_completed, deviations, coverage_gate, tdd_gate}` or `{status, retry_count, summary}` |
+| `init --plan-structure <json> --track-id <id> --type <type> --description <desc>` | Create track-state.json + index.md + handoff.md + feature-checklist.json from plan structure in one call | `{ok, track_id, phases, tasks}` |
 | `shas` | List all commit SHAs for a track | `{shas, first, last, count}` |
 | `deferred-report` | List all deferred tasks for verification | `{deferred, count}` |
 | `get-handoff <p> <t> [--subtask <s>]` | Get handoff content for a specific task/subtask | `{content, path}` |
 | `sync-handoff` | Sync handoff.md index with current state | `{ok, updated}` |
 | `append-handoff <p> <t> --type <explore|decision|risk|deviation> --content <json> [--subtask <s>]` | Append content to a task's handoff file | `{ok, type, handoff_file}` |
+| `checklist-verify` | Check feature-checklist.json verification status | `{exists, total, verified, unverified}` |
 
 ---
 

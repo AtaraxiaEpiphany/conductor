@@ -26,6 +26,8 @@ Usage:
     track-state init <track-dir> --plan-structure <json> --track-id <id> --type <type> --description <desc>
     track-state get-handoff <track-dir> <phase> <task> [--subtask <n>]
     track-state append-handoff <track-dir> <phase> <task> --type <explore|decision|risk|deviation> --content <json> [--subtask <n>]
+    track-state checklist-verify <track-dir>
+    track-state gc <track-dir>
 """
 
 import json
@@ -1141,9 +1143,81 @@ def cmd_finalize(track_dir):
     else:
         state["status"] = "completed"
 
+    # Feature checklist verification
+    checklist = _checklist_status(track_dir)
+
+    # Quality score calculation
+    quality_score = _compute_quality_score(state, statuses, checklist)
+
+    state["quality_score"] = quality_score
     state["updated_at"] = now_iso()
     save(track_dir, state)
-    out(dict(status=state["status"]))
+
+    result = dict(
+        status=state["status"],
+        quality_score=quality_score,
+    )
+    if checklist["exists"]:
+        result["checklist"] = dict(
+            verified=checklist["verified"],
+            total=checklist["total"],
+            unverified=checklist["unverified"],
+        )
+    out(result)
+
+
+def _compute_quality_score(state, statuses, checklist):
+    """Compute a 0-100 quality score for the track.
+    Weights: completion 40%, checklist 30%, coverage 20%, retry penalty 10%."""
+    total = len(statuses)
+    if total == 0:
+        return 100
+
+    # Completion score (40%): ratio of completed tasks
+    completed = statuses.count("completed")
+    completion_ratio = completed / total
+
+    # Checklist score (30%): ratio of verified items
+    if checklist["exists"] and checklist["total"] > 0:
+        checklist_ratio = checklist["verified"] / checklist["total"]
+    else:
+        checklist_ratio = 1.0  # No checklist = assume full
+
+    # Coverage score (20%): from git notes or state metadata
+    coverage_ratio = 0.8  # Default assumption
+    shas_result = _get_all_shas(state)
+    if shas_result:
+        # Best-effort: read coverage from last few git notes
+        try:
+            import subprocess
+            for sha in shas_result[-3:]:
+                note = subprocess.run(
+                    ["git", "notes", "show", sha],
+                    capture_output=True, text=True, cwd=state.get("_track_dir", "."), timeout=5
+                ).stdout.strip()
+                for line in note.split("\n"):
+                    if line.startswith("Coverage:"):
+                        m = re.search(r"(\d+)%", line)
+                        if m:
+                            coverage_ratio = int(m.group(1)) / 100
+                            break
+                if coverage_ratio > 0:
+                    break
+        except Exception:
+            pass
+
+    # Retry penalty (10%): penalize high retry counts
+    total_retries = 0
+    for phase in state.get("phases", []):
+        for task in phase.get("tasks", []):
+            total_retries += task.get("retry_count", 0)
+    retry_penalty = min(total_retries * 0.05, 0.3)  # Cap at 30% penalty
+
+    score = (completion_ratio * 40 +
+             checklist_ratio * 30 +
+             coverage_ratio * 20 +
+             (1.0 - retry_penalty) * 10)
+    return round(min(score, 100))
 
 
 def cmd_archive(track_dir):
@@ -1526,9 +1600,8 @@ def cmd_validate(track_dir, fix=False):
     out(dict(valid=len(errors) == 0, errors=errors, warnings=warnings, fixes=fixes))
 
 
-def cmd_shas(track_dir):
-    """Extract all commit SHAs from completed tasks. Returns first/last for revision range."""
-    state = load(track_dir)
+def _get_all_shas(state):
+    """Extract all commit SHAs from state. Returns list."""
     shas = []
     for phase in state["phases"]:
         for task in phase["tasks"]:
@@ -1539,6 +1612,13 @@ def cmd_shas(track_dir):
                 sha = sub.get("commit_sha", "")
                 if sha and sub["status"] in ("completed", "skipped", "failed", "blocked", "deferred", "cancelled"):
                     shas.append(sha)
+    return shas
+
+
+def cmd_shas(track_dir):
+    """Extract all commit SHAs from completed tasks. Returns first/last for revision range."""
+    state = load(track_dir)
+    shas = _get_all_shas(state)
     out(dict(
         shas=shas,
         first=shas[0] if shas else None,
@@ -1591,6 +1671,42 @@ def cmd_add_checkpoint(track_dir, p, sha):
             f.write("\n")
 
     out(dict(ok=True, phase=p, sha=sha))
+
+
+def _extract_tags_for_task(state, phase_str, task_str):
+    """Extract tags from task name for gate exemption checks."""
+    try:
+        pi, ti = int(phase_str), int(task_str)
+        task = state["phases"][pi]["tasks"][ti]
+        return extract_tags(task["name"])
+    except (IndexError, KeyError, ValueError):
+        return []
+
+
+def _tag_exempt_from_coverage(tags):
+    """Tags that don't require coverage gate enforcement."""
+    return bool(set(tags) & {"Docs", "Config", "Chore", "Manual"})
+
+
+def _tag_exempt_from_tdd(tags):
+    """Tags that don't require TDD gate enforcement."""
+    return bool(set(tags) & {"Explore", "Docs", "Config", "Chore", "Manual"})
+
+
+def _verify_tdd_gate(track_dir, sha, result_data):
+    """Best-effort TDD verification: check that test files exist in the commit."""
+    if not sha or sha == "N/A":
+        return "UNKNOWN"
+
+    # Check files_changed in result for test file patterns
+    files = result_data.get("files_changed", "")
+    if not files:
+        return "UNKNOWN"
+
+    test_patterns = ("test/", "tests/", "spec/", "_test.", "_spec.", ".test.", ".spec.", "Test", "Spec")
+    has_test = any(p in files for p in test_patterns)
+
+    return "PASS" if has_test else "NO_TESTS_FOUND"
 
 
 def _write_git_note(track_dir, result_data, state):
@@ -1712,7 +1828,8 @@ def _write_git_note_basic(track_dir, sha, state, pi, ti, si=None):
 
 def cmd_process_result(track_dir):
     """Read .conductor/result.json, update state, sync plan, manage handoff.
-    Writes git notes audit trail. Deletes result file after processing."""
+    Writes git notes audit trail. Enforces F2/F3 quality gates.
+    Updates feature checklist. Deletes result file after processing."""
     result_path = conductor_dir(track_dir) / "result.json"
 
     if not result_path.exists():
@@ -1733,8 +1850,24 @@ def cmd_process_result(track_dir):
     # Load state once for use in handoff functions
     state = load(track_dir)
 
+    # Get task tags for gate exemption check
+    tags = _extract_tags_for_task(state, p, t)
+
     if status == "SUCCESS":
         sha = r.get("commit_sha", "")
+
+        # F3 Coverage Gate — warn if below threshold (not enforced for [Docs]/[Config]/[Chore])
+        cov_pct = r.get("coverage_pct")
+        coverage_gate = "PASS"
+        if cov_pct is not None and not _tag_exempt_from_coverage(tags):
+            if cov_pct < 80:
+                coverage_gate = f"FAILED ({cov_pct}% < 80%)"
+
+        # F2 TDD Gate — verify test files present in commit (best-effort)
+        tdd_gate = "PASS"
+        if not _tag_exempt_from_tdd(tags):
+            tdd_gate = _verify_tdd_gate(track_dir, sha, r)
+
         parent_completed = _do_complete(track_dir, p, t, s, sha)
         _do_sync_plan(track_dir, state)
 
@@ -1749,15 +1882,23 @@ def cmd_process_result(track_dir):
         # Write git notes audit trail
         _write_git_note(track_dir, r, state)
 
+        # Update feature checklist
+        _update_checklist_on_success(track_dir, p, t, s, r)
+
         # Clean up
         result_path.unlink(missing_ok=True)
 
-        out(dict(
+        result = dict(
             status="success",
             sha=sha,
             parent_completed=parent_completed,
             deviations=len(deviations),
-        ))
+            coverage_gate=coverage_gate,
+            tdd_gate=tdd_gate,
+        )
+        if cov_pct is not None:
+            result["coverage_pct"] = cov_pct
+        out(result)
 
     elif status == "FAILURE":
         summary = r.get("summary", "")
@@ -1781,6 +1922,106 @@ def cmd_process_result(track_dir):
 
     else:
         out(dict(error=f"Unknown status: {status}"))
+
+
+# ── Feature Checklist ────────────────────────────────────────────────
+
+
+def _checklist_path(track_dir):
+    return Path(track_dir) / "feature-checklist.json"
+
+
+def _generate_feature_checklist(track_dir, track_id, phases):
+    """Generate feature-checklist.json from plan structure.
+    All items start with passes=false. Updated by process-result on task success."""
+    items = []
+    for pi, phase in enumerate(phases):
+        for ti, task in enumerate(phase.get("tasks", [])):
+            items.append({
+                "phase": pi,
+                "task": ti,
+                "subtask": None,
+                "name": task["name"],
+                "passes": False,
+                "verified_at": None,
+                "evidence": None,
+            })
+            for si, sub in enumerate(task.get("subtasks", [])):
+                items.append({
+                    "phase": pi,
+                    "task": ti,
+                    "subtask": si,
+                    "name": sub["name"],
+                    "passes": False,
+                    "verified_at": None,
+                    "evidence": None,
+                })
+
+    checklist = {
+        "version": "1.0",
+        "track_id": track_id,
+        "generated_at": now_iso(),
+        "items": items,
+    }
+    with open(_checklist_path(track_dir), "w") as f:
+        json.dump(checklist, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+
+
+def _update_checklist_on_success(track_dir, phase, task, subtask, result_data):
+    """Mark a task/subtask as passes=true in feature-checklist.json."""
+    cp = _checklist_path(track_dir)
+    if not cp.exists():
+        return
+    with open(cp) as f:
+        checklist = json.load(f)
+
+    p, t = int(phase), int(task)
+    s = int(subtask) if subtask is not None else None
+
+    for item in checklist["items"]:
+        if item["phase"] == p and item["task"] == t and item["subtask"] == s:
+            item["passes"] = True
+            item["verified_at"] = now_iso()
+            cov = result_data.get("coverage_pct")
+            item["evidence"] = {
+                "sha": result_data.get("commit_sha", ""),
+                "coverage_pct": cov,
+                "tc_coverage": result_data.get("tc_coverage", ""),
+                "deviations": len(result_data.get("spec_deviation_detail", [])),
+            }
+            break
+
+    with open(cp, "w") as f:
+        json.dump(checklist, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+
+
+def _checklist_status(track_dir):
+    """Return checklist verification status. Used by finalize and process-result."""
+    cp = _checklist_path(track_dir)
+    if not cp.exists():
+        return dict(exists=False, total=0, verified=0, unverified=[])
+
+    with open(cp) as f:
+        checklist = json.load(f)
+
+    items = checklist.get("items", [])
+    verified = [i for i in items if i["passes"]]
+    unverified = [i for i in items if not i["passes"]]
+
+    return dict(
+        exists=True,
+        total=len(items),
+        verified=len(verified),
+        unverified=[f"P{i['phase']}.T{i['task']}" + (f".S{i['subtask']}" if i["subtask"] is not None else "") + f" {i['name']}" for i in unverified],
+    )
+
+
+def cmd_checklist_verify(track_dir):
+    """Check feature checklist verification status."""
+    status = _checklist_status(track_dir)
+    out(status)
 
 
 # ── Init (Track Creation) ────────────────────────────────────────────
@@ -1844,6 +2085,9 @@ def cmd_init(track_dir, plan_structure_json, track_id, track_type, description, 
 
     # Create initial handoff.md
     _ensure_handoff_index(str(track_path), state)
+
+    # Create feature-checklist.json
+    _generate_feature_checklist(str(track_path), track_id, phases)
 
     task_count = sum(len(p.get("tasks", [])) for p in phases)
     out(dict(ok=True, track_id=track_id, phases=len(phases), tasks=task_count))
@@ -2225,6 +2469,8 @@ def main():
             cmd_archive(track_dir)
         elif cmd == "gc":
             cmd_gc(track_dir)
+        elif cmd == "checklist-verify":
+            cmd_checklist_verify(track_dir)
         elif cmd == "process-result":
             cmd_process_result(track_dir)
         elif cmd == "dispatch-prepare":

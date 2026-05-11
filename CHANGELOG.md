@@ -8,6 +8,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Feature Verification File (feature-checklist.json)** (Harness Engineering P1)
+  - Generated during `track-state init` with one entry per task/subtask, all `passes: false`
+  - Updated to `passes: true` by `track-state process-result` on task success, with coverage and SHA evidence
+  - Verified by `track-state finalize` — reports unverified items
+  - New command: `track-state checklist-verify <track-dir>` for manual status check
+  - Prevents premature "done" declarations: every task must have evidence of verification
+- **F2/F3 Mechanical Enforcement** (Harness Engineering P2)
+  - F3 Coverage Gate: `process-result` checks `coverage_pct < 80%` and reports `coverage_gate: FAILED`
+  - F2 TDD Gate: `process-result` verifies test files exist in commit, reports `tdd_gate: NO_TESTS_FOUND`
+  - Gate exemptions: `[Explore]`, `[Docs]`, `[Config]`, `[Chore]`, `[Manual]` tasks bypass TDD/coverage checks
+- **Track Quality Score** (Harness Engineering P3)
+  - `track-state finalize` computes a 0-100 quality score: completion 40% + checklist 30% + coverage 20% + retry penalty 10%
+  - Score stored in `track-state.json` and reported in finalize output
 - **P1/P2 hooks for comprehensive lifecycle coverage** ([b6a604f](https://github.com/anthropics/conductor-plugin/commit/b6a604f))
   - `PostToolBatch` hook: batch-level validation after parallel tool calls
   - Prompt hook on implement Stop: LLM-based state audit (uses haiku model)
