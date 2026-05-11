@@ -8,6 +8,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **P1/P2 hooks for comprehensive lifecycle coverage** ([b6a604f](https://github.com/anthropics/conductor-plugin/commit/b6a604f))
+  - `PostToolBatch` hook: batch-level validation after parallel tool calls
+  - Prompt hook on implement Stop: LLM-based state audit (uses haiku model)
+  - `asyncRewake` on critical subagent Stop: auto-recover on task-executor/explorer/phase-checker failure
+  - `InstructionsLoaded` hook: progressive disclosure for conductor context
+  - `ConfigChange` hook: hook configuration validation and audit logging
+  - `CwdChanged` hook: conductor state awareness across directory changes
+- **PreToolUse state protection** ([e1c824f](https://github.com/anthropics/conductor-plugin/commit/e1c824f))
+  - Blocks dangerous git operations (push --force, reset --hard, clean -f) during active tracks
+  - Prevents state lock violations before tool execution
+- **SessionEnd cleanup hook** ([e1c824f](https://github.com/anthropics/conductor-plugin/commit/e1c824f))
+  - Session cleanup: validates handoff files, logs session metrics
+  - Writes session summary for cross-session recovery
+- **Phase checkpoint resume** ([8947d21](https://github.com/anthropics/conductor-plugin/commit/8947d21))
+  - `track-state recover` detects interrupted phase-checker via `phase_checkpoint_pending` field
+  - `track-state dispatch-next` returns `dispatch_phase_checker` instead of `finalize` when checkpoint is pending
+  - `_phase_needs_checkpoint()` / `_any_phase_needs_checkpoint()` scan plan.md for missing `[checkpoint: <sha>]` markers
+  - Implement SKILL.md Section 2.1: phase-checker resume flow
 - **Track archive system** ([3b9450f](https://github.com/anthropics/conductor-plugin/commit/3b9450f))
   - `track-state archive` command: transitions completed tracks to `archived` status with `archived_at` timestamp
   - `archived` status added to track-state schema with `[@]` marker in tracks.md
@@ -34,6 +52,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Hook configuration centralized** ([b6a604f](https://github.com/anthropics/conductor-plugin/commit/b6a604f))
+  - All hooks now registered in `hooks/hooks.json` (skill-scoped Stop hook remains in SKILL.md frontmatter)
+  - `SubagentStop` split: critical agents (task-executor, explorer, phase-checker) use `asyncRewake`, others use `async`
+- **track-state code consolidation** ([d0b65fc](https://github.com/anthropics/conductor-plugin/commit/d0b65fc))
+  - Extracted `_find_next_task()` helper, eliminating 49 lines of duplicated task-finding logic in `cmd_next` and `cmd_dispatch_next`
+- **Implement skill compression section removed** ([b6a604f](https://github.com/anthropics/conductor-plugin/commit/b6a604f))
+  - Removed `COMPRESSION PRIORITY` section from SKILL.md (PreCompact hook handles this automatically)
 - **handoff.md system** ([a6bcbac](https://github.com/anthropics/conductor-plugin/commit/a6bcbac))
   - Replaced issues.md with indexed handoff system for better context management
   - `track-state get-handoff`, `sync-handoff`, `append-handoff` commands
@@ -90,6 +115,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Subtask SHA visibility** ([73335d6](https://github.com/anthropics/conductor-plugin/commit/73335d6))
+  - Subtask SHA now shown in plan.md even when identical to parent SHA
+  - Previously, completed subtasks appeared without commit reference
+- **Phase-checker skip on interruption** ([8947d21](https://github.com/anthropics/conductor-plugin/commit/8947d21))
+  - Resumed interrupted phase-checker when all tasks terminal but no checkpoint in plan.md
 - **track-state command not found** ([74542da](https://github.com/anthropics/conductor-plugin/commit/74542da))
   - Added `bin/track-state` wrapper so bare command resolves via plugin PATH
   - Normalized all invocations to bare `track-state` across skills and agents

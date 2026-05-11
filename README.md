@@ -36,6 +36,32 @@ Conductor is a Claude Code plugin built on **Spec-Driven Development** and **Sub
 
 ---
 
+## Hooks System
+
+Conductor uses Claude Code's hook system for lifecycle automation. Hooks are configured in `hooks/hooks.json`.
+
+### Hook Events
+
+| Event | Script | Purpose |
+|-------|--------|---------|
+| `InstructionsLoaded` | `enhance-conductor-context` | Progressive conductor context disclosure |
+| `SessionStart` | `session-start` | Inject conductor-core.md, session handoff |
+| `SessionEnd` | `session-end` | Cleanup, handoff validation, metrics logging |
+| `PreToolUse` (Bash) | `pre-command-check` | Block dangerous git ops, enforce state lock |
+| `PostToolBatch` | `on-batch-complete` | Batch-level validation after parallel tool calls |
+| `PostToolUse` (Agent) | `filter-subagent-output` | Filter subagent output for context pressure |
+| `SubagentStart` | `on-subagent-start` | Inject role-specific execution reminders |
+| `SubagentStop` | `on-subagent-stop` | Lifecycle logging; `asyncRewake` for critical agents |
+| `TaskCreated/Completed` | `on-task-event` | Async logging to `logs/task-lifecycle.log` |
+| `ConfigChange` | `on-config-change` | Configuration validation & audit logging |
+| `CwdChanged` | `on-cwd-change` | Conductor state awareness across directory changes |
+
+### Subagent Stop Priority
+
+Critical subagents (`task-executor`, `explorer`, `phase-checker`) use `asyncRewake: true` — the orchestrator auto-recovers on failure. Other subagents use `async: true` for fire-and-forget logging.
+
+---
+
 ## Commands
 
 | Command | Description |
@@ -172,7 +198,7 @@ conductor-plugin/
 │   └── doc-syncer.md                  #   Project documentation sync
 │
 ├── hooks/
-│   └── hooks.json                     # Hook event configurations
+│   └── hooks.json                     # Hook event configurations (10 hook types)
 │
 ├── monitors/
 │   └── monitors.json                  # Background monitor definitions
@@ -180,16 +206,19 @@ conductor-plugin/
 ├── bin/                               # Executables (added to PATH)
 ├── scripts/                           # Hook & utility scripts
 │   ├── session-start                  #   SessionStart hook (injects conductor-core.md)
+│   ├── session-end                    #   SessionEnd hook (cleanup, handoff validation, metrics)
+│   ├── enhance-conductor-context      #   InstructionsLoaded hook (progressive context disclosure)
 │   ├── on-subagent-start              #   SubagentStart hook (injects agent reminders)
-│   ├── on-subagent-stop               #   SubagentStop hook (logs lifecycle events)
-│   ├── on-task-executor-stop          #   task-executor Stop hook (enriches git notes)
+│   ├── on-subagent-stop               #   SubagentStop hook (lifecycle logging, asyncRewake for critical agents)
+│   ├── on-task-event                  #   TaskCreated/TaskCompleted hooks (async logging)
 │   ├── on-test-run                    #   PostToolUse hook for test monitoring
-│   ├── enrich-git-notes               #   Generates structured JSON git notes
-│   ├── git-notes-query                #   Query tool for audit data
-│   ├── on-review-stop                 #   code-reviewer Stop hook (logs review events)
-│   ├── on-phase-checkpoint-stop       #   phase-checker Stop hook (logs checkpoint events)
+│   ├── on-batch-complete              #   PostToolBatch hook (batch-level validation)
+│   ├── pre-command-check              #   PreToolUse hook (blocks dangerous git ops, state lock violations)
+│   ├── on-config-change               #   ConfigChange hook (configuration validation & audit)
+│   ├── on-cwd-change                  #   CwdChanged hook (conductor state awareness)
 │   ├── state-consistency-check        #   implement Stop hook (detects stale locks)
-│   └── track-state                    #   State management CLI (Python 3)
+│   ├── git-notes-query                #   Query tool for audit data
+│   ├── track-state                    #   State management CLI (Python 3)
 │       # Commands: next, recover, lock, complete,
 │       #   fail, skip, block, defer, sync-plan,
 │       #   registry-update, start, validate,
@@ -297,13 +326,14 @@ Interactive workflow:
 
 The orchestrator:
 1. Loads track state and recovers from interruptions via `track-state recover`
-2. Selects next pending task (global state lock) via `track-state next`
-3. Dispatches appropriate subagent:
+2. If interrupted phase-checker detected (`phase_checkpoint_pending`), resumes it before dispatching new tasks
+3. Selects next pending task (global state lock) via `track-state next`
+4. Dispatches appropriate subagent:
    - `[Explore]` tasks → `conductor:explorer` (read-only investigation)
    - Default tasks → `conductor:task-executor` (TDD workflow, self-extracts ACs from spec.md)
-4. Processes result via `track-state process-result` (state update + plan sync + handoff)
-5. Dispatches `conductor:phase-checker` at phase boundaries
-6. Dispatches `conductor:doc-syncer` upon track completion
+5. Processes result via `track-state process-result` (state update + plan sync + handoff)
+6. Dispatches `conductor:phase-checker` at phase boundaries
+7. Dispatches `conductor:doc-syncer` upon track completion
 
 All state mutations are performed by the `track-state` CLI script — the orchestrator never reads or edits `track-state.json` directly. Subagents self-extract ACs from spec.md and write step logs to files, keeping orchestrator context minimal.
 
@@ -315,8 +345,6 @@ After implementation, the orchestrator offers cleanup options:
 - **Delete** — removes track files entirely (irreversible)
 
 ### 5. Monitor Progress
-
-### 4. Monitor Progress
 
 ```
 > /conductor:status
@@ -378,14 +406,16 @@ Conductor prefixes: `conductor(plan)`, `conductor(checkpoint)`, `chore(conductor
 
 ### Track Status Lifecycle
 
-| Status | Marker | Description |
-|--------|--------|-------------|
-| `new` | `[ ]` | Track created, not yet started |
-| `in_progress` | `[~]` | Track actively being implemented |
-| `completed` | `[x]` | All tasks finished, review done |
-| `archived` | `[@]` | Track archived for reference |
-| `blocked` | `[#]` | Track has unresolvable blockers |
-| `cancelled` | `[-]` | Track cancelled |
+Track-level status is stored as plain text in `track-state.json` and synced to `tracks.md` via `track-state registry-update`. Supported formats in `tracks.md`: section-based (`- **Status:** in_progress`), checkbox (`- [~] description`), or table row.
+
+| Status | Description |
+|--------|-------------|
+| `new` | Track created, not yet started |
+| `in_progress` | Track actively being implemented |
+| `completed` | All tasks finished, review done |
+| `archived` | Track archived for reference |
+| `blocked` | Track has unresolvable blockers |
+| `cancelled` | Track cancelled |
 
 ### Execution Modes
 
@@ -402,7 +432,7 @@ track-state.json          plan.md
 └──────────────┘         └──────────────┘
 ```
 
-Status marker mapping:
+Task status marker mapping (plan.md only):
 
 | track-state.json | plan.md |
 |------------------|---------|
@@ -418,7 +448,7 @@ Status marker mapping:
 
 ## Git Notes Audit System
 
-Every task-executor commit includes structured JSON git notes for comprehensive auditability. The system uses a **marker + enrich** pattern to minimize subagent overhead.
+Every task-executor commit gets a human-readable git note for comprehensive auditability. Notes are written by `track-state process-result` — zero agent context cost.
 
 ### Note Structure
 
@@ -458,19 +488,16 @@ Every task-executor commit includes structured JSON git notes for comprehensive 
 
 ### How It Works
 
-1. **task-executor Step 9**: Writes minimal marker note
-   ```bash
-   git notes add -m "TASK-RESULT: <path> | TRACK_DIR: <path>" $SHA
-   ```
+1. **task-executor**: Completes task, writes `result.json`, commits code
 
-2. **Stop Hook (async)**: `on-task-executor-stop` detects marker via `TASK-RESULT:` prefix
+2. **Orchestrator**: Calls `track-state process-result` which:
+   - Reads `result.json` (coverage, spec deviations, TC coverage)
+   - Updates track-state.json state
+   - Syncs plan.md markers
+   - Updates handoff.md index
+   - Writes human-readable git note to the commit
 
-3. **Enrichment**: `enrich-git-notes` combines:
-   - `.conductor/result.json` (task-executor output)
-   - `track-state.json` (task metadata)
-   - `git diff` statistics (file changes, line counts)
-
-4. **Final Note**: Structured JSON overwrites the marker
+3. **Recovery**: `track-state recover` performs best-effort git notes recovery on interruption
 
 ### Query Tool
 
@@ -496,8 +523,8 @@ git-notes-query --deviations
 
 ### Benefits
 
-- **Zero subagent overhead**: task-executor only writes a marker
-- **Queryable**: Structured JSON enables post-hoc analysis
+- **Zero subagent overhead**: Notes written by CLI, not by agents
+- **Queryable**: Human-readable notes viewable via `git log --notes`
 - **Complete traceability**: Links commits to requirements, tests, and state
 - **Session tracking**: All work in a session can be reconstructed
 
@@ -513,8 +540,8 @@ track-state <command> <track-dir> [options]
 
 | Command | Description | Output |
 |---------|-------------|--------|
-| `next` | Find next dispatchable task (in_progress > pending) | `{phase, task, subtask, name, type, tags}` |
-| `recover` | Get recovery context for current task | `{status, phase, task, subtask, name, type, retry_count, ...}` |
+| `next` | Find next dispatchable task (in_progress > pending); returns `phase_checkpoint_pending` if checkpoint resume needed | `{phase, task, subtask, name, type, tags, phase_checkpoint_pending?}` |
+| `recover` | Get recovery context for current task; includes `phase_checkpoint_pending` if interrupted phase-checker detected | `{status, phase, task, subtask, name, type, retry_count, phase_checkpoint_pending, ...}` |
 | `lock <p> <t> [<s>]` | Set task to in_progress, update indices | `{ok}` |
 | `complete <p> <t> [<s>] --sha <sha>` | Set task to completed, check parent completion | `{ok, parent_completed}` |
 | `fail <p> <t> [<s>] --summary <text>` | Set task to failed, increment retry_count | `{retry_count}` |

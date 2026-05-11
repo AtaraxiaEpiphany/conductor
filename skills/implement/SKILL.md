@@ -83,7 +83,13 @@ track-state dispatch-next "<track_dir>"
 
 Returns `action` enum — switch on it:
 
-### 3.2 Action: `dispatch_explorer`
+### 3.2 Action: `dispatch_phase_checker`
+
+Dispatch `conductor:phase-checker` with `TRACK_DIR TRACK_ID PHASE=<phase from output> EXECUTION_MODE`.
+
+After return → **Section 3.6** (Phase Boundary).
+
+### 3.3 Action: `dispatch_explorer`
 
 ```bash
 track-state dispatch-prepare "<track_dir>"
@@ -92,9 +98,9 @@ git add -A && git commit -m "<commit_msg from dispatch-prepare>"
 
 Dispatch `conductor:explorer`. Prompt: `TRACK_DIR={td} PHASE={p} TASK={t} NAME={name}`
 
-After return: commit exploration artifacts (`git add -A && git commit -m "docs(explore): {name}"`) → get SHA (`git rev-parse --short HEAD`) → update `commit_sha` in `.conductor/result.json` → **Section 3.5**.
+After return: commit exploration artifacts (`git add -A && git commit -m "docs(explore): {name}"`) → get SHA (`git rev-parse --short HEAD`) → update `commit_sha` in `.conductor/result.json` → **Section 3.6**.
 
-### 3.3 Action: `dispatch_executor`
+### 3.4 Action: `dispatch_executor`
 
 ```bash
 track-state dispatch-prepare "<track_dir>"
@@ -103,9 +109,9 @@ git add -A && git commit -m "<commit_msg from dispatch-prepare>"
 
 Dispatch `conductor:task-executor`. Prompt: `TRACK_DIR={td} PHASE={p} TASK={t} SUBTASK={s} NAME={name} ATTEMPT={n} MAX_RETRIES={m} IS_RETRY={bool}`
 
-After return → **Section 3.5**.
+After return → **Section 3.6**.
 
-### 3.4 Action: `defer_manual`
+### 3.5 Action: `defer_manual`
 
 ```bash
 track-state defer "<track_dir>" <p> <t> --reason 'Deferred: manual task requires human verification'
@@ -113,19 +119,19 @@ track-state sync-plan "<track_dir>"
 git commit -m "chore(conductor): Defer manual task '<name>'"
 ```
 
-Emit: `DEFERRED: P{p}.T{t} '<name>'` → **Section 3.6**.
+Emit: `DEFERRED: P{p}.T{t} '<name>'` → **Section 3.7**.
 
-### 3.5 Process Result (after task-executor)
+### 3.6 Process Result (after task-executor)
 
 ```bash
 track-state dispatch-finalize "<track_dir>"
 ```
 
-**SUCCESS**: commit using `commit_msg` from dispatch-finalize. Deviations > 0 → announce. → **Section 3.6**.
+**SUCCESS**: commit using `commit_msg` from dispatch-finalize. Deviations > 0 → announce. → **Section 3.7**.
 
 **FAILURE**: commit using `commit_msg` from dispatch-finalize. retry < max → re-dispatch (Section 3.1). retry >= max → dispatch `conductor:skip-analyst`. Skip-analyst result: `can_skip` → `track-state skip` or `block` → `sync-plan` → commit → Section 3.1 or HALT.
 
-### 3.6 Phase Boundary
+### 3.7 Phase Boundary
 
 ```bash
 track-state phase-done "<track_dir>" <phase>
@@ -134,7 +140,7 @@ track-state phase-done "<track_dir>" <phase>
 `complete=true` → dispatch `conductor:phase-checker` with `TRACK_DIR TRACK_ID PHASE_INDEX EXECUTION_MODE`. FAILED → HALT. Otherwise → Section 3.1.
 `complete=false` → Section 3.1.
 
-### 3.7 Action: `finalize`
+### 3.8 Action: `finalize`
 
 → **Section 4.0**.
 

@@ -2,17 +2,16 @@
 # filter-subagent-output — PostToolUse hook on Agent tool.
 # Extracts only ---RESULT--- delimited blocks from subagent output,
 # discarding narrative/thinking text to reduce main session context pressure.
-set -euo pipefail
+set -eo pipefail
 
 INPUT=$(cat)
 
-# Only process Agent tool calls
 TOOL_NAME=$(echo "$INPUT" | python3 -c "
 import json, sys
 try:
     print(json.load(sys.stdin).get('tool_name', ''))
 except: print('')
-" 2>/dev/null)
+" 2>/dev/null || echo "")
 
 [[ "$TOOL_NAME" != "Agent" ]] && exit 0
 
@@ -54,11 +53,9 @@ print(json.dumps({
         'additionalContext': '[Conductor] Subagent output filtered: no ---RESULT--- block detected in response.'
     }
 }))
-" 2>/dev/null)
+" 2>/dev/null || echo "")
 
 if [[ -n "$RESULT" ]]; then
     echo "$RESULT"
-else
-    # Fallback: pass through unmodified
-    exit 0
 fi
+# If RESULT is empty, silently pass through (exit 0 = no modification)
