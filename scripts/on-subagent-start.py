@@ -4,7 +4,6 @@
 Reads hook input from stdin, outputs JSON with additionalContext.
 """
 
-import json
 import sys
 from pathlib import Path
 

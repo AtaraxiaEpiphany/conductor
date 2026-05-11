@@ -4,7 +4,6 @@
 Progressive disclosure: inject track-specific info when conductor-core.md loads.
 """
 
-import json
 import re
 import sys
 from pathlib import Path

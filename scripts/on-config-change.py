@@ -4,8 +4,6 @@
 Monitors hooks.json modifications for safety.
 """
 
-import json
-import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path

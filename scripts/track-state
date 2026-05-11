@@ -169,7 +169,24 @@ def clean(tgt, keep):
 
 
 def extract_tags(name):
-    return re.findall(r"\[(Explore|Docs|Config|Chore|Manual)\]", name)
+    """Extract task tags like [Docs], [Config] from name.
+
+    Tags should be at the start or end of the task name, not in the middle.
+    Returns unique tags in the order they appear.
+    """
+    if not name:
+        return []
+    # Match tags at start or end, avoid middle-of-sentence matches
+    pattern = r'(^|\s)\[(Explore|Docs|Config|Chore|Manual)\](\s|$)'
+    matches = re.findall(pattern, name)
+    # Extract tag names and preserve order while removing duplicates
+    seen = set()
+    result = []
+    for _, tag, _ in matches:
+        if tag not in seen:
+            seen.add(tag)
+            result.append(tag)
+    return result
 
 
 def _inherit_tags(sub_tags, parent_name):
@@ -386,7 +403,7 @@ def _do_sync_plan(track_dir, state=None):
     for line in lines:
         stripped = line.rstrip("\n")
 
-        pm = re.match(r"^##\s+Phase\s+(\d+)", stripped)
+        pm = re.match(r"^##\s+Phase\s+(\d+)\b", stripped)
         if pm:
             phase_idx = int(pm.group(1)) - 1
             task_idx = -1
@@ -1492,7 +1509,7 @@ def _validate_plan_consistency(track_dir, state, errors, warnings):
     for line in lines:
         stripped = line.rstrip("\n")
 
-        pm = re.match(r"^##\s+Phase\s+(\d+)", stripped)
+        pm = re.match(r"^##\s+Phase\s+(\d+)\b", stripped)
         if pm:
             has_checkpoint = bool(re.search(r"\[checkpoint:\s*[0-9a-f]{7}\]", stripped))
             current_phase = {"has_checkpoint": has_checkpoint, "tasks": 0, "subtasks": 0}

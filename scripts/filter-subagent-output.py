@@ -5,7 +5,6 @@ Extracts only ---RESULT--- delimited blocks from subagent output,
 discarding narrative/thinking text to reduce main session context pressure.
 """
 
-import json
 import re
 import sys
 from pathlib import Path

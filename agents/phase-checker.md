@@ -11,6 +11,7 @@ hooks:
       hooks:
         - type: command
           command: "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/on-phase-checkpoint-stop.py\""
+          timeout: 5
 ---
 
 # Conductor Phase Checker

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """TaskCreated / TaskCompleted hook: log task lifecycle events."""
 
-import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path

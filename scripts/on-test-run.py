@@ -4,7 +4,6 @@
 After any test command runs, log and provide additionalContext on failure.
 """
 
-import json
 import re
 import sys
 from datetime import datetime, timezone

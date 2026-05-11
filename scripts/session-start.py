@@ -4,8 +4,6 @@
 On compact events, inject a compact summary to reduce context pressure.
 """
 
-import json
-import os
 import sys
 from pathlib import Path
 

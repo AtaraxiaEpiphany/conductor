@@ -11,6 +11,7 @@ hooks:
       hooks:
         - type: command
           command: "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/on-review-stop.py\""
+          timeout: 5
 ---
 
 # Conductor Code Reviewer
