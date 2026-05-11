@@ -1,3 +1,14 @@
+---
+title: Interaction Mechanism
+audience: developer
+status: stable
+last_updated: 2026-05-11
+related:
+  - overview.md
+  - INTERACTION_FLOW.md
+  - ../guides/extending-hooks.md
+---
+
 # Conductor Plugin: Interaction Mechanism Documentation
 
 ## Overview

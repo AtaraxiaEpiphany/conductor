@@ -1,6 +1,15 @@
-## Reference Layer
+---
+title: Reference Paths
+audience: runtime
+status: stable
+last_updated: 2026-05-11
+inject_by: inline (skills/setup/SKILL.md, skills/new-track/SKILL.md)
+related:
+  - ../skills/setup/SKILL.md
+  - ../skills/new-track/SKILL.md
+---
 
-Loaded by `/conductor:setup` and `/conductor:newTrack` for project initialization.
+## Reference Layer
 
 ### File Resolution
 

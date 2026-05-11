@@ -1,3 +1,13 @@
+---
+title: State Model
+audience: developer
+status: stable
+last_updated: 2026-05-11
+related:
+  - overview.md
+  - ../../reference/track-state-cli.md
+---
+
 # State Model
 
 > State machine and state management in Conductor

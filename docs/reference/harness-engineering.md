@@ -1,3 +1,11 @@
+---
+title: Harness Engineering Reference
+audience: reference
+status: stable
+last_updated: 2026-05-11
+external: true
+---
+
 # Harness Engineering: Complete Reference
 
 Sources:

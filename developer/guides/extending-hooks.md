@@ -1,12 +1,21 @@
+---
+title: Extending Hooks
+audience: developer
+status: stable
+last_updated: 2026-05-11
+related:
+  - ../../docs/reference/hooks.md
+---
+
 # Hook Implementation Details
 
-> Internal documentation for hook script implementations
+> Developer documentation for hook script implementations
 
 ---
 
 ## Overview
 
-This document describes the implementation details of Conductor's hook scripts. For users, see [Hook Reference](../reference/hooks.md).
+This document describes the implementation details of Conductor's hook scripts. For users, see [Hook Reference](../../docs/reference/hooks.md).
 
 ---
 
@@ -129,7 +138,7 @@ def main():
     match_result = hook.input.get("match_result", "")
 
     if "startup" in match_result:
-        core_content = load_file("internal/conductor-core.md")
+        core_content = load_file("runtime/core-contract.md")
     else:
         core_content = load_compact_core()
 

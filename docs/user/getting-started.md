@@ -1,3 +1,14 @@
+---
+title: Getting Started
+audience: user
+status: stable
+last_updated: 2026-05-11
+related:
+  - user-guide.md
+  - commands.md
+  - troubleshooting.md
+---
+
 # Getting Started
 
 > Get started with Conductor for Spec-Driven Development in 5 minutes
@@ -160,7 +171,7 @@ All task execution must follow 6 mandatory rules:
 
 - Read the complete [User Guide](user-guide.md)
 - View [Command Reference](commands.md)
-- Learn about [Architecture Overview](../architecture/overview.md)
+- Learn about [Architecture Overview](../developer/architecture/overview.md)
 
 ---
 

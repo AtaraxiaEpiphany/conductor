@@ -1,6 +1,15 @@
-## Orchestration Layer
+---
+title: Orchestration Specification
+audience: runtime
+status: stable
+last_updated: 2026-05-11
+inject_by: inline (skills/implement/SKILL.md)
+related:
+  - ../skills/implement/SKILL.md
+  - core-contract.md
+---
 
-Loaded by `/conductor:implement` and other execution skills.
+## Orchestration Layer
 
 ### Orchestrator Contract
 

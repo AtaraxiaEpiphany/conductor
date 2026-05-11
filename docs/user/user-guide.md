@@ -1,3 +1,14 @@
+---
+title: User Guide
+audience: user
+status: stable
+last_updated: 2026-05-11
+related:
+  - getting-started.md
+  - commands.md
+  - troubleshooting.md
+---
+
 # User Guide
 
 > Complete guide to using Conductor for spec-driven development

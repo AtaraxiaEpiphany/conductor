@@ -45,7 +45,7 @@ Conductor uses Claude Code's hook system for lifecycle automation. Hooks are con
 | Event | Script | Purpose |
 |-------|--------|---------|
 | `InstructionsLoaded` | `enhance-conductor-context` | Progressive conductor context disclosure |
-| `SessionStart` | `session-start` | Inject conductor-core.md, session handoff |
+| `SessionStart` | `session-start` | Inject runtime/core-contract.md, session handoff |
 | `SessionEnd` | `session-end` | Cleanup, handoff validation, metrics logging |
 | `PreToolUse` (Bash) | `pre-command-check` | Block dangerous git ops, enforce state lock |
 | `PostToolBatch` | `on-batch-complete` | Batch-level validation after parallel tool calls |
@@ -205,7 +205,7 @@ conductor-plugin/
 │
 ├── bin/                               # Executables (added to PATH)
 ├── scripts/                           # Hook & utility scripts
-│   ├── session-start                  #   SessionStart hook (injects conductor-core.md)
+│   ├── session-start                  #   SessionStart hook (injects runtime/core-contract.md)
 │   ├── session-end                    #   SessionEnd hook (cleanup, handoff validation, metrics)
 │   ├── enhance-conductor-context      #   InstructionsLoaded hook (progressive context disclosure)
 │   ├── on-subagent-start              #   SubagentStart hook (injects agent reminders)

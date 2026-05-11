@@ -1,3 +1,13 @@
+---
+title: Troubleshooting
+audience: user
+status: stable
+last_updated: 2026-05-11
+related:
+  - getting-started.md
+  - user-guide.md
+---
+
 # Troubleshooting
 
 > Common issues and solutions for Conductor

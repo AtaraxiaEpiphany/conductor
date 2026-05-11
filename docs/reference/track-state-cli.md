@@ -1,3 +1,13 @@
+---
+title: track-state CLI Reference
+audience: reference
+status: stable
+last_updated: 2026-05-11
+related:
+  - ../developer/architecture/state-model.md
+  - commands/implement.md
+---
+
 # track-state CLI Reference
 
 > Complete reference for the track-state state management CLI

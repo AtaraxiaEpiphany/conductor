@@ -1,3 +1,13 @@
+---
+title: Quality Gates Reference
+audience: reference
+status: stable
+last_updated: 2026-05-11
+related:
+  - ../runtime/core-contract.md
+  - subagents.md
+---
+
 # Quality Gates Reference
 
 > F1-F6 Execution Firewall rules explained
@@ -270,7 +280,7 @@ Check task tag
 ## Next Steps
 
 - [track-state CLI](track-state-cli.md) - How gates are enforced
-- [Interaction Mechanism](../architecture/INTERACTION_MECHANISM.md) - Gate enforcement flow
+- [Interaction Mechanism](../developer/architecture/INTERACTION_MECHANISM.md) - Gate enforcement flow
 
 ---
 

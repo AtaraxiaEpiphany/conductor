@@ -1,3 +1,14 @@
+---
+title: Interaction Flow
+audience: developer
+status: stable
+last_updated: 2026-05-11
+related:
+  - overview.md
+  - INTERACTION_MECHANISM.md
+  - state-model.md
+---
+
 # Conductor Interaction Flow Diagrams
 
 ## Master Flow: From User Command to Task Completion

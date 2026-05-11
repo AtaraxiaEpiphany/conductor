@@ -1,3 +1,13 @@
+---
+title: Hook Reference
+audience: reference
+status: stable
+last_updated: 2026-05-11
+related:
+  - ../developer/guides/extending-hooks.md
+  - commands/implement.md
+---
+
 # Hook Reference
 
 > Complete reference for all hooks in Conductor
@@ -260,7 +270,7 @@ Used for permission decisions:
 
 ## Next Steps
 
-- [Interaction Mechanism](../architecture/INTERACTION_MECHANISM.md) - Deep dive into hook flows
+- [Interaction Mechanism](../developer/architecture/INTERACTION_MECHANISM.md) - Deep dive into hook flows
 - [Subagent Reference](subagents.md) - Subagent definitions
 - [track-state CLI](track-state-cli.md) - State management commands
 

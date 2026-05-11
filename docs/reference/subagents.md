@@ -1,3 +1,13 @@
+---
+title: Subagent Reference
+audience: reference
+status: stable
+last_updated: 2026-05-11
+related:
+  - ../runtime/orchestration-spec.md
+  - ../agents/
+---
+
 # Subagent Reference
 
 > Complete reference for all subagents in Conductor
@@ -265,7 +275,7 @@ Injects role-specific reminders:
 ## Next Steps
 
 - [Hook Reference](hooks.md) - Hook events and configuration
-- [Interaction Mechanism](../architecture/INTERACTION_MECHANISM.md) - Communication flows
+- [Interaction Mechanism](../developer/architecture/INTERACTION_MECHANISM.md) - Communication flows
 - [Quality Gates](quality-gates.md) - F1-F6 rules
 
 ---

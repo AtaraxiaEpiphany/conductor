@@ -1,3 +1,13 @@
+---
+title: Git Notes Audit System
+audience: reference
+status: stable
+last_updated: 2026-05-11
+related:
+  - track-state-cli.md
+  - ../runtime/core-contract.md
+---
+
 # Git Notes Audit System
 
 > Complete audit trail for all task-executor commits

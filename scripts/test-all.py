@@ -12,7 +12,7 @@ scripts_dir = Path(__file__).parent
 # Test cases for each script
 TEST_CASES = {
     "enhance-conductor-context.py": {
-        "input": '{"file_path":"conductor-core.md","cwd":"/tmp","load_reason":"startup"}',
+        "input": '{"file_path":"runtime/core-contract.md","cwd":"/tmp","load_reason":"startup"}',
         "expected_keys": ["hookSpecificOutput"]
     },
     "filter-subagent-output.py": {

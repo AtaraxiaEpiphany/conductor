@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SessionStart hook: inject conductor-core.md + session handoff into session context.
+"""SessionStart hook: inject runtime/core-contract.md + session handoff into session context.
 
 On compact events, inject a compact summary to reduce context pressure.
 """
@@ -57,8 +57,8 @@ def get_conductor_content(plugin_root: Path, source: str) -> str:
     if source == "compact":
         return COMPACT_CONTENT
 
-    # Load full conductor-core.md
-    instructions_file = plugin_root / "conductor-core.md"
+    # Load full runtime/core-contract.md
+    instructions_file = plugin_root / "runtime" / "core-contract.md"
     if instructions_file.exists():
         try:
             return instructions_file.read_text(encoding="utf-8")

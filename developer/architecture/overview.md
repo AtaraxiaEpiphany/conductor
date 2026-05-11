@@ -1,3 +1,14 @@
+---
+title: Architecture Overview
+audience: developer
+status: stable
+last_updated: 2026-05-11
+related:
+  - state-model.md
+  - INTERACTION_FLOW.md
+  - INTERACTION_MECHANISM.md
+---
+
 # Architecture Overview
 
 > System architecture and design principles of Conductor

@@ -8,21 +8,27 @@
 
 | Document | Description |
 |----------|-------------|
-| [Getting Started](docs/getting-started.md) | Get up and running with Conductor in 5 minutes |
-| [User Guide](docs/user-guide.md) | Complete usage guide |
-| [Command Reference](docs/commands.md) | Detailed command reference |
-| [Troubleshooting](docs/troubleshooting.md) | Common issues and solutions |
+| [Getting Started](docs/user/getting-started.md) | Get up and running with Conductor in 5 minutes |
+| [User Guide](docs/user/user-guide.md) | Complete usage guide |
+| [Command Reference](docs/user/commands.md) | Detailed command reference |
+| [Troubleshooting](docs/user/troubleshooting.md) | Common issues and solutions |
 
 ---
 
-## 🏗️ Architecture
+## 🏗️ Architecture (Developer)
 
 | Document | Description |
 |----------|-------------|
-| [Architecture Overview](architecture/overview.md) | System architecture overview |
-| [Interaction Mechanism](architecture/INTERACTION_MECHANISM.md) | Deep dive into Skills, Subagents, and Hooks communication |
-| [Interaction Flow](architecture/INTERACTION_FLOW.md) | 8 visual flowcharts |
-| [State Model](architecture/state-model.md) | State machine and state management |
+| [Architecture Overview](developer/architecture/overview.md) | System architecture overview |
+| [Interaction Mechanism](developer/architecture/INTERACTION_MECHANISM.md) | Deep dive into Skills, Subagents, and Hooks communication |
+| [Interaction Flow](developer/architecture/INTERACTION_FLOW.md) | 8 visual flowcharts |
+| [State Model](developer/architecture/state-model.md) | State machine and state management |
+
+### Developer Guides
+
+| Document | Description |
+|----------|-------------|
+| [Extending Hooks](developer/guides/extending-hooks.md) | Hook script implementation details |
 
 ---
 
@@ -30,23 +36,22 @@
 
 | Document | Description |
 |----------|-------------|
-| [Interaction Reference](architecture/INTERACTION_REFERENCE.md) | Quick reference for all interaction points |
-| [Hook Reference](reference/hooks.md) | Hook events, configuration, and implementation |
-| [Subagent Reference](reference/subagents.md) | All subagent definitions and purposes |
-| [track-state CLI](reference/track-state-cli.md) | Complete CLI command reference |
-| [Quality Gates](reference/quality-gates.md) | F1-F6 rules explained |
-| [Git Notes Audit](reference/git-notes.md) | Audit system and query tools |
+| [Interaction Reference](docs/reference/INTERACTION_REFERENCE.md) | Quick reference for all interaction points |
+| [Hook Reference](docs/reference/hooks.md) | Hook events, configuration, and implementation |
+| [Subagent Reference](docs/reference/subagents.md) | All subagent definitions and purposes |
+| [track-state CLI](docs/reference/track-state-cli.md) | Complete CLI command reference |
+| [Quality Gates](docs/reference/quality-gates.md) | F1-F6 rules explained |
+| [Git Notes Audit](docs/reference/git-notes.md) | Audit system and query tools |
 
 ---
 
-## 🔒 Internal
+## 🤖 Runtime (Injected)
 
-| Document | Description |
-|----------|-------------|
-| [System Prompt](internal/conductor-core.md) | Orchestrator agent core rules |
-| [Orchestration Layer](internal/conductor-orchestration.md) | Orchestration Layer specification |
-| [Reference Layer](internal/conductor-reference.md) | Reference Layer specification |
-| [Hook Implementation](internal/hooks-implementation.md) | Hook script implementation details |
+| Document | Description | Injected By |
+|----------|-------------|-------------|
+| [Core Contract](runtime/core-contract.md) | Orchestrator agent core rules (Execution Firewall, Anti-Patterns) | session-start.py |
+| [Orchestration Specification](runtime/orchestration-spec.md) | Dispatch loop, subagent registry, execution modes | inline (implement skill) |
+| [Reference Paths](runtime/reference-paths.md) | Default paths for project initialization | inline (setup/new-track skills) |
 
 ---
 
@@ -54,34 +59,28 @@
 
 ```
 conductor-plugin/
-├── README.md              # Project homepage
-├── INDEX.md               # This document
-├── CHANGELOG.md           # Changelog
+├── README.md                  # Project homepage
+├── INDEX.md                   # This document
+├── CHANGELOG.md               # Changelog
 │
-├── docs/                  # 👤 User Documentation
-│   ├── getting-started.md
-│   ├── user-guide.md
-│   ├── commands.md
-│   └── troubleshooting.md
+├── docs/                      # 👤 User Documentation
+│   ├── user/                  #   Getting Started, User Guide, Commands, Troubleshooting
+│   └── reference/             #   Hook Reference, Subagent Reference, CLI Reference
 │
-├── architecture/          # 🏗️ Architecture Documentation
-│   ├── overview.md
-│   ├── INTERACTION_MECHANISM.md
-│   ├── INTERACTION_FLOW.md
-│   └── state-model.md
+├── developer/                 # 🛠️ Developer Documentation
+│   ├── architecture/          #   Architecture docs (moved from architecture/)
+│   └── guides/                #   Developer guides (moved from internal/)
 │
-├── reference/             # 📖 Reference Manual
-│   ├── hooks.md
-│   ├── subagents.md
-│   ├── track-state-cli.md
-│   ├── quality-gates.md
-│   └── git-notes.md
+├── runtime/                   # 🤖 Runtime Injection (moved from internal/)
+│   ├── core-contract.md       #   Injected by session-start.py
+│   ├── orchestration-spec.md  #   Referenced by implement skill
+│   └── reference-paths.md     #   Referenced by setup/new-track skills
 │
-└── internal/             # 🔒 Internal Documentation
-    ├── conductor-core.md
-    ├── conductor-orchestration.md
-    ├── conductor-reference.md
-    └── hooks-implementation.md
+├── agents/                    # Subagent definitions
+├── skills/                    # Skill definitions
+├── scripts/                   # Hook scripts and utilities
+├── templates/                 # Workflow templates and style guides
+└── hooks/                     # Hook configuration
 ```
 
 ---

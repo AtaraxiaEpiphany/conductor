@@ -1,3 +1,13 @@
+---
+title: Command Reference
+audience: user
+status: stable
+last_updated: 2026-05-11
+related:
+  - ../reference/commands/
+  - user-guide.md
+---
+
 # Command Reference
 
 > Complete reference for all Conductor commands
