@@ -166,9 +166,10 @@ def main():
     if issues:
         msg = "".join(issues)
         msg += "Consider running /conductor:implement to recover state, or /conductor:status to inspect."
-        write_simple_output(additional_context=msg)
+        # Stop hook should not return hookSpecificOutput
+        print(json.dumps({"additionalContext": msg}, ensure_ascii=False))
     else:
-        write_simple_output()
+        print(json.dumps({}, ensure_ascii=False))
 
 
 if __name__ == "__main__":

@@ -15,7 +15,7 @@ from pathlib import Path
 # Add lib directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent / "lib"))
 
-from lib.hook_io import read_hook_input
+from lib.hook_io import read_hook_input, write_hook_output
 from lib.json_utils import load_json_safe
 from lib.logging import init_logging, log_entry
 
@@ -189,19 +189,14 @@ def main():
             summary_count = min(5, len(recent_lines))
             if summary_count > 0:
                 summary = f"[Conductor] Session ended. {summary_count} recent sessions logged."
-                output = {
-                    "hookSpecificOutput": {
-                        "hookEventName": "SessionEnd",
-                        "additionalContext": summary
-                    }
-                }
-                print(json.dumps(output, ensure_ascii=False))
+                # SessionEnd hook - return simple JSON
+                print(json.dumps({"additionalContext": summary}, ensure_ascii=False))
                 return
         except Exception:
             pass
 
     # Default output
-    print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionEnd"}}, ensure_ascii=False))
+    print(json.dumps({}, ensure_ascii=False))
 
 
 if __name__ == "__main__":

@@ -121,8 +121,8 @@ def main():
 
     # Only check Bash tool
     if tool_name != "Bash":
-        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse"}}))
-        sys.exit(0)
+        write_hook_output(hook_event_name="PreToolUse")
+        return
 
     # Extract command from tool input
     tool_input = input_data.get("tool_input", {})
@@ -193,8 +193,7 @@ def main():
         # Should not reach here
 
     # Allow all other commands
-    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse"}}))
-    sys.exit(0)
+    write_hook_output(hook_event_name="PreToolUse")
 
 
 if __name__ == "__main__":
