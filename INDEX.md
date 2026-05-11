@@ -4,7 +4,7 @@
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 | Document | Description |
 |----------|-------------|
@@ -15,7 +15,21 @@
 
 ---
 
-## 🏗️ Architecture (Developer)
+## Reference
+
+| Document | Description |
+|----------|-------------|
+| [Subagent Reference](docs/reference/subagents.md) | All subagent definitions and purposes |
+| [Hook Reference](docs/reference/hooks.md) | Hook events and configuration |
+| [Quality Gates](docs/reference/quality-gates.md) | F1-F6 rules explained |
+
+---
+
+## Developer Documentation
+
+> Internal implementation details for plugin developers
+
+### Architecture
 
 | Document | Description |
 |----------|-------------|
@@ -24,38 +38,33 @@
 | [Interaction Flow](developer/architecture/INTERACTION_FLOW.md) | 8 visual flowcharts |
 | [State Model](developer/architecture/state-model.md) | State machine and state management |
 
-### Developer Guides
+### Guides
 
 | Document | Description |
 |----------|-------------|
 | [Extending Hooks](developer/guides/extending-hooks.md) | Hook script implementation details |
 
----
-
-## 📖 Reference
+### Reference
 
 | Document | Description |
 |----------|-------------|
-| [Interaction Reference](docs/reference/INTERACTION_REFERENCE.md) | Quick reference for all interaction points |
-| [Hook Reference](docs/reference/hooks.md) | Hook events, configuration, and implementation |
-| [Subagent Reference](docs/reference/subagents.md) | All subagent definitions and purposes |
-| [track-state CLI](docs/reference/track-state-cli.md) | Complete CLI command reference |
-| [Quality Gates](docs/reference/quality-gates.md) | F1-F6 rules explained |
-| [Git Notes Audit](docs/reference/git-notes.md) | Audit system and query tools |
+| [Interaction Reference](developer/reference/INTERACTION_REFERENCE.md) | Complete interaction reference |
+| [track-state CLI](developer/reference/track-state-cli.md) | Complete CLI command reference |
+| [Git Notes Audit](developer/reference/git-notes.md) | Audit system and query tools |
 
 ---
 
-## 🤖 Runtime (Injected)
+## Runtime (Injected)
 
 | Document | Description | Injected By |
 |----------|-------------|-------------|
-| [Core Contract](runtime/core-contract.md) | Orchestrator agent core rules (Execution Firewall, Anti-Patterns) | session-start.py |
-| [Orchestration Specification](runtime/orchestration-spec.md) | Dispatch loop, subagent registry, execution modes | inline (implement skill) |
+| [Core Contract](runtime/core-contract.md) | Orchestrator agent core rules | session-start.py |
+| [Orchestration Specification](runtime/orchestration-spec.md) | Dispatch loop, subagent registry | inline (implement skill) |
 | [Reference Paths](runtime/reference-paths.md) | Default paths for project initialization | inline (setup/new-track skills) |
 
 ---
 
-## 📂 Directory Structure
+## Directory Structure
 
 ```
 conductor-plugin/
@@ -63,58 +72,36 @@ conductor-plugin/
 ├── INDEX.md                   # This document
 ├── CHANGELOG.md               # Changelog
 │
-├── docs/                      # 👤 User Documentation
+├── docs/                      # User Documentation
 │   ├── user/                  #   Getting Started, User Guide, Commands, Troubleshooting
-│   └── reference/             #   Hook Reference, Subagent Reference, CLI Reference
+│   └── reference/             #   Hook Reference, Subagent Reference, Quality Gates
 │
-├── developer/                 # 🛠️ Developer Documentation
-│   ├── architecture/          #   Architecture docs (moved from architecture/)
-│   └── guides/                #   Developer guides (moved from internal/)
+├── developer/                 # Developer Documentation (internal)
+│   ├── architecture/          #   Architecture docs
+│   ├── guides/                #   Developer guides
+│   └── reference/            #   Internal reference docs
 │
-├── runtime/                   # 🤖 Runtime Injection (moved from internal/)
-│   ├── core-contract.md       #   Injected by session-start.py
-│   ├── orchestration-spec.md  #   Referenced by implement skill
-│   └── reference-paths.md     #   Referenced by setup/new-track skills
+├── runtime/                   # Runtime Injection
+│   ├── core-contract.md
+│   ├── orchestration-spec.md
+│   └── reference-paths.md
 │
 ├── agents/                    # Subagent definitions
 ├── skills/                    # Skill definitions
 ├── scripts/                   # Hook scripts and utilities
-├── templates/                 # Workflow templates and style guides
+├── templates/                 # Workflow templates
 └── hooks/                     # Hook configuration
 ```
 
 ---
 
-## 📊 Three-Layer Architecture Overview
-
-```
-┌─────────────────────────────────────────────────┐
-│              Orchestrator Agent                │
-│         (State, FSM, Dispatch)                │
-└────────────────┬──────────────────────────────┘
-                 │
-      ┌──────────┼──────────┐
-      ▼          ▼           ▼
-   Skills    Subagents    Templates
-   (6 cmds)  (9 agents)  + Styles
-```
-
-### Components
+## Component Overview
 
 | Component | Count | Description |
 |-----------|--------|-------------|
 | **Skills** | 6 | User command interfaces: setup, implement, newTrack, status, review, revert |
-| **Subagents** | 9 | Specialized execution agents: task-executor, explorer, phase-checker, etc. |
-| **Hooks** | 10+ | Lifecycle event handlers: session-start, subagent-stop, etc. |
-| **Templates** | 24+ | Workflow templates, code style guides, testing strategies |
-
----
-
-## 🔗 Related Resources
-
-- [Claude Code Plugins Reference](references/claude-docs/plugins-reference.md)
-- [Claude Code Hooks Documentation](https://code.claude.com/docs/en/hooks)
-- [Claude Code Subagents Documentation](https://code.claude.com/docs/en/subagents)
+| **Subagents** | 9 | Specialized execution agents |
+| **Hooks** | 10+ | Lifecycle event handlers |
 
 ---
 
