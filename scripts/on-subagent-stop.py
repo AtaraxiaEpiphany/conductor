@@ -2,8 +2,12 @@
 """SubagentStop hook: log subagent completion and inject post-processing context.
 
 Uses asyncRewake for critical subagents to auto-recover on failure.
+
+Improved failure detection to reduce false positives through context-aware pattern matching.
 """
 
+import json
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,13 +20,31 @@ from lib.hook_io import read_hook_input, write_simple_output
 from lib.logging import init_logging, log_entry
 
 
-FAILURE_PATTERNS = [
-    "error",
-    "failed",
-    "exception",
-    "traceback",
-    "timed out",
-    "API error",
+# Strong failure indicators - actual errors
+STRONG_FAILURE_PATTERNS = [
+    r"Traceback \(most recent call last\):",  # Python traceback
+    r"Error:\s+",  # Explicit error messages
+    r"Permission denied",  # OS-level permission errors
+    r"File not found",  # File access errors
+    r"Command failed",  # Command execution failures
+    r"BUILD FAILED",  # Build failures
+    r"test.*failed",  # Test failures
+    r"AssertionError",  # Assertion failures
+]
+
+# Medium failure indicators - potential issues
+MEDIUM_FAILURE_PATTERNS = [
+    r"warning",  # Warnings
+    r"deprecated",  # Deprecation notices
+]
+
+# Safe contexts where "error" keywords don't indicate actual failure
+SAFE_CONTEXT_PATTERNS = [
+    r"error handling",  # Code discussing error handling
+    r"error message",  # Documentation about error messages
+    r"errors?:?\s*none",  # Explicitly no errors
+    r"error\s*code",  # Error codes (not errors)
+    r"catch\s+error",  # Try-catch code
 ]
 
 # Critical subagent types that should trigger auto-recovery on failure
@@ -34,7 +56,7 @@ CRITICAL_AGENTS = {
 
 
 def detect_failure(message: str) -> tuple[bool, Optional[str]]:
-    """Detect failure patterns in message
+    """Detect failure patterns in message with reduced false positives.
 
     Args:
         message: Message to check
@@ -46,9 +68,23 @@ def detect_failure(message: str) -> tuple[bool, Optional[str]]:
         return False, None
 
     message_lower = message.lower()
-    for pattern in FAILURE_PATTERNS:
-        if pattern in message_lower:
+
+    # First, check if message is in a safe context
+    for pattern in SAFE_CONTEXT_PATTERNS:
+        if re.search(pattern, message_lower, re.IGNORECASE):
+            return False, None
+
+    # Check for strong failure indicators
+    for pattern in STRONG_FAILURE_PATTERNS:
+        if re.search(pattern, message, re.IGNORECASE):
             return True, pattern
+
+    # Medium patterns only trigger on specific agent types or conditions
+    for pattern in MEDIUM_FAILURE_PATTERNS:
+        if re.search(pattern, message, re.IGNORECASE):
+            # Warnings alone don't trigger failure detection
+            return False, None
+
     return False, None
 
 

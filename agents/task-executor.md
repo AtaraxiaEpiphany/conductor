@@ -171,7 +171,33 @@ Dual output: result file + terse stdout.
 
 ### 6.1 Result File
 
-Write to `{TRACK_DIR}/.conductor/result.json`:
+Write to `{TRACK_DIR}/.conductor/result.json` using **atomic write pattern**:
+
+```python
+import tempfile
+import os
+import json
+
+result_file = Path(TRACK_DIR) / ".conductor" / "result.json"
+temp_file = tempfile.NamedTemporaryFile(
+    mode='w',
+    dir=result_file.parent,
+    prefix='.result.tmp.',
+    delete=False
+)
+try:
+    json.dump(result_data, temp_file, indent=2)
+    temp_file.flush()
+    os.fsync(temp_file.fileno())
+    temp_name = temp_file.name
+finally:
+    temp_file.close()
+
+# Atomic replacement
+os.replace(temp_name, str(result_file))
+```
+
+**This prevents file corruption if write is interrupted.**
 
 **Success:**
 ```json

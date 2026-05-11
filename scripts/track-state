@@ -62,14 +62,66 @@ _RE_TRAILING_MARKER = re.compile(
 
 
 def load(track_dir):
-    with open(Path(track_dir) / "track-state.json") as f:
-        return json.load(f)
+    """Load track-state.json with shared lock for concurrent access safety."""
+    state_file = Path(track_dir) / "track-state.json"
+    with open(state_file, "r+") as f:
+        # Acquire shared lock for reading (multiple readers allowed)
+        try:
+            import fcntl
+            fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+        except (ImportError, AttributeError):
+            pass  # fcntl not available on Windows, proceed without lock
+        try:
+            return json.load(f)
+        finally:
+            try:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+            except (ImportError, AttributeError, OSError):
+                pass
 
 
 def save(track_dir, state):
-    with open(Path(track_dir) / "track-state.json", "w") as f:
-        json.dump(state, f, indent=2, ensure_ascii=False)
-        f.write("\n")
+    """Save track-state.json with exclusive lock using atomic write pattern."""
+    import tempfile
+    import os
+
+    state_file = Path(track_dir) / "track-state.json"
+
+    # Write to temporary file first for atomicity
+    temp_file = tempfile.NamedTemporaryFile(
+        mode='w',
+        dir=state_file.parent,
+        prefix=f'.{state_file.name}.tmp',
+        delete=False
+    )
+    try:
+        json.dump(state, temp_file, indent=2, ensure_ascii=False)
+        temp_file.write("\n")
+        temp_file.flush()
+        os.fsync(temp_file.fileno())
+        temp_file_name = temp_file.name
+    except (OSError, IOError) as e:
+        temp_file.close()
+        raise
+    finally:
+        temp_file.close()
+
+    # Acquire exclusive lock for the state file before replacement
+    with open(state_file, "a+") as f:
+        try:
+            import fcntl
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        except (ImportError, AttributeError):
+            pass
+
+        try:
+            # Atomic replacement
+            os.replace(temp_file_name, str(state_file))
+        finally:
+            try:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+            except (ImportError, AttributeError, OSError):
+                pass
 
 
 def now_iso():
@@ -411,10 +463,10 @@ def _ensure_handoff_index(track_dir, state=None):
         return handoff_path.read_text()
 
     if state is None:
-        try:
-            state = load(track_dir)
-        except Exception:
-            state = None
+            try:
+                state = load(track_dir)
+            except (FileNotFoundError, json.JSONDecodeError):
+                state = None
 
     track_id = state.get("track_id", "unknown") if state else "unknown"
     description = state.get("description", "") if state else ""
@@ -757,8 +809,8 @@ def _append_deviation_legacy(track_dir, task_name, dev):
         try:
             state = load(track_dir)
             track_id = state.get("track_id", "unknown")
-        except Exception:
-            pass
+        except (FileNotFoundError, json.JSONDecodeError):
+            track_id = "unknown"
         header = f"# Track: {track_id} — Failure Reports\n\n"
 
     entry = (
@@ -988,7 +1040,7 @@ def _phase_needs_checkpoint(track_dir, state, phase_index):
 
     try:
         content = plan_path.read_text()
-    except Exception:
+    except (FileNotFoundError, PermissionError, UnicodeDecodeError):
         return phase_index
 
     # Check for checkpoint marker: [checkpoint: <sha>]
@@ -1024,8 +1076,8 @@ def _recover_git_notes(track_dir, state):
                 for si, sub in enumerate(task.get("subtasks", [])):
                     if sub.get("status") == "completed" and sub.get("commit_sha"):
                         _ensure_note(track_dir, state, pi, ti, si, sub)
-    except Exception:
-        pass
+    except (ImportError, FileNotFoundError):
+        pass  # Git unavailable or missing state file
 
 
 def _ensure_note(track_dir, state, pi, ti, si, tgt):
@@ -1062,13 +1114,13 @@ def _ensure_note(track_dir, state, pi, ti, si, tgt):
                 if str(rp) == str(pi) and str(rt) == str(ti) and (rs is None and si is None or str(rs) == str(si)):
                     _write_git_note(track_dir, r, state)
                     return
-            except Exception:
-                pass
+            except (FileNotFoundError, json.JSONDecodeError):
+                pass  # Result file missing or invalid
 
         # Fall back to basic note from track-state.json + git
         _write_git_note_basic(track_dir, sha, state, pi, ti, si)
-    except Exception:
-        pass
+    except (ImportError, FileNotFoundError, PermissionError):
+        pass  # Git unavailable or permission denied
 
 
 def cmd_lock(track_dir, p, t, s=None):
@@ -1202,9 +1254,9 @@ def _compute_quality_score(state, statuses, checklist):
                             coverage_ratio = int(m.group(1)) / 100
                             break
                 if coverage_ratio > 0:
-                    break
-        except Exception:
-            pass
+                            break
+        except (ImportError, FileNotFoundError, PermissionError, OSError):
+            pass  # Git notes unavailable - use default coverage
 
     # Retry penalty (10%): penalize high retry counts
     total_retries = 0
@@ -1760,8 +1812,8 @@ def _write_git_note(track_dir, result_data, state):
             ["git", "notes", "add", "-m", note, full_sha],
             capture_output=True, text=True, cwd=track_dir, timeout=5
         )
-    except Exception:
-        pass
+    except (ImportError, subprocess.SubprocessError, FileNotFoundError, PermissionError, subprocess.TimeoutExpired):
+        pass  # Git unavailable or permission denied
 
 
 def _write_git_note_basic(track_dir, sha, state, pi, ti, si=None):
@@ -1792,8 +1844,8 @@ def _write_git_note_basic(track_dir, sha, state, pi, ti, si=None):
         )
         if diff_out.returncode == 0 and diff_out.stdout.strip():
             files = ", ".join(diff_out.stdout.strip().split("\n"))
-    except Exception:
-        pass
+    except (ImportError, subprocess.SubprocessError, FileNotFoundError, PermissionError, subprocess.TimeoutExpired):
+        pass  # Git unavailable - no file info available
 
     lines = [f"[Conductor] {task_name} ({loc})"]
     lines.append("Summary: (recovered — no runtime data available)")
@@ -1821,9 +1873,9 @@ def _write_git_note_basic(track_dir, sha, state, pi, ti, si=None):
             subprocess.run(
                 ["git", "notes", "add", "-m", note, full_sha],
                 capture_output=True, text=True, cwd=track_dir, timeout=5
-            )
-    except Exception:
-        pass
+        )
+    except (ImportError, subprocess.SubprocessError, FileNotFoundError, PermissionError, subprocess.TimeoutExpired):
+        pass  # Git unavailable or permission denied
 
 
 def cmd_process_result(track_dir):
