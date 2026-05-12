@@ -99,7 +99,7 @@ conductor-plugin/
 │   └── .gitkeep
 │
 ├── hooks/                        # Hook configuration
-│   └── hooks.json                # 12 event bindings
+│   └── hooks.json                # 10 event bindings
 │
 ├── monitors/                     # Background monitors (empty)
 │   └── monitors.json
@@ -339,26 +339,20 @@ hooks/hooks.json
 
 ### Event coverage
 
-Conductor registers hooks for 12 of the 25 available Claude Code events:
+Conductor registers hooks for 10 of the 25 available Claude Code events:
 
 | Event | Script | Async | Purpose |
 |-------|--------|-------|---------|
 | `SessionStart` | `session-start.py` | No | Load core-contract.md, session handoff |
 | `SessionEnd` | `session-end.py` | No | Cleanup, validation, metrics |
-| `InstructionsLoaded` | `enhance-conductor-context.py` | No | Audit logging |
 | `PreToolUse` | `pre-command-check.py` | No | Block dangerous git ops |
-| `PostToolUse` (Agent) | `filter-subagent-output.py` | No | Filter subagent output |
-| `PostToolUse` (Agent) | `on-subagent-result.py` | No | Recovery context injection |
+| `PostToolUse` (Agent) | `filter-subagent-output.py` | No | Filter subagent output + failure/recovery detection |
 | `PostToolUse` (Bash) | `on-test-run.py` | No | TDD guidance on test failure |
 | `PostToolBatch` | `on-batch-complete.py` | No | Batch analysis, coverage gate |
 | `SubagentStart` | `on-subagent-start.py` | No | Role-specific reminders |
 | `SubagentStop` | `on-subagent-stop.py` | Mixed | Failure detection and recovery |
 | `SubagentStop` | `on-phase-checkpoint-stop.py` | No | Checkpoint logging |
 | `SubagentStop` | `on-review-stop.py` | Yes | Review logging |
-| `TaskCreated` | `on-task-event.py` | Yes | Lifecycle logging |
-| `TaskCompleted` | `on-task-event.py` | Yes | Lifecycle logging |
-| `ConfigChange` | `on-config-change.py` | No | Config validation |
-| `CwdChanged` | `on-cwd-change.py` | No | Conductor awareness |
 | `PreCompact` | `on-compact.py` | No | Compression priority |
 | `Stop` | `state-consistency-check.py` | No | State consistency, handoff |
 
@@ -480,14 +474,10 @@ Hook commands support inline variable substitution:
 │   ├── session-metrics.log         # Session duration tracking
 │   ├── subagent-failures.log       # Subagent failure detection
 │   ├── on-batch-complete.log       # Batch analysis metrics
-│   ├── on-task-event.log           # Task lifecycle events
-│   ├── on-config-change.log        # Configuration changes
-│   ├── on-cwd-change.log           # Directory changes
 │   ├── on-test-run.log             # Test command results
 │   ├── on-subagent-stop.log        # Subagent stop events
 │   ├── on-phase-checkpoint-stop.log # Checkpoint completions
 │   ├── on-review-stop.log          # Review completions
-│   ├── enhance-conductor-context.log # Instruction load audit
 │   └── cleanup.log                 # Temp file cleanup
 ├── tmp/                            # Temporary files (auto-cleaned after 24h)
 └── session-handoff.md              # State for next session recovery
@@ -528,10 +518,9 @@ Installed (marketplace) plugins cannot reference files outside their directory. 
 
 1. Claude Code discovers `.claude-plugin/plugin.json`
 2. Auto-scans `skills/`, `agents/`, `hooks/hooks.json`, `output-styles/`, `monitors/monitors.json`
-3. Registers skills (6), agents (9), and hooks (17 from 5 plugins merged)
+3. Registers skills (6), agents (9), and hooks from plugin
 4. Fires `SessionStart` hooks — `session-start.py` loads `runtime/core-contract.md`
-5. Fires `InstructionsLoaded` hooks — `enhance-conductor-context.py` logs loads
-6. Plugin is ready
+5. Plugin is ready
 
 ---
 

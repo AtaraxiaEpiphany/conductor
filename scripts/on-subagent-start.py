@@ -13,43 +13,18 @@ sys.path.insert(0, str(Path(__file__).parent / "lib"))
 from lib.hook_io import read_hook_input, write_simple_output
 
 
+# Minimal result-format reminders. Agent markdown files already define full role behavior.
+# Only the delimiter format is reinforced here — filter-subagent-output.py depends on it.
 AGENT_REMINDERS = {
-    "task-executor": (
-        "[Conductor] You are a task-executor. Follow TDD: Red -> Green -> Refactor. "
-        "Validate every tool call. Report in ---TASK RESULT--- format."
-    ),
-    "code-reviewer": (
-        "[Conductor] You are a code-reviewer. You are READ-ONLY for application code. "
-        "Report in ---REVIEW RESULT--- format."
-    ),
-    "explorer": (
-        "[Conductor] You are an explorer. You are READ-ONLY. "
-        "Produce exploration.md as file-bridge. Report in ---TASK RESULT--- format."
-    ),
-    "phase-checker": (
-        "[Conductor] You are a phase-checker. Execute full checkpoint protocol. "
-        "Report in ---CHECKPOINT RESULT--- format."
-    ),
-    "doc-syncer": (
-        "[Conductor] You are a doc-syncer. Only targeted updates with user confirmation. "
-        "Report in ---DOC SYNC RESULT--- format."
-    ),
-    "skip-analyst": (
-        "[Conductor] You are a skip-analyst. You are READ-ONLY. "
-        "Be conservative — when in doubt, recommend pause_and_escalate."
-    ),
-    "spec-planner": (
-        "[Conductor] You are a spec-planner. Write spec.md and plan.md. "
-        "Return compact summary in ---SPEC PLAN RESULT--- format."
-    ),
-    "spec-reviewer": (
-        "[Conductor] You are a spec-reviewer. Present summaries, handle revisions, "
-        "keep full files out of orchestrator context. Report in ---REVIEW RESULT--- format."
-    ),
-    "project-analyzer": (
-        "[Conductor] You are a project-analyzer. You are READ-ONLY. "
-        "Return analysis in ---ANALYSIS RESULT--- format."
-    ),
+    "task-executor": "[Conductor] Result format: ---TASK RESULT--- ... ---END RESULT---",
+    "code-reviewer": "[Conductor] Result format: ---REVIEW RESULT--- ... ---END REVIEW RESULT---",
+    "explorer": "[Conductor] Result format: ---TASK RESULT--- ... ---END RESULT---",
+    "phase-checker": "[Conductor] Result format: ---CHECKPOINT RESULT--- ... ---END RESULT---",
+    "doc-syncer": "[Conductor] Result format: ---DOC SYNC RESULT--- ... ---END RESULT---",
+    "skip-analyst": "[Conductor] Result format: ---SKIP ANALYSIS--- ... ---END ANALYSIS---",
+    "spec-planner": "[Conductor] Result format: ---SPEC PLAN RESULT--- ... ---END SPEC PLAN RESULT---",
+    "spec-reviewer": "[Conductor] Result format: ---REVIEW RESULT--- ... ---END REVIEW RESULT---",
+    "project-analyzer": "[Conductor] Result format: ---TASK RESULT--- ... ---END RESULT---",
 }
 
 

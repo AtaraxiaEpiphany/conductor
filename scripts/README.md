@@ -25,19 +25,15 @@ The `lib/` directory contains reusable modules:
 
 | Script | Hook Event | Purpose |
 |--------|------------|---------|
-| `enhance-conductor-context.py` | InstructionsLoaded | Progressive disclosure for conductor context |
-| `filter-subagent-output.py` | PostToolUse (Agent) | Filter subagent output to main context |
+| `filter-subagent-output.py` | PostToolUse (Agent) | Filter subagent output to main context; failure/recovery detection |
 | `git-notes-query.py` | CLI | Query git notes audit data |
 | `lint-track-state.py` | CLI | Boundary enforcement linter (F1, F4) |
 | `on-batch-complete.py` | PostToolBatch | Batch-level validation |
 | `on-compact.py` | PreCompact | Compression priority instructions |
-| `on-config-change.py` | ConfigChange | Hook configuration validation |
-| `on-cwd-change.py` | CwdChanged | Conductor state awareness |
 | `on-phase-checkpoint-stop.py` | Stop (phase-checker) | Phase checkpoint logging |
 | `on-review-stop.py` | Stop (code-reviewer) | Code review logging |
 | `on-subagent-start.py` | SubagentStart | Subagent execution reminders |
 | `on-subagent-stop.py` | SubagentStop | Subagent completion logging |
-| `on-task-event.py` | TaskCreated/Completed | Task lifecycle logging |
 | `on-test-run.py` | PostToolUse (Bash) | Test monitoring and TDD context |
 | `pre-command-check.py` | PreToolUse (Bash) | Command execution protection |
 | `session-end.py` | SessionEnd | Session cleanup and metrics |

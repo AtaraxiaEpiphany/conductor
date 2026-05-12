@@ -97,14 +97,11 @@ Hooks are event-driven scripts that execute at specific lifecycle points.
 |-----------|---------|-------------|
 | `SessionStart` | Session begins/resumes | `session-start.py` |
 | `SessionEnd` | Session terminates | `session-end.py` |
-| `InstructionsLoaded` | CLAUDE.md loads | `enhance-conductor-context.py` |
 | `PreToolUse` | Before tool execution | `pre-command-check.py` |
 | `PostToolUse` | After tool success | `filter-subagent-output.py`, `on-test-run.py` |
 | `PostToolBatch` | After parallel tools resolve | `on-batch-complete.py` |
 | `SubagentStart` | Subagent spawns | `on-subagent-start.py` |
 | `SubagentStop` | Subagent finishes | `on-subagent-stop.py` |
-| `TaskCreated/Completed` | Task lifecycle events | `on-task-event.py` |
-| `ConfigChange` | Settings modify | `on-config-change.py` |
 
 ---
 

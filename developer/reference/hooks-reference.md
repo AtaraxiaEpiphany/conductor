@@ -40,21 +40,17 @@ scripts/
     json_utils.py         # Safe JSON load, merge, format
     git_utils.py          # Git commands, notes, status
     path_utils.py         # Track root detection, file age
+    constants.py          # Shared failure patterns
   session-start.py        # SessionStart
   session-end.py          # SessionEnd
-  enhance-conductor-context.py  # InstructionsLoaded
   pre-command-check.py    # PreToolUse (Bash)
   filter-subagent-output.py     # PostToolUse (Agent)
-  on-subagent-result.py         # PostToolUse (Agent)
   on-test-run.py                # PostToolUse (Bash)
   on-batch-complete.py          # PostToolBatch
   on-subagent-start.py          # SubagentStart
   on-subagent-stop.py           # SubagentStop
   on-phase-checkpoint-stop.py   # SubagentStop (phase-checker)
   on-review-stop.py             # SubagentStop (code-reviewer)
-  on-task-event.py              # TaskCreated / TaskCompleted
-  on-config-change.py           # ConfigChange
-  on-cwd-change.py              # CwdChanged
   on-compact.py                 # PreCompact
   state-consistency-check.py    # Stop
 ```
@@ -164,24 +160,6 @@ Only emit this object when you have actual event-specific fields. The runtime re
 
 ---
 
-### InstructionsLoaded
-
-| | |
-|---|---|
-| **Script** | `enhance-conductor-context.py` |
-| **Matcher** | `session_start\|include` |
-| **Timeout** | 3s |
-| **Can block** | No |
-| **Output** | `{}` (observability only) |
-
-**Input fields**: `file_path`, `memory_type`, `load_reason`, `globs`, `trigger_file_path`, `parent_file_path`
-
-**Behavior**: Logs when conductor-related instruction files are loaded. Does not produce any output — exit code 0 with empty JSON object `{}`.
-
-This event does **not** support `hookSpecificOutput`. The script uses `write_hook_output()` with no arguments, which outputs `{}`.
-
----
-
 ### PreToolUse (Bash)
 
 | | |
@@ -226,11 +204,13 @@ Uses `lib/validation.py`: `is_dangerous_git_operation()`, `contains_dangerous_pa
 | **Matcher** | `Agent` |
 | **Timeout** | 5s |
 | **Can block** | No |
-| **Output** | `hookSpecificOutput.updatedToolOutput` |
+| **Output** | `hookSpecificOutput.updatedToolOutput`, `hookSpecificOutput.additionalContext` |
 
 **Input fields**: `tool_name`, `tool_input`, `tool_response`
 
-**Behavior**: Extracts only `---RESULT---` delimited blocks from subagent output, discarding narrative/thinking text to reduce context pressure in the parent session.
+**Behavior**:
+1. Extracts only `---RESULT---` delimited blocks from subagent output, discarding narrative/thinking text to reduce context pressure in the parent session.
+2. Detects failure indicators in subagent output and injects recovery context into the parent session (merged from the former `on-subagent-result.py`).
 
 **Recognized block types**:
 
@@ -247,33 +227,6 @@ When no result block is found, replaces the output with a compact summary:
 
 ```
 [Conductor] Subagent completed. No structured result block found. Check .conductor/ for artifacts.
-```
-
----
-
-### PostToolUse (Agent) — on-subagent-result
-
-| | |
-|---|---|
-| **Script** | `on-subagent-result.py` |
-| **Matcher** | `Agent` |
-| **Timeout** | 5s |
-| **Can block** | No |
-| **Output** | `hookSpecificOutput.additionalContext` |
-
-**Behavior**: Complements the SubagentStop hook by injecting recovery context into the **parent** session (not the subagent). Detects failure indicators (`status.*FAILURE`, `BUILD FAILED`, `Traceback`, `Command failed`, `test.*failed`) and recovery success indicators in subagent output.
-
-This hook runs **after** the subagent has fully returned (unlike SubagentStop which fires during the stop attempt).
-
-**Output on failure**:
-
-```json
-{
-  "hookSpecificOutput": {
-    "hookEventName": "PostToolUse",
-    "additionalContext": "[Conductor] Subagent reported failure. If retries remain, the orchestrator will re-dispatch..."
-  }
-}
 ```
 
 ---
@@ -414,23 +367,6 @@ If this is the Green phase (Step 4), fix the implementation.
 
 ---
 
-### TaskCreated / TaskCompleted
-
-| | |
-|---|---|
-| **Script** | `on-task-event.py` |
-| **Matcher** | none |
-| **Timeout** | 3s |
-| **Can block** | No (async) |
-| **Output** | `{}` |
-| **Async** | Yes |
-
-**Input fields**: `task_id`, `task_subject`, `task_description`, `teammate_name`, `team_name`
-
-**Behavior**: Logs task lifecycle events to `.data/logs/`. Async fire-and-forget.
-
----
-
 ### Stop
 
 | | |
@@ -476,47 +412,6 @@ If this is the Green phase (Step 4), fix the implementation.
 2. Cleans orphaned temp files in `.data/tmp/` older than 24 hours.
 3. Logs session duration (reads `.session-{id}.start` timestamp).
 4. Ensures `.data/logs/` directory structure exists.
-
----
-
-### ConfigChange
-
-| | |
-|---|---|
-| **Script** | `on-config-change.py` |
-| **Matcher** | `project_settings\|skills` |
-| **Timeout** | 3s |
-| **Can block** | Yes — via `decision: "block"` (not used currently) |
-| **Output** | `systemMessage` on danger |
-
-**Input fields**: `source` (`"user_settings"`, `"project_settings"`, `"local_settings"`, `"policy_settings"`, `"skills"`), `file_path`
-
-**Behavior**: Validates hook configuration files for dangerous patterns:
-
-| Pattern | Description |
-|---------|-------------|
-| `rm -rf` | Recursive delete |
-| `curl.*\|.*sh` | Pipe remote script to shell |
-| `eval $` | Dynamic evaluation |
-| `; rm ` | Command chaining with delete |
-| `> /etc/` | System file overwrite |
-| `mv /usr/` | System file move |
-
----
-
-### CwdChanged
-
-| | |
-|---|---|
-| **Script** | `on-cwd-change.py` |
-| **Matcher** | none |
-| **Timeout** | 2s |
-| **Can block** | No |
-| **Output** | `systemMessage` |
-
-**Input fields**: `old_cwd`, `new_cwd`
-
-**Behavior**: When the working directory changes to a project with a `conductor/` directory and active tracks, shows a system message with the track count.
 
 ---
 
@@ -700,14 +595,6 @@ echo '{"hook_event_name":"Stop","session_id":"test","cwd":"/tmp"}' | \
 
 ### Expected output verification
 
-For observability-only events, the output should be `{}`:
-
-```bash
-echo '{"hook_event_name":"InstructionsLoaded","session_id":"test"}' | \
-  python3 scripts/enhance-conductor-context.py
-# Expected: {}
-```
-
 For events with context injection, check that `hookSpecificOutput` is present:
 
 ```bash
@@ -753,9 +640,6 @@ All hooks write to `.data/logs/`:
 | `session-lifecycle.log` | session-start.py, session-end.py |
 | `subagent-failures.log` | on-subagent-stop.py |
 | `on-batch-complete.log` | on-batch-complete.py |
-| `on-task-event.log` | on-task-event.py |
-| `on-config-change.log` | on-config-change.py |
-| `on-cwd-change.log` | on-cwd-change.py |
 | `on-test-run.log` | on-test-run.py |
 | `session-metrics.log` | session-end.py |
 | `cleanup.log` | session-end.py |
@@ -768,21 +652,16 @@ All hooks write to `.data/logs/`:
 |------|---------|-------|---------------|-------|
 | `session-start.py` | 10s | No | Yes | Reads `core-contract.md` from disk |
 | `pre-command-check.py` | 3s | No | Yes | Regex matching on command string |
-| `filter-subagent-output.py` | 5s | No | Yes | Regex on subagent output |
-| `on-subagent-result.py` | 5s | No | Yes | Regex on subagent output |
+| `filter-subagent-output.py` | 5s | No | Yes | Regex on subagent output + failure/recovery detection |
 | `on-test-run.py` | 5s | No | No | Only fires on test commands |
 | `on-batch-complete.py` | 35s | No | Yes | May run coverage tool (up to 30s) |
 | `on-subagent-start.py` | 5s | No | No | Short string lookup and output |
 | `on-subagent-stop.py` | 10s/5s | Partial | Yes | Sync for critical agents, async for others |
 | `on-phase-checkpoint-stop.py` | 5s | No | No | Logging only |
 | `on-review-stop.py` | 5s | Yes | No | Async logging |
-| `on-task-event.py` | 3s | Yes | No | Async logging |
 | `state-consistency-check.py` | 5s | No | No | File reads, no heavy computation |
 | `session-end.py` | 5s | No | No | Cleanup and logging |
-| `on-config-change.py` | 3s | No | No | Pattern matching on config file |
-| `on-cwd-change.py` | 2s | No | No | Directory existence check |
 | `on-compact.py` | 3s | No | No | Static string output |
-| `enhance-conductor-context.py` | 3s | No | No | Logging only |
 
 ---
 

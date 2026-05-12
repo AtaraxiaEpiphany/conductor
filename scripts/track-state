@@ -27,6 +27,7 @@ Usage:
     track-state get-handoff <track-dir> <phase> <task> [--subtask <n>]
     track-state append-handoff <track-dir> <phase> <task> --type <explore|decision|risk|deviation> --content <json> [--subtask <n>]
     track-state checklist-verify <track-dir>
+    track-state write-result <track-dir> [--data '<json>']
     track-state gc <track-dir>
 """
 
@@ -1914,6 +1915,52 @@ def _write_git_note_basic(track_dir, sha, state, pi, ti, si=None):
         pass  # Git unavailable or permission denied
 
 
+def cmd_write_result(track_dir):
+    """Atomically write result.json from stdin or --data flag.
+
+    Usage: track-state write-result <track-dir> [--data '<json>']
+
+    Reads JSON from --data flag, or from stdin if --data is not provided.
+    Writes to .conductor/result.json using atomic replace (temp file + os.replace).
+    """
+    cdir = conductor_dir(track_dir)
+    result_path = cdir / "result.json"
+
+    raw = flag(sys.argv[3:], "--data")
+    if raw:
+        data = raw
+    else:
+        data = sys.stdin.read()
+
+    try:
+        result = json.loads(data)
+    except json.JSONDecodeError as e:
+        out(dict(error=f"Invalid JSON: {e}"))
+        sys.exit(1)
+
+    # Validate required fields
+    status = result.get("status", "").upper()
+    if status not in ("SUCCESS", "FAILURE"):
+        out(dict(error=f"Missing or invalid 'status': must be SUCCESS or FAILURE"))
+        sys.exit(1)
+
+    # Atomic write
+    import tempfile
+    tmp = tempfile.NamedTemporaryFile(
+        mode="w", dir=str(cdir), prefix=".result.tmp.", delete=False
+    )
+    try:
+        json.dump(result, tmp, indent=2, ensure_ascii=False)
+        tmp.flush()
+        os.fsync(tmp.fileno())
+        tmp_name = tmp.name
+    finally:
+        tmp.close()
+
+    os.replace(tmp_name, str(result_path))
+    out(dict(ok=True, path=str(result_path)))
+
+
 def cmd_process_result(track_dir):
     """Read .conductor/result.json, update state, sync plan, manage handoff.
     Writes git notes audit trail. Enforces F2/F3 quality gates.
@@ -2569,6 +2616,8 @@ def main():
             cmd_checklist_verify(track_dir)
         elif cmd == "process-result":
             cmd_process_result(track_dir)
+        elif cmd == "write-result":
+            cmd_write_result(track_dir)
         elif cmd == "dispatch-prepare":
             cmd_dispatch_prepare(track_dir)
         elif cmd == "dispatch-finalize":

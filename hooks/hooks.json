@@ -1,17 +1,5 @@
 {
   "hooks": {
-    "InstructionsLoaded": [
-      {
-        "matcher": "session_start|include",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/enhance-conductor-context.py\"",
-            "timeout": 3
-          }
-        ]
-      }
-    ],
     "PostToolBatch": [
       {
         "hooks": [
@@ -54,11 +42,6 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/filter-subagent-output.py\"",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/on-subagent-result.py\"",
             "timeout": 5
           }
         ]
@@ -109,30 +92,6 @@
         ]
       }
     ],
-    "TaskCreated": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/on-task-event.py\"",
-            "timeout": 3,
-            "async": true
-          }
-        ]
-      }
-    ],
-    "TaskCompleted": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/on-task-event.py\"",
-            "timeout": 3,
-            "async": true
-          }
-        ]
-      }
-    ],
     "SessionEnd": [
       {
         "hooks": [
@@ -140,29 +99,6 @@
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/session-end.py\"",
             "timeout": 5
-          }
-        ]
-      }
-    ],
-    "ConfigChange": [
-      {
-        "matcher": "project_settings|skills",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/on-config-change.py\"",
-            "timeout": 3
-          }
-        ]
-      }
-    ],
-    "CwdChanged": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/on-cwd-change.py\"",
-            "timeout": 2
           }
         ]
       }

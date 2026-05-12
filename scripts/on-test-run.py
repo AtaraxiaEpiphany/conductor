@@ -16,29 +16,32 @@ from lib.hook_io import read_hook_input, write_simple_output
 from lib.logging import init_logging, log_entry
 
 
-TEST_PATTERNS = [
-    r'test',
-    r'pytest',
-    r'jest',
-    r'vitest',
-    r'go test',
-    r'cargo test',
-    r'dotnet test',
+# Precise test runner patterns — anchored to avoid matching arbitrary
+# strings that happen to contain "test" (e.g. grep, cat, echo commands).
+TEST_RUNNER_PATTERNS = [
+    r'\bpytest\b',
+    r'\bjest\b',
+    r'\bvitest\b',
+    r'\bgo\s+test\b',
+    r'\bcargo\s+test\b',
+    r'\bdotnet\s+test\b',
+    r'\bnpm\s+test\b',
+    r'\byarn\s+test\b',
+    r'\bpnpm\s+test\b',
+    r'\bbun\s+test\b',
+    r'\bmvn\s+test\b',
+    r'\bgradle\s+.*test\b',
+    r'\brspec\b',
+    r'\bminitest\b',
+    r'\bnose2?\b',
+    r'\bcoverage\s+(run|report)\b',
 ]
 
 
 def is_test_command(command: str) -> bool:
-    """Check if command is a test command
-
-    Args:
-        command: Command string to check
-
-    Returns:
-        True if command appears to be a test command
-    """
-    command_lower = command.lower()
-    for pattern in TEST_PATTERNS:
-        if pattern in command_lower:
+    """Check if command is a test command using precise pattern matching."""
+    for pattern in TEST_RUNNER_PATTERNS:
+        if re.search(pattern, command, re.IGNORECASE):
             return True
     return False
 

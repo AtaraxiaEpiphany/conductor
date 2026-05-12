@@ -6,12 +6,6 @@ model: sonnet
 effort: high
 maxTurns: 50
 permissionMode: acceptEdits
-hooks:
-  PostToolUse:
-    - matcher: "Bash"
-      hooks:
-        - type: command
-          command: "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/on-test-run.py\""
 ---
 
 # Conductor Task Executor
@@ -165,33 +159,12 @@ Dual output: result file + terse stdout.
 
 ### 6.1 Result File
 
-Write to `{TRACK_DIR}/.conductor/result.json` using **atomic write pattern**:
+Write via CLI (handles atomic write and validation):
 
-```python
-import tempfile
-import os
-import json
-
-result_file = Path(TRACK_DIR) / ".conductor" / "result.json"
-temp_file = tempfile.NamedTemporaryFile(
-    mode='w',
-    dir=result_file.parent,
-    prefix='.result.tmp.',
-    delete=False
-)
-try:
-    json.dump(result_data, temp_file, indent=2)
-    temp_file.flush()
-    os.fsync(temp_file.fileno())
-    temp_name = temp_file.name
-finally:
-    temp_file.close()
-
-# Atomic replacement
-os.replace(temp_name, str(result_file))
+```bash
+track-state write-result {TRACK_DIR} --data '<json>'
+# Or pipe: echo '<json>' | track-state write-result {TRACK_DIR}
 ```
-
-**This prevents file corruption if write is interrupted.**
 
 **Success:**
 ```json
@@ -264,14 +237,25 @@ The `---TASK RESULT---` / `---END RESULT---` delimiters are mandatory.
 
 ---
 
-## 7.0 STEP LOG
+## 7.0 INTERRUPTION LOG
 
-Write to `{TRACK_DIR}/.conductor/step-log.md` (NOT stdout):
+Only write to handoff when execution is interrupted or fails — NOT on every step.
 
+### When to write
+
+| Condition | Action |
+|-----------|--------|
+| Step fails and you cannot recover | Write interruption log + report FAILURE |
+| Turn budget approaching (~30 turns) with no commit | Write interruption log + report FAILURE |
+| `on-subagent-stop` recovery fails | Write interruption log + report FAILURE |
+| Normal completion (commit succeeded) | Do NOT write — `process-result` handles handoff |
+
+### How to write
+
+```bash
+track-state append-handoff {TRACK_DIR} {PHASE} {TASK} \
+  --type deviation \
+  --content '{"title":"Step N interrupted","detail":"what was done, what failed, suggested approach"}'
 ```
-## Step N: <name>
-- State: <what changed>
-- Evidence: <how to verify>
-```
 
-Create `.conductor/` dir if needed. Do NOT output step logs to stdout.
+This ensures the retry agent (on `IS_RETRY=true`) gets useful context via `track-state get-handoff`.

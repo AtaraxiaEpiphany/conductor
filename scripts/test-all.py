@@ -11,10 +11,6 @@ scripts_dir = Path(__file__).parent
 
 # Test cases for each script
 TEST_CASES = {
-    "enhance-conductor-context.py": {
-        "input": '{"file_path":"runtime/core-contract.md","cwd":"/tmp","load_reason":"startup"}',
-        "expected_keys": ["hookSpecificOutput"]
-    },
     "filter-subagent-output.py": {
         "input": '{"tool_name":"Bash","tool_response":"no result block here"}',
         "expected_keys": ["hookSpecificOutput"]
@@ -36,14 +32,6 @@ TEST_CASES = {
         "input": '{}',
         "expected_keys": ["hookSpecificOutput"]
     },
-    "on-config-change.py": {
-        "input": '{"source":"user","file_path":"/tmp/config.json","session_id":"test"}',
-        "expected_keys": ["hookSpecificOutput"]
-    },
-    "on-cwd-change.py": {
-        "input": '{"old_cwd":"/tmp","new_cwd":"/tmp","session_id":"test"}',
-        "expected_keys": ["hookSpecificOutput"]
-    },
     "on-phase-checkpoint-stop.py": {
         "input": '{"session_id":"test"}',
         "expected_keys": ["hookSpecificOutput"]
@@ -58,10 +46,6 @@ TEST_CASES = {
     },
     "on-subagent-stop.py": {
         "input": '{"agent_type":"task-executor","session_id":"test","last_assistant_message":"done"}',
-        "expected_keys": ["hookSpecificOutput"]
-    },
-    "on-task-event.py": {
-        "input": '{"hook_event_name":"TaskCreated","session_id":"test"}',
         "expected_keys": ["hookSpecificOutput"]
     },
     "on-test-run.py": {

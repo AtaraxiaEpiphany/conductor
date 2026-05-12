@@ -44,17 +44,13 @@ Conductor uses Claude Code's hook system for lifecycle automation. Hooks are con
 
 | Event | Script | Purpose |
 |-------|--------|---------|
-| `InstructionsLoaded` | `enhance-conductor-context` | Progressive conductor context disclosure |
 | `SessionStart` | `session-start` | Inject runtime/core-contract.md, session handoff |
 | `SessionEnd` | `session-end` | Cleanup, handoff validation, metrics logging |
 | `PreToolUse` (Bash) | `pre-command-check` | Block dangerous git ops, enforce state lock |
 | `PostToolBatch` | `on-batch-complete` | Batch-level validation after parallel tool calls |
-| `PostToolUse` (Agent) | `filter-subagent-output` | Filter subagent output for context pressure |
+| `PostToolUse` (Agent) | `filter-subagent-output` | Filter subagent output for context pressure; failure/recovery detection |
 | `SubagentStart` | `on-subagent-start` | Inject role-specific execution reminders |
 | `SubagentStop` | `on-subagent-stop` | Lifecycle logging; `asyncRewake` for critical agents |
-| `TaskCreated/Completed` | `on-task-event` | Async logging to `logs/task-lifecycle.log` |
-| `ConfigChange` | `on-config-change` | Configuration validation & audit logging |
-| `CwdChanged` | `on-cwd-change` | Conductor state awareness across directory changes |
 
 ### Subagent Stop Priority
 
@@ -222,15 +218,12 @@ conductor-plugin/
 ├── scripts/                           # Hook & utility scripts
 │   ├── session-start                  #   SessionStart hook (injects runtime/core-contract.md)
 │   ├── session-end                    #   SessionEnd hook (cleanup, handoff validation, metrics)
-│   ├── enhance-conductor-context      #   InstructionsLoaded hook (progressive context disclosure)
 │   ├── on-subagent-start              #   SubagentStart hook (injects agent reminders)
 │   ├── on-subagent-stop               #   SubagentStop hook (lifecycle logging, asyncRewake for critical agents)
-│   ├── on-task-event                  #   TaskCreated/TaskCompleted hooks (async logging)
+│   ├── filter-subagent-output         #   PostToolUse hook (output filtering + failure/recovery detection)
 │   ├── on-test-run                    #   PostToolUse hook for test monitoring
 │   ├── on-batch-complete              #   PostToolBatch hook (batch-level validation)
 │   ├── pre-command-check              #   PreToolUse hook (blocks dangerous git ops, state lock violations)
-│   ├── on-config-change               #   ConfigChange hook (configuration validation & audit)
-│   ├── on-cwd-change                  #   CwdChanged hook (conductor state awareness)
 │   ├── state-consistency-check        #   implement Stop hook (detects stale locks)
 │   ├── git-notes-query                #   Query tool for audit data
 │   ├── track-state                    #   State management CLI (Python 3)

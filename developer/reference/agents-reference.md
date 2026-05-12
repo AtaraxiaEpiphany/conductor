@@ -849,7 +849,7 @@ For non-critical agents (code-reviewer, doc-syncer, etc.): async logging only.
 
 ### Parent session notification
 
-The `on-subagent-result.py` hook runs as a `PostToolUse` on the Agent tool. It detects failure indicators in the final subagent output and injects recovery context into the **parent** session:
+Failure/recovery detection is now handled by `filter-subagent-output.py` (merged from the former `on-subagent-result.py`). It detects failure indicators in the final subagent output and injects recovery context into the **parent** session:
 
 ```
 [Conductor] Subagent reported failure. If retries remain, the orchestrator will re-dispatch.

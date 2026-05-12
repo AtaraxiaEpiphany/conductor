@@ -27,19 +27,8 @@ sys.path.insert(0, str(Path(__file__).parent / "lib"))
 
 from lib.hook_io import read_hook_input, write_hook_output
 from lib.logging import init_logging, log_entry
+from lib.constants import FAILURE_PATTERNS
 
-
-# Strong failure indicators
-STRONG_FAILURE_PATTERNS = [
-    r"Traceback \(most recent call last\):",
-    r"Error:\s+",
-    r"Permission denied",
-    r"File not found",
-    r"Command failed",
-    r"BUILD FAILED",
-    r"test.*failed",
-    r"AssertionError",
-]
 
 # Safe contexts where error keywords don't indicate actual failure
 SAFE_CONTEXT_PATTERNS = [
@@ -66,7 +55,7 @@ def detect_failure(message: str) -> tuple[bool, Optional[str]]:
         if re.search(pattern, message_lower, re.IGNORECASE):
             return False, None
 
-    for pattern in STRONG_FAILURE_PATTERNS:
+    for pattern in FAILURE_PATTERNS:
         if re.search(pattern, message, re.IGNORECASE):
             return True, pattern
 
@@ -101,13 +90,12 @@ def main():
             "If the issue is unresolvable, report FAILURE in your result block."
         )
         write_hook_output(
-            hook_event_name="SubagentStop",
             decision="block",
             reason=reason,
         )
 
     # No failure detected — allow the subagent to stop normally
-    write_hook_output(hook_event_name="SubagentStop")
+    write_hook_output()
 
 
 if __name__ == "__main__":

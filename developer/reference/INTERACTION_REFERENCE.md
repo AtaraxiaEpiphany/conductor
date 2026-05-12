@@ -20,7 +20,6 @@
 |--------|---------|------------|--------------|
 | `SessionStart` | Session begins | No | additionalContext | `session-start.py` |
 | `SessionEnd` | Session ends | No | logging only | `session-end.py` |
-| `InstructionsLoaded` | CLAUDE.md loads | No | additionalContext | `enhance-conductor-context.py` |
 | `PreCompact` | Before compaction | Yes | decision: "block" | `on-compact.py` |
 | `PostCompact` | After compaction | No | additionalContext | (none) |
 
@@ -39,20 +38,6 @@
 |--------|---------|------------|--------------|
 | `SubagentStart` | Subagent spawns | No | additionalContext | `on-subagent-start.py` |
 | `SubagentStop` | Subagent finishes | Yes | decision: "block" | `on-subagent-stop.py` |
-
-### Task Hooks
-
-| Event | Trigger | Can Block | Output Type | Key Scripts |
-|--------|---------|------------|--------------|
-| `TaskCreated` | Task created | Yes | Exit code 2 blocks | `on-task-event.py` |
-| `TaskCompleted` | Task completed | Yes | Exit code 2 blocks | `on-task-event.py` |
-
-### Configuration Hooks
-
-| Event | Trigger | Can Block | Output Type | Key Scripts |
-|--------|---------|------------|--------------|
-| `ConfigChange` | Settings modify | Yes (except policy) | additionalContext | `on-config-change.py` |
-| `CwdChanged` | Directory changes | No | watchPaths | `on-cwd-change.py` |
 
 ### Orchestrator Hooks
 

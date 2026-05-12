@@ -237,35 +237,6 @@ def check_for_failure(message):
 
 ---
 
-## Async Hooks
-
-### on-task-event.py
-
-**Purpose**: Async logging for TaskCreated and TaskCompleted events
-
-**Flow**:
-1. Parse event data
-2. Append to `logs/task-lifecycle.log`
-3. Exit immediately (async)
-
-```python
-def main():
-    hook = HookIO()
-    event = hook.input.get("hook_event_name")
-    task_data = hook.input.get("task_data", {})
-
-    log_entry = {
-        "timestamp": datetime.now().isoformat(),
-        "event": event,
-        "task": task_data.get("name", "unknown")
-    }
-
-    with open("logs/task-lifecycle.log", "a") as f:
-        f.write(json.dumps(log_entry) + "\n")
-```
-
----
-
 ## Hook Configuration
 
 ### hooks.json Structure
@@ -346,7 +317,6 @@ cat logs/hook-debug.log
 | pre-command-check | 3s | No | Must block dangerous ops |
 | filter-subagent-output | 5s | No | Regex matching |
 | on-subagent-stop | 30s | Rewake | Critical agents only |
-| on-task-event | - | Yes | Fire-and-forget |
 
 ---
 
