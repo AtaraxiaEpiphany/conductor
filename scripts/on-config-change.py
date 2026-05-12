@@ -12,7 +12,7 @@ from typing import Optional
 # Add lib directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent / "lib"))
 
-from lib.hook_io import read_hook_input, write_simple_output
+from lib.hook_io import read_hook_input, write_hook_output
 from lib.env import get_data_dir
 from lib.logging import init_logging, log_entry
 
@@ -76,14 +76,14 @@ def main():
 
         if issues is not None and issues:
             dangerous_str = ",".join(issues)
-            context = (
+            msg = (
                 f"[Conductor] WARNING: Hook configuration contains suspicious patterns: {dangerous_str}. "
                 "Review before trusting."
             )
-            write_simple_output(additional_context=context)
+            write_hook_output(system_message=msg)
             return
 
-    write_simple_output()
+    write_hook_output()
 
 
 if __name__ == "__main__":

@@ -220,6 +220,22 @@ def _clean_trailing_markers(text):
         prev = cleaned
 
 
+def _safe_task_name(state, phase_idx, task_idx):
+    """Safely get task name from state, returning '...' on any index error."""
+    try:
+        if not state or phase_idx < 0 or task_idx < 0:
+            return '...'
+        phases = state.get('phases', [])
+        if phase_idx >= len(phases):
+            return '...'
+        tasks = phases[phase_idx].get('tasks', [])
+        if task_idx >= len(tasks):
+            return '...'
+        return tasks[task_idx].get('name', '...')
+    except (IndexError, KeyError, TypeError):
+        return '...'
+
+
 def _is_phase_terminal(phase):
     """Check if all tasks and subtasks in a phase are in terminal status."""
     for task in phase.get("tasks", []):
@@ -492,7 +508,7 @@ def _ensure_handoff_index(track_dir, state=None):
 
 **Track ID**: {track_id}
 **Description**: {description}
-**Status**:Initializing
+**Status**: Initializing
 **Updated**: {now_iso()}
 
 ---
@@ -653,7 +669,7 @@ def _sync_handoff_index(track_dir, state=None):
 
 ### Current Focus
 **Phase {current_phase + 1}**: Next task
-**Next**: Task {current_task} - {state.get('phases', [{}])[current_phase].get('tasks', [{}])[current_task].get('name', '...') if current_phase >= 0 and current_task >= 0 else '...'}
+**Next**: {_safe_task_name(state, current_phase, current_task)}
 
 ### Risk Radar
 """
@@ -914,46 +930,49 @@ def cmd_next(track_dir, compact=False):
 def cmd_dispatch_next(track_dir):
     """One-call dispatch decision: next + parent-complete resolution + tag routing.
     Returns action enum for orchestrator to switch on."""
-    state = load(track_dir)
-    execution_mode = state.get("execution_mode", "interactive")
+    # Loop instead of recursion to avoid stack overflow on many parent-complete tasks
+    while True:
+        state = load(track_dir)
+        execution_mode = state.get("execution_mode", "interactive")
 
-    # Find next task
-    result = _find_next_task(state)
+        # Find next task
+        result = _find_next_task(state)
 
-    if result.get("phase", -1) < 0:
-        # No more tasks — check if any phase needs a checkpoint before finalizing
-        checkpoint_pending = _any_phase_needs_checkpoint(track_dir, state)
-        if checkpoint_pending is not None:
-            out(dict(action="dispatch_phase_checker", phase=checkpoint_pending,
-                     execution_mode=execution_mode))
+        if result.get("phase", -1) < 0:
+            # No more tasks — check if any phase needs a checkpoint before finalizing
+            checkpoint_pending = _any_phase_needs_checkpoint(track_dir, state)
+            if checkpoint_pending is not None:
+                out(dict(action="dispatch_phase_checker", phase=checkpoint_pending,
+                         execution_mode=execution_mode))
+                return
+            out(dict(action="finalize"))
             return
-        out(dict(action="finalize"))
+
+        # Resolve action from type + tags
+        rtype = result["type"]
+        tags = result["tags"]
+
+        if rtype == "parent-complete":
+            # Auto-complete parent, resolve SHA from subtasks, then loop again
+            parent_task = state["phases"][result["phase"]]["tasks"][result["task"]]
+            sha = _last_subtask_sha(parent_task)
+            _do_complete(track_dir, result["phase"], result["task"], None, sha)
+            state = load(track_dir)
+            _do_sync_plan(track_dir, state)
+            continue
+
+        # Route by tags
+        if "Manual" in tags:
+            action = "defer_manual"
+        elif "Explore" in tags:
+            action = "dispatch_explorer"
+        else:
+            action = "dispatch_executor"
+
+        result["action"] = action
+        result["execution_mode"] = execution_mode
+        out(result)
         return
-
-    # Resolve action from type + tags
-    rtype = result["type"]
-    tags = result["tags"]
-
-    if rtype == "parent-complete":
-        # Auto-complete parent, resolve SHA from subtasks, then recurse
-        parent_task = state["phases"][result["phase"]]["tasks"][result["task"]]
-        sha = _last_subtask_sha(parent_task)
-        _do_complete(track_dir, result["phase"], result["task"], None, sha)
-        _do_sync_plan(track_dir, state)
-        cmd_dispatch_next(track_dir)
-        return
-
-    # Route by tags
-    if "Manual" in tags:
-        action = "defer_manual"
-    elif "Explore" in tags:
-        action = "dispatch_explorer"
-    else:
-        action = "dispatch_executor"
-
-    result["action"] = action
-    result["execution_mode"] = execution_mode
-    out(result)
 
 
 def cmd_recover(track_dir, compact=False):
@@ -1216,7 +1235,7 @@ def cmd_finalize(track_dir):
     checklist = _checklist_status(track_dir)
 
     # Quality score calculation
-    quality_score = _compute_quality_score(state, statuses, checklist)
+    quality_score = _compute_quality_score(track_dir, state, statuses, checklist)
 
     state["quality_score"] = quality_score
     state["updated_at"] = now_iso()
@@ -1235,7 +1254,7 @@ def cmd_finalize(track_dir):
     out(result)
 
 
-def _compute_quality_score(state, statuses, checklist):
+def _compute_quality_score(track_dir, state, statuses, checklist):
     """Compute a 0-100 quality score for the track.
     Weights: completion 40%, checklist 30%, coverage 20%, retry penalty 10%."""
     total = len(statuses)
@@ -1262,7 +1281,7 @@ def _compute_quality_score(state, statuses, checklist):
             for sha in shas_result[-3:]:
                 note = subprocess.run(
                     ["git", "notes", "show", sha],
-                    capture_output=True, text=True, cwd=state.get("_track_dir", "."), timeout=5
+                    capture_output=True, text=True, cwd=track_dir, timeout=5
                 ).stdout.strip()
                 for line in note.split("\n"):
                     if line.startswith("Coverage:"):
@@ -1271,7 +1290,7 @@ def _compute_quality_score(state, statuses, checklist):
                             coverage_ratio = int(m.group(1)) / 100
                             break
                 if coverage_ratio > 0:
-                            break
+                    break
         except (ImportError, FileNotFoundError, PermissionError, OSError):
             pass  # Git notes unavailable - use default coverage
 
@@ -1890,7 +1909,7 @@ def _write_git_note_basic(track_dir, sha, state, pi, ti, si=None):
             subprocess.run(
                 ["git", "notes", "add", "-m", note, full_sha],
                 capture_output=True, text=True, cwd=track_dir, timeout=5
-        )
+            )
     except (ImportError, subprocess.SubprocessError, FileNotFoundError, PermissionError, subprocess.TimeoutExpired):
         pass  # Git unavailable or permission denied
 
@@ -1938,6 +1957,8 @@ def cmd_process_result(track_dir):
             tdd_gate = _verify_tdd_gate(track_dir, sha, r)
 
         parent_completed = _do_complete(track_dir, p, t, s, sha)
+        # Reload state after _do_complete modified the file
+        state = load(track_dir)
         _do_sync_plan(track_dir, state)
 
         # Write to handoff
@@ -1972,6 +1993,8 @@ def cmd_process_result(track_dir):
     elif status == "FAILURE":
         summary = r.get("summary", "")
         retry_count = _do_fail(track_dir, p, t, s, summary)
+        # Reload state after _do_fail modified the file
+        state = load(track_dir)
         _do_sync_plan(track_dir, state)
 
         # Write to handoff
@@ -2392,6 +2415,8 @@ def cmd_dispatch_finalize(track_dir):
     if status == "SUCCESS":
         sha = r.get("commit_sha", "")
         parent_completed = _do_complete(track_dir, p, t, s, sha)
+        # Reload state after _do_complete modified the file
+        state = load(track_dir)
         synced = _do_sync_plan(track_dir, state)
         _append_execution_record(track_dir, p, t, s, r, state)
         for dev in r.get("spec_deviation_detail", []):
@@ -2407,6 +2432,8 @@ def cmd_dispatch_finalize(track_dir):
     elif status == "FAILURE":
         summary = r.get("summary", "")
         retry_count = _do_fail(track_dir, p, t, s, summary)
+        # Reload state after _do_fail modified the file
+        state = load(track_dir)
         synced = _do_sync_plan(track_dir, state)
         _append_execution_record(track_dir, p, t, s, r, state)
         _append_failure_legacy(track_dir, r)

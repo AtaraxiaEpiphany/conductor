@@ -2,6 +2,13 @@
 
 Provides unified interface for processing Claude Code hook JSON input/output,
 following the Claude Code hook protocol.
+
+JSON output format per the official docs:
+  - Top-level: continue, stopReason, suppressOutput, systemMessage
+  - Top-level decision: decision ("block") + reason
+  - hookSpecificOutput: nested object requiring hookEventName, containing
+    event-specific fields like additionalContext, permissionDecision,
+    updatedToolOutput, etc.
 """
 
 import json
@@ -47,47 +54,80 @@ def write_hook_output(
     system_message: Optional[str] = None,
     suppress_output: bool = False,
     stop_reason: Optional[str] = None,
-    hook_event_name: Optional[str] = None
+    hook_event_name: Optional[str] = None,
+    *,
+    permission_decision: Optional[str] = None,
+    permission_decision_reason: Optional[str] = None,
+    updated_input: Optional[Dict] = None,
+    updated_tool_output: Any = None,
+    retry: Optional[bool] = None,
 ) -> None:
-    """Write hook output, following Claude Code hook protocol
+    """Write hook output, following Claude Code hook protocol.
+
+    Builds the correct JSON structure with hookSpecificOutput for event-specific
+    fields.
 
     Args:
-        additional_context: Additional context injection
-        decision: Decision ('block' to prevent execution)
-        reason: Reason for decision
-        system_message: System warning message
-        suppress_output: Whether to suppress output
-        stop_reason: Stop reason (when continue=false)
-        hook_event_name: Hook event name (overrides auto-detection)
+        additional_context: Context string injected into Claude's context window
+        decision: Top-level decision ("block" to block the action)
+        reason: Reason for decision (required when decision is "block")
+        system_message: Warning message shown to the user
+        suppress_output: Whether to suppress output from debug log
+        stop_reason: Message shown to the user when continue is false
+        hook_event_name: Hook event name (auto-detected if not provided)
+        permission_decision: PreToolUse: "allow", "deny", "ask", or "defer"
+        permission_decision_reason: Reason for permission decision
+        updated_input: PreToolUse: modified tool input parameters
+        updated_tool_output: PostToolUse: replacement tool output
+        retry: PermissionDenied: whether the model may retry
     """
-    output = {"hookSpecificOutput": {}}
+    output: Dict[str, Any] = {}
 
-    # Set hook event name - try parameter first, then read from input
+    # Resolve hook event name
     if hook_event_name is None:
         event_name = get_hook_event_name() or os.environ.get("HOOK_EVENT_NAME", "")
     else:
         event_name = hook_event_name
-    output["hookSpecificOutput"]["hookEventName"] = event_name
 
-    # Additional context
-    if additional_context:
-        output["hookSpecificOutput"]["additionalContext"] = additional_context
+    # Build hookSpecificOutput if any event-specific fields are present
+    has_specific_fields = any([
+        additional_context,
+        permission_decision is not None,
+        permission_decision_reason is not None,
+        updated_input is not None,
+        updated_tool_output is not None,
+        retry is not None,
+    ])
 
-    # Decision control
+    if has_specific_fields or event_name:
+        specific = {"hookEventName": event_name}
+
+        if additional_context:
+            specific["additionalContext"] = additional_context
+        if permission_decision is not None:
+            specific["permissionDecision"] = permission_decision
+        if permission_decision_reason is not None:
+            specific["permissionDecisionReason"] = permission_decision_reason
+        if updated_input is not None:
+            specific["updatedInput"] = updated_input
+        if updated_tool_output is not None:
+            specific["updatedToolOutput"] = updated_tool_output
+        if retry is not None:
+            specific["retry"] = retry
+
+        output["hookSpecificOutput"] = specific
+
+    # Top-level decision control
     if decision:
         output["decision"] = decision
         if reason:
             output["reason"] = reason
 
-    # System message
+    # Top-level universal fields
     if system_message:
         output["systemMessage"] = system_message
-
-    # Output control
     if suppress_output:
         output["suppressOutput"] = suppress_output
-
-    # Stop reason
     if stop_reason:
         output["stopReason"] = stop_reason
 

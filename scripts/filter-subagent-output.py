@@ -32,14 +32,7 @@ NO_RESULT_CONTEXT = (
 
 
 def extract_result_blocks(response: str) -> Optional[str]:
-    """Extract result blocks from subagent response
-
-    Args:
-        response: Subagent response text
-
-    Returns:
-        Filtered result blocks or None if not found
-    """
+    """Extract result blocks from subagent response"""
     for pattern in RESULT_PATTERNS:
         matches = re.findall(pattern, response, re.DOTALL)
         if matches:
@@ -50,7 +43,6 @@ def extract_result_blocks(response: str) -> Optional[str]:
 
 def main():
     """Main hook function"""
-    # Read hook input
     input_data = read_hook_input()
     tool_name = input_data.get("tool_name", "")
 
@@ -70,14 +62,14 @@ def main():
     if result:
         write_hook_output(
             hook_event_name="PostToolUse",
-            updated_tool_output=result
+            updated_tool_output=result,
         )
     else:
         # No result block found - provide compact summary
         write_hook_output(
             hook_event_name="PostToolUse",
             updated_tool_output=NO_RESULT_MESSAGE,
-            additional_context=NO_RESULT_CONTEXT
+            additional_context=NO_RESULT_CONTEXT,
         )
 
 

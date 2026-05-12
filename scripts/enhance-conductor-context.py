@@ -1,92 +1,33 @@
 #!/usr/bin/env python3
-"""InstructionsLoaded hook: dynamically enhance conductor context based on loaded file.
+"""InstructionsLoaded hook: log when conductor instruction files are loaded.
 
-Progressive disclosure: inject track-specific info when conductor-core.md loads.
+InstructionsLoaded does not support additionalContext — it fires for
+observability only. This hook logs the load event for audit purposes.
 """
 
-import re
 import sys
 from pathlib import Path
-from typing import Optional
 
 # Add lib directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent / "lib"))
 
-from lib.hook_io import read_hook_input, write_simple_output
-from lib.json_utils import load_json_safe
-
-
-def get_track_context(cwd: Path) -> Optional[str]:
-    """Get active track context for conductor files
-
-    Args:
-        cwd: Current working directory
-
-    Returns:
-        Track context string or None
-    """
-    conductor_dir = cwd / "conductor"
-    if not conductor_dir.exists():
-        return None
-
-    tracks_file = conductor_dir / "tracks.md"
-    if not tracks_file.exists():
-        return None
-
-    try:
-        content = tracks_file.read_text(encoding="utf-8")
-
-        # Find all tracks
-        tracks = re.findall(r'\[([^\]]+)\]\(([^)]+)\)', content)
-
-        active = []
-        for name, path in tracks[:3]:  # Limit to 3 for context
-            state_file = cwd / path / "track-state.json"
-            if state_file.exists():
-                state = load_json_safe(state_file)
-                if state:
-                    status = state.get("status", "unknown")
-                    if status not in ("completed", "archived", "cancelled"):
-                        phase_idx = state.get("current_phase_index", 0)
-                        task_idx = state.get("current_task_index", 0)
-                        active.append(f'- {name}: {status} (P{phase_idx+1}.T{task_idx+1})')
-
-        if active:
-            return "Active tracks:\n" + "\n".join(active)
-
-    except Exception:
-        pass
-
-    return None
+from lib.hook_io import read_hook_input, write_hook_output
+from lib.logging import init_logging, log_entry
 
 
 def main():
     """Main hook function"""
-    # Read hook input
     input_data = read_hook_input()
     file_path = input_data.get("file_path", "")
-    cwd_str = input_data.get("cwd", "")
+    load_reason = input_data.get("load_reason", "")
+    session_id = input_data.get("session_id", "")
 
-    cwd = Path(cwd_str) if cwd_str else Path.cwd()
+    # Log conductor file loads for audit
+    if "conductor" in file_path or "conductor-core" in file_path:
+        log_file = init_logging("enhance-conductor-context")
+        log_entry(log_file, f"session={session_id} file={file_path} reason={load_reason}")
 
-    # Only enhance conductor-related files
-    if "conductor" not in file_path and "conductor-core" not in file_path:
-        write_simple_output()
-        return
-
-    # Get current track context if available
-    track_context = get_track_context(cwd)
-
-    # Inject enhanced context
-    if track_context:
-        context = f"""## Quick Reference
-
-{track_context}
-
-Run /conductor:status for full overview."""
-        write_simple_output(additional_context=context)
-    else:
-        write_simple_output()
+    write_hook_output()
 
 
 if __name__ == "__main__":

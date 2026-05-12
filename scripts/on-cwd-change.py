@@ -11,7 +11,7 @@ from pathlib import Path
 # Add lib directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent / "lib"))
 
-from lib.hook_io import read_hook_input, write_simple_output
+from lib.hook_io import read_hook_input, write_hook_output
 from lib.env import get_data_dir
 from lib.logging import init_logging, log_entry
 
@@ -60,14 +60,14 @@ def main():
         track_count = count_tracks(tracks_file)
 
         if track_count > 0:
-            context = (
+            msg = (
                 f"[Conductor] Switched to project with {track_count} track(s). "
                 "Run /conductor:status for overview."
             )
-            write_simple_output(additional_context=context)
+            write_hook_output(system_message=msg)
             return
 
-    write_simple_output()
+    write_hook_output()
 
 
 if __name__ == "__main__":

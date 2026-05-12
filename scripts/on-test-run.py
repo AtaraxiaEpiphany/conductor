@@ -57,18 +57,21 @@ def has_test_failure(stdout: str, stderr: str, interrupted: bool) -> bool:
     if interrupted:
         return True
 
-    # Check stderr for failure indicators
+    # Precise failure indicators — avoid matching "successfully", "without failure", etc.
     failure_patterns = [
-        r'fail',
-        r'error',
-        r'failed',
-        r'FAILURES',
-        r'FAILED',
+        r'\bFAILED\b',
+        r'\bFAILURES\b',
+        r'\d+\s+failed\b',
+        r'tests?\s+failed\b',
+        r'assertion\s+error',
+        r'test\s+run\s+failed\b',
+        r'runtime\s+error',
     ]
 
-    stderr_lower = stderr.lower()
+    combined = stdout + "\n" + stderr
+    combined_lower = combined.lower()
     for pattern in failure_patterns:
-        if re.search(pattern, stderr_lower):
+        if re.search(pattern, combined_lower):
             return True
 
     return False

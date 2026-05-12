@@ -4,7 +4,7 @@
 1. Verifies track-state.json and plan.md markers are consistent.
 2. Writes session handoff file for next session recovery.
 Returns additionalContext with warning if inconsistencies found.
-Non-blocking — only warns, does not halt.
+Non-blocking -- only warns, does not halt.
 """
 
 import json
@@ -18,20 +18,13 @@ from typing import Optional
 # Add lib directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent / "lib"))
 
-from lib.hook_io import read_hook_input, write_simple_output
+from lib.hook_io import read_hook_input, write_hook_output
 from lib.json_utils import load_json_safe
 from lib.env import get_data_dir
 
 
 def find_stale_in_progress_tasks(state_file: Path) -> list[str]:
-    """Find stale in_progress tasks in state file
-
-    Args:
-        state_file: Path to track-state.json
-
-    Returns:
-        List of stale task descriptions
-    """
+    """Find stale in_progress tasks in state file"""
     state = load_json_safe(state_file)
     if not state:
         return []
@@ -42,7 +35,6 @@ def find_stale_in_progress_tasks(state_file: Path) -> list[str]:
             if task.get("status") == "in_progress":
                 name = task.get("name", "")
                 stale.append(f'Phase {pi+1} Task {ti+1}: {name}')
-            # Check subtasks
             for si, sub in enumerate(task.get("subtasks", [])):
                 if sub.get("status") == "in_progress":
                     name = sub.get("name", "")
@@ -52,14 +44,7 @@ def find_stale_in_progress_tasks(state_file: Path) -> list[str]:
 
 
 def get_track_handoff_info(state_file: Path) -> Optional[str]:
-    """Get handoff information for active track
-
-    Args:
-        state_file: Path to track-state.json
-
-    Returns:
-        Handoff info string or None if track is inactive
-    """
+    """Get handoff information for active track"""
     state = load_json_safe(state_file)
     if not state:
         return None
@@ -67,7 +52,6 @@ def get_track_handoff_info(state_file: Path) -> Optional[str]:
     status = state.get("status", "unknown")
     track_id = state.get("track_id", "unknown")
 
-    # Only include active tracks
     if status in ("completed", "archived", "cancelled"):
         return None
 
@@ -79,14 +63,7 @@ def get_track_handoff_info(state_file: Path) -> Optional[str]:
 
 
 def extract_track_dirs(tracks_file: Path) -> list[str]:
-    """Extract track directories from tracks.md
-
-    Args:
-        tracks_file: Path to tracks.md
-
-    Returns:
-        List of track directory paths
-    """
+    """Extract track directories from tracks.md"""
     if not tracks_file.exists():
         return []
 
@@ -96,12 +73,7 @@ def extract_track_dirs(tracks_file: Path) -> list[str]:
 
 
 def write_session_handoff(data_dir: Path, handoff_data: str) -> None:
-    """Write session handoff file
-
-    Args:
-        data_dir: Data directory
-        handoff_data: Handoff data to write
-    """
+    """Write session handoff file"""
     handoff_file = data_dir / "session-handoff.md"
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -113,31 +85,25 @@ def write_session_handoff(data_dir: Path, handoff_data: str) -> None:
 
         handoff_file.write_text(handoff_content, encoding="utf-8")
     elif handoff_file.exists():
-        # Clean up stale handoff if no active tracks
         handoff_file.unlink()
 
 
 def main():
     """Main hook function"""
-    # Read hook input
     input_data = read_hook_input()
     cwd_str = input_data.get("cwd", "")
     cwd = Path(cwd_str) if cwd_str else Path.cwd()
 
-    # Get data directory
     data_dir = get_data_dir()
     data_dir.mkdir(parents=True, exist_ok=True)
 
     issues = []
     handoff_data = ""
 
-    # Check for conductor directory
-    conductor_dir = cwd / "conductor"
-    if conductor_dir.exists():
-        # Look for tracks registry
-        tracks_file = conductor_dir / "tracks.md"
+    conductor_directory = cwd / "conductor"
+    if conductor_directory.exists():
+        tracks_file = conductor_directory / "tracks.md"
         if tracks_file.exists():
-            # Extract track dirs from registry
             track_dirs = extract_track_dirs(tracks_file)
 
             for track_dir in track_dirs:
@@ -146,7 +112,6 @@ def main():
                 plan_file = full_dir / "plan.md"
 
                 if state_file.exists() and plan_file.exists():
-                    # Check for stale in_progress tasks
                     stale_locks = find_stale_in_progress_tasks(state_file)
                     if stale_locks:
                         stale_str = "; ".join(stale_locks)
@@ -154,7 +119,6 @@ def main():
                             f"[Conductor] Stale in_progress tasks found in {track_dir}: {stale_str}. "
                         )
 
-                    # Collect handoff data
                     track_info = get_track_handoff_info(state_file)
                     if track_info:
                         handoff_data += track_info + "\n"
@@ -162,14 +126,16 @@ def main():
     # Write session handoff file
     write_session_handoff(data_dir, handoff_data)
 
-    # Output result
+    # Output result — auto-detect event name (Stop or SubagentStop after auto-convert)
     if issues:
         msg = "".join(issues)
         msg += "Consider running /conductor:implement to recover state, or /conductor:status to inspect."
-        # Stop hook should not return hookSpecificOutput
-        print(json.dumps({"additionalContext": msg}, ensure_ascii=False))
+        write_hook_output(
+            additional_context=msg,
+            system_message=msg,
+        )
     else:
-        print(json.dumps({}, ensure_ascii=False))
+        write_hook_output()
 
 
 if __name__ == "__main__":

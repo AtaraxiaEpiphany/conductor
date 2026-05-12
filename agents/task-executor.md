@@ -12,12 +12,6 @@ hooks:
       hooks:
         - type: command
           command: "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/on-test-run.py\""
-  PreCompact:
-    - matcher: "auto"
-    - hooks:
-        - type: command
-          command: "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/on-compact.py\""
-          timeout: 5
 ---
 
 # Conductor Task Executor

@@ -4,7 +4,6 @@
 Runs on session termination: clear, resume, logout, prompt_input_exit, bypass_permissions_disabled, other.
 """
 
-import json
 import os
 import re
 import sys
@@ -181,22 +180,9 @@ def main():
     # 4. Validate .data/ directory structure
     ensure_data_structure(data_dir, log_dir / "cleanup.log")
 
-    # 5. Emit session summary
-    session_metrics_file = log_dir / "session-metrics.log"
-    if session_metrics_file.exists():
-        try:
-            recent_lines = session_metrics_file.read_text(encoding="utf-8").strip().split("\n")
-            summary_count = min(5, len(recent_lines))
-            if summary_count > 0:
-                summary = f"[Conductor] Session ended. {summary_count} recent sessions logged."
-                # SessionEnd hook - return simple JSON
-                print(json.dumps({"additionalContext": summary}, ensure_ascii=False))
-                return
-        except Exception:
-            pass
-
-    # Default output
-    print(json.dumps({}, ensure_ascii=False))
+    # SessionEnd has no decision control and does not support additionalContext.
+    # Only side effects (cleanup, logging) are meaningful here.
+    write_hook_output(hook_event_name="SessionEnd")
 
 
 if __name__ == "__main__":

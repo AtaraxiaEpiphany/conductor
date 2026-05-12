@@ -2,7 +2,7 @@
 """PreToolUse hook: real-time state protection for git and track-state operations.
 
 Validates commands before execution, blocks suspicious operations.
-Exit 2 = block with reason. Exit 0 = allow.
+Uses hookSpecificOutput.permissionDecision per the Claude Code hook protocol.
 """
 
 import json
@@ -24,14 +24,7 @@ from lib.validation import is_dangerous_git_operation, contains_dangerous_patter
 
 
 def has_in_progress_task(state_file: Path) -> bool:
-    """Check if state file has in_progress tasks
-
-    Args:
-        state_file: Path to track-state.json
-
-    Returns:
-        True if has in_progress tasks
-    """
+    """Check if state file has in_progress tasks"""
     state = load_json_safe(state_file)
     if not state:
         return False
@@ -40,7 +33,6 @@ def has_in_progress_task(state_file: Path) -> bool:
         for task in phase.get("tasks", []):
             if task.get("status") == "in_progress":
                 return True
-            # Check subtasks
             for sub in task.get("subtasks", []):
                 if sub.get("status") == "in_progress":
                     return True
@@ -49,20 +41,11 @@ def has_in_progress_task(state_file: Path) -> bool:
 
 
 def find_track_state_violations(cwd: Path, command: str) -> list[str]:
-    """Find tracks with state lock violations
-
-    Args:
-        cwd: Current working directory
-        command: Command to check
-
-    Returns:
-        List of violation messages
-    """
+    """Find tracks with state lock violations"""
     tracks_file = cwd / "conductor" / "tracks.md"
     if not tracks_file.exists():
         return []
 
-    # Extract track directories from tracks.md
     content = tracks_file.read_text(encoding="utf-8")
     dirs = re.findall(r'\[.*?\]\(([^)]+)\)', content)
 
@@ -74,15 +57,9 @@ def find_track_state_violations(cwd: Path, command: str) -> list[str]:
         if not state_file.exists():
             continue
 
-        state = load_json_safe(state_file)
-        if not state:
-            continue
-
-        # Check for in_progress tasks
         has_in_progress = has_in_progress_task(state_file)
 
         if has_in_progress:
-            # Check for dangerous operations during in_progress
             if 'rm ' in cmd_lower or 'delete' in cmd_lower:
                 violations.append(f'{d}: in_progress task + deletion command')
             elif ' mv ' in cmd_lower or 'move' in cmd_lower:
@@ -92,14 +69,7 @@ def find_track_state_violations(cwd: Path, command: str) -> list[str]:
 
 
 def is_direct_track_state_modification(command: str) -> bool:
-    """Check if command directly modifies track-state.json
-
-    Args:
-        command: Command to check
-
-    Returns:
-        True if directly modifies track-state.json
-    """
+    """Check if command directly modifies track-state.json"""
     patterns = [
         r'(rm|mv|git\s+rm).*track-state\.json',
         r'sed.*track-state',
@@ -113,7 +83,6 @@ def is_direct_track_state_modification(command: str) -> bool:
 
 def main():
     """Main hook function"""
-    # Read hook input
     input_data = read_hook_input()
     tool_name = input_data.get("tool_name", "")
     cwd_str = input_data.get("cwd", "")
@@ -130,7 +99,6 @@ def main():
 
     # Check for dangerous git operations
     if is_dangerous_git_operation(command):
-        # Extract the operation name
         match = re.search(r'git\s+(reset|rebase|clean|filter-branch)', command, re.IGNORECASE)
         operation = match.group(1) if match else "history-modifying"
 
@@ -139,17 +107,16 @@ def main():
             f'This may break state consistency. Run /conductor:revert if needed.'
         )
         permission_reason = (
-            'Git history-modifying operations can break conductor state tracking. '
-            'Confirm with /conductor:revert workflow instead.'
+            f'Git history-modifying operation ({operation}) detected. '
+            'Use /conductor:revert workflow instead.'
         )
 
         write_hook_output(
             hook_event_name="PreToolUse",
             additional_context=additional_context,
-            permissionDecision="ask",
-            reason=permission_reason
+            permission_decision="ask",
+            permission_decision_reason=permission_reason,
         )
-        # Should not reach here due to sys.exit in write_hook_output
 
     # Check for track-state lock violations
     if 'track-state' in command.lower():
@@ -168,10 +135,9 @@ def main():
             write_hook_output(
                 hook_event_name="PreToolUse",
                 additional_context=additional_context,
-                permissionDecision="ask",
-                reason=permission_reason
+                permission_decision="ask",
+                permission_decision_reason=permission_reason,
             )
-            # Should not reach here
 
     # Check for direct modifications to track-state.json
     if is_direct_track_state_modification(command):
@@ -187,10 +153,9 @@ def main():
         write_hook_output(
             hook_event_name="PreToolUse",
             additional_context=additional_context,
-            permissionDecision="ask",
-            reason=permission_reason
+            permission_decision="ask",
+            permission_decision_reason=permission_reason,
         )
-        # Should not reach here
 
     # Allow all other commands
     write_hook_output(hook_event_name="PreToolUse")

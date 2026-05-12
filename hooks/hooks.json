@@ -2,7 +2,7 @@
   "hooks": {
     "InstructionsLoaded": [
       {
-        "matcher": "conductor",
+        "matcher": "session_start|include",
         "hooks": [
           {
             "type": "command",
@@ -18,7 +18,7 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/on-batch-complete.py\"",
-            "timeout": 3
+            "timeout": 35
           }
         ]
       }
@@ -55,6 +55,11 @@
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/filter-subagent-output.py\"",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/on-subagent-result.py\"",
+            "timeout": 5
           }
         ]
       },
@@ -88,8 +93,7 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/on-subagent-stop.py\"",
-            "asyncRewake": true,
-            "timeout": 30
+            "timeout": 10
           }
         ]
       },
@@ -142,7 +146,7 @@
     ],
     "ConfigChange": [
       {
-        "matcher": "hooks|project_settings",
+        "matcher": "project_settings|skills",
         "hooks": [
           {
             "type": "command",

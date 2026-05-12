@@ -102,7 +102,8 @@ def validate_track_state(state: Dict) -> tuple[bool, Optional[str]]:
     Returns:
         Tuple of (is_valid, error_message)
     """
-    required_fields = ["track_name", "status", "phase", "task"]
+    required_fields = ["track_id", "type", "status", "description", "current_phase_index",
+                       "current_task_index", "updated_at", "phases"]
     return validate_json_structure(state, required_fields)
 
 
