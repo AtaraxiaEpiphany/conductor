@@ -310,6 +310,15 @@ def _do_complete(track_dir, p, t, s=None, sha=None):
             if sub["status"] not in TERMINAL_STATUSES:
                 sub["status"] = "completed"
                 sub["completed_at"] = now_iso()
+                sub["commit_sha"] = resolved_sha
+
+    # Update current indices so recovery always points to the latest state
+    state["current_phase_index"] = pi
+    state["current_task_index"] = ti
+    if si is not None:
+        state["current_subtask_index"] = si
+    else:
+        state.pop("current_subtask_index", None)
 
     state["updated_at"] = now_iso()
     save(track_dir, state)
@@ -337,6 +346,14 @@ def _do_fail(track_dir, p, t, s=None, summary=""):
     tgt["last_failure_summary"] = summary
     clean(tgt, {"status", "retry_count", "last_failure_summary"})
 
+    # Update current indices so recovery always points to the latest state
+    state["current_phase_index"] = pi
+    state["current_task_index"] = ti
+    if si is not None:
+        state["current_subtask_index"] = si
+    else:
+        state.pop("current_subtask_index", None)
+
     state["updated_at"] = now_iso()
     save(track_dir, state)
     return tgt["retry_count"]
@@ -355,6 +372,14 @@ def _do_skip(track_dir, p, t, s=None, reason=""):
     if si is None:
         _propagate_to_subtasks(tgt, "skipped", "skip_analysis", reason)
 
+    # Update current indices so recovery always points to the latest state
+    state["current_phase_index"] = pi
+    state["current_task_index"] = ti
+    if si is not None:
+        state["current_subtask_index"] = si
+    else:
+        state.pop("current_subtask_index", None)
+
     state["updated_at"] = now_iso()
     save(track_dir, state)
 
@@ -371,6 +396,14 @@ def _do_block(track_dir, p, t, s=None, reason=""):
 
     if si is None:
         _propagate_to_subtasks(tgt, "blocked", "skip_analysis", reason)
+
+    # Update current indices so recovery always points to the latest state
+    state["current_phase_index"] = pi
+    state["current_task_index"] = ti
+    if si is not None:
+        state["current_subtask_index"] = si
+    else:
+        state.pop("current_subtask_index", None)
 
     state["updated_at"] = now_iso()
     save(track_dir, state)
@@ -396,6 +429,14 @@ def _do_defer(track_dir, p, t, s=None, reason=""):
             parent_deferred = True
     elif si is None:
         _propagate_to_subtasks(tgt, "deferred", "defer_reason", reason)
+
+    # Update current indices so recovery always points to the latest state
+    state["current_phase_index"] = pi
+    state["current_task_index"] = ti
+    if si is not None:
+        state["current_subtask_index"] = si
+    else:
+        state.pop("current_subtask_index", None)
 
     state["updated_at"] = now_iso()
     save(track_dir, state)
@@ -1036,11 +1077,11 @@ def cmd_recover(track_dir, compact=False):
         execution_mode=state.get("execution_mode", "interactive"),
     )
 
-    # Check if we need to resume a phase checkpoint (only for terminal task states)
-    if tgt.get("status") in ("completed", "skipped", "cancelled"):
-        checkpoint_pending = _phase_needs_checkpoint(track_dir, state, pi)
-        if checkpoint_pending is not None:
-            result["phase_checkpoint_pending"] = checkpoint_pending
+    # Check if any phase needs a checkpoint — scan ALL phases, not just current.
+    # This ensures missed checkpoints from interrupted sessions are always recovered.
+    checkpoint_pending = _any_phase_needs_checkpoint(track_dir, state)
+    if checkpoint_pending is not None:
+        result["phase_checkpoint_pending"] = checkpoint_pending
 
     if compact:
         out_compact(result)
@@ -1227,6 +1268,8 @@ def cmd_finalize(track_dir):
 
     if "blocked" in statuses:
         state["status"] = "blocked"
+    elif "failed" in statuses:
+        state["status"] = "failed"
     elif all(s in ("completed", "skipped", "deferred") for s in statuses):
         state["status"] = "completed"
     else:
@@ -1332,13 +1375,37 @@ def cmd_gc(track_dir):
     fixes = []
 
     # Clean orphaned result.json files (left from crashed sessions)
+    # Only remove if no task is currently in_progress (i.e., no active processing)
     result_file = cond_dir / "result.json"
     if result_file.exists():
-        result_file.unlink()
-        fixes.append("Removed orphaned .conductor/result.json")
+        has_active = False
+        try:
+            state = load(track_dir)
+            for phase in state.get("phases", []):
+                for task in phase.get("tasks", []):
+                    if task.get("status") == "in_progress":
+                        has_active = True
+                        break
+                    for sub in task.get("subtasks", []):
+                        if sub.get("status") == "in_progress":
+                            has_active = True
+                            break
+                if has_active:
+                    break
+        except (FileNotFoundError, json.JSONDecodeError):
+            pass
+        if not has_active:
+            result_file.unlink()
+            fixes.append("Removed orphaned .conductor/result.json")
+        else:
+            fixes.append("Skipped .conductor/result.json (active task may be processing it)")
 
     # Detect stale in_progress tasks (older than 24h)
-    state = load(track_dir)
+    try:
+        if state is None:
+            state = load(track_dir)
+    except NameError:
+        state = load(track_dir)
     now = datetime.now(timezone.utc)
     updated = datetime.fromisoformat(state.get("updated_at", now.isoformat()))
     age_hours = (now - updated).total_seconds() / 3600
