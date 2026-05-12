@@ -51,6 +51,11 @@
 | [Interaction Reference](developer/reference/INTERACTION_REFERENCE.md) | Complete interaction reference |
 | [track-state CLI](developer/reference/track-state-cli.md) | Complete CLI command reference |
 | [Git Notes Audit](developer/reference/git-notes.md) | Audit system and query tools |
+| [Hooks Reference](developer/reference/hooks-reference.md) | Hook scripts, I/O protocol, shared library API |
+| [Agents Reference](developer/reference/agents-reference.md) | Subagent definitions, dispatch patterns, result formats |
+| [Skills Reference](developer/reference/skills-reference.md) | Orchestrator skills, execution workflows, state management |
+| [Plugins Reference](developer/reference/plugins-reference.md) | Manifest, directory structure, CLI management |
+| [Harness Engineering](developer/reference/harness-engineering.md) | Anthropic/OpenAI/Martin Fowler best practices |
 
 ---
 
@@ -101,8 +106,8 @@ conductor-plugin/
 |-----------|--------|-------------|
 | **Skills** | 6 | User command interfaces: setup, implement, newTrack, status, review, revert |
 | **Subagents** | 9 | Specialized execution agents |
-| **Hooks** | 10+ | Lifecycle event handlers |
+| **Hooks** | 10 | Lifecycle event handlers (8 event types) |
 
 ---
 
-**Last Updated**: 2026-05-11
+**Last Updated**: 2026-05-12

@@ -38,7 +38,7 @@ Conductor is a Claude Code plugin built on **Spec-Driven Development** and **Sub
 
 ## Hooks System
 
-Conductor uses Claude Code's hook system for lifecycle automation. Hooks are configured in `hooks/hooks.json`.
+Conductor uses Claude Code's hook system for lifecycle automation. Hooks are configured in `hooks/hooks.json` — 8 event types with 10 hook registrations.
 
 ### Hook Events
 
@@ -49,8 +49,11 @@ Conductor uses Claude Code's hook system for lifecycle automation. Hooks are con
 | `PreToolUse` (Bash) | `pre-command-check` | Block dangerous git ops, enforce state lock |
 | `PostToolBatch` | `on-batch-complete` | Batch-level validation after parallel tool calls |
 | `PostToolUse` (Agent) | `filter-subagent-output` | Filter subagent output for context pressure; failure/recovery detection |
-| `SubagentStart` | `on-subagent-start` | Inject role-specific execution reminders |
+| `PostToolUse` (Bash) | `on-test-run` | Test execution monitoring with precise pattern detection |
+| `SubagentStart` | `on-subagent-start` | Inject result-format reminders |
 | `SubagentStop` | `on-subagent-stop` | Lifecycle logging; `asyncRewake` for critical agents |
+| `PreCompact` | `on-compact` | Context compression priority guidance |
+| `Stop` | `state-consistency-check` | State consistency guard (stale lock detection) |
 
 ### Subagent Stop Priority
 
@@ -95,7 +98,7 @@ Complete documentation is organized by audience:
 |----------|----------|----------|
 | **Users** | `docs/user/` | Getting Started, User Guide, Commands, Troubleshooting |
 | **Reference** | `docs/reference/` | Hook Reference, Subagent Reference, CLI Reference, Quality Gates, Git Notes, Harness Engineering |
-| **Developers** | `developer/` | Architecture Overview, Interaction Mechanism, Interaction Flow, State Model, Extending Hooks |
+| **Developers** | `developer/` | Architecture Overview, Interaction Mechanism, Interaction Flow, State Model, Extending Hooks, Hook/Agent/Skill/Plugin References, Harness Engineering |
 | **Runtime** | `runtime/` | Core Contract, Orchestration Specification, Reference Paths |
 
 For a complete index, see [INDEX.md](INDEX.md).
@@ -209,7 +212,7 @@ conductor-plugin/
 │   └── doc-syncer.md                  #   Project documentation sync
 │
 ├── hooks/
-│   └── hooks.json                     # Hook event configurations (10 hook types)
+│   └── hooks.json                     # Hook event configurations (8 events, 10 hook types)
 │
 ├── monitors/
 │   └── monitors.json                  # Background monitor definitions
@@ -218,13 +221,14 @@ conductor-plugin/
 ├── scripts/                           # Hook & utility scripts
 │   ├── session-start                  #   SessionStart hook (injects runtime/core-contract.md)
 │   ├── session-end                    #   SessionEnd hook (cleanup, handoff validation, metrics)
-│   ├── on-subagent-start              #   SubagentStart hook (injects agent reminders)
+│   ├── on-subagent-start              #   SubagentStart hook (injects result-format reminders)
 │   ├── on-subagent-stop               #   SubagentStop hook (lifecycle logging, asyncRewake for critical agents)
 │   ├── filter-subagent-output         #   PostToolUse hook (output filtering + failure/recovery detection)
-│   ├── on-test-run                    #   PostToolUse hook for test monitoring
-│   ├── on-batch-complete              #   PostToolBatch hook (batch-level validation)
+│   ├── on-test-run                    #   PostToolUse hook for test monitoring (precise regex patterns)
+│   ├── on-batch-complete              #   PostToolBatch hook (batch-level validation, F3 coverage gate)
+│   ├── on-compact                     #   PreCompact hook (context compression priority)
 │   ├── pre-command-check              #   PreToolUse hook (blocks dangerous git ops, state lock violations)
-│   ├── state-consistency-check        #   implement Stop hook (detects stale locks)
+│   ├── state-consistency-check        #   Stop hook (detects stale locks)
 │   ├── git-notes-query                #   Query tool for audit data
 │   ├── track-state                    #   State management CLI (Python 3)
 │       # Commands: next, recover, lock, complete,

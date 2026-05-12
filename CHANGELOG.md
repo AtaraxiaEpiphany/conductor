@@ -8,6 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Comprehensive developer reference documentation** ([6c88fdc](https://github.com/anthropics/conductor-plugin/commit/6c88fdc))
+  - `developer/reference/hooks-reference.md`: 17 hook scripts, I/O protocol, shared library API, testing and debugging guides
+  - `developer/reference/plugins-reference.md`: manifest, directory structure, 6 skills, 9 agents, environment variables, CLI management
+  - `developer/reference/agents-reference.md`: 9 subagent definitions, frontmatter config, dispatch patterns, result formats, failure recovery
+  - `developer/reference/skills-reference.md`: 6 orchestrator skills, execution workflows, agent dispatch mapping, state management
+- **Harness engineering reference** ([db222cb](https://github.com/anthropics/conductor-plugin/commit/db222cb))
+  - Moved `harness-engineering.md` from gitignored local-only to tracked developer reference
+  - Consolidates Anthropic/OpenAI/Martin Fowler harness engineering best practices
+
 - **Documentation reorganization** ([ebcbec3](https://github.com/anthropics/conductor-plugin/commit/ebcbec3))
   - Restructured documentation based on audience segmentation
   - New directory structure: `docs/user/`, `docs/reference/`, `developer/`, `runtime/`
@@ -32,6 +41,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Hook system streamlined for reduced context pressure** ([7be594c](https://github.com/anthropics/conductor-plugin/commit/7be594c))
+  - Removed 5 redundant hooks: enhance-conductor-context, on-task-event, on-config-change, on-cwd-change, on-subagent-result
+  - Merged on-subagent-result failure/recovery detection into filter-subagent-output
+  - Extracted shared `FAILURE_PATTERNS` to `lib/constants.py` for single-source truth
+  - Fixed test command detection in on-test-run: precise regex patterns replace broad substring match
+  - Trimmed SubagentStart reminders to result-format delimiters only
+  - Added `track-state write-result` CLI for atomic result.json writes
+  - Repurposed task-executor Step Log as Interruption Log (only writes on failure/interruption)
+  - Hooks registration reduced from 14 to 8 events; net change: -754 lines, +207 lines
+- **Code quality improvements and hook timeout safety** ([1a6b239](https://github.com/anthropics/conductor-plugin/commit/1a6b239))
+  - Improved regex precision: word boundaries for extract_tags() and phase matching patterns
+  - Removed unused imports across 9 hook scripts
+  - Added timeout settings to code-reviewer and phase-checker Stop hooks
 - **All hooks migrated from Bash to pure Python** ([7158b06](https://github.com/anthropics/conductor-plugin/commit/7158b06), [785a2bb](https://github.com/anthropics/conductor-plugin/commit/785a2bb))
   - 18 scripts converted from Bash to Python with shebang `#!/usr/bin/env python3`
   - Eliminated 40% duplicate code through shared library architecture
@@ -46,6 +68,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     - `path_utils.py`: Path and directory operations
     - `validation.py`: Validation functions
     - `git_utils.py`: Git operation utilities
+
+### Fixed
+
+- **Comprehensive hook protocol compliance audit** ([f6e31fe](https://github.com/anthropics/conductor-plugin/commit/f6e31fe))
+  - Rewrote `hook_io.py` to support hookSpecificOutput with all event-specific fields (permissionDecision, updatedToolOutput, additionalContext, retry)
+  - Fixed pre-command-check.py TypeError that bypassed security checks for dangerous git operations
+  - Fixed filter-subagent-output.py TypeError that prevented subagent output filtering
+  - Fixed state-consistency-check.py hardcoded hookEventName breaking SubagentStop auto-convert
+  - Redesigned on-subagent-stop.py: use decision:"block" + reason for subagent self-recovery
+  - Fixed on-test-run.py overly broad failure patterns (r'fail' matched "successfully")
+  - Fixed hooks.json: InstructionsLoaded matcher, PostToolBatch timeout, ConfigChange matcher
+  - Fixed validation.py wrong field names in validate_track_state
+  - Fixed track-state: stack overflow from recursive dispatch, stale state reads, IndexError in _safe_task_name
+- **HookSpecificOutput omission for observability-only events** ([f07cce9](https://github.com/anthropics/conductor-plugin/commit/f07cce9))
+  - write_hook_output previously generated hookSpecificOutput whenever event name was present, causing JSON validation failures
+  - Now only emits hookSpecificOutput when actual event-specific fields are provided
+- **Harness engineering reliability issues** ([a6f9674](https://github.com/anthropics/conductor-plugin/commit/a6f9674))
+  - Added file locking to track-state load/save for concurrent access safety
+  - Added server-side coverage verification to on-batch-complete.py (F3 gate)
+  - Improved subagent failure detection with context-aware pattern matching
+  - Replaced bare except Exception blocks with specific exception types
+  - Updated task-executor.md with atomic result.json write pattern
+- **Gitignore pattern scope** ([92cda8f](https://github.com/anthropics/conductor-plugin/commit/92cda8f))
+  - Changed broad `lib/` pattern to `/lib/` to prevent `scripts/lib/` from being ignored
 
 ### Added
 
