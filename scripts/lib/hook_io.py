@@ -99,7 +99,7 @@ def write_hook_output(
         retry is not None,
     ])
 
-    if has_specific_fields or event_name:
+    if has_specific_fields:
         specific = {"hookEventName": event_name}
 
         if additional_context:
@@ -147,12 +147,7 @@ def write_simple_output(additional_context: Optional[str] = None) -> None:
     Args:
         additional_context: Additional context
     """
-    if additional_context:
-        write_hook_output(additional_context=additional_context)
-    else:
-        event_name = get_hook_event_name() or os.environ.get("HOOK_EVENT_NAME", "")
-        print(json.dumps({"hookSpecificOutput": {"hookEventName": event_name}}, ensure_ascii=False))
-        sys.exit(0)
+    write_hook_output(additional_context=additional_context)
 
 
 def write_decision_block(reason: str) -> None:
