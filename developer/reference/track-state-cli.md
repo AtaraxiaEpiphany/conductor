@@ -2,7 +2,7 @@
 title: track-state CLI Reference
 audience: reference
 status: stable
-last_updated: 2026-05-11
+last_updated: 2026-05-12
 related:
   - ../developer/architecture/state-model.md
   - commands/implement.md
@@ -53,7 +53,7 @@ track-state next <track-dir>
 
 ### recover
 
-Get recovery context for current task.
+Get recovery context for current task. Scans ALL phases for missing checkpoints.
 
 ```bash
 track-state recover <track-dir>
@@ -73,6 +73,10 @@ track-state recover <track-dir>
 }
 ```
 
+**Behavior notes**:
+- Current indices (`current_phase_index`/`current_task_index`) are updated by all state transition commands (`lock`, `complete`, `fail`, `skip`, `block`, `defer`), ensuring recovery always points to the latest task
+- `phase_checkpoint_pending` scans ALL phases for missing checkpoints, not just the current phase — this ensures interrupted phase-checker dispatches are recovered regardless of which task the indices point to
+
 ---
 
 ### lock
@@ -89,7 +93,7 @@ track-state lock <track-dir> <phase> <task> [subtask]
 
 ### complete
 
-Set task to completed and check parent completion.
+Set task to completed and check parent completion. Updates current indices.
 
 ```bash
 track-state complete <track-dir> <phase> <task> [subtask] --sha <sha>
@@ -102,6 +106,10 @@ track-state complete <track-dir> <phase> <task> [subtask] --sha <sha>
   "parent_completed": false
 }
 ```
+
+**Behavior notes**:
+- Auto-completes remaining non-terminal subtasks when completing a parent task directly, inheriting the parent's resolved SHA
+- Updates `current_phase_index`/`current_task_index`/`current_subtask_index` for recovery tracking
 
 ---
 
@@ -306,6 +314,11 @@ track-state finalize <track-dir>
 }
 ```
 
+**Status determination**:
+- `blocked` if any task has `blocked` status
+- `failed` if any task has `failed` status
+- `completed` otherwise
+
 **Quality Score Weights**:
 - Completion: 40%
 - Checklist verification: 30%
@@ -498,4 +511,4 @@ track-state checklist-verify <track-dir>
 
 ---
 
-**Last Updated**: 2026-05-11
+**Last Updated**: 2026-05-12

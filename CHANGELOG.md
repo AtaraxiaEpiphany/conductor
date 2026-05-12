@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Interrupt recovery: stale current indices after state transitions** ([699798f](https://github.com/anthropics/conductor-plugin/commit/699798f))
+  - `_do_complete`, `_do_defer`, `_do_skip`, `_do_block`, `_do_fail` now update `current_phase_index`/`current_task_index`/`current_subtask_index` so recovery always points to the latest task
+  - Previously only `_do_lock` updated indices, causing recovery to target stale positions after defer/complete/skip/block/fail
+- **Interrupt recovery: checkpoint detection scans ALL phases** ([699798f](https://github.com/anthropics/conductor-plugin/commit/699798f))
+  - `cmd_recover` now calls `_any_phase_needs_checkpoint` instead of `_phase_needs_checkpoint(pi)` — checks every phase for missing checkpoints, not just the current one
+  - Previously only checked when current task status was `completed`/`skipped`/`cancelled`, missing `deferred`/`blocked`/`failed` states
+- **Auto-completed subtasks inherit parent commit SHA** ([699798f](https://github.com/anthropics/conductor-plugin/commit/699798f))
+  - `_do_complete` now sets `commit_sha` on auto-completed subtasks via `resolved_sha`
+- **`cmd_finalize` correctly sets `failed` status** ([699798f](https://github.com/anthropics/conductor-plugin/commit/699798f))
+  - Previously fell through to `"completed"` even when `failed` tasks existed
+- **`cmd_gc` guards result.json against active-task race** ([699798f](https://github.com/anthropics/conductor-plugin/commit/699798f))
+  - Only deletes orphaned `result.json` when no task is `in_progress`
+
 ### Added
 
 - **Comprehensive developer reference documentation** ([6c88fdc](https://github.com/anthropics/conductor-plugin/commit/6c88fdc))

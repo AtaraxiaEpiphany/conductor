@@ -2,7 +2,7 @@
 title: State Model
 audience: developer
 status: stable
-last_updated: 2026-05-11
+last_updated: 2026-05-12
 related:
   - overview.md
   - ../../reference/track-state-cli.md
@@ -45,11 +45,11 @@ Conductor uses a hierarchical state model with three levels:
 │ archived │              │
 └──────────┘              │
                          │
-      ┌────────────────────┴──────────────────┐
-      ▼                                    ▼
-┌──────────┐                         ┌──────────┐
-│ blocked  │                         │ cancelled │
-└──────────┘                         └──────────┘
+      ┌────────────────────┬──────────────────┐
+      ▼                    ▼                  ▼
+┌──────────┐         ┌──────────┐       ┌──────────┐
+│ blocked  │         │  failed  │       │ cancelled │
+└──────────┘         └──────────┘       └──────────┘
 ```
 
 ### Status Definitions
@@ -59,6 +59,7 @@ Conductor uses a hierarchical state model with three levels:
 | `new` | Track created, not yet started | - |
 | `in_progress` | Track actively being implemented | `new`, `blocked` (human reset) |
 | `completed` | All tasks finished, review done | `in_progress` |
+| `failed` | One or more tasks failed (non-recoverable) | `in_progress` (via `finalize`) |
 | `archived` | Track archived for reference | `completed` |
 | `blocked` | Track has unresolvable blockers | `in_progress` |
 | `cancelled` | Track cancelled | `in_progress`, `blocked` |
@@ -306,10 +307,27 @@ SessionStart Hook loads session-handoff.md
     ↓
 track-state recover detects stale locks
     ↓
-User prompted to recover or clean
+cmd_recover scans ALL phases for missing checkpoints
+    ↓
+If phase_checkpoint_pending → dispatch phase-checker
     ↓
 Session resumed from handoff
 ```
+
+### Current Index Tracking
+
+All state transition commands update `current_phase_index` / `current_task_index` / `current_subtask_index`:
+
+| Command | Updates Indices | Notes |
+|---------|----------------|-------|
+| `lock` | Yes | Sets indices to locked task |
+| `complete` | Yes | Sets indices to completed task |
+| `fail` | Yes | Sets indices to failed task |
+| `skip` | Yes | Sets indices to skipped task |
+| `block` | Yes | Sets indices to blocked task |
+| `defer` | Yes | Sets indices to deferred task |
+
+This ensures recovery always targets the most recent state, even after deferred manual tasks or auto-completed parents.
 
 ---
 
@@ -321,4 +339,4 @@ Session resumed from handoff
 
 ---
 
-**Last Updated**: 2026-05-11
+**Last Updated**: 2026-05-12
