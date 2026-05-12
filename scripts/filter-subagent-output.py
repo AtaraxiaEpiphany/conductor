@@ -8,6 +8,7 @@ Two responsibilities merged into a single hook to avoid duplicate processing:
 Previously split across filter-subagent-output.py and on-subagent-result.py.
 """
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -83,6 +84,10 @@ def main():
         return
 
     response = input_data.get("tool_response", "")
+    if isinstance(response, dict):
+        response = response.get("result") or json.dumps(response, ensure_ascii=False)
+    elif not isinstance(response, str):
+        response = str(response) if response else ""
     if not response:
         write_hook_output()
         return
