@@ -212,6 +212,8 @@ Uses `lib/validation.py`: `is_dangerous_git_operation()`, `contains_dangerous_pa
 1. Extracts only `---RESULT---` delimited blocks from subagent output, discarding narrative/thinking text to reduce context pressure in the parent session.
 2. Detects failure indicators in subagent output and injects recovery context into the parent session (merged from the former `on-subagent-result.py`).
 
+**Type handling**: `tool_response` may be a dict (structured Agent output) or a string. The hook coerces dicts to strings by extracting the `"result"` key if present, otherwise JSON-serializing the full dict.
+
 **Recognized block types**:
 
 | Delimiter start | Delimiter end |

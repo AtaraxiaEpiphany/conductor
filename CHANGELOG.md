@@ -20,6 +20,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - Previously fell through to `"completed"` even when `failed` tasks existed
 - **`cmd_gc` guards result.json against active-task race** ([699798f](https://github.com/anthropics/conductor-plugin/commit/699798f))
   - Only deletes orphaned `result.json` when no task is `in_progress`
+- **filter-subagent-output crash on dict tool_response** ([fc26e3e](https://github.com/anthropics/conductor-plugin/commit/fc26e3e))
+  - `PostToolUse:Agent` hook crashed with `TypeError: expected string or bytes-like object, got 'dict'` when Agent tool returned structured dict output
+  - Now coerces dict to string: extracts `"result"` key if present, otherwise JSON-serializes
 
 ### Added
 
