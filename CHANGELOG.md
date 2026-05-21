@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **spec-planner now preserves dispatch tags in PLAN_STRUCTURE** ([38487a9](https://github.com/anthropics/conductor-plugin/commit/38487a9))
+  - `[Explore]`, `[Docs]`, `[Config]`, `[Chore]`, `[Manual]` tags are no longer stripped from task names in PLAN_STRUCTURE JSON
+  - Previously, tags were excluded causing `dispatch-next` to route all tagged tasks to `task-executor` instead of the correct subagent (e.g. `[Explore]` → `explorer`)
+  - Updated `agents-reference.md` PLAN_STRUCTURE example to show tagged task names
+
 - **Merge feature-checklist.json into track-state.json**
   - Removed `feature-checklist.json` — verification evidence (`coverage_pct`, `tc_coverage`, `deviations`) now stored directly on task/subtask nodes in `track-state.json` via the `evidence` field
   - `_checklist_status` reads from `track-state.json` instead of a separate file

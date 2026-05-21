@@ -604,8 +604,9 @@ PLAN_STRUCTURE:
     {
       "name": "Phase 1: ...",
       "tasks": [
-        { "name": "Task name" },
-        { "name": "Task with subtasks", "subtasks": ["Sub 1", "Sub 2"] }
+        { "name": "[Explore] Investigate existing code" },
+        { "name": "Task with subtasks", "subtasks": ["Sub 1", "Sub 2"] },
+        { "name": "[Manual] User verification" }
       ]
     }
   ]
