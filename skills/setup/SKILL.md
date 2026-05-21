@@ -19,7 +19,7 @@ Key paths (resolve via `conductor/index.md` if non-default):
 ## 1.0 RESUME CHECK
 
 1. Read `conductor/setup_state.json` if exists.
-2. Resume from `last_successful_step` (keys: `2.1_product_guide` → `2.2_product_guidelines` → `2.3_tech_stack_styleguides` → `2.4_workflow` → `3.4_track_artifacts_created` → `3.5_setup_complete`).
+2. Resume from `last_successful_step` (keys: `2.1_product_guide` → `2.2_product_guidelines` → `2.3_tech_stack_styleguides` → `2.4_workflow` → `2.5_finalization` → `3.4_track_artifacts_created` → `3.5_setup_complete`).
 3. If `3.5_setup_complete` → announce complete → HALT.
 4. No file → new setup → proceed.
 
@@ -87,7 +87,10 @@ Save state: `2.4_workflow`.
 
 1. **CLAUDE.md TOC:** Read `${CLAUDE_PLUGIN_ROOT}/templates/claude-md-toc.md`, append to project's `CLAUDE.md` (create if missing).
 2. **Project index:** Read `${CLAUDE_PLUGIN_ROOT}/templates/project-index.md`, write to `conductor/index.md`.
-3. Summarize Phase 1 actions.
+3. **Tracks Registry:** Create `conductor/tracks.md` if missing (empty registry with header `# Tracks Registry`).
+4. Save state: `2.5_finalization`.
+5. Ask user: "Create an initial track now, or later?" If later → commit Phase 1 → HALT.
+6. Summarize Phase 1 actions.
 
 ---
 
