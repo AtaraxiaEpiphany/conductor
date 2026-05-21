@@ -7,7 +7,6 @@ Exit 0 on pass, 1 on failure.
 """
 
 import json
-import re
 import sys
 from pathlib import Path
 from typing import Optional
@@ -18,33 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent / "lib"))
 from lib.json_utils import load_json_safe, load_json
 from lib.env import get_track_state_json, get_plan_md_path
 from lib.validation import check_state_file_age, validate_json_structure
-from lib.path_utils import find_track_root
-
-
-def extract_track_dirs(tracks_file: Path) -> list[str]:
-    """Extract track directories from tracks.md
-
-    Args:
-        tracks_file: Path to tracks.md file
-
-    Returns:
-        List of track directory paths
-    """
-    if not tracks_file.exists():
-        return []
-
-    # Extract markdown links [name](path)
-    content = tracks_file.read_text(encoding="utf-8")
-    pattern = r'\[.*?\]\(([^)]+)\)'
-    tracks = re.findall(pattern, content)
-
-    # Filter out non-relative paths (assume relative to tracks.md)
-    relative_tracks = []
-    for track in tracks:
-        if not track.startswith(('http://', 'https://', '/', '\\')):
-            relative_tracks.append(track)
-
-    return relative_tracks
+from lib.path_utils import find_track_root, find_tracks_registry, extract_track_dirs
 
 
 def check_f1_rule(state_file: Path) -> tuple[bool, Optional[str]]:
@@ -76,7 +49,11 @@ def check_f1_rule(state_file: Path) -> tuple[bool, Optional[str]]:
                     active_tasks.append(f"P{pi}.T{ti}.S{si}")
 
     if len(active_tasks) > 2:
-        return False, f"VIOLATION: {len(active_tasks)} in_progress tasks (max 2 allowed). Tasks: {', '.join(active_tasks)}"
+        return False, (
+            f"VIOLATION: {len(active_tasks)} in_progress tasks "
+            f"(max 2 allowed: 1 parent task + 1 subtask). "
+            f"Tasks: {', '.join(active_tasks)}"
+        )
 
     return True, None
 
@@ -187,10 +164,10 @@ def main():
     """Main linter function"""
     # Get current working directory
     cwd = Path(sys.argv[1]) if len(sys.argv) > 1 else Path.cwd()
-    tracks_file = cwd / "conductor" / "tracks.md"
+    tracks_file = find_tracks_registry(cwd)
 
     # Check if tracks.md exists
-    if not tracks_file.exists():
+    if not tracks_file:
         print("No conductor/tracks.md found. Nothing to lint.")
         sys.exit(0)
 

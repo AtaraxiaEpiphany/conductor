@@ -30,12 +30,14 @@ from lib.logging import init_logging, log_entry
 from lib.constants import FAILURE_PATTERNS
 
 
-# Safe contexts where error keywords don't indicate actual failure
+# Safe contexts where error keywords don't indicate actual failure.
+# Must be narrow to avoid masking real errors — only match phrases that
+# clearly describe error handling/absence, not the errors themselves.
 SAFE_CONTEXT_PATTERNS = [
-    r"error handling",
-    r"error message",
+    r"no\s+errors?\s*(?:were\s+)?(?:found|detected|encountered|occurred|reported)",
     r"errors?:?\s*none",
-    r"error\s*code",
+    r"error\s+was\s+handled",
+    r"successfully\s+handled\s+the\s+error",
     r"catch\s+error",
 ]
 
@@ -67,7 +69,7 @@ def main():
     input_data = read_hook_input()
     agent_type = input_data.get("agent_type", "")
     session_id = input_data.get("session_id", "")
-    last_message = input_data.get("last_assistant_message", "")[:500]
+    last_message = input_data.get("last_assistant_message", "")[:2000]
 
     # Initialize logging
     log_file = init_logging("on-subagent-stop")

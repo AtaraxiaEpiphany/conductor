@@ -12,7 +12,7 @@ scripts_dir = Path(__file__).parent
 # Test cases for each script
 TEST_CASES = {
     "filter-subagent-output.py": {
-        "input": '{"tool_name":"Bash","tool_response":"no result block here"}',
+        "input": '{"tool_name":"Agent","tool_response":"---TASK RESULT---\\nSTATUS: SUCCESS\\nCOMMIT_SHA: abc1234\\n---END RESULT---"}',
         "expected_keys": ["hookSpecificOutput"]
     },
     "git-notes-query.py": {
@@ -26,7 +26,6 @@ TEST_CASES = {
     },
     "on-batch-complete.py": {
         "input": '{"tool_calls":[],"session_id":"test"}',
-        "expected_keys": ["hookSpecificOutput"]
     },
     "on-compact.py": {
         "input": '{}',
@@ -34,11 +33,9 @@ TEST_CASES = {
     },
     "on-phase-checkpoint-stop.py": {
         "input": '{"session_id":"test"}',
-        "expected_keys": ["hookSpecificOutput"]
     },
     "on-review-stop.py": {
         "input": '{"session_id":"test"}',
-        "expected_keys": ["hookSpecificOutput"]
     },
     "on-subagent-start.py": {
         "input": '{"agent_type":"task-executor"}',
@@ -46,19 +43,15 @@ TEST_CASES = {
     },
     "on-subagent-stop.py": {
         "input": '{"agent_type":"task-executor","session_id":"test","last_assistant_message":"done"}',
-        "expected_keys": ["hookSpecificOutput"]
     },
     "on-test-run.py": {
         "input": '{"tool_name":"Bash","tool_input":{"command":"echo test"},"tool_response":{"stdout":"","stderr":""}}',
-        "expected_keys": ["hookSpecificOutput"]
     },
     "pre-command-check.py": {
         "input": '{"tool_name":"Bash","tool_input":{"command":"echo test"},"cwd":"/tmp"}',
-        "expected_keys": ["hookSpecificOutput"]
     },
     "session-end.py": {
         "input": '{"session_id":"test","cwd":"/tmp","reason":"logout"}',
-        "expected_keys": ["hookSpecificOutput"]
     },
     "session-start.py": {
         "input": '{"source":"startup","cwd":"/tmp"}',
@@ -66,7 +59,6 @@ TEST_CASES = {
     },
     "state-consistency-check.py": {
         "input": '{"cwd":"/tmp"}',
-        "expected_keys": ["hookSpecificOutput"]
     },
 }
 

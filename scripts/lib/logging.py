@@ -22,10 +22,14 @@ def init_logging(script_name: str, log_dir_name: str = "logs") -> Path:
         Log file path
     """
     # Get data directory
-    data_dir = os.environ.get(
-        "CLAUDE_PLUGIN_DATA",
-        os.environ.get("CLAUDE_PLUGIN_ROOT", "") + "/.data"
-    )
+    data_dir = os.environ.get("CLAUDE_PLUGIN_DATA", "")
+    if not data_dir:
+        plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT", "")
+        if plugin_root:
+            data_dir = plugin_root + "/.data"
+        else:
+            # Fallback: relative to this lib directory (scripts/lib -> scripts -> plugin_root)
+            data_dir = str(Path(__file__).parent.parent.parent / ".data")
 
     # Create log directory structure
     log_dir = Path(data_dir) / log_dir_name
@@ -57,9 +61,10 @@ def log_entry(
     timestamp_str = timestamp.isoformat()
     log_entry = f"{timestamp_str} [{level}] {message}\n"
 
-    # Write to file
+    # Append to file
     try:
-        log_file.write_text(log_entry, encoding="utf-8")
+        with log_file.open("a", encoding="utf-8") as f:
+            f.write(log_entry)
     except Exception:
         # Fallback to stderr if write fails
         print(f"LOG_ERROR: {log_entry.strip()}", file=sys.stderr)

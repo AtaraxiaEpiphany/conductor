@@ -4,6 +4,7 @@ Provides unified path manipulation and file system utilities.
 """
 
 import os
+import re
 import shutil
 from pathlib import Path
 from typing import Optional, List
@@ -51,6 +52,45 @@ def find_track_root(cwd: Optional[Path] = None) -> Optional[Path]:
             return parent
 
     return None
+
+
+def find_tracks_registry(cwd: Optional[Path] = None) -> Optional[Path]:
+    """Find tracks registry file (conductor/tracks.md)
+
+    Args:
+        cwd: Current working directory (default: current directory)
+
+    Returns:
+        Tracks registry path or None if not found
+    """
+    if cwd is None:
+        cwd = Path.cwd()
+
+    # Standard path
+    registry = cwd / "conductor" / "tracks.md"
+    if registry.exists():
+        return registry
+
+    return None
+
+
+def extract_track_dirs(tracks_file: Path) -> List[str]:
+    """Extract track directory paths from tracks.md registry
+
+    Args:
+        tracks_file: Path to tracks.md file
+
+    Returns:
+        List of track directory relative paths
+    """
+    if not tracks_file.exists():
+        return []
+
+    content = tracks_file.read_text(encoding="utf-8")
+    tracks = re.findall(r'\[.*?\]\(([^)]+)\)', content)
+
+    # Filter out non-relative paths
+    return [t for t in tracks if not t.startswith(('http://', 'https://', '/', '\\'))]
 
 
 def get_relative_path(base: Path, target: Path) -> Path:
