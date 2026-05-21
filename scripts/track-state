@@ -2539,9 +2539,124 @@ def positional(args):
     return result
 
 
+COMMAND_HELP = {
+    "init": ("init <track-dir> --plan-structure <json> --track-id <id>\n"
+             "              --type <feature|bugfix|chore|docs> --description <text>\n"
+             "              [--execution-mode <interactive|autonomous>]",
+             "Create track-state.json and index.md from plan structure"),
+    "start": ("start <track-dir>",
+              "Transition track from 'new' to 'in_progress'"),
+    "next": ("next <track-dir> [--compact]",
+             "Find the next task to execute (JSON or compact format)"),
+    "dispatch-next": ("dispatch-next <track-dir>",
+                      "One-call dispatch: next + parent-complete + tag routing"),
+    "recover": ("recover <track-dir> [--compact]",
+                "Recover current in_progress task after interruption"),
+    "lock": ("lock <track-dir> <phase> <task> [<subtask>]",
+             "Set task/subtask status to in_progress"),
+    "complete": ("complete <track-dir> <phase> <task> [<subtask>] --sha <sha>",
+                 "Mark task completed with commit SHA"),
+    "fail": ("fail <track-dir> <phase> <task> [<subtask>] --summary <text>",
+             "Mark task failed (increments retry_count)"),
+    "skip": ("skip <track-dir> <phase> <task> [<subtask>] --reason <text>",
+             "Skip task with reason"),
+    "defer": ("defer <track-dir> <phase> <task> [<subtask>] --reason <text>",
+              "Defer task for later verification"),
+    "block": ("block <track-dir> <phase> <task> [<subtask>] --reason <text>",
+              "Block task with reason"),
+    "finalize": ("finalize <track-dir>",
+                 "Transition track to completed/blocked/failed, compute quality score"),
+    "archive": ("archive <track-dir>",
+                "Archive a completed track"),
+    "sync-plan": ("sync-plan <track-dir>",
+                  "Sync plan.md checkbox markers from track-state.json"),
+    "sync-handoff": ("sync-handoff <track-dir>",
+                     "Regenerate handoff.md index from current state"),
+    "get-handoff": ("get-handoff <track-dir> <phase> <task> [--subtask <n>]",
+                    "Read handoff content for a specific task"),
+    "append-handoff": ("append-handoff <track-dir> <phase> <task>\n"
+                       "                  --type <explore|decision|risk|deviation>\n"
+                       "                  --content '<json>' [--subtask <n>]",
+                       "Append notes to a task's handoff file"),
+    "registry-update": ("registry-update <track-dir> <tracks-md-path>",
+                        "Update track entry in Tracks Registry (tracks.md)"),
+    "write-result": ("write-result <track-dir> [--data '<json>']",
+                     "Write result.json from --data or stdin (SUCCESS|FAILURE)"),
+    "process-result": ("process-result <track-dir>",
+                       "Read result.json, update state, sync plan, write git notes, enforce gates"),
+    "dispatch-prepare": ("dispatch-prepare <track-dir>",
+                         "Composite: next + lock + sync-plan + route (reduces round trips)"),
+    "dispatch-finalize": ("dispatch-finalize <track-dir>",
+                          "Composite: process-result + sync-plan + commit message"),
+    "record-summary": ("record-summary <track-dir>",
+                       "Record compact task summary (stdin JSON) for post-compaction recovery"),
+    "validate": ("validate <track-dir> [--fix]",
+                 "Validate state consistency; --fix auto-repairs warnings"),
+    "gc": ("gc <track-dir>",
+           "Garbage collection: clean orphaned artifacts, detect stale state"),
+    "shas": ("shas <track-dir>",
+             "List all commit SHAs from completed tasks"),
+    "checklist-verify": ("checklist-verify <track-dir>",
+                         "Check feature checklist verification status"),
+    "deferred-report": ("deferred-report <track-dir>",
+                        "List all deferred tasks with context"),
+    "phase-done": ("phase-done <track-dir> <phase>",
+                   "Check if all tasks in a phase are in terminal state"),
+    "add-checkpoint": ("add-checkpoint <track-dir> <phase> <sha>",
+                       "Add/update checkpoint SHA for a phase in plan.md"),
+}
+
+_COMMAND_GROUPS = [
+    ("Lifecycle", ["init", "start", "finalize", "archive"]),
+    ("Navigation", ["next", "dispatch-next", "recover"]),
+    ("State Mutations", ["lock", "complete", "fail", "skip", "defer", "block"]),
+    ("Sync & Registry", ["sync-plan", "sync-handoff", "registry-update"]),
+    ("Handoff", ["get-handoff", "append-handoff"]),
+    ("Result Processing", ["write-result", "process-result"]),
+    ("Dispatch Composites", ["dispatch-prepare", "dispatch-finalize", "record-summary"]),
+    ("Diagnostics", ["validate", "gc", "shas", "checklist-verify", "deferred-report",
+                     "phase-done", "add-checkpoint"]),
+]
+
+
+def cmd_help(command=None):
+    """Print usage help for all commands or a specific command."""
+    if command and command in COMMAND_HELP:
+        usage, desc = COMMAND_HELP[command]
+        print(f"track-state {usage}\n\n  {desc}")
+        return
+
+    if command:
+        print(f"Unknown command: {command}", file=sys.stderr)
+        print(f"Run 'track-state help' to see all commands.", file=sys.stderr)
+        sys.exit(1)
+
+    print("track-state — Conductor track state management CLI")
+    print()
+    print("Usage: track-state <command> <track-dir> [args...]")
+    print("       track-state help [<command>]")
+    print()
+
+    for group_name, cmds in _COMMAND_GROUPS:
+        print(f"  {group_name}:")
+        for c in cmds:
+            usage, desc = COMMAND_HELP[c]
+            # First line of usage only, for the summary
+            first_line = usage.split("\n")[0]
+            print(f"    {first_line:<62s} {desc}")
+        print()
+
+
 def main():
+    # Handle help and bare invocation
+    if len(sys.argv) < 2 or sys.argv[1] in ("help", "--help", "-h"):
+        target = sys.argv[2] if len(sys.argv) >= 3 and sys.argv[1] == "help" else None
+        cmd_help(target)
+        sys.exit(0)
+
     if len(sys.argv) < 3:
         print("Usage: track-state <command> <track-dir> [args...]", file=sys.stderr)
+        print("       track-state help [<command>]", file=sys.stderr)
         sys.exit(1)
 
     cmd = sys.argv[1]
