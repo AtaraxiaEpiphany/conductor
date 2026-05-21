@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Merge feature-checklist.json into track-state.json**
+  - Removed `feature-checklist.json` — verification evidence (`coverage_pct`, `tc_coverage`, `deviations`) now stored directly on task/subtask nodes in `track-state.json` via the `evidence` field
+  - `_checklist_status` reads from `track-state.json` instead of a separate file
+  - Removed `_generate_feature_checklist`, `_update_checklist_on_success`, `_checklist_path` functions
+  - Removed unused `get_feature_checklist_path` from `scripts/lib/env.py`
+  - `track-state init` no longer creates `feature-checklist.json`
+  - `checklist-verify` command continues to work, reading from `track-state.json`
+
 ### Fixed
 
 - **Interrupt recovery: stale current indices after state transitions** ([699798f](https://github.com/anthropics/conductor-plugin/commit/699798f))

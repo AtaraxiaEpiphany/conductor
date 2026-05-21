@@ -353,7 +353,7 @@ Enforces F2/F3 gates and writes git notes.
 
 ### init
 
-Create track-state.json + index.md + handoff.md + feature-checklist.json from plan structure.
+Create track-state.json + index.md + handoff.md from plan structure.
 
 ```bash
 track-state init <track-dir> \
@@ -475,7 +475,7 @@ track-state append-handoff <track-dir> <phase> <task> \
 
 ### checklist-verify
 
-Check feature-checklist.json verification status.
+Check task verification status from track-state.json.
 
 ```bash
 track-state checklist-verify <track-dir>

@@ -212,7 +212,7 @@ sequenceDiagram
     Skill->>Skill: Parse result from stdout
     Skill->>CLI: track-state dispatch-finalize <track_dir>
     CLI->>State: Update task status, sync plan
-    CLI->>State: Update feature-checklist.json
+    CLI->>State: Store evidence on task
     CLI->>Git: Write git notes to commit SHA
     CLI-->>Skill: JSON: status, sha, deviations, coverage
     Skill->>Skill: Commit using commit_msg from output
@@ -315,7 +315,7 @@ graph LR
 
     subgraph "Projections"
         Plan[plan.md<br/>markers synced]
-        Checklist[feature-checklist.json<br/>verification status]
+        Checklist[track-state.json<br/>evidence on tasks]
         Registry[tracks.md<br/>status updated]
     end
 
@@ -564,7 +564,7 @@ sequenceDiagram
     H-->>S: Result block only
     S->>CLI: dispatch-finalize
     CLI->>ST: Update complete, sync plan
-    CLI->>ST: Update checklist
+    CLI->>ST: Store evidence on task
     CLI-->>S: SUCCESS JSON + commit_msg
     S->>S: Commit with message
     S->>H: PostToolBatch (validate git+state ops)

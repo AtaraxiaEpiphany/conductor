@@ -92,6 +92,16 @@
         "last_failure_summary": { "type": "string" },
         "skip_analysis": { "type": "string" },
         "defer_reason": { "type": "string" },
+        "evidence": {
+          "type": "object",
+          "description": "Verification evidence captured on task completion.",
+          "additionalProperties": false,
+          "properties": {
+            "coverage_pct": { "type": ["number", "null"] },
+            "tc_coverage": { "type": "string" },
+            "deviations": { "type": "integer", "minimum": 0 }
+          }
+        },
         "subtasks": {
           "type": "array",
           "minItems": 1,
