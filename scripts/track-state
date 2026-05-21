@@ -169,6 +169,17 @@ def clean(tgt, keep):
             tgt.pop(k, None)
 
 
+def _store_evidence(state, track_dir, p, t, s, r):
+    """Write evidence from result onto the completed task/subtask node."""
+    tgt = target(state, int(p), int(t), int(s) if s is not None else None)
+    tgt["evidence"] = {
+        "coverage_pct": r.get("coverage_pct"),
+        "tc_coverage": r.get("tc_coverage", ""),
+        "deviations": len(r.get("spec_deviation_detail", [])),
+    }
+    save(track_dir, state)
+
+
 def extract_tags(name):
     """Extract task tags like [Docs], [Config] from name.
 
@@ -283,6 +294,18 @@ def _do_complete(track_dir, p, t, s=None, sha=None):
     si = int(s) if s is not None else None
 
     tgt = target(state, pi, ti, si)
+
+    # Guard: parent task cannot be completed while subtasks are still non-terminal
+    if si is None and "subtasks" in tgt:
+        pending = [sub["name"] for sub in tgt["subtasks"]
+                   if sub["status"] not in TERMINAL_STATUSES]
+        if pending:
+            raise ValueError(
+                f"Cannot complete P{pi}:T{ti} — {len(pending)} subtask(s) still "
+                f"non-terminal: {pending[0]}"
+                + (f" (+{len(pending)-1} more)" if len(pending) > 1 else "")
+            )
+
     tgt["status"] = "completed"
     # For parent-complete (si=None) with empty sha, inherit from last subtask
     resolved_sha = sha or ""
@@ -303,14 +326,6 @@ def _do_complete(track_dir, p, t, s=None, sha=None):
             parent["completed_at"] = now_iso()
             clean(parent, {"status", "commit_sha", "completed_at"})
             parent_completed = True
-    elif "subtasks" in tgt:
-        # When completing a task directly (no subtask specified),
-        # auto-complete all remaining non-terminal subtasks
-        for sub in tgt["subtasks"]:
-            if sub["status"] not in TERMINAL_STATUSES:
-                sub["status"] = "completed"
-                sub["completed_at"] = now_iso()
-                sub["commit_sha"] = resolved_sha
 
     # Update current indices so recovery always points to the latest state
     state["current_phase_index"] = pi
@@ -2067,14 +2082,7 @@ def cmd_process_result(track_dir):
         # Reload state after _do_complete modified the file
         state = load(track_dir)
 
-        # Store evidence on the completed task/subtask
-        tgt = target(state, int(p), int(t), int(s) if s is not None else None)
-        tgt["evidence"] = {
-            "coverage_pct": r.get("coverage_pct"),
-            "tc_coverage": r.get("tc_coverage", ""),
-            "deviations": len(r.get("spec_deviation_detail", [])),
-        }
-        save(track_dir, state)
+        _store_evidence(state, track_dir, p, t, s, r)
 
         _do_sync_plan(track_dir, state)
 
@@ -2458,6 +2466,9 @@ def cmd_dispatch_finalize(track_dir):
         parent_completed = _do_complete(track_dir, p, t, s, sha)
         # Reload state after _do_complete modified the file
         state = load(track_dir)
+
+        _store_evidence(state, track_dir, p, t, s, r)
+
         synced = _do_sync_plan(track_dir, state)
         _append_execution_record(track_dir, p, t, s, r, state)
         for dev in r.get("spec_deviation_detail", []):
