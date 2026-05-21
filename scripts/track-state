@@ -27,6 +27,7 @@ Usage:
     track-state get-handoff <track-dir> <phase> <task> [--subtask <n>]
     track-state append-handoff <track-dir> <phase> <task> --type <explore|decision|risk|deviation> --content <json> [--subtask <n>]
     track-state checklist-verify <track-dir>
+    track-state dispatch-finalize <track-dir> [--override k=v,k2=v2]
     track-state write-result <track-dir> [--data '<json>']
     track-state gc <track-dir>
 """
@@ -2442,7 +2443,8 @@ def _last_subtask_sha_from_state(track_dir, pi, ti):
 
 
 def cmd_dispatch_finalize(track_dir):
-    """Process result + sync-plan + return commit message. Reduces CLI round trips."""
+    """Process result + sync-plan + return commit message. Reduces CLI round trips.
+    Accepts --override key=value to patch result fields before processing."""
     result_path = conductor_dir(track_dir) / "result.json"
     if not result_path.exists():
         out(dict(error="No result file at .conductor/result.json"))
@@ -2450,6 +2452,16 @@ def cmd_dispatch_finalize(track_dir):
 
     with open(result_path) as f:
         r = json.load(f)
+
+    # Apply overrides: merge CLI-supplied values into result (only if currently empty/falsy)
+    overrides = flag(sys.argv[3:], "--override")
+    if overrides:
+        for pair in overrides.split(","):
+            if "=" not in pair:
+                continue
+            k, v = pair.split("=", 1)
+            if not r.get(k):
+                r[k] = v
 
     status = r.get("status", "").upper()
     p = str(r.get("phase", ""))
@@ -2597,8 +2609,8 @@ COMMAND_HELP = {
                        "Read result.json, update state, sync plan, write git notes, enforce gates"),
     "dispatch-prepare": ("dispatch-prepare <track-dir>",
                          "Composite: next + lock + sync-plan + route (reduces round trips)"),
-    "dispatch-finalize": ("dispatch-finalize <track-dir>",
-                          "Composite: process-result + sync-plan + commit message"),
+    "dispatch-finalize": ("dispatch-finalize <track-dir> [--override k=v,k2=v2]",
+                          "Composite: process-result + sync-plan + commit message. --override patches empty result fields"),
     "record-summary": ("record-summary <track-dir>",
                        "Record compact task summary (stdin JSON) for post-compaction recovery"),
     "validate": ("validate <track-dir> [--fix]",

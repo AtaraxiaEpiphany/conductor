@@ -98,7 +98,7 @@ git add -A && git commit -m "<commit_msg from dispatch-prepare>"
 
 Dispatch `conductor:explorer`. Prompt: `TRACK_DIR={td} PHASE={p} TASK={t} NAME={name}`
 
-After return: commit exploration artifacts (`git add -A && git commit -m "docs(explore): {name}"`) → get SHA (`git rev-parse --short HEAD`) → update `commit_sha` in `.conductor/result.json` → **Section 3.6**.
+After return: commit exploration artifacts (`git add -A && git commit -m "docs(explore): {name}"`) → get SHA (`git rev-parse --short HEAD`) → `track-state dispatch-finalize "<track_dir>" --override commit_sha={sha}` → **Section 3.7**.
 
 ### 3.4 Action: `dispatch_executor`
 
