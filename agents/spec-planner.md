@@ -291,7 +291,7 @@ SUMMARY: <one-line summary of what was generated>
 - Tasks WITH subtasks: use `{ "name": "...", "subtasks": ["..."] }` format.
 - Tasks WITHOUT subtasks: use `{ "name": "..." }` format (no `subtasks` key).
 - This compact JSON is used by the parent to generate `track-state.json` without reading the full file.
-- Exclude HTML comments (`<!-- ... -->`) and task type tags from task names.
+- Exclude HTML comments (`<!-- ... -->`) from task names. **Preserve** dispatch tags (`[Explore]`, `[Docs]`, `[Config]`, `[Chore]`, `[Manual]`) — the dispatch router depends on them being present in track-state.json.
 
 On failure:
 
