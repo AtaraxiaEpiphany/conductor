@@ -57,6 +57,7 @@ tool_query
 
 # Logs and traces
 .claude-trace/
+.claude/settings.json
 *.log
 
 # Temporary files
