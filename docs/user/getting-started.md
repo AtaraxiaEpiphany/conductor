@@ -134,8 +134,7 @@ Displays:
 A track is a complete development unit for a feature, containing:
 - **spec.md**: Feature specification document
 - **plan.md**: Implementation plan (broken into phases and tasks)
-- **track-state.json**: Authoritative source of state
-- **feature-checklist.json**: Feature verification checklist
+- **track-state.json**: Authoritative source of state (includes verification evidence)
 
 ### Task
 

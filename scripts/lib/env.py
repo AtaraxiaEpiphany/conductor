@@ -174,15 +174,3 @@ def get_plan_md_path(track_dir: Path) -> Path:
         plan.md file path
     """
     return track_dir / "plan.md"
-
-
-def get_feature_checklist_path(track_dir: Path) -> Path:
-    """Get feature-checklist.json file path
-
-    Args:
-        track_dir: Track directory
-
-    Returns:
-        feature-checklist.json file path
-    """
-    return track_dir / "feature-checklist.json"

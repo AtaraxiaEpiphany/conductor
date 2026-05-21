@@ -1315,28 +1315,21 @@ def _compute_quality_score(track_dir, state, statuses, checklist):
     else:
         checklist_ratio = 1.0  # No checklist = assume full
 
-    # Coverage score (20%): from git notes or state metadata
-    coverage_ratio = 0.8  # Default assumption
-    shas_result = _get_all_shas(state)
-    if shas_result:
-        # Best-effort: read coverage from last few git notes
-        try:
-            import subprocess
-            for sha in shas_result[-3:]:
-                note = subprocess.run(
-                    ["git", "notes", "show", sha],
-                    capture_output=True, text=True, cwd=track_dir, timeout=5
-                ).stdout.strip()
-                for line in note.split("\n"):
-                    if line.startswith("Coverage:"):
-                        m = re.search(r"(\d+)%", line)
-                        if m:
-                            coverage_ratio = int(m.group(1)) / 100
-                            break
-                if coverage_ratio > 0:
-                    break
-        except (ImportError, FileNotFoundError, PermissionError, OSError):
-            pass  # Git notes unavailable - use default coverage
+    # Coverage score (20%): from task evidence, fallback to git notes
+    coverage_values = []
+    for phase in state.get("phases", []):
+        for task in phase.get("tasks", []):
+            ev = task.get("evidence")
+            if ev and ev.get("coverage_pct") is not None:
+                coverage_values.append(ev["coverage_pct"])
+            for sub in task.get("subtasks", []):
+                sev = sub.get("evidence")
+                if sev and sev.get("coverage_pct") is not None:
+                    coverage_values.append(sev["coverage_pct"])
+    if coverage_values:
+        coverage_ratio = sum(coverage_values) / len(coverage_values) / 100
+    else:
+        coverage_ratio = 0.8  # Default assumption when no evidence
 
     # Retry penalty (10%): penalize high retry counts
     total_retries = 0
@@ -2031,7 +2024,7 @@ def cmd_write_result(track_dir):
 def cmd_process_result(track_dir):
     """Read .conductor/result.json, update state, sync plan, manage handoff.
     Writes git notes audit trail. Enforces F2/F3 quality gates.
-    Updates feature checklist. Deletes result file after processing."""
+    Deletes result file after processing."""
     result_path = conductor_dir(track_dir) / "result.json"
 
     if not result_path.exists():
@@ -2073,6 +2066,16 @@ def cmd_process_result(track_dir):
         parent_completed = _do_complete(track_dir, p, t, s, sha)
         # Reload state after _do_complete modified the file
         state = load(track_dir)
+
+        # Store evidence on the completed task/subtask
+        tgt = target(state, int(p), int(t), int(s) if s is not None else None)
+        tgt["evidence"] = {
+            "coverage_pct": r.get("coverage_pct"),
+            "tc_coverage": r.get("tc_coverage", ""),
+            "deviations": len(r.get("spec_deviation_detail", [])),
+        }
+        save(track_dir, state)
+
         _do_sync_plan(track_dir, state)
 
         # Write to handoff
@@ -2085,9 +2088,6 @@ def cmd_process_result(track_dir):
 
         # Write git notes audit trail
         _write_git_note(track_dir, r, state)
-
-        # Update feature checklist
-        _update_checklist_on_success(track_dir, p, t, s, r)
 
         # Clean up
         result_path.unlink(missing_ok=True)
@@ -2130,98 +2130,28 @@ def cmd_process_result(track_dir):
         out(dict(error=f"Unknown status: {status}"))
 
 
-# ── Feature Checklist ────────────────────────────────────────────────
-
-
-def _checklist_path(track_dir):
-    return Path(track_dir) / "feature-checklist.json"
-
-
-def _generate_feature_checklist(track_dir, track_id, phases):
-    """Generate feature-checklist.json from plan structure.
-    All items start with passes=false. Updated by process-result on task success."""
-    items = []
-    for pi, phase in enumerate(phases):
-        for ti, task in enumerate(phase.get("tasks", [])):
-            items.append({
-                "phase": pi,
-                "task": ti,
-                "subtask": None,
-                "name": task["name"],
-                "passes": False,
-                "verified_at": None,
-                "evidence": None,
-            })
-            for si, sub in enumerate(task.get("subtasks", [])):
-                items.append({
-                    "phase": pi,
-                    "task": ti,
-                    "subtask": si,
-                    "name": sub["name"],
-                    "passes": False,
-                    "verified_at": None,
-                    "evidence": None,
-                })
-
-    checklist = {
-        "version": "1.0",
-        "track_id": track_id,
-        "generated_at": now_iso(),
-        "items": items,
-    }
-    with open(_checklist_path(track_dir), "w") as f:
-        json.dump(checklist, f, indent=2, ensure_ascii=False)
-        f.write("\n")
-
-
-def _update_checklist_on_success(track_dir, phase, task, subtask, result_data):
-    """Mark a task/subtask as passes=true in feature-checklist.json."""
-    cp = _checklist_path(track_dir)
-    if not cp.exists():
-        return
-    with open(cp) as f:
-        checklist = json.load(f)
-
-    p, t = int(phase), int(task)
-    s = int(subtask) if subtask is not None else None
-
-    for item in checklist["items"]:
-        if item["phase"] == p and item["task"] == t and item["subtask"] == s:
-            item["passes"] = True
-            item["verified_at"] = now_iso()
-            cov = result_data.get("coverage_pct")
-            item["evidence"] = {
-                "sha": result_data.get("commit_sha", ""),
-                "coverage_pct": cov,
-                "tc_coverage": result_data.get("tc_coverage", ""),
-                "deviations": len(result_data.get("spec_deviation_detail", [])),
-            }
-            break
-
-    with open(cp, "w") as f:
-        json.dump(checklist, f, indent=2, ensure_ascii=False)
-        f.write("\n")
-
-
 def _checklist_status(track_dir):
-    """Return checklist verification status. Used by finalize and process-result."""
-    cp = _checklist_path(track_dir)
-    if not cp.exists():
-        return dict(exists=False, total=0, verified=0, unverified=[])
-
-    with open(cp) as f:
-        checklist = json.load(f)
-
-    items = checklist.get("items", [])
-    verified = [i for i in items if i["passes"]]
-    unverified = [i for i in items if not i["passes"]]
-
-    return dict(
-        exists=True,
-        total=len(items),
-        verified=len(verified),
-        unverified=[f"P{i['phase']}.T{i['task']}" + (f".S{i['subtask']}" if i["subtask"] is not None else "") + f" {i['name']}" for i in unverified],
-    )
+    """Return verification status by reading track-state.json directly."""
+    state = load(track_dir)
+    total = 0
+    verified = 0
+    unverified = []
+    for pi, phase in enumerate(state.get("phases", [])):
+        for ti, task in enumerate(phase.get("tasks", [])):
+            total += 1
+            key = f"P{pi}.T{ti} {task['name']}"
+            if task["status"] == "completed":
+                verified += 1
+            else:
+                unverified.append(key)
+            for si, sub in enumerate(task.get("subtasks", [])):
+                total += 1
+                subkey = f"P{pi}.T{ti}.S{si} {sub['name']}"
+                if sub["status"] == "completed":
+                    verified += 1
+                else:
+                    unverified.append(subkey)
+    return dict(exists=True, total=total, verified=verified, unverified=unverified)
 
 
 def cmd_checklist_verify(track_dir):
@@ -2291,9 +2221,6 @@ def cmd_init(track_dir, plan_structure_json, track_id, track_type, description, 
 
     # Create initial handoff.md
     _ensure_handoff_index(str(track_path), state)
-
-    # Create feature-checklist.json
-    _generate_feature_checklist(str(track_path), track_id, phases)
 
     task_count = sum(len(p.get("tasks", [])) for p in phases)
     out(dict(ok=True, track_id=track_id, phases=len(phases), tasks=task_count))

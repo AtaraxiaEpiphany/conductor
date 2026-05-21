@@ -221,7 +221,7 @@ graph LR
 
     subgraph "Projection Layer (Derived)"
         Plan[plan.md<br/>status markers]
-        Checklist[feature-checklist.json<br/>verification status]
+        Checklist[track-state.json<br/>evidence on tasks]
         Registry[tracks.md<br/>track entries]
     end
 
@@ -331,7 +331,7 @@ flowchart TD
 
     WriteNotes --> UpdateState[Update track-state.json]
     UpdateState --> SyncPlan[Sync plan.md markers]
-    SyncPlan --> UpdateChecklist[Update feature-checklist.json]
+    SyncPlan --> StoreEvidence[Store evidence on task in track-state.json]
     UpdateChecklist --> Return([Return to Orchestrator])
 
     style Commit fill:#4caf50
