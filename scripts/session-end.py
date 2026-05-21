@@ -5,7 +5,6 @@ Runs on session termination: clear, resume, logout, prompt_input_exit, bypass_pe
 """
 
 import os
-import re
 import sys
 import time
 from datetime import datetime, timezone
@@ -17,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent / "lib"))
 from lib.hook_io import read_hook_input, write_hook_output
 from lib.json_utils import load_json_safe
 from lib.logging import init_logging, log_entry
+from lib.path_utils import find_tracks_registry, extract_track_dirs
 
 
 def has_active_tracks(cwd: Path) -> bool:
@@ -28,13 +28,12 @@ def has_active_tracks(cwd: Path) -> bool:
     Returns:
         True if there are active tracks
     """
-    tracks_file = cwd / "conductor" / "tracks.md"
-    if not tracks_file.exists():
+    tracks_file = find_tracks_registry(cwd)
+    if not tracks_file:
         return False
 
     try:
-        content = tracks_file.read_text(encoding="utf-8")
-        dirs = re.findall(r'\[.*?\]\(([^)]+)\)', content)
+        dirs = extract_track_dirs(tracks_file)
 
         for d in dirs:
             state_file = cwd / d / "track-state.json"

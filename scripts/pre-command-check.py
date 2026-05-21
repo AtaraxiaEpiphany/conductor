@@ -21,6 +21,7 @@ from lib.hook_io import (
 )
 from lib.json_utils import load_json_safe
 from lib.validation import is_dangerous_git_operation, contains_dangerous_pattern
+from lib.path_utils import find_tracks_registry, extract_track_dirs
 
 
 def has_in_progress_task(state_file: Path) -> bool:
@@ -42,12 +43,11 @@ def has_in_progress_task(state_file: Path) -> bool:
 
 def find_track_state_violations(cwd: Path, command: str) -> list[str]:
     """Find tracks with state lock violations"""
-    tracks_file = cwd / "conductor" / "tracks.md"
-    if not tracks_file.exists():
+    tracks_file = find_tracks_registry(cwd)
+    if not tracks_file:
         return []
 
-    content = tracks_file.read_text(encoding="utf-8")
-    dirs = re.findall(r'\[.*?\]\(([^)]+)\)', content)
+    dirs = extract_track_dirs(tracks_file)
 
     violations = []
     cmd_lower = command.lower()
@@ -117,6 +117,7 @@ def main():
             permission_decision="ask",
             permission_decision_reason=permission_reason,
         )
+        return
 
     # Check for track-state lock violations
     if 'track-state' in command.lower():
@@ -138,6 +139,7 @@ def main():
                 permission_decision="ask",
                 permission_decision_reason=permission_reason,
             )
+            return
 
     # Check for direct modifications to track-state.json
     if is_direct_track_state_modification(command):
@@ -156,6 +158,7 @@ def main():
             permission_decision="ask",
             permission_decision_reason=permission_reason,
         )
+        return
 
     # Allow all other commands
     write_hook_output(hook_event_name="PreToolUse")

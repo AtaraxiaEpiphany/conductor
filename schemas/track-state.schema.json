@@ -79,7 +79,7 @@
         "status": { "$ref": "#/$defs/task_status" },
         "commit_sha": {
           "type": "string",
-          "pattern": "^[0-9a-f]{0,7}$"
+          "pattern": "^[0-9a-f]{7,40}$"
         },
         "completed_at": {
           "type": "string",

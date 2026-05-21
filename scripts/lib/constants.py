@@ -2,15 +2,16 @@
 
 # Failure patterns shared by on-subagent-stop.py and filter-subagent-output.py.
 # Keep in sync — any change here affects both failure detection and recovery.
+# Patterns are anchored for precision to reduce false positives.
 FAILURE_PATTERNS = [
-    r"status.*FAILURE",
-    r"BUILD FAILED",
+    r"\bstatus:\s*FAILURE\b",
+    r"\bBUILD FAILED\b",
     r"Traceback \(most recent call last\):",
-    r"Command failed",
-    r"test.*failed",
-    r"Permission denied",
-    r"File not found",
-    r"AssertionError",
+    r"\bCommand failed\b",
+    r"\b\d+\s+tests?\s+failed\b",
+    r"\bPermission denied\b",
+    r"\bFile not found\b",
+    r"\bAssertionError\b",
 ]
 
 # Recovery success indicators (only meaningful after [Conductor Recovery] marker)

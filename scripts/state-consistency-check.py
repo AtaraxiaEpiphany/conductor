@@ -9,7 +9,6 @@ Non-blocking -- only warns, does not halt.
 
 import json
 import os
-import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).parent / "lib"))
 from lib.hook_io import read_hook_input, write_hook_output
 from lib.json_utils import load_json_safe
 from lib.env import get_data_dir
+from lib.path_utils import find_tracks_registry, extract_track_dirs
 
 
 def find_stale_in_progress_tasks(state_file: Path) -> list[str]:
@@ -62,16 +62,6 @@ def get_track_handoff_info(state_file: Path) -> Optional[str]:
     return f'- Track {track_id}: status={status}, position=P{pi}.T{ti}, mode={mode}'
 
 
-def extract_track_dirs(tracks_file: Path) -> list[str]:
-    """Extract track directories from tracks.md"""
-    if not tracks_file.exists():
-        return []
-
-    content = tracks_file.read_text(encoding="utf-8")
-    pattern = r'\[.*?\]\(([^)]+)\)'
-    return re.findall(pattern, content)
-
-
 def write_session_handoff(data_dir: Path, handoff_data: str) -> None:
     """Write session handoff file"""
     handoff_file = data_dir / "session-handoff.md"
@@ -101,26 +91,25 @@ def main():
     handoff_data = ""
 
     conductor_directory = cwd / "conductor"
-    if conductor_directory.exists():
-        tracks_file = conductor_directory / "tracks.md"
-        if tracks_file.exists():
-            track_dirs = extract_track_dirs(tracks_file)
+    tracks_file = find_tracks_registry(cwd)
+    if tracks_file:
+        track_dirs = extract_track_dirs(tracks_file)
 
-            for track_dir in track_dirs:
-                full_dir = cwd / track_dir
-                state_file = full_dir / "track-state.json"
-                plan_file = full_dir / "plan.md"
+        for track_dir in track_dirs:
+            full_dir = cwd / track_dir
+            state_file = full_dir / "track-state.json"
+            plan_file = full_dir / "plan.md"
 
-                if state_file.exists() and plan_file.exists():
-                    stale_locks = find_stale_in_progress_tasks(state_file)
-                    if stale_locks:
-                        stale_str = "; ".join(stale_locks)
-                        issues.append(
-                            f"[Conductor] Stale in_progress tasks found in {track_dir}: {stale_str}. "
-                        )
+            if state_file.exists() and plan_file.exists():
+                stale_locks = find_stale_in_progress_tasks(state_file)
+                if stale_locks:
+                    stale_str = "; ".join(stale_locks)
+                    issues.append(
+                        f"[Conductor] Stale in_progress tasks found in {track_dir}: {stale_str}. "
+                    )
 
-                    track_info = get_track_handoff_info(state_file)
-                    if track_info:
+                track_info = get_track_handoff_info(state_file)
+                if track_info:
                         handoff_data += track_info + "\n"
 
     # Write session handoff file
