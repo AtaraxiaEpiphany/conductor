@@ -1017,6 +1017,12 @@ def cmd_dispatch_next(track_dir):
             _do_complete(track_dir, result["phase"], result["task"], None, sha)
             state = load(track_dir)
             _do_sync_plan(track_dir, state)
+            # Check if the phase just completed needs a checkpoint
+            cp = _phase_needs_checkpoint(track_dir, state, result["phase"])
+            if cp is not None:
+                out(dict(action="dispatch_phase_checker", phase=cp,
+                         execution_mode=execution_mode))
+                return
             continue
 
         # Route by tags
@@ -1244,7 +1250,12 @@ def cmd_block(track_dir, p, t, s=None, reason=""):
 
 def cmd_defer(track_dir, p, t, s=None, reason=""):
     parent_deferred = _do_defer(track_dir, p, t, s, reason)
-    out(dict(ok=True, parent_deferred=parent_deferred))
+    state = load(track_dir)
+    result = dict(ok=True, parent_deferred=parent_deferred)
+    checkpoint_pending = _phase_needs_checkpoint(track_dir, state, int(p))
+    if checkpoint_pending is not None:
+        result["phase_checkpoint_pending"] = checkpoint_pending
+    out(result)
 
 
 def cmd_deferred_report(track_dir):
@@ -2442,8 +2453,81 @@ def _last_subtask_sha_from_state(track_dir, pi, ti):
         return ""
 
 
+def _has_sibling_sha(state, pi, ti, si, sha):
+    """Check if a sibling subtask already uses the given SHA."""
+    if si is None or not sha:
+        return False
+    try:
+        task = state["phases"][int(pi)]["tasks"][int(ti)]
+        for i, sub in enumerate(task.get("subtasks", [])):
+            if i != int(si) and sub.get("commit_sha") == sha:
+                return True
+    except (IndexError, KeyError, ValueError):
+        pass
+    return False
+
+
+def _update_task_sha(track_dir, p, t, s, sha):
+    """Update commit_sha for a specific task/subtask and re-sync plan."""
+    state = load(track_dir)
+    pi, ti = int(p), int(t)
+    si = int(s) if s is not None else None
+    tgt = state["phases"][pi]["tasks"][ti]
+    if si is not None:
+        tgt["subtasks"][si]["commit_sha"] = sha
+    else:
+        tgt["commit_sha"] = sha
+    save(track_dir, state)
+    _do_sync_plan(track_dir, state)
+
+
+def _git_commit(track_dir, message):
+    """Stage conductor state files and create a git commit. Returns True if committed.
+
+    Only stages files that dispatch-finalize modifies: track-state.json,
+    plan.md, .conductor/, and issues.md — never arbitrary untracked files.
+    """
+    try:
+        import subprocess
+        # Stage only conductor-managed files (not arbitrary untracked files)
+        paths = ["track-state.json", "plan.md", ".conductor/", "issues.md"]
+        subprocess.run(
+            ["git", "add", "--"] + [p for p in paths if Path(track_dir, p).exists()],
+            capture_output=True, text=True, cwd=track_dir, timeout=10
+        )
+        # Verify there is something staged
+        diff = subprocess.run(
+            ["git", "diff", "--cached", "--quiet"],
+            capture_output=True, text=True, cwd=track_dir, timeout=10
+        )
+        if diff.returncode == 0:
+            return False  # Nothing staged
+        subprocess.run(
+            ["git", "commit", "-m", message],
+            capture_output=True, text=True, cwd=track_dir, timeout=10
+        )
+        return True
+    except Exception:
+        return False
+
+
+def _git_head_sha(track_dir):
+    """Get 7-char short SHA of current HEAD. Returns None on failure."""
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["git", "rev-parse", "--short=7", "HEAD"],
+            capture_output=True, text=True, cwd=track_dir, timeout=5
+        )
+        sha = result.stdout.strip()
+        return sha if re.match(r"^[0-9a-f]{7}$", sha) else None
+    except Exception:
+        return None
+
+
 def cmd_dispatch_finalize(track_dir):
-    """Process result + sync-plan + return commit message. Reduces CLI round trips.
+    """Process result + create conductor commit + sync-plan.
+    Creates the conductor commit internally so each task/subtask gets a unique SHA.
     Accepts --override key=value to patch result fields before processing."""
     result_path = conductor_dir(track_dir) / "result.json"
     if not result_path.exists():
@@ -2474,8 +2558,8 @@ def cmd_dispatch_finalize(track_dir):
     state = load(track_dir)
 
     if status == "SUCCESS":
-        sha = r.get("commit_sha", "")
-        parent_completed = _do_complete(track_dir, p, t, s, sha)
+        code_sha = r.get("commit_sha", "")
+        parent_completed = _do_complete(track_dir, p, t, s, code_sha)
         # Reload state after _do_complete modified the file
         state = load(track_dir)
 
@@ -2488,10 +2572,26 @@ def cmd_dispatch_finalize(track_dir):
         _write_git_note(track_dir, r, state)
         result_path.unlink(missing_ok=True)
 
-        commit_msg = f"chore(conductor): Complete '{task_name}' [{sha}]"
-        out(dict(status="success", sha=sha, parent_completed=parent_completed,
-                 deviations=len(r.get("spec_deviation_detail", [])),
-                 sync_count=synced, commit_msg=commit_msg))
+        # Create conductor commit to get a unique SHA per task/subtask
+        commit_msg = f"chore(conductor): Complete '{task_name}' [{code_sha}]"
+        committed = _git_commit(track_dir, commit_msg)
+        final_sha = code_sha
+        if committed:
+            final_sha = _git_head_sha(track_dir) or code_sha
+            # Update SHA in state only if duplicate detected or commit succeeded
+            if final_sha != code_sha or _has_sibling_sha(state, p, t, s, code_sha):
+                _update_task_sha(track_dir, p, t, s, final_sha)
+
+        result = dict(status="success", sha=final_sha, parent_completed=parent_completed,
+                      deviations=len(r.get("spec_deviation_detail", [])),
+                      sync_count=synced, committed=committed)
+
+        # Check if phase needs checkpoint after this completion
+        checkpoint_pending = _phase_needs_checkpoint(track_dir, load(track_dir), int(p))
+        if checkpoint_pending is not None:
+            result["phase_checkpoint_pending"] = checkpoint_pending
+
+        out(result)
 
     elif status == "FAILURE":
         summary = r.get("summary", "")
@@ -2504,8 +2604,9 @@ def cmd_dispatch_finalize(track_dir):
         result_path.unlink(missing_ok=True)
 
         commit_msg = f"chore(conductor): '{task_name}' failed (attempt {retry_count})"
+        committed = _git_commit(track_dir, commit_msg)
         out(dict(status="failure", retry_count=retry_count, summary=summary,
-                 sync_count=synced, commit_msg=commit_msg))
+                 sync_count=synced, committed=committed))
 
     else:
         out(dict(error=f"Unknown status: {status}"))
@@ -2610,7 +2711,7 @@ COMMAND_HELP = {
     "dispatch-prepare": ("dispatch-prepare <track-dir>",
                          "Composite: next + lock + sync-plan + route (reduces round trips)"),
     "dispatch-finalize": ("dispatch-finalize <track-dir> [--override k=v,k2=v2]",
-                          "Composite: process-result + sync-plan + commit message. --override patches empty result fields"),
+                          "Composite: process-result + conductor commit + sync-plan. --override patches empty result fields"),
     "record-summary": ("record-summary <track-dir>",
                        "Record compact task summary (stdin JSON) for post-compaction recovery"),
     "validate": ("validate <track-dir> [--fix]",

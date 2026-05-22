@@ -98,7 +98,7 @@ git add -A && git commit -m "<commit_msg from dispatch-prepare>"
 
 Dispatch `conductor:explorer`. Prompt: `TRACK_DIR={td} PHASE={p} TASK={t} NAME={name}`
 
-After return: commit exploration artifacts (`git add -A && git commit -m "docs(explore): {name}"`) → get SHA (`git rev-parse --short HEAD`) → `track-state dispatch-finalize "<track_dir>" --override commit_sha={sha}` → **Section 3.7**.
+After return: commit exploration artifacts (`git add -A && git commit -m "docs(explore): {name}"`) → get SHA (`git rev-parse --short HEAD`) → `track-state dispatch-finalize "<track_dir>" --override commit_sha={sha}` → `dispatch-finalize` commits internally → **Section 3.7**.
 
 ### 3.4 Action: `dispatch_executor`
 
@@ -119,7 +119,7 @@ track-state sync-plan "<track_dir>"
 git commit -m "chore(conductor): Defer manual task '<name>'"
 ```
 
-Emit: `DEFERRED: P{p}.T{t} '<name>'` → **Section 3.7**.
+If output contains `phase_checkpoint_pending` → dispatch `conductor:phase-checker` immediately. Otherwise → **Section 3.7**.
 
 ### 3.6 Process Result (after task-executor)
 
@@ -127,9 +127,12 @@ Emit: `DEFERRED: P{p}.T{t} '<name>'` → **Section 3.7**.
 track-state dispatch-finalize "<track_dir>"
 ```
 
-**SUCCESS**: commit using `commit_msg` from dispatch-finalize. Deviations > 0 → announce. → **Section 3.7**.
+`dispatch-finalize` creates the conductor commit internally. Do NOT commit separately.
+Output includes `committed: true/false` and optionally `phase_checkpoint_pending: <phase_index>`.
 
-**FAILURE**: commit using `commit_msg` from dispatch-finalize. retry < max → re-dispatch (Section 3.1). retry >= max → dispatch `conductor:skip-analyst`. Skip-analyst result: `can_skip` → `track-state skip` or `block` → `sync-plan` → commit → Section 3.1 or HALT.
+**SUCCESS**: Deviations > 0 → announce. If `phase_checkpoint_pending` present → dispatch `conductor:phase-checker` immediately. Otherwise → **Section 3.7**.
+
+**FAILURE**: retry < max → re-dispatch (Section 3.1). retry >= max → dispatch `conductor:skip-analyst`. Skip-analyst result: `can_skip` → `track-state skip` or `block` → `sync-plan` → commit → Section 3.1 or HALT.
 
 ### 3.7 Phase Boundary
 

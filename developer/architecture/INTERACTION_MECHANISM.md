@@ -214,8 +214,8 @@ sequenceDiagram
     CLI->>State: Update task status, sync plan
     CLI->>State: Store evidence on task
     CLI->>Git: Write git notes to commit SHA
-    CLI-->>Skill: JSON: status, sha, deviations, coverage
-    Skill->>Skill: Commit using commit_msg from output
+    CLI->>Git: Stage + commit conductor state files
+    CLI-->>Skill: JSON: status, sha, committed, deviations, coverage
     Skill->>Skill: Announce result tersely
 ```
 
@@ -565,8 +565,9 @@ sequenceDiagram
     S->>CLI: dispatch-finalize
     CLI->>ST: Update complete, sync plan
     CLI->>ST: Store evidence on task
-    CLI-->>S: SUCCESS JSON + commit_msg
-    S->>S: Commit with message
+    CLI->>Git: Stage + commit conductor state
+    CLI-->>S: SUCCESS JSON + committed
+    S->>S: Read sha from output
     S->>H: PostToolBatch (validate git+state ops)
     H-->>S: OK
     S->>CLI: phase-done P1
