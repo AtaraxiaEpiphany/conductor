@@ -1017,8 +1017,30 @@ def cmd_dispatch_next(track_dir):
             _do_complete(track_dir, result["phase"], result["task"], None, sha)
             state = load(track_dir)
             _do_sync_plan(track_dir, state)
-            # Check if the phase just completed needs a checkpoint
-            cp = _phase_needs_checkpoint(track_dir, state, result["phase"])
+
+            # Create conductor commit for parent completion (before note so note targets final SHA)
+            parent_name = parent_task.get("name", "unknown")
+            commit_msg = f"chore(conductor): Complete parent '{parent_name}' [{sha}]"
+            _git_commit(track_dir, commit_msg)
+            final_sha = _git_head_sha(track_dir) or sha
+            if final_sha != sha:
+                state = load(track_dir)
+                state["phases"][result["phase"]]["tasks"][result["task"]]["commit_sha"] = final_sha
+                save(track_dir, state)
+                _do_sync_plan(track_dir, state)
+
+            # Write git note AFTER conductor commit so it targets the same SHA track-state.json references
+            state = load(track_dir)
+            parent_tgt = state["phases"][result["phase"]]["tasks"][result["task"]]
+            _ensure_note(track_dir, state, result["phase"], result["task"], None, parent_tgt)
+
+            # Store minimal evidence for parent if none exists
+            if "evidence" not in parent_tgt:
+                parent_tgt["evidence"] = {"coverage_pct": None, "tc_coverage": "", "deviations": 0}
+                save(track_dir, state)
+
+            # Check if ANY phase needs a checkpoint (not just the current one)
+            cp = _any_phase_needs_checkpoint(track_dir, load(track_dir))
             if cp is not None:
                 out(dict(action="dispatch_phase_checker", phase=cp,
                          execution_mode=execution_mode))
@@ -1230,6 +1252,17 @@ def cmd_lock(track_dir, p, t, s=None):
 
 def cmd_complete(track_dir, p, t, s=None, sha=None):
     parent_completed = _do_complete(track_dir, p, t, s, sha)
+    state = load(track_dir)
+
+    # Store minimal evidence if none exists (recovery path)
+    tgt = target(state, int(p), int(t), int(s) if s is not None else None)
+    if "evidence" not in tgt:
+        tgt["evidence"] = {"coverage_pct": None, "tc_coverage": "", "deviations": 0}
+        save(track_dir, state)
+
+    # Write git note if missing
+    _ensure_note(track_dir, state, int(p), int(t), int(s) if s is not None else None, tgt)
+
     out(dict(ok=True, parent_completed=parent_completed))
 
 
@@ -1252,7 +1285,7 @@ def cmd_defer(track_dir, p, t, s=None, reason=""):
     parent_deferred = _do_defer(track_dir, p, t, s, reason)
     state = load(track_dir)
     result = dict(ok=True, parent_deferred=parent_deferred)
-    checkpoint_pending = _phase_needs_checkpoint(track_dir, state, int(p))
+    checkpoint_pending = _any_phase_needs_checkpoint(track_dir, state)
     if checkpoint_pending is not None:
         result["phase_checkpoint_pending"] = checkpoint_pending
     out(result)
@@ -2569,7 +2602,6 @@ def cmd_dispatch_finalize(track_dir):
         _append_execution_record(track_dir, p, t, s, r, state)
         for dev in r.get("spec_deviation_detail", []):
             _append_deviation_legacy(track_dir, task_name, dev)
-        _write_git_note(track_dir, r, state)
         result_path.unlink(missing_ok=True)
 
         # Create conductor commit to get a unique SHA per task/subtask
@@ -2582,12 +2614,16 @@ def cmd_dispatch_finalize(track_dir):
             if final_sha != code_sha or _has_sibling_sha(state, p, t, s, code_sha):
                 _update_task_sha(track_dir, p, t, s, final_sha)
 
+        # Write git note AFTER conductor commit so it's on the same SHA track-state.json references
+        r["commit_sha"] = final_sha
+        _write_git_note(track_dir, r, load(track_dir))
+
         result = dict(status="success", sha=final_sha, parent_completed=parent_completed,
                       deviations=len(r.get("spec_deviation_detail", [])),
                       sync_count=synced, committed=committed)
 
-        # Check if phase needs checkpoint after this completion
-        checkpoint_pending = _phase_needs_checkpoint(track_dir, load(track_dir), int(p))
+        # Check if ANY phase needs checkpoint after this completion
+        checkpoint_pending = _any_phase_needs_checkpoint(track_dir, load(track_dir))
         if checkpoint_pending is not None:
             result["phase_checkpoint_pending"] = checkpoint_pending
 
