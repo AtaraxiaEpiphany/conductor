@@ -1250,20 +1250,47 @@ def cmd_lock(track_dir, p, t, s=None):
     out(dict(ok=True))
 
 
-def cmd_complete(track_dir, p, t, s=None, sha=None):
+def cmd_complete(track_dir, p, t, s=None, sha=None,
+                 coverage=None, deviations=None):
+    state = load(track_dir)
+    pi, ti = int(p), int(t)
+    si = int(s) if s is not None else None
+
+    # Pre-check: if completing a subtask that would duplicate a sibling SHA,
+    # create a conductor commit (allow-empty) to guarantee a unique SHA
+    if si is not None and sha and _has_sibling_sha(state, pi, ti, si, sha):
+        _do_sync_plan(track_dir, state)
+        commit_msg = f"chore(conductor): Dedup SHA for P{pi}:T{ti}:S{si}"
+        _git_commit(track_dir, commit_msg, allow_empty=True)
+        new_sha = _git_head_sha(track_dir)
+        if new_sha and new_sha != sha:
+            sha = new_sha
+
     parent_completed = _do_complete(track_dir, p, t, s, sha)
     state = load(track_dir)
 
-    # Store minimal evidence if none exists (recovery path)
-    tgt = target(state, int(p), int(t), int(s) if s is not None else None)
-    if "evidence" not in tgt:
+    # Resolve actual SHA from state (may differ from input sha when
+    # parent-complete inherits from _last_subtask_sha)
+    tgt = target(state, pi, ti, si)
+    resolved_sha = tgt.get("commit_sha", sha or "")
+
+    # Store evidence (from --coverage/--deviations flags or minimal default)
+    if coverage is not None or deviations is not None:
+        if "evidence" not in tgt:
+            tgt["evidence"] = {"coverage_pct": None, "tc_coverage": "", "deviations": 0}
+        if coverage is not None:
+            tgt["evidence"]["coverage_pct"] = coverage
+        if deviations is not None:
+            tgt["evidence"]["deviations"] = deviations
+        save(track_dir, state)
+    elif "evidence" not in tgt:
         tgt["evidence"] = {"coverage_pct": None, "tc_coverage": "", "deviations": 0}
         save(track_dir, state)
 
     # Write git note if missing
-    _ensure_note(track_dir, state, int(p), int(t), int(s) if s is not None else None, tgt)
+    _ensure_note(track_dir, state, pi, ti, si, tgt)
 
-    out(dict(ok=True, parent_completed=parent_completed))
+    out(dict(ok=True, parent_completed=parent_completed, sha=resolved_sha))
 
 
 def cmd_fail(track_dir, p, t, s=None, summary=""):
@@ -2514,11 +2541,12 @@ def _update_task_sha(track_dir, p, t, s, sha):
     _do_sync_plan(track_dir, state)
 
 
-def _git_commit(track_dir, message):
+def _git_commit(track_dir, message, allow_empty=False):
     """Stage conductor state files and create a git commit. Returns True if committed.
 
     Only stages files that dispatch-finalize modifies: track-state.json,
     plan.md, .conductor/, and issues.md — never arbitrary untracked files.
+    When allow_empty is True, creates a commit even with nothing staged (for SHA dedup).
     """
     try:
         import subprocess
@@ -2533,12 +2561,12 @@ def _git_commit(track_dir, message):
             ["git", "diff", "--cached", "--quiet"],
             capture_output=True, text=True, cwd=track_dir, timeout=10
         )
-        if diff.returncode == 0:
+        if diff.returncode == 0 and not allow_empty:
             return False  # Nothing staged
-        subprocess.run(
-            ["git", "commit", "-m", message],
-            capture_output=True, text=True, cwd=track_dir, timeout=10
-        )
+        cmd = ["git", "commit", "-m", message]
+        if allow_empty:
+            cmd.append("--allow-empty")
+        subprocess.run(cmd, capture_output=True, text=True, cwd=track_dir, timeout=10)
         return True
     except Exception:
         return False
@@ -2610,9 +2638,18 @@ def cmd_dispatch_finalize(track_dir):
         final_sha = code_sha
         if committed:
             final_sha = _git_head_sha(track_dir) or code_sha
-            # Update SHA in state only if duplicate detected or commit succeeded
-            if final_sha != code_sha or _has_sibling_sha(state, p, t, s, code_sha):
-                _update_task_sha(track_dir, p, t, s, final_sha)
+        # Always check for sibling SHA collision, even if no conductor commit
+        if final_sha != code_sha or _has_sibling_sha(state, p, t, s, code_sha):
+            if final_sha == code_sha:
+                # Commit didn't create a new SHA but sibling collision detected.
+                # Force a conductor commit to get a unique SHA.
+                commit_msg = f"chore(conductor): Dedup '{task_name}' [{code_sha}]"
+                _git_commit(track_dir, commit_msg, allow_empty=True)
+                final_sha = _git_head_sha(track_dir) or code_sha
+            # Update SHA in state first, then sync plan and commit so the
+            # commit captures the corrected SHA in plan.md
+            _update_task_sha(track_dir, p, t, s, final_sha)
+            _git_commit(track_dir, f"chore(conductor): Finalize dedup [{final_sha}]")
 
         # Write git note AFTER conductor commit so it's on the same SHA track-state.json references
         r["commit_sha"] = final_sha
@@ -2834,9 +2871,19 @@ def main():
         elif cmd == "lock":
             cmd_lock(track_dir, pos[0], pos[1], pos[2] if len(pos) > 2 else None)
         elif cmd == "complete":
+            cov = flag(args, "--coverage")
+            dev = flag(args, "--deviations")
+            try:
+                cov_val = int(cov) if cov else None
+                dev_val = int(dev) if dev else None
+            except ValueError:
+                out(dict(error=f"--coverage and --deviations require integers, got: {cov!r} {dev!r}"))
+                sys.exit(1)
             cmd_complete(track_dir, pos[0], pos[1],
                          pos[2] if len(pos) > 2 else None,
-                         flag(args, "--sha"))
+                         flag(args, "--sha"),
+                         coverage=cov_val,
+                         deviations=dev_val)
         elif cmd == "fail":
             cmd_fail(track_dir, pos[0], pos[1],
                      pos[2] if len(pos) > 2 else None,

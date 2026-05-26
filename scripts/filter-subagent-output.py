@@ -32,8 +32,13 @@ NO_RESULT_MESSAGE = (
     "Check .conductor/ for artifacts."
 )
 
-NO_RESULT_CONTEXT = (
+NO_RESULT_WARN = (
     "[Conductor] Subagent output filtered: no ---RESULT--- block detected in response."
+)
+
+NO_RESULT_OK = (
+    "[Conductor] Subagent output filtered: no ---RESULT--- block in output, "
+    "but result.json was written — processing will continue via dispatch-finalize."
 )
 
 
@@ -106,9 +111,28 @@ def main():
     if extra_context is None:
         extra_context = detect_failure_context(response)
 
-    # If no structured result block AND no failure/recovery, add filter notice
+    # If no structured result block AND no failure/recovery, check for result file
     if result is None and extra_context is None:
-        extra_context = NO_RESULT_CONTEXT
+        # The subagent may have written results via track-state write-result
+        # (to conductor/tracks/<name>/.conductor/result.json) without wrapping
+        # output in ---RESULT--- delimiters. Search for any recent result.json.
+        cwd = input_data.get("cwd") or str(Path.cwd())
+        result_found = False
+        try:
+            # Search conductor/tracks/*/**.conductor/result.json under cwd
+            base = Path(cwd)
+            for p in base.glob("conductor/tracks/*/.conductor/result.json"):
+                if p.exists():
+                    result_found = True
+                    break
+            # Also check .conductor/result.json directly (non-tracks layout)
+            if not result_found:
+                direct = base / ".conductor" / "result.json"
+                if direct.exists():
+                    result_found = True
+        except (TypeError, ValueError):
+            pass
+        extra_context = NO_RESULT_OK if result_found else NO_RESULT_WARN
 
     write_hook_output(
         updated_tool_output=updated_output,
