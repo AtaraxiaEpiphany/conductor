@@ -126,6 +126,7 @@ def save(track_dir, state):
             prefix=f'.{state_file.name}.tmp',
             delete=False
         )
+        temp_file_name = None
         try:
             json.dump(state, temp_file, indent=2, ensure_ascii=False)
             temp_file.write("\n")
@@ -134,6 +135,12 @@ def save(track_dir, state):
             temp_file_name = temp_file.name
         except (OSError, IOError) as e:
             temp_file.close()
+            if temp_file_name is None:
+                temp_file_name = temp_file.name
+            try:
+                os.unlink(temp_file_name)
+            except OSError:
+                pass
             raise
         finally:
             temp_file.close()
@@ -1294,7 +1301,7 @@ def _ensure_note(track_dir, state, pi, ti, si, tgt):
                     r = json.load(f)
                 rp, rt = r.get("phase"), r.get("task")
                 rs = r.get("subtask")
-                if str(rp) == str(pi) and str(rt) == str(ti) and (rs is None and si is None or str(rs) == str(si)):
+                if str(rp) == str(pi) and str(rt) == str(ti) and ((rs is None and si is None) or str(rs) == str(si)):
                     _write_git_note(track_dir, r, state)
                     return
             except (FileNotFoundError, json.JSONDecodeError):
@@ -1518,13 +1525,33 @@ def cmd_gc(track_dir):
     cond_dir = track_path / ".conductor"
     fixes = []
 
+    # Clean orphaned temp files from interrupted save() / write-result operations
+    for pattern in [".track-state.json.tmp*", ".result.tmp.*"]:
+        for tmp_file in track_path.glob(pattern):
+            try:
+                tmp_file.unlink()
+                fixes.append(f"Removed orphaned temp file: {tmp_file.name}")
+            except OSError:
+                pass
+    for tmp_file in cond_dir.glob(".result.tmp.*"):
+        try:
+            tmp_file.unlink()
+            fixes.append(f"Removed orphaned temp file: {tmp_file.name}")
+        except OSError:
+            pass
+
+    # Load state once for all checks below
+    try:
+        state = load(track_dir)
+    except (FileNotFoundError, json.JSONDecodeError):
+        state = None
+
     # Clean orphaned result.json files (left from crashed sessions)
     # Only remove if no task is currently in_progress (i.e., no active processing)
     result_file = cond_dir / "result.json"
     if result_file.exists():
         has_active = False
-        try:
-            state = load(track_dir)
+        if state:
             for phase in state.get("phases", []):
                 for task in phase.get("tasks", []):
                     if task.get("status") == "in_progress":
@@ -1536,8 +1563,6 @@ def cmd_gc(track_dir):
                             break
                 if has_active:
                     break
-        except (FileNotFoundError, json.JSONDecodeError):
-            pass
         if not has_active:
             result_file.unlink()
             fixes.append("Removed orphaned .conductor/result.json")
@@ -1545,11 +1570,9 @@ def cmd_gc(track_dir):
             fixes.append("Skipped .conductor/result.json (active task may be processing it)")
 
     # Detect stale in_progress tasks (older than 24h)
-    try:
-        if state is None:
-            state = load(track_dir)
-    except NameError:
-        state = load(track_dir)
+    if state is None:
+        out(dict(fixes=fixes, stale_count=0, age_hours=0))
+        return
     now = datetime.now(timezone.utc)
     updated = datetime.fromisoformat(state.get("updated_at", now.isoformat()))
     age_hours = (now - updated).total_seconds() / 3600
@@ -2057,7 +2080,7 @@ def _write_git_note(track_dir, result_data, state):
         if not full_sha:
             return
         subprocess.run(
-            ["git", "notes", "add", "-m", note, full_sha],
+            ["git", "notes", "add", "-f", "-m", note, full_sha],
             capture_output=True, text=True, cwd=track_dir, timeout=5
         )
     except (ImportError, subprocess.SubprocessError, FileNotFoundError, PermissionError, subprocess.TimeoutExpired):
@@ -2119,7 +2142,7 @@ def _write_git_note_basic(track_dir, sha, state, pi, ti, si=None):
         )
         if existing.returncode != 0:
             subprocess.run(
-                ["git", "notes", "add", "-m", note, full_sha],
+                ["git", "notes", "add", "-f", "-m", note, full_sha],
                 capture_output=True, text=True, cwd=track_dir, timeout=5
             )
     except (ImportError, subprocess.SubprocessError, FileNotFoundError, PermissionError, subprocess.TimeoutExpired):
@@ -2342,9 +2365,7 @@ def cmd_init(track_dir, plan_structure_json, track_id, track_type, description, 
     if execution_mode:
         state["execution_mode"] = execution_mode
 
-    with open(track_path / "track-state.json", "w") as f:
-        json.dump(state, f, indent=2, ensure_ascii=False)
-        f.write("\n")
+    save(str(track_path), state)
 
     # Create index.md from template
     plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT", "")
