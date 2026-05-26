@@ -54,6 +54,10 @@ MARKER_MAP = {
 SHA_MARKERS = {"x", "!", ">", "#", "-", "d"}
 
 TERMINAL_STATUSES = {"completed", "skipped", "deferred", "blocked", "cancelled"}
+# "failed" is terminal for parent auto-completion but NOT for dispatch — the
+# orchestrator retries failed tasks via recover, so dispatch-next must not
+# treat them as terminal.
+TERMINAL_FOR_PARENT = TERMINAL_STATUSES | {"failed"}
 
 _RE_TRAILING_MARKER = re.compile(
     r'\s*\[(?:N/A|verified|[0-9a-f]{7}(?:\s*,\s*[0-9a-f]{7})*)\]\s*$'
@@ -63,65 +67,85 @@ _RE_TRAILING_MARKER = re.compile(
 # ── Utilities ─────────────────────────────────────────────────────────
 
 
+def _lock_file_path(track_dir):
+    """Path to the separate lock file used for coordinated file access."""
+    return Path(track_dir) / ".track-state.lock"
+
+
 def load(track_dir):
     """Load track-state.json with shared lock for concurrent access safety."""
     state_file = Path(track_dir) / "track-state.json"
-    with open(state_file, "r+") as f:
-        # Acquire shared lock for reading (multiple readers allowed)
-        try:
-            import fcntl
-            fcntl.flock(f.fileno(), fcntl.LOCK_SH)
-        except (ImportError, AttributeError):
-            pass  # fcntl not available on Windows, proceed without lock
-        try:
+    lock_path = _lock_file_path(track_dir)
+    lock_fd = None
+    try:
+        import fcntl
+        lock_fd = open(lock_path, "w")
+        fcntl.flock(lock_fd.fileno(), fcntl.LOCK_SH)
+    except (ImportError, AttributeError, OSError):
+        pass  # fcntl not available on Windows, proceed without lock
+    try:
+        with open(state_file, "r") as f:
             return json.load(f)
-        finally:
+    finally:
+        if lock_fd is not None:
             try:
-                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                import fcntl
+                fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
+                lock_fd.close()
             except (ImportError, AttributeError, OSError):
                 pass
 
 
 def save(track_dir, state):
-    """Save track-state.json with exclusive lock using atomic write pattern."""
+    """Save track-state.json with exclusive lock using atomic write pattern.
+
+    Uses a separate lock file (.track-state.lock) so that the lock persists
+    across the os.replace() call (which swaps the inode of track-state.json,
+    rendering locks on that file's fd ineffective).
+    """
     import tempfile
     import os
 
     state_file = Path(track_dir) / "track-state.json"
+    lock_path = _lock_file_path(track_dir)
 
-    # Write to temporary file first for atomicity
-    temp_file = tempfile.NamedTemporaryFile(
-        mode='w',
-        dir=state_file.parent,
-        prefix=f'.{state_file.name}.tmp',
-        delete=False
-    )
+    # Acquire exclusive lock on the separate lock file
+    lock_fd = None
     try:
-        json.dump(state, temp_file, indent=2, ensure_ascii=False)
-        temp_file.write("\n")
-        temp_file.flush()
-        os.fsync(temp_file.fileno())
-        temp_file_name = temp_file.name
-    except (OSError, IOError) as e:
-        temp_file.close()
-        raise
-    finally:
-        temp_file.close()
+        import fcntl
+        lock_fd = open(lock_path, "w")
+        fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX)
+    except (ImportError, AttributeError, OSError):
+        pass  # fcntl not available on Windows, proceed without lock
 
-    # Acquire exclusive lock for the state file before replacement
-    with open(state_file, "a+") as f:
+    try:
+        # Write to temporary file first for atomicity
+        temp_file = tempfile.NamedTemporaryFile(
+            mode='w',
+            dir=state_file.parent,
+            prefix=f'.{state_file.name}.tmp',
+            delete=False
+        )
         try:
-            import fcntl
-            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-        except (ImportError, AttributeError):
-            pass
-
-        try:
-            # Atomic replacement
-            os.replace(temp_file_name, str(state_file))
+            json.dump(state, temp_file, indent=2, ensure_ascii=False)
+            temp_file.write("\n")
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
+            temp_file_name = temp_file.name
+        except (OSError, IOError) as e:
+            temp_file.close()
+            raise
         finally:
+            temp_file.close()
+
+        # Atomic replacement — lock remains valid because it's on a separate file
+        os.replace(temp_file_name, str(state_file))
+    finally:
+        if lock_fd is not None:
             try:
-                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                import fcntl
+                fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
+                lock_fd.close()
             except (ImportError, AttributeError, OSError):
                 pass
 
@@ -214,11 +238,15 @@ def conductor_dir(track_dir):
 
 
 def _propagate_to_subtasks(tgt, status, reason_key, reason_value):
-    """Propagate status to non-terminal subtasks when parent enters terminal state."""
+    """Propagate status to non-terminal subtasks when parent enters terminal state.
+
+    Preserves 'failed' subtasks — their audit trail (retry_count,
+    last_failure_summary) must not be destroyed by parent-level operations.
+    """
     if "subtasks" not in tgt:
         return
     for sub in tgt["subtasks"]:
-        if sub["status"] not in TERMINAL_STATUSES:
+        if sub["status"] not in TERMINAL_FOR_PARENT:
             sub["status"] = status
             sub[reason_key] = reason_value
 
@@ -252,10 +280,10 @@ def _safe_task_name(state, phase_idx, task_idx):
 def _is_phase_terminal(phase):
     """Check if all tasks and subtasks in a phase are in terminal status."""
     for task in phase.get("tasks", []):
-        if task["status"] not in TERMINAL_STATUSES:
+        if task["status"] not in TERMINAL_FOR_PARENT:
             return False
         for sub in task.get("subtasks", []):
-            if sub["status"] not in TERMINAL_STATUSES:
+            if sub["status"] not in TERMINAL_FOR_PARENT:
                 return False
     return True
 
@@ -299,7 +327,7 @@ def _do_complete(track_dir, p, t, s=None, sha=None):
     # Guard: parent task cannot be completed while subtasks are still non-terminal
     if si is None and "subtasks" in tgt:
         pending = [sub["name"] for sub in tgt["subtasks"]
-                   if sub["status"] not in TERMINAL_STATUSES]
+                   if sub["status"] not in TERMINAL_FOR_PARENT]
         if pending:
             raise ValueError(
                 f"Cannot complete P{pi}:T{ti} — {len(pending)} subtask(s) still "
@@ -319,7 +347,7 @@ def _do_complete(track_dir, p, t, s=None, sha=None):
     parent_completed = False
     if si is not None:
         parent = state["phases"][pi]["tasks"][ti]
-        if all(sub["status"] in TERMINAL_STATUSES for sub in parent.get("subtasks", [])):
+        if all(sub["status"] in TERMINAL_FOR_PARENT for sub in parent.get("subtasks", [])):
             # Inherit SHA from last completed subtask if parent SHA is empty
             parent_sha = sha or _last_subtask_sha(parent)
             parent["status"] = "completed"
@@ -438,7 +466,7 @@ def _do_defer(track_dir, p, t, s=None, reason=""):
     parent_deferred = False
     if si is not None:
         parent = state["phases"][pi]["tasks"][ti]
-        if all(sub["status"] in TERMINAL_STATUSES for sub in parent.get("subtasks", [])):
+        if all(sub["status"] in TERMINAL_FOR_PARENT for sub in parent.get("subtasks", [])):
             parent["status"] = "deferred"
             parent["defer_reason"] = "All subtasks deferred or completed"
             clean(parent, {"status", "defer_reason"})
@@ -460,7 +488,12 @@ def _do_defer(track_dir, p, t, s=None, reason=""):
 
 
 def _do_sync_plan(track_dir, state=None):
-    """Sync plan.md markers from state. Returns synced count."""
+    """Sync plan.md markers from state. Returns synced count.
+
+    Warns to stderr when plan.md contains subtask lines that have no
+    corresponding entry in track-state.json (untracked subtasks that
+    the dispatcher will never see).
+    """
     if state is None:
         state = load(track_dir)
     plan_path = Path(track_dir) / "plan.md"
@@ -473,6 +506,7 @@ def _do_sync_plan(track_dir, state=None):
     task_idx = -1
     subtask_idx = -1
     synced = 0
+    untracked = 0
 
     for line in lines:
         stripped = line.rstrip("\n")
@@ -487,6 +521,11 @@ def _do_sync_plan(track_dir, state=None):
 
         tm = re.match(r"^(\s*)-\s+\[([ x~!>#\-d])\]\s+(.*)", stripped)
         if tm:
+            if phase_idx < 0:
+                # Task line found before any Phase heading — skip
+                result.append(stripped)
+                continue
+
             indent = tm.group(1)
             rest = tm.group(3)
             is_subtask = len(indent) > 0
@@ -497,14 +536,9 @@ def _do_sync_plan(track_dir, state=None):
                 if is_subtask:
                     subtask_idx += 1
                     sub = state["phases"][phase_idx]["tasks"][task_idx]["subtasks"][subtask_idx]
-                    parent_task = state["phases"][phase_idx]["tasks"][task_idx]
-                    if parent_task["status"] == "completed":
-                        marker = MARKER_MAP["completed"]
-                        # Show subtask's own SHA if it has one (even if same as parent)
-                        sha = sub.get("commit_sha", "")
-                    else:
-                        marker = MARKER_MAP.get(sub["status"], " ")
-                        sha = sub.get("commit_sha", "")
+                    # Always show the subtask's OWN status, even if parent is completed
+                    marker = MARKER_MAP.get(sub["status"], " ")
+                    sha = sub.get("commit_sha", "")
                 else:
                     task_idx += 1
                     subtask_idx = -1
@@ -520,6 +554,15 @@ def _do_sync_plan(track_dir, state=None):
                 synced += 1
                 continue
             except (IndexError, KeyError):
+                # Untracked subtask: not in track-state.json, dispatcher will never see it
+                if is_subtask and phase_idx >= 0 and task_idx >= 0:
+                    untracked += 1
+                    print(
+                        f"WARNING: Untracked subtask in plan.md at Phase {phase_idx + 1}, "
+                        f"Task {task_idx + 1}, subtask index {subtask_idx + 1}: "
+                        f"{rest_clean[:60]}{'...' if len(rest_clean) > 60 else ''}",
+                        file=sys.stderr,
+                    )
                 result.append(stripped)
                 continue
 
@@ -528,6 +571,14 @@ def _do_sync_plan(track_dir, state=None):
     with open(plan_path, "w") as f:
         f.write("\n".join(result))
         f.write("\n")
+
+    if untracked > 0:
+        print(
+            f"WARNING: {untracked} untracked subtask(s) found in plan.md but missing "
+            f"from track-state.json. These will NOT be dispatched. "
+            f"Re-run 'track-state init' with updated PLAN_STRUCTURE to include them.",
+            file=sys.stderr,
+        )
 
     return synced
 
@@ -954,13 +1005,19 @@ def _find_next_task(state):
                     subs = task.get("subtasks")
                     if subs:
                         for si, sub in enumerate(subs):
-                            if sub["status"] == "pending":
+                            if sub["status"] in ("in_progress", "pending"):
                                 result = dict(phase=pi, task=ti, subtask=si,
                                               name=sub["name"], type="subtask",
                                               tags=_inherit_tags(extract_tags(sub["name"]), task["name"]))
                                 break
                         if not result:
-                            continue
+                            # All subtasks are terminal but parent is still pending — auto-complete parent
+                            if all(sub["status"] in TERMINAL_FOR_PARENT for sub in subs):
+                                result = dict(phase=pi, task=ti, subtask=None,
+                                              name=task["name"], type="parent-complete",
+                                              tags=extract_tags(task["name"]))
+                            else:
+                                continue
                     else:
                         result = dict(phase=pi, task=ti, subtask=None,
                                       name=task["name"], type="flat",
@@ -1014,7 +1071,11 @@ def cmd_dispatch_next(track_dir):
             # Auto-complete parent, resolve SHA from subtasks, then loop again
             parent_task = state["phases"][result["phase"]]["tasks"][result["task"]]
             sha = _last_subtask_sha(parent_task)
-            _do_complete(track_dir, result["phase"], result["task"], None, sha)
+            try:
+                _do_complete(track_dir, result["phase"], result["task"], None, sha)
+            except ValueError as e:
+                out(dict(error=str(e), status="error"))
+                return
             state = load(track_dir)
             _do_sync_plan(track_dir, state)
 
@@ -1093,7 +1154,7 @@ def cmd_recover(track_dir, compact=False):
             out(result)
         return
 
-    if si is not None and "subtasks" in task:
+    if si is not None and "subtasks" in task and len(task["subtasks"]) > 0:
         si = min(si, len(task["subtasks"]) - 1)
         tgt = task["subtasks"][si]
         name = tgt["name"]
@@ -1147,7 +1208,7 @@ def _phase_needs_checkpoint(track_dir, state, phase_index):
         return None
 
     # Check if all tasks in phase are in terminal state
-    terminal = {"completed", "skipped", "cancelled", "blocked", "deferred"}
+    terminal = TERMINAL_FOR_PARENT
     for task in phase.get("tasks", []):
         if task.get("status") not in terminal:
             return None
@@ -1289,6 +1350,9 @@ def cmd_complete(track_dir, p, t, s=None, sha=None,
 
     # Write git note if missing
     _ensure_note(track_dir, state, pi, ti, si, tgt)
+
+    # Sync plan.md markers to reflect completion
+    _do_sync_plan(track_dir, state)
 
     out(dict(ok=True, parent_completed=parent_completed, sha=resolved_sha))
 
@@ -1508,7 +1572,7 @@ def cmd_gc(track_dir):
 def cmd_phase_done(track_dir, p):
     state = load(track_dir)
     phase = state["phases"][int(p)]
-    terminal = {"completed", "skipped", "cancelled", "blocked", "deferred"}
+    terminal = TERMINAL_FOR_PARENT
     total = 0
     done = 0
     for task in phase["tasks"]:
@@ -1723,16 +1787,16 @@ def _auto_fix(state):
             continue
 
         for ti, task in enumerate(tasks):
-            if task["status"] in TERMINAL_STATUSES and "subtasks" in task:
+            if task["status"] in TERMINAL_FOR_PARENT and "subtasks" in task:
                 for sub in task["subtasks"]:
-                    if sub["status"] not in TERMINAL_STATUSES:
+                    if sub["status"] not in TERMINAL_FOR_PARENT:
                         old = sub["status"]
                         sub["status"] = task["status"]
                         fixes.append(
                             f"P{pi}.T{ti}.{sub.get('name', '?')}: "
                             f"subtask '{old}' → '{task['status']}' (parent propagation)")
 
-        if _is_phase_terminal(phase) and phase["status"] not in TERMINAL_STATUSES:
+        if _is_phase_terminal(phase) and phase["status"] not in TERMINAL_FOR_PARENT:
             task_statuses = [t["status"] for t in tasks]
             best = Counter(task_statuses).most_common(1)[0][0]
             old = phase["status"]
@@ -2150,7 +2214,11 @@ def cmd_process_result(track_dir):
         if not _tag_exempt_from_tdd(tags):
             tdd_gate = _verify_tdd_gate(track_dir, sha, r)
 
-        parent_completed = _do_complete(track_dir, p, t, s, sha)
+        try:
+            parent_completed = _do_complete(track_dir, p, t, s, sha)
+        except ValueError as e:
+            out(dict(error=str(e), status="error"))
+            return
         # Reload state after _do_complete modified the file
         state = load(track_dir)
 
@@ -2620,7 +2688,13 @@ def cmd_dispatch_finalize(track_dir):
 
     if status == "SUCCESS":
         code_sha = r.get("commit_sha", "")
-        parent_completed = _do_complete(track_dir, p, t, s, code_sha)
+        try:
+            parent_completed = _do_complete(track_dir, p, t, s, code_sha)
+        except ValueError as e:
+            # Parent cannot be completed while subtasks are still non-terminal.
+            # Leave result.json in place so the orchestrator can re-dispatch.
+            out(dict(error=str(e), status="error"))
+            return
         # Reload state after _do_complete modified the file
         state = load(track_dir)
 
