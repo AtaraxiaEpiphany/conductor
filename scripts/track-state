@@ -189,9 +189,26 @@ def out_compact(obj):
 
 
 def target(state, p, t, s=None):
-    task = state["phases"][p]["tasks"][t]
+    try:
+        task = state["phases"][p]["tasks"][t]
+    except IndexError:
+        n_phases = len(state.get("phases", []))
+        if p >= n_phases:
+            raise IndexError(
+                f"Phase index {p} out of range (track has {n_phases} phases). "
+                f"Run 'track-state validate --fix' to correct indices.") from None
+        n_tasks = len(state["phases"][p].get("tasks", []))
+        raise IndexError(
+            f"Task index {t} out of range in phase {p} (has {n_tasks} tasks). "
+            f"Run 'track-state validate --fix' to correct indices.") from None
     if s is not None and "subtasks" in task:
-        return task["subtasks"][s]
+        try:
+            return task["subtasks"][s]
+        except IndexError:
+            n_subs = len(task["subtasks"])
+            raise IndexError(
+                f"Subtask index {s} out of range in P{p}:T{t} (has {n_subs} subtasks). "
+                f"Run 'track-state validate --fix' to correct indices.") from None
     return task
 
 
@@ -1080,7 +1097,7 @@ def cmd_dispatch_next(track_dir):
             sha = _last_subtask_sha(parent_task)
             try:
                 _do_complete(track_dir, result["phase"], result["task"], None, sha)
-            except ValueError as e:
+            except (ValueError, IndexError) as e:
                 out(dict(error=str(e), status="error"))
                 return
             state = load(track_dir)
@@ -1334,12 +1351,20 @@ def cmd_complete(track_dir, p, t, s=None, sha=None,
         if new_sha and new_sha != sha:
             sha = new_sha
 
-    parent_completed = _do_complete(track_dir, p, t, s, sha)
+    try:
+        parent_completed = _do_complete(track_dir, p, t, s, sha)
+    except IndexError as e:
+        out(dict(error=str(e), hint="Run 'track-state validate --fix' to correct state"))
+        return
     state = load(track_dir)
 
     # Resolve actual SHA from state (may differ from input sha when
     # parent-complete inherits from _last_subtask_sha)
-    tgt = target(state, pi, ti, si)
+    try:
+        tgt = target(state, pi, ti, si)
+    except IndexError as e:
+        out(dict(error=str(e), hint="Run 'track-state validate --fix' to correct state"))
+        return
     resolved_sha = tgt.get("commit_sha", sha or "")
 
     # Store evidence (from --coverage/--deviations flags or minimal default)
@@ -1800,9 +1825,142 @@ def _validate_plan_consistency(track_dir, state, errors, warnings):
             warnings.append(f"{pname}: all tasks complete but no checkpoint in plan.md")
 
 
-def _auto_fix(state):
+def _parse_plan_structure(plan_path):
+    """Parse plan.md into a structure indexed by phase number.
+
+    Returns dict mapping phase_number (int) to phase data. Each phase has
+    'tasks' list. Each task has 'name' and 'subtasks' list.
+    Names are cleaned (markers/SHAs stripped).
+    """
+    with open(plan_path) as f:
+        lines = f.readlines()
+
+    phases = {}
+    current_phase = None
+    current_task = None
+
+    for line in lines:
+        stripped = line.rstrip("\n")
+
+        pm = re.match(r"^##\s+Phase\s+(\d+)\b", stripped)
+        if pm:
+            phase_num = int(pm.group(1))
+            current_phase = {"tasks": []}
+            phases[phase_num] = current_phase
+            current_task = None
+            continue
+
+        tm = re.match(r"^(\s*)-\s+\[[ x~!>#\-d]\]\s+(.*)", stripped)
+        if tm and current_phase is not None:
+            indent = tm.group(1)
+            rest = _clean_trailing_markers(tm.group(2).strip())
+            is_subtask = len(indent) > 0
+
+            if is_subtask:
+                if current_task is not None:
+                    current_task["subtasks"].append({"name": rest, "status": "pending"})
+            else:
+                current_task = {"name": rest, "subtasks": []}
+                current_phase["tasks"].append(current_task)
+
+    return phases
+
+
+def _fix_plan_mismatches(track_dir, state, errors):
+    """Absorb plan.md entries missing from state. Returns list of fixes."""
+    plan_path = Path(track_dir) / "plan.md"
+    if not plan_path.exists():
+        return []
+
+    # Check if any errors are plan count mismatches
+    has_plan_mismatch = any("plan.md has" in e and "state has" in e for e in errors)
+    if not has_plan_mismatch:
+        return []
+
+    try:
+        plan_struct = _parse_plan_structure(plan_path)
+    except Exception:
+        return []
+
+    fixes = []
+    for pi, state_phase in enumerate(state.get("phases", [])):
+        # Match by phase number (1-indexed in plan headings) to handle gaps
+        plan_phase = plan_struct.get(pi + 1)
+        if plan_phase is None:
+            continue
+        state_tasks = state_phase.setdefault("tasks", [])
+
+        # Absorb missing tasks (plan has more than state)
+        for ti, pt in enumerate(plan_phase["tasks"]):
+            if ti < len(state_tasks):
+                # Task exists — check for missing subtasks
+                # setdefault ensures the list is attached to the task dict
+                state_subs = state_tasks[ti].setdefault("subtasks", [])
+                plan_subs = pt.get("subtasks", [])
+                for si in range(len(state_subs), len(plan_subs)):
+                    sub_name = plan_subs[si]["name"]
+                    state_subs.append({"name": sub_name, "status": "pending"})
+                    fixes.append(
+                        f"P{pi}.T{ti}.S{si}: added subtask from plan.md as pending")
+            else:
+                # Task doesn't exist in state — add it
+                new_task = {"name": pt["name"], "status": "pending", "subtasks": pt["subtasks"]}
+                state_tasks.append(new_task)
+                fixes.append(
+                    f"P{pi}.T{ti}.{pt['name']}: added task from plan.md as pending "
+                    f"({len(pt['subtasks'])} subtasks)")
+
+    return fixes
+
+
+def _fix_indices(state):
+    """Fix out-of-range current_*_index fields. Returns list of fixes."""
+    fixes = []
+    phases = state.get("phases", [])
+
+    cpi = state.get("current_phase_index", -1)
+    if cpi >= len(phases):
+        state["current_phase_index"] = len(phases) - 1 if phases else -1
+        fixes.append(f"current_phase_index: {cpi} → {state['current_phase_index']} (clamped)")
+
+    cti = state.get("current_task_index", -1)
+    fixed_pi = state.get("current_phase_index", -1)
+    if fixed_pi >= 0 and fixed_pi < len(phases):
+        max_tasks = len(phases[fixed_pi].get("tasks", []))
+        if cti >= max_tasks:
+            state["current_task_index"] = max_tasks - 1 if max_tasks > 0 else -1
+            fixes.append(f"current_task_index: {cti} → {state['current_task_index']} (clamped)")
+
+    csi = state.get("current_subtask_index")
+    if csi is not None and fixed_pi >= 0 and fixed_pi < len(phases):
+        fixed_ti = state.get("current_task_index", -1)
+        if fixed_ti >= 0:
+            tasks = phases[fixed_pi].get("tasks", [])
+            if fixed_ti < len(tasks):
+                subs = tasks[fixed_ti].get("subtasks", [])
+                if csi >= len(subs):
+                    state.pop("current_subtask_index", None)
+                    fixes.append(f"current_subtask_index: {csi} → removed (out of range)")
+
+    if "updated_at" not in state:
+        state["updated_at"] = now_iso()
+        fixes.append("updated_at: set to current time (was missing)")
+
+    return fixes
+
+
+def _auto_fix(state, track_dir=None, errors=None):
     """Auto-fix repairable inconsistencies. Returns list of fixes applied."""
     fixes = []
+    errors = errors or []
+
+    # Fix out-of-range indices
+    fixes.extend(_fix_indices(state))
+
+    # Absorb plan.md entries missing from state
+    if track_dir:
+        plan_fixes = _fix_plan_mismatches(track_dir, state, errors)
+        fixes.extend(plan_fixes)
 
     for pi, phase in enumerate(state.get("phases", [])):
         tasks = phase.get("tasks", [])
@@ -1832,25 +1990,10 @@ def _auto_fix(state):
     return fixes
 
 
-def cmd_validate(track_dir, fix=False):
-    """Validate track-state.json and plan.md against structural and semantic rules."""
-    errors = []
-    warnings = []
-    try:
-        state = load(track_dir)
-    except Exception as e:
-        out(dict(valid=False, errors=[f"Cannot read track-state.json: {e}"], warnings=[], fixes=[]))
-        return
-
-    # Top-level required fields
-    for field in ["track_id", "type", "status", "description", "current_phase_index",
-                   "current_task_index", "updated_at", "phases"]:
-        if field not in state:
-            errors.append(f"Missing required field: {field}")
-
-    if errors:
-        out(dict(valid=False, errors=errors, warnings=[], fixes=[]))
-        return
+def _run_all_checks(track_dir, state, errors, warnings):
+    """Run the full validation suite: structural, enum, index, phase/task, semantic, plan."""
+    TASK_STATUSES = {"pending", "in_progress", "completed", "failed", "skipped",
+                     "deferred", "blocked", "cancelled"}
 
     # Enum checks
     if state["type"] not in ("feature", "bugfix", "chore", "docs"):
@@ -1865,16 +2008,14 @@ def cmd_validate(track_dir, fix=False):
         )
 
     # Index checks
-    cpi = state["current_phase_index"]
-    cti = state["current_task_index"]
+    cpi = state.get("current_phase_index", -1)
+    cti = state.get("current_task_index", -1)
     if cpi < -1 or cpi >= len(state.get("phases", [])):
         errors.append(f"current_phase_index {cpi} out of range")
     if cti < -1:
         errors.append(f"current_task_index {cti} out of range")
 
     # Phase validation
-    TASK_STATUSES = {"pending", "in_progress", "completed", "failed", "skipped",
-                     "deferred", "blocked", "cancelled"}
     for pi, phase in enumerate(state.get("phases", [])):
         pname = phase.get("name", f"Phase {pi+1}")
         if "name" not in phase:
@@ -1912,13 +2053,53 @@ def cmd_validate(track_dir, fix=False):
     _validate_state_consistency(state, errors, warnings)
     _validate_plan_consistency(track_dir, state, errors, warnings)
 
-    # Auto-fix if requested
+
+def cmd_validate(track_dir, fix=False):
+    """Validate track-state.json and plan.md against structural and semantic rules."""
+    errors = []
+    warnings = []
+    try:
+        state = load(track_dir)
+    except Exception as e:
+        out(dict(valid=False, errors=[f"Cannot read track-state.json: {e}"], warnings=[], fixes=[]))
+        return
+
+    # Top-level required fields
+    for field in ["track_id", "type", "status", "description", "current_phase_index",
+                   "current_task_index", "updated_at", "phases"]:
+        if field not in state:
+            errors.append(f"Missing required field: {field}")
+
+    if errors:
+        out(dict(valid=False, errors=errors, warnings=[], fixes=[]))
+        return
+
+    _run_all_checks(track_dir, state, errors, warnings)
+
+    # Auto-fix if requested — run for both errors and warnings
     fixes = []
-    if fix and warnings:
-        fixes = _auto_fix(state)
+    if fix and (errors or warnings):
+        fixes = _auto_fix(state, track_dir=track_dir, errors=errors)
         if fixes:
             save(track_dir, state)
             _do_sync_plan(track_dir, state)
+
+            # Re-validate after fixes with FULL check suite
+            new_errors = []
+            new_warnings = []
+            try:
+                fixed_state = load(track_dir)
+            except Exception:
+                fixed_state = state
+            _run_all_checks(track_dir, fixed_state, new_errors, new_warnings)
+            out(dict(
+                valid=len(new_errors) == 0,
+                errors=new_errors if new_errors != errors else errors,
+                warnings=new_warnings if new_warnings != warnings else warnings,
+                fixes=fixes,
+                fixed=True,
+            ))
+            return
 
     out(dict(valid=len(errors) == 0, errors=errors, warnings=warnings, fixes=fixes))
 
@@ -2239,7 +2420,7 @@ def cmd_process_result(track_dir):
 
         try:
             parent_completed = _do_complete(track_dir, p, t, s, sha)
-        except ValueError as e:
+        except (ValueError, IndexError) as e:
             out(dict(error=str(e), status="error"))
             return
         # Reload state after _do_complete modified the file
@@ -2712,8 +2893,12 @@ def cmd_dispatch_finalize(track_dir):
         try:
             parent_completed = _do_complete(track_dir, p, t, s, code_sha)
         except ValueError as e:
-            # Parent cannot be completed while subtasks are still non-terminal.
-            # Leave result.json in place so the orchestrator can re-dispatch.
+            # Parent has non-terminal subtasks — retryable, keep result.json
+            out(dict(error=str(e), status="error"))
+            return
+        except IndexError as e:
+            # Stale indices — unrecoverable, clean up result.json
+            result_path.unlink(missing_ok=True)
             out(dict(error=str(e), status="error"))
             return
         # Reload state after _do_complete modified the file
