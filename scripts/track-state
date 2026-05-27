@@ -212,8 +212,14 @@ def target(state, p, t, s=None):
     return task
 
 
+_RESET_FIELDS = [
+    "commit_sha", "completed_at", "retry_count", "last_failure_summary",
+    "skip_analysis", "defer_reason", "evidence",
+]
+
+
 def clean(tgt, keep):
-    for k in ["commit_sha", "completed_at", "retry_count", "last_failure_summary", "skip_analysis"]:
+    for k in _RESET_FIELDS:
         if k not in keep:
             tgt.pop(k, None)
 
@@ -509,6 +515,89 @@ def _do_defer(track_dir, p, t, s=None, reason=""):
     state["updated_at"] = now_iso()
     save(track_dir, state)
     return parent_deferred
+
+
+def _reset_task(tgt):
+    """Reset a single task/subtask dict to pending, clearing all completion fields."""
+    tgt["status"] = "pending"
+    for k in _RESET_FIELDS:
+        tgt.pop(k, None)
+
+
+def cmd_reset(track_dir, scope, p=None, t=None):
+    """Reset task(s) to pending, clearing all completion fields.
+
+    Scopes:
+      task  — reset a single task (and its subtasks) at phase p, task t
+      phase — reset ALL tasks in phase p
+      track — reset ALL tasks across ALL phases
+    """
+    state = load(track_dir)
+
+    if scope == "task":
+        if p is None or t is None:
+            out(dict(error="task scope requires phase and task index"))
+            sys.exit(1)
+        pi, ti = int(p), int(t)
+        if pi < 0 or ti < 0:
+            out(dict(error=f"Negative indices not allowed: phase={pi}, task={ti}"))
+            sys.exit(1)
+        tgt = target(state, pi, ti)
+        _reset_task(tgt)
+        for sub in tgt.get("subtasks", []):
+            _reset_task(sub)
+        # If parent phase was terminal, bring it back to in_progress
+        parent_phase = state["phases"][pi]
+        if parent_phase.get("status") in TERMINAL_FOR_PARENT:
+            parent_phase["status"] = "in_progress"
+        state["current_phase_index"] = pi
+        state["current_task_index"] = ti
+        state.pop("current_subtask_index", None)
+
+    elif scope == "phase":
+        if p is None:
+            out(dict(error="phase scope requires phase index"))
+            sys.exit(1)
+        pi = int(p)
+        if pi < 0:
+            out(dict(error=f"Negative index not allowed: phase={pi}"))
+            sys.exit(1)
+        phases = state.get("phases", [])
+        if pi >= len(phases):
+            out(dict(error=f"Phase index {pi} out of range (track has {len(phases)} phases)"))
+            sys.exit(1)
+        phase = phases[pi]
+        for task in phase.get("tasks", []):
+            _reset_task(task)
+            for sub in task.get("subtasks", []):
+                _reset_task(sub)
+        phase["status"] = "in_progress"
+        state["current_phase_index"] = pi
+        state["current_task_index"] = 0
+        state.pop("current_subtask_index", None)
+
+    elif scope == "track":
+        for phase in state.get("phases", []):
+            for task in phase.get("tasks", []):
+                _reset_task(task)
+                for sub in task.get("subtasks", []):
+                    _reset_task(sub)
+            phase["status"] = "in_progress"
+        state["current_phase_index"] = 0
+        state["current_task_index"] = 0
+        state.pop("current_subtask_index", None)
+        state["status"] = "in_progress"
+
+    else:
+        out(dict(error=f"Unknown scope: {scope}. Use task, phase, or track."))
+        sys.exit(1)
+
+    state["updated_at"] = now_iso()
+    save(track_dir, state)
+    _do_sync_plan(track_dir, state)
+
+    out(dict(ok=True, scope=scope, phase=int(p) if p is not None else None,
+             task=int(t) if t is not None else None))
 
 
 def _do_sync_plan(track_dir, state=None):
@@ -1666,6 +1755,9 @@ def cmd_registry_update(track_dir, tracks_md_path):
         "archived": "@",
         "blocked": "#",
         "cancelled": "-",
+        "deferred": "d",
+        "skipped": ">",
+        "failed": "!",
     }
     new_marker = status_to_marker.get(track_status, " ")
 
@@ -1687,7 +1779,7 @@ def cmd_registry_update(track_dir, tracks_md_path):
             continue
 
         # Format 2: Checkbox — [marker] ... (path/)
-        m = re.match(r"^(\s*-\s+\[)([ x~!>#\-])(\]\s+.*?\()([^)]*)(\).*)$", line)
+        m = re.match(r"^(\s*-\s+\[)([ x~!>#\-d@])(\]\s+.*?\()([^)]*)(\).*)$", line)
         if m:
             prefix, old_marker, mid, link_path, suffix = m.groups()
             if track_dir_name in link_path or str(track_dir_path) in link_path:
@@ -1705,7 +1797,7 @@ def cmd_registry_update(track_dir, tracks_md_path):
                 new_line = line
                 # Replace status in table — status is 3rd data column
                 new_line = re.sub(
-                    r"\|\s*(new|in_progress|completed|blocked|cancelled)\s*\|",
+                    r"\|\s*(new|in_progress|completed|blocked|cancelled|deferred|skipped|failed|archived)\s*\|",
                     f"| {track_status} |",
                     new_line,
                     count=1,
@@ -1746,9 +1838,9 @@ def _validate_state_consistency(state, errors, warnings):
             continue
 
         all_terminal = _is_phase_terminal(phase)
-        if all_terminal and phase["status"] not in TERMINAL_STATUSES:
+        if all_terminal and phase["status"] not in TERMINAL_FOR_PARENT:
             warnings.append(f"{pname}: all tasks terminal but phase status is '{phase['status']}'")
-        if phase["status"] in TERMINAL_STATUSES and not all_terminal:
+        if phase["status"] in TERMINAL_FOR_PARENT and not all_terminal:
             warnings.append(f"{pname}: phase terminal but tasks still in progress")
 
         in_progress = [t.get("name", f"P{pi}.T{ti}")
@@ -3041,6 +3133,8 @@ COMMAND_HELP = {
               "Defer task for later verification"),
     "block": ("block <track-dir> <phase> <task> [<subtask>] --reason <text>",
               "Block task with reason"),
+    "reset": ("reset <track-dir> --scope <task|phase|track> [--phase <n>] [--task <n>]",
+              "Reset task(s) to pending, clearing completion fields and syncing plan"),
     "finalize": ("finalize <track-dir>",
                  "Transition track to completed/blocked/failed, compute quality score"),
     "archive": ("archive <track-dir>",
@@ -3086,7 +3180,7 @@ COMMAND_HELP = {
 _COMMAND_GROUPS = [
     ("Lifecycle", ["init", "start", "finalize", "archive"]),
     ("Navigation", ["next", "dispatch-next", "recover"]),
-    ("State Mutations", ["lock", "complete", "fail", "skip", "defer", "block"]),
+    ("State Mutations", ["lock", "complete", "fail", "skip", "defer", "block", "reset"]),
     ("Sync & Registry", ["sync-plan", "sync-handoff", "registry-update"]),
     ("Handoff", ["get-handoff", "append-handoff"]),
     ("Result Processing", ["write-result", "process-result"]),
@@ -3176,6 +3270,11 @@ def main():
             cmd_block(track_dir, pos[0], pos[1],
                       pos[2] if len(pos) > 2 else None,
                       flag(args, "--reason") or "")
+        elif cmd == "reset":
+            scope = flag(args, "--scope") or "task"
+            cmd_reset(track_dir, scope,
+                      flag(args, "--phase"),
+                      flag(args, "--task"))
         elif cmd == "defer":
             cmd_defer(track_dir, pos[0], pos[1],
                       pos[2] if len(pos) > 2 else None,

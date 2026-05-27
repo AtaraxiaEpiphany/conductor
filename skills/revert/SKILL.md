@@ -103,38 +103,33 @@ I have analyzed your request. Here is the plan:
 
 ### 5.2 Update track-state.json
 
-After all git reverts succeed:
+After all git reverts succeed, use `track-state reset` to reset state atomically:
 
-1. Read current `track-state.json`.
-2. **For Task revert:**
-   - Set `task.status = "pending"`
-   - Remove `commit_sha`, `completed_at`, `retry_count`, `last_failure_summary`, `skip_analysis`
-   - **If task has subtasks:** Reset all subtasks to `status: "pending"`, remove completion fields from each.
-   - Remove `current_subtask_index` if present.
-   - Update `current_phase_index` and `current_task_index` to point to this task
-3. **For Phase revert:**
-   - Reset ALL tasks (and their subtasks) in the phase to `pending`
-   - Remove all completion fields from tasks and subtasks
-   - Remove `current_subtask_index` if present
-   - Update indices to point to the first task of this phase
-4. **For Track revert:**
-   - Reset ALL tasks (and their subtasks) across ALL phases to `pending`
-   - Remove all completion fields from tasks and subtasks
-   - Remove `current_subtask_index` if present
-   - Set `current_phase_index = 0`, `current_task_index = 0`
+**For Task revert:**
+```bash
+track-state reset "<track_dir>" --scope task --phase <p> --task <t>
+```
+
+**For Phase revert:**
+```bash
+track-state reset "<track_dir>" --scope phase --phase <p>
+```
+
+**For Track revert:**
+```bash
+track-state reset "<track_dir>" --scope track
+```
+
+`reset` handles: clearing all completion fields (`commit_sha`, `completed_at`, `retry_count`, `last_failure_summary`, `skip_analysis`, `defer_reason`, `evidence`), resetting subtasks, updating current indices, setting `phase.status`/`track.status` to `in_progress`, and syncing `plan.md` markers — all with lock-safe atomic writes.
+
+After reset, verify with:
+```bash
+track-state validate "<track_dir>"
+```
 
 ### 5.3 Sync plan.md
 
-Re-project from `track-state.json` to `plan.md`:
-- Remove SHA from line end, then change marker:
-  - `[x] ...line... [sha]` → `[ ] ...line...`
-  - `[!] ...line... [sha]` → `[ ] ...line...`
-  - `[>] ...line... [sha]` → `[ ] ...line...`
-  - `[#] ...line... [sha]` → `[ ] ...line...`
-  - `[-] ...line... [sha]` → `[ ] ...line...`
-  - `[~] ...line...` → `[ ] ...line...`
-- Apply same rules to indented subtask lines
-- Remove `[checkpoint: <sha>]` from phase headings (for phase/track revert)
+`track-state reset` already syncs `plan.md` markers. For phase/track reverts, also remove `[checkpoint: <sha>]` from relevant phase headings manually (reset does not handle checkpoints).
 
 ### 5.4 Commit State Sync
 

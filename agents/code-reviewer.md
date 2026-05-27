@@ -105,7 +105,7 @@ Execute each verification:
 
 2. **State Consistency**
    - For each task in track-state.json, does the plan.md marker match?
-   - Mapping: `pending=[ ]`, `in_progress=[~]`, `completed=[x]`, `failed=[!]`, `skipped=[>]`, `blocked=[#]`, `cancelled=[-]`
+   - Mapping: `pending=[ ]`, `in_progress=[~]`, `completed=[x]`, `failed=[!]`, `skipped=[>]`, `deferred=[d]`, `blocked=[#]`, `cancelled=[-]`
 
 3. **Style Compliance**
    - Does the code follow the project's code style guides?

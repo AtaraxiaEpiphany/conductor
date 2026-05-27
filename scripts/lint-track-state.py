@@ -76,7 +76,10 @@ def check_f4_rule(state_file: Path) -> tuple[bool, Optional[str]]:
     if not valid:
         return False, f"Invalid state structure: {error}"
 
-    terminal_statuses = {"completed", "failed", "skipped", "blocked", "cancelled", "deferred"}
+    # Canonical source: scripts/track-state TERMINAL_FOR_PARENT.
+    # "failed" excluded: _do_fail never sets commit_sha, so SHA check for
+    # failed tasks would always be a false positive.
+    terminal_statuses = {"completed", "skipped", "deferred", "blocked", "cancelled"}
     missing_shas = []
 
     for pi, phase in enumerate(state.get("phases", [])):
