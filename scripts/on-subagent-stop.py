@@ -51,17 +51,39 @@ def detect_failure(message: str) -> tuple[bool, Optional[str]]:
     if not message:
         return False, None
 
-    message_lower = message.lower()
-
-    for pattern in SAFE_CONTEXT_PATTERNS:
-        if re.search(pattern, message_lower, re.IGNORECASE):
-            return False, None
-
+    # Check for failure patterns first — real failures must never be masked.
+    failure_hit = None
     for pattern in FAILURE_PATTERNS:
         if re.search(pattern, message, re.IGNORECASE):
-            return True, pattern
+            failure_hit = pattern
+            break
 
-    return False, None
+    if failure_hit is None:
+        return False, None
+
+    # A failure pattern matched — but check if the ENTIRE message is a safe
+    # context (e.g. "no errors found"). Only suppress if every line containing
+    # the failure keyword is also matched by a safe context pattern.
+    message_lower = message.lower()
+    for safe in SAFE_CONTEXT_PATTERNS:
+        if re.search(safe, message_lower, re.IGNORECASE):
+            # Safe context present alongside failure — check overlap.
+            # If the failure keyword appears ONLY within safe phrases, suppress.
+            for line in message.split("\n"):
+                line_lower = line.strip().lower()
+                if re.search(failure_hit, line_lower, re.IGNORECASE):
+                    # This line has the failure keyword — is it in a safe context?
+                    is_safe = False
+                    for sp in SAFE_CONTEXT_PATTERNS:
+                        if re.search(sp, line_lower, re.IGNORECASE):
+                            is_safe = True
+                            break
+                    if not is_safe:
+                        return True, failure_hit
+            # All lines containing the failure keyword are in safe contexts
+            return False, None
+
+    return True, failure_hit
 
 
 def main():

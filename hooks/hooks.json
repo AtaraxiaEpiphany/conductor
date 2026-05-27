@@ -121,7 +121,7 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/state-consistency-check.py\"",
-            "timeout": 5
+            "timeout": 10
           }
         ]
       }

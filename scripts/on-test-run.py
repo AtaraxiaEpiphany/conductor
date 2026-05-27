@@ -16,25 +16,25 @@ from lib.hook_io import read_hook_input, write_simple_output
 from lib.logging import init_logging, log_entry
 
 
-# Precise test runner patterns — anchored to avoid matching arbitrary
-# strings that happen to contain "test" (e.g. grep, cat, echo commands).
+# Precise test runner patterns — anchored to command start or pipe/chain
+# boundaries to avoid matching "grep pytest", "echo 'jest'", etc.
 TEST_RUNNER_PATTERNS = [
-    r'\bpytest\b',
-    r'\bjest\b',
-    r'\bvitest\b',
-    r'\bgo\s+test\b',
-    r'\bcargo\s+test\b',
-    r'\bdotnet\s+test\b',
-    r'\bnpm\s+test\b',
-    r'\byarn\s+test\b',
-    r'\bpnpm\s+test\b',
-    r'\bbun\s+test\b',
-    r'\bmvn\s+test\b',
-    r'\bgradle\s+.*test\b',
-    r'\brspec\b',
-    r'\bminitest\b',
-    r'\bnose2?\b',
-    r'\bcoverage\s+(run|report)\b',
+    r'(?:^|[|&;]\s*)pytest\b',
+    r'(?:^|[|&;]\s*)jest\b',
+    r'(?:^|[|&;]\s*)vitest\b',
+    r'(?:^|[|&;]\s*)go\s+test\b',
+    r'(?:^|[|&;]\s*)cargo\s+test\b',
+    r'(?:^|[|&;]\s*)dotnet\s+test\b',
+    r'(?:^|[|&;]\s*)(?:npm|npx)\s+(?:run\s+)?test\b',
+    r'(?:^|[|&;]\s*)yarn\s+test\b',
+    r'(?:^|[|&;]\s*)pnpm\s+test\b',
+    r'(?:^|[|&;]\s*)bun\s+test\b',
+    r'(?:^|[|&;]\s*)mvn\s+test\b',
+    r'(?:^|[|&;]\s*)gradle\s+.*test\b',
+    r'(?:^|[|&;]\s*)rspec\b',
+    r'(?:^|[|&;]\s*)minitest\b',
+    r'(?:^|[|&;]\s*)nose2?\b',
+    r'(?:^|[|&;]\s*)coverage\s+(run|report)\b',
 ]
 
 

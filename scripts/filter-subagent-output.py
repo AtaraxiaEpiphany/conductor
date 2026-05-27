@@ -115,22 +115,26 @@ def main():
     if result is None and extra_context is None:
         # The subagent may have written results via track-state write-result
         # (to conductor/tracks/<name>/.conductor/result.json) without wrapping
-        # output in ---RESULT--- delimiters. Search for any recent result.json.
+        # output in ---RESULT--- delimiters. Only match fresh result.json files
+        # (modified within the last 60 seconds) to avoid false positives from
+        # stale files left by crashed sessions in other tracks.
+        import time
         cwd = input_data.get("cwd") or str(Path.cwd())
         result_found = False
+        freshness_threshold = time.time() - 60  # 60 seconds
         try:
-            # Search conductor/tracks/*/**.conductor/result.json under cwd
             base = Path(cwd)
-            for p in base.glob("conductor/tracks/*/.conductor/result.json"):
-                if p.exists():
-                    result_found = True
-                    break
-            # Also check .conductor/result.json directly (non-tracks layout)
+            # Check direct .conductor/result.json first (most common path)
+            direct = base / ".conductor" / "result.json"
+            if direct.exists() and direct.stat().st_mtime >= freshness_threshold:
+                result_found = True
+            # Then check under conductor/tracks/*/ — only fresh files
             if not result_found:
-                direct = base / ".conductor" / "result.json"
-                if direct.exists():
-                    result_found = True
-        except (TypeError, ValueError):
+                for p in base.glob("conductor/tracks/*/.conductor/result.json"):
+                    if p.exists() and p.stat().st_mtime >= freshness_threshold:
+                        result_found = True
+                        break
+        except (TypeError, ValueError, OSError):
             pass
         extra_context = NO_RESULT_OK if result_found else NO_RESULT_WARN
 

@@ -221,18 +221,26 @@ def get_context_message(issues: list[str]) -> Optional[str]:
 def should_verify_coverage(tool_calls: list[dict]) -> bool:
     """Determine if coverage verification should run based on tool calls.
 
+    Only triggers for conductor-related commits (message contains conductor
+    markers or stages conductor-managed files), not for arbitrary git commits.
+
     Args:
         tool_calls: List of tool call dictionaries
 
     Returns:
         True if coverage verification should run
     """
-    # Only verify after git commit operations
+    conductor_markers = ["conductor", "chore(conductor)", "track-state"]
     for tc in tool_calls:
         if tc.get("tool_name") == "Bash":
             cmd = tc.get("tool_input", {}).get("command", "")
             if cmd and "git commit" in cmd.lower():
-                return True
+                # Only trigger for conductor-managed commits
+                if any(marker in cmd.lower() for marker in conductor_markers):
+                    return True
+                # Also check if conductor state files are staged
+                if "track-state.json" in cmd or "plan.md" in cmd:
+                    return True
     return False
 
 

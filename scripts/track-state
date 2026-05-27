@@ -680,11 +680,14 @@ def _do_sync_plan(track_dir, state=None):
                     try:
                         parent_task = state["phases"][phase_idx]["tasks"][task_idx]
                         parent_subs = parent_task.setdefault("subtasks", [])
-                        # If parent is terminal, inherit its status instead of 'pending'
-                        initial_status = "pending"
+                        # Always absorb as 'pending' so the dispatcher sees new work.
+                        # If parent was terminal, reopen it so the new subtask
+                        # gets dispatched instead of being silently marked done.
+                        parent_subs.append({"name": rest_clean, "status": "pending"})
                         if parent_task["status"] in TERMINAL_FOR_PARENT:
-                            initial_status = parent_task["status"]
-                        parent_subs.append({"name": rest_clean, "status": initial_status})
+                            parent_task["status"] = "in_progress"
+                            for k in ("commit_sha", "completed_at"):
+                                parent_task.pop(k, None)
                         absorbed += 1
                         # Now retry the lookup with the absorbed entry
                         sub = parent_subs[-1]
@@ -1267,6 +1270,8 @@ def cmd_dispatch_next(track_dir):
             try:
                 _do_complete(track_dir, result["phase"], result["task"], None, sha)
             except (ValueError, IndexError) as e:
+                # All subtasks should be terminal (failed counts), but guard
+                # against edge cases where non-terminal subtasks still exist.
                 out(dict(error=str(e), status="error"))
                 return
             state = load(track_dir)
@@ -3089,18 +3094,14 @@ def cmd_dispatch_finalize(track_dir):
         final_sha = code_sha
         if committed:
             final_sha = _git_head_sha(track_dir) or code_sha
-        # Always check for sibling SHA collision, even if no conductor commit
-        if final_sha != code_sha or _has_sibling_sha(state, p, t, s, code_sha):
-            if final_sha == code_sha:
-                # Commit didn't create a new SHA but sibling collision detected.
-                # Force a conductor commit to get a unique SHA.
-                commit_msg = f"chore(conductor): Dedup '{task_name}' [{code_sha}]"
-                _git_commit(track_dir, commit_msg, allow_empty=True)
-                final_sha = _git_head_sha(track_dir) or code_sha
-            # Update SHA in state first, then sync plan and commit so the
-            # commit captures the corrected SHA in plan.md
-            _update_task_sha(track_dir, p, t, s, final_sha)
-            _git_commit(track_dir, f"chore(conductor): Finalize dedup [{final_sha}]")
+        # Deduplicate: if SHA collides with a sibling subtask, force a unique SHA
+        if _has_sibling_sha(state, p, t, s, final_sha):
+            _git_commit(track_dir, f"chore(conductor): Dedup '{task_name}' [{final_sha}]",
+                        allow_empty=True)
+            dedup_sha = _git_head_sha(track_dir)
+            if dedup_sha and dedup_sha != final_sha:
+                final_sha = dedup_sha
+                _update_task_sha(track_dir, p, t, s, final_sha)
 
         # Delete result.json after all commits succeed
         # If commit failed, result.json is preserved for manual recovery
