@@ -58,6 +58,9 @@ TERMINAL_STATUSES = {"completed", "skipped", "deferred", "blocked", "cancelled"}
 # orchestrator retries failed tasks via recover, so dispatch-next must not
 # treat them as terminal.
 TERMINAL_FOR_PARENT = TERMINAL_STATUSES | {"failed"}
+# Stricter set for parent auto-complete in _find_next_task: excludes "failed"
+# so parents with failed subtasks are NOT auto-completed silently.
+AUTO_COMPLETE_OK = TERMINAL_STATUSES  # completed, skipped, deferred, blocked, cancelled
 
 _RE_TRAILING_MARKER = re.compile(
     r'\s*\[(?:N/A|verified|[0-9a-f]{7}(?:\s*,\s*[0-9a-f]{7})*)\]\s*$'
@@ -377,7 +380,7 @@ def _do_complete(track_dir, p, t, s=None, sha=None):
     parent_completed = False
     if si is not None:
         parent = state["phases"][pi]["tasks"][ti]
-        if all(sub["status"] in TERMINAL_FOR_PARENT for sub in parent.get("subtasks", [])):
+        if all(sub["status"] in AUTO_COMPLETE_OK for sub in parent.get("subtasks", [])):
             # Inherit SHA from last completed subtask if parent SHA is empty
             parent_sha = sha or _last_subtask_sha(parent)
             parent["status"] = "completed"
@@ -387,12 +390,18 @@ def _do_complete(track_dir, p, t, s=None, sha=None):
             parent_completed = True
 
     # Update current indices so recovery always points to the latest state
-    state["current_phase_index"] = pi
-    state["current_task_index"] = ti
-    if si is not None:
-        state["current_subtask_index"] = si
-    else:
+    if parent_completed:
+        # Parent was auto-completed — clear subtask index since parent is done
+        state["current_phase_index"] = pi
+        state["current_task_index"] = ti
         state.pop("current_subtask_index", None)
+    else:
+        state["current_phase_index"] = pi
+        state["current_task_index"] = ti
+        if si is not None:
+            state["current_subtask_index"] = si
+        else:
+            state.pop("current_subtask_index", None)
 
     state["updated_at"] = now_iso()
     save(track_dir, state)
@@ -603,9 +612,8 @@ def cmd_reset(track_dir, scope, p=None, t=None):
 def _do_sync_plan(track_dir, state=None):
     """Sync plan.md markers from state. Returns synced count.
 
-    Warns to stderr when plan.md contains subtask lines that have no
-    corresponding entry in track-state.json (untracked subtasks that
-    the dispatcher will never see).
+    Auto-absorbs plan.md subtask lines that have no corresponding entry
+    in track-state.json, adding them as pending so the dispatcher sees them.
     """
     if state is None:
         state = load(track_dir)
@@ -619,7 +627,7 @@ def _do_sync_plan(track_dir, state=None):
     task_idx = -1
     subtask_idx = -1
     synced = 0
-    untracked = 0
+    absorbed = 0
 
     for line in lines:
         stripped = line.rstrip("\n")
@@ -667,9 +675,26 @@ def _do_sync_plan(track_dir, state=None):
                 synced += 1
                 continue
             except (IndexError, KeyError):
-                # Untracked subtask: not in track-state.json, dispatcher will never see it
+                # Untracked subtask: auto-absorb into state as pending
                 if is_subtask and phase_idx >= 0 and task_idx >= 0:
-                    untracked += 1
+                    try:
+                        parent_task = state["phases"][phase_idx]["tasks"][task_idx]
+                        parent_subs = parent_task.setdefault("subtasks", [])
+                        # If parent is terminal, inherit its status instead of 'pending'
+                        initial_status = "pending"
+                        if parent_task["status"] in TERMINAL_FOR_PARENT:
+                            initial_status = parent_task["status"]
+                        parent_subs.append({"name": rest_clean, "status": initial_status})
+                        absorbed += 1
+                        # Now retry the lookup with the absorbed entry
+                        sub = parent_subs[-1]
+                        marker = MARKER_MAP.get(sub["status"], " ")
+                        new_line = f"{indent}- [{marker}] {rest_clean}"
+                        result.append(new_line)
+                        synced += 1
+                        continue
+                    except (IndexError, KeyError):
+                        pass
                     print(
                         f"WARNING: Untracked subtask in plan.md at Phase {phase_idx + 1}, "
                         f"Task {task_idx + 1}, subtask index {subtask_idx + 1}: "
@@ -685,13 +710,9 @@ def _do_sync_plan(track_dir, state=None):
         f.write("\n".join(result))
         f.write("\n")
 
-    if untracked > 0:
-        print(
-            f"WARNING: {untracked} untracked subtask(s) found in plan.md but missing "
-            f"from track-state.json. These will NOT be dispatched. "
-            f"Re-run 'track-state init' with updated PLAN_STRUCTURE to include them.",
-            file=sys.stderr,
-        )
+    if absorbed > 0:
+        state["updated_at"] = now_iso()
+        save(track_dir, state)
 
     return synced
 
@@ -1087,6 +1108,7 @@ def _append_deviation_legacy(track_dir, task_name, dev):
 def _find_next_task(state):
     """Find the next task to execute. Returns result dict or None."""
     result = None
+    stuck = None
     # Pass 1: in_progress tasks (recovery / dispatch continuation)
     for pi, phase in enumerate(state["phases"]):
         for ti, task in enumerate(phase["tasks"]):
@@ -1100,14 +1122,22 @@ def _find_next_task(state):
                                           tags=_inherit_tags(extract_tags(sub["name"]), task["name"]))
                             break
                     if not result:
-                        result = dict(phase=pi, task=ti, subtask=None,
-                                      name=task["name"], type="parent-complete",
-                                      tags=extract_tags(task["name"]))
+                        # All subtasks are non-dispatchable — auto-complete only if no failures
+                        if all(sub["status"] in AUTO_COMPLETE_OK for sub in subs):
+                            result = dict(phase=pi, task=ti, subtask=None,
+                                          name=task["name"], type="parent-complete",
+                                          tags=extract_tags(task["name"]))
+                        else:
+                            # Parent has failed subtasks — record as stuck but keep looking
+                            stuck = dict(phase=pi, task=ti, subtask=None,
+                                         name=task["name"], type="parent-stuck",
+                                         tags=extract_tags(task["name"]))
                 else:
                     result = dict(phase=pi, task=ti, subtask=None,
                                   name=task["name"], type="flat",
                                   tags=extract_tags(task["name"]))
-                break
+                if result:
+                    break
         if result:
             break
     # Pass 2: pending tasks (new dispatch)
@@ -1124,8 +1154,9 @@ def _find_next_task(state):
                                               tags=_inherit_tags(extract_tags(sub["name"]), task["name"]))
                                 break
                         if not result:
-                            # All subtasks are terminal but parent is still pending — auto-complete parent
-                            if all(sub["status"] in TERMINAL_FOR_PARENT for sub in subs):
+                            # All subtasks are terminal but parent is still pending
+                            # Only auto-complete if no subtasks are failed
+                            if all(sub["status"] in AUTO_COMPLETE_OK for sub in subs):
                                 result = dict(phase=pi, task=ti, subtask=None,
                                               name=task["name"], type="parent-complete",
                                               tags=extract_tags(task["name"]))
@@ -1138,6 +1169,9 @@ def _find_next_task(state):
                     break
             if result:
                 break
+    # If nothing else found but a stuck parent exists, return it for handling
+    if not result:
+        result = stuck
     if not result:
         result = dict(phase=-1, task=-1, subtask=None, name=None, type=None, tags=[])
     return result
@@ -1159,7 +1193,8 @@ def cmd_dispatch_next(track_dir):
     """One-call dispatch decision: next + parent-complete resolution + tag routing.
     Returns action enum for orchestrator to switch on."""
     # Loop instead of recursion to avoid stack overflow on many parent-complete tasks
-    while True:
+    max_iterations = 50
+    for _ in range(max_iterations):
         state = load(track_dir)
         execution_mode = state.get("execution_mode", "interactive")
 
@@ -1195,7 +1230,10 @@ def cmd_dispatch_next(track_dir):
             # Create conductor commit for parent completion (before note so note targets final SHA)
             parent_name = parent_task.get("name", "unknown")
             commit_msg = f"chore(conductor): Complete parent '{parent_name}' [{sha}]"
-            _git_commit(track_dir, commit_msg)
+            committed = _git_commit(track_dir, commit_msg)
+            if not committed:
+                print(f"WARNING: conductor commit failed for parent-complete of '{parent_name}'",
+                      file=sys.stderr)
             final_sha = _git_head_sha(track_dir) or sha
             if final_sha != sha:
                 state = load(track_dir)
@@ -1221,6 +1259,33 @@ def cmd_dispatch_next(track_dir):
                 return
             continue
 
+        if rtype == "parent-stuck":
+            # Parent has failed subtasks and no other work exists.
+            # Auto-complete using TERMINAL_FOR_PARENT (includes 'failed') as fallback.
+            parent_task = state["phases"][result["phase"]]["tasks"][result["task"]]
+            sha = _last_subtask_sha(parent_task)
+            try:
+                _do_complete(track_dir, result["phase"], result["task"], None, sha)
+            except (ValueError, IndexError) as e:
+                out(dict(error=str(e), status="error"))
+                return
+            state = load(track_dir)
+            _do_sync_plan(track_dir, state)
+            parent_name = parent_task.get("name", "unknown")
+            commit_msg = f"chore(conductor): Complete stuck parent '{parent_name}' [{sha}]"
+            _git_commit(track_dir, commit_msg)
+            final_sha = _git_head_sha(track_dir) or sha
+            if final_sha != sha:
+                state = load(track_dir)
+                state["phases"][result["phase"]]["tasks"][result["task"]]["commit_sha"] = final_sha
+                save(track_dir, state)
+                _do_sync_plan(track_dir, state)
+
+            out(dict(action="parent_stuck", phase=result["phase"], task=result["task"],
+                     name=parent_name, sha=final_sha,
+                     execution_mode=execution_mode))
+            return
+
         # Route by tags
         if "Manual" in tags:
             action = "defer_manual"
@@ -1233,6 +1298,9 @@ def cmd_dispatch_next(track_dir):
         result["execution_mode"] = execution_mode
         out(result)
         return
+
+    out(dict(error="dispatch-next exceeded max iterations — possible state corruption",
+             status="error"))
 
 
 def cmd_recover(track_dir, compact=False):
@@ -1871,49 +1939,47 @@ def _validate_plan_consistency(track_dir, state, errors, warnings):
         warnings.append("plan.md not found — skipping plan consistency checks")
         return
 
+    try:
+        plan_struct = _parse_plan_structure(plan_path)
+    except Exception:
+        warnings.append("plan.md parse failed — skipping plan consistency checks")
+        return
+
+    # Check for checkpoint markers via line scan
+    has_checkpoint = {}
     with open(plan_path) as f:
-        lines = f.readlines()
-
-    plan_phases = []
-    current_phase = None
-
-    for line in lines:
-        stripped = line.rstrip("\n")
-
-        pm = re.match(r"^##\s+Phase\s+(\d+)\b", stripped)
-        if pm:
-            has_checkpoint = bool(re.search(r"\[checkpoint:\s*[0-9a-f]{7}\]", stripped))
-            current_phase = {"has_checkpoint": has_checkpoint, "tasks": 0, "subtasks": 0}
-            plan_phases.append(current_phase)
-            continue
-
-        tm = re.match(r"^(\s*)-\s+\[([ x~!>#\-d])\]\s+", stripped)
-        if tm and current_phase is not None:
-            indent = tm.group(1)
-            if len(indent) > 0:
-                current_phase["subtasks"] += 1
-            else:
-                current_phase["tasks"] += 1
+        for line in f:
+            m = re.match(r"^##\s+Phase\s+(\d+)\b", line.rstrip("\n"))
+            if m:
+                phase_num = int(m.group(1))
+                has_checkpoint[phase_num] = bool(re.search(r"\[checkpoint:\s*[0-9a-f]{7}\]", line))
 
     for pi, phase in enumerate(state.get("phases", [])):
         pname = phase.get("name", f"Phase {pi+1}")
         tasks = phase.get("tasks", [])
+        phase_num = pi + 1
 
-        if pi >= len(plan_phases):
+        plan_phase = plan_struct.get(phase_num)
+        if plan_phase is None:
             warnings.append(f"{pname}: phase heading missing in plan.md")
             continue
 
-        pp = plan_phases[pi]
-
+        plan_tasks = plan_phase["tasks"]
         state_tasks = len(tasks)
-        if pp["tasks"] != state_tasks:
-            errors.append(f"{pname}: plan.md has {pp['tasks']} tasks, state has {state_tasks}")
+        plan_task_count = len(plan_tasks)
+        if plan_task_count != state_tasks:
+            errors.append(f"{pname}: plan.md has {plan_task_count} tasks, state has {state_tasks}")
 
-        state_subs = sum(len(t.get("subtasks", [])) for t in tasks)
-        if pp["subtasks"] != state_subs:
-            errors.append(f"{pname}: plan.md has {pp['subtasks']} subtasks, state has {state_subs}")
+        # Per-task subtask count validation (not just aggregate)
+        for ti in range(min(state_tasks, plan_task_count)):
+            state_sub_count = len(tasks[ti].get("subtasks", []))
+            plan_sub_count = len(plan_tasks[ti].get("subtasks", []))
+            if plan_sub_count != state_sub_count:
+                tname = tasks[ti].get("name", f"P{pi}.T{ti}")
+                errors.append(
+                    f"{tname}: plan.md has {plan_sub_count} subtasks, state has {state_sub_count}")
 
-        if _is_phase_terminal(phase) and not pp["has_checkpoint"]:
+        if _is_phase_terminal(phase) and not has_checkpoint.get(phase_num, False):
             warnings.append(f"{pname}: all tasks complete but no checkpoint in plan.md")
 
 
@@ -1958,15 +2024,14 @@ def _parse_plan_structure(plan_path):
     return phases
 
 
-def _fix_plan_mismatches(track_dir, state, errors):
-    """Absorb plan.md entries missing from state. Returns list of fixes."""
+def _fix_plan_mismatches(track_dir, state, errors=None):
+    """Absorb plan.md entries missing from state. Returns list of fixes.
+
+    Always attempts reconciliation regardless of validate errors — the function
+    is idempotent (only adds, never removes) so running without errors is safe.
+    """
     plan_path = Path(track_dir) / "plan.md"
     if not plan_path.exists():
-        return []
-
-    # Check if any errors are plan count mismatches
-    has_plan_mismatch = any("plan.md has" in e and "state has" in e for e in errors)
-    if not has_plan_mismatch:
         return []
 
     try:
@@ -2823,6 +2888,13 @@ def cmd_append_handoff(track_dir, phase, task, entry_type, content_json, subtask
 
 def cmd_dispatch_prepare(track_dir):
     """Lock + sync-plan + return commit message template. Reduces CLI round trips."""
+    # Auto-reconcile plan.md changes before dispatch
+    state = load(track_dir)
+    fixes = _fix_plan_mismatches(track_dir, state)
+    if fixes:
+        state["updated_at"] = now_iso()
+        save(track_dir, state)
+
     nxt = cmd_next(track_dir)
     if nxt.get("phase", -1) < 0:
         out(dict(action="done", next=nxt))
@@ -2928,9 +3000,13 @@ def _git_commit(track_dir, message, allow_empty=False):
         cmd = ["git", "commit", "-m", message]
         if allow_empty:
             cmd.append("--allow-empty")
-        subprocess.run(cmd, capture_output=True, text=True, cwd=track_dir, timeout=10)
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd=track_dir, timeout=10)
+        if result.returncode != 0:
+            print(f"WARNING: git commit failed: {result.stderr.strip()}", file=sys.stderr)
+            return False
         return True
-    except Exception:
+    except Exception as e:
+        print(f"WARNING: git commit error: {e}", file=sys.stderr)
         return False
 
 
@@ -2944,7 +3020,8 @@ def _git_head_sha(track_dir):
         )
         sha = result.stdout.strip()
         return sha if re.match(r"^[0-9a-f]{7}$", sha) else None
-    except Exception:
+    except Exception as e:
+        print(f"WARNING: git rev-parse error: {e}", file=sys.stderr)
         return None
 
 
@@ -3002,11 +3079,13 @@ def cmd_dispatch_finalize(track_dir):
         _append_execution_record(track_dir, p, t, s, r, state)
         for dev in r.get("spec_deviation_detail", []):
             _append_deviation_legacy(track_dir, task_name, dev)
-        result_path.unlink(missing_ok=True)
 
         # Create conductor commit to get a unique SHA per task/subtask
         commit_msg = f"chore(conductor): Complete '{task_name}' [{code_sha}]"
         committed = _git_commit(track_dir, commit_msg)
+        if not committed:
+            print(f"WARNING: conductor commit failed for '{task_name}'",
+                  file=sys.stderr)
         final_sha = code_sha
         if committed:
             final_sha = _git_head_sha(track_dir) or code_sha
@@ -3022,6 +3101,13 @@ def cmd_dispatch_finalize(track_dir):
             # commit captures the corrected SHA in plan.md
             _update_task_sha(track_dir, p, t, s, final_sha)
             _git_commit(track_dir, f"chore(conductor): Finalize dedup [{final_sha}]")
+
+        # Delete result.json after all commits succeed
+        # If commit failed, result.json is preserved for manual recovery
+        if committed:
+            result_path.unlink(missing_ok=True)
+        else:
+            print(f"WARNING: result.json preserved due to commit failure", file=sys.stderr)
 
         # Write git note AFTER conductor commit so it's on the same SHA track-state.json references
         r["commit_sha"] = final_sha
@@ -3046,10 +3132,13 @@ def cmd_dispatch_finalize(track_dir):
         synced = _do_sync_plan(track_dir, state)
         _append_execution_record(track_dir, p, t, s, r, state)
         _append_failure_legacy(track_dir, r)
-        result_path.unlink(missing_ok=True)
 
         commit_msg = f"chore(conductor): '{task_name}' failed (attempt {retry_count})"
         committed = _git_commit(track_dir, commit_msg)
+        if committed:
+            result_path.unlink(missing_ok=True)
+        else:
+            print(f"WARNING: result.json preserved due to commit failure", file=sys.stderr)
         out(dict(status="failure", retry_count=retry_count, summary=summary,
                  sync_count=synced, committed=committed))
 
@@ -3086,6 +3175,9 @@ def flag(args, name):
     for i, a in enumerate(args):
         if a == name and i + 1 < len(args):
             return args[i + 1]
+        # Support --flag=value syntax
+        if a.startswith(name + "="):
+            return a[len(name) + 1:]
     return None
 
 
@@ -3101,6 +3193,9 @@ def positional(args):
             skip = False
             continue
         if a.startswith("--"):
+            if "=" in a:
+                # --flag=value form: skip the arg itself, no value to consume
+                continue
             if a not in _BOOL_FLAGS:
                 skip = True
             continue
@@ -3330,7 +3425,7 @@ def main():
             # Get handoff content for a specific task/subtask
             # Usage: track-state get-handoff <track-dir> <phase> <task> [--subtask <n>]
             cmd_get_handoff(track_dir, pos[0], pos[1],
-                           flag(args, "--subtask") if "--subtask" in args else None)
+                           flag(args, "--subtask"))
         elif cmd == "sync-handoff":
             # Sync handoff.md index with current state
             cmd_sync_handoff(track_dir)
@@ -3340,7 +3435,7 @@ def main():
             cmd_append_handoff(track_dir, pos[0], pos[1],
                               flag(args, "--type") or "explore",
                               flag(args, "--content") or "{}",
-                              flag(args, "--subtask") if "--subtask" in args else None)
+                              flag(args, "--subtask"))
         else:
             print(f"Unknown command: {cmd}", file=sys.stderr)
             sys.exit(1)

@@ -47,9 +47,9 @@ Tag inheritance: subtasks inherit dispatch tags from parent when subtask name ha
 ## 2.0 STATE RECOVERY
 
 ```bash
-track-state validate "<track_dir>"          # --fix if invalid
+track-state validate "<track_dir>" --fix   # auto-fixes plan mismatches, stale indices
 track-state recover "<track_dir>"
-track-state sync-plan "<track_dir>"
+track-state sync-plan "<track_dir>"         # auto-absorbs untracked subtasks
 ```
 
 Route by recover `status`:
@@ -111,7 +111,15 @@ Dispatch `conductor:task-executor`. Prompt: `TRACK_DIR={td} PHASE={p} TASK={t} S
 
 After return → **Section 3.6**.
 
-### 3.5 Action: `defer_manual`
+### 3.5 Action: `parent_stuck`
+
+Parent auto-completed with failed subtasks (no other work remains). Announce:
+
+`"⚠️ Parent '{name}' completed with failed subtasks — check P{phase}.T{task}"`
+
+`track-state sync-plan "<track_dir>"` → commit → **Section 3.7**.
+
+### 3.5b Action: `defer_manual`
 
 ```bash
 track-state defer "<track_dir>" <p> <t> --reason 'Deferred: manual task requires human verification'
@@ -130,7 +138,7 @@ track-state dispatch-finalize "<track_dir>"
 `dispatch-finalize` creates the conductor commit internally. Do NOT commit separately.
 Output includes `committed: true/false` and optionally `phase_checkpoint_pending: <phase_index>`.
 
-**SUCCESS**: Deviations > 0 → announce. If `phase_checkpoint_pending` present → dispatch `conductor:phase-checker` immediately. Otherwise → **Section 3.7**.
+**SUCCESS**: `committed: false` → announce `"conductor commit failed, result.json preserved"` → re-run `dispatch-finalize`. Deviations > 0 → announce. If `phase_checkpoint_pending` present → dispatch `conductor:phase-checker` immediately. Otherwise → **Section 3.7**.
 
 **FAILURE**: retry < max → re-dispatch (Section 3.1). retry >= max → dispatch `conductor:skip-analyst`. Skip-analyst result: `can_skip` → `track-state skip` or `block` → `sync-plan` → commit → Section 3.1 or HALT.
 
