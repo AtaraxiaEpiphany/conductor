@@ -124,7 +124,11 @@ track-state sync-plan "<track_dir>"
 git commit -m "chore(conductor): Defer manual task '<name>'"
 ```
 
-If output contains `phase_checkpoint_pending` → dispatch `conductor:phase-checker` immediately. Otherwise → **Section 3.7**.
+Check the output of ALL three commands (especially `defer` and `sync-plan`) for `phase_checkpoint_pending` or `next_action: dispatch_phase_checker`.
+
+If found → dispatch `conductor:phase-checker` with `TRACK_DIR TRACK_ID PHASE=<phase from output> EXECUTION_MODE`, then → **Section 3.1**.
+
+If NOT found → **Section 3.7**.
 
 ### 3.6 Process Result (after task-executor)
 

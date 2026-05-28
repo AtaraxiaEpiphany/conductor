@@ -1573,6 +1573,7 @@ def cmd_defer(track_dir, p, t, s=None, reason=""):
     checkpoint_pending = _any_phase_needs_checkpoint(track_dir, state)
     if checkpoint_pending is not None:
         result["phase_checkpoint_pending"] = checkpoint_pending
+        result["next_action"] = "dispatch_phase_checker"
     out(result)
 
 
@@ -1798,7 +1799,13 @@ def cmd_phase_done(track_dir, p):
 
 def cmd_sync_plan(track_dir):
     synced = _do_sync_plan(track_dir)
-    out(dict(synced=synced))
+    state = load(track_dir)
+    result = dict(synced=synced)
+    checkpoint_pending = _any_phase_needs_checkpoint(track_dir, state)
+    if checkpoint_pending is not None:
+        result["phase_checkpoint_pending"] = checkpoint_pending
+        result["next_action"] = "dispatch_phase_checker"
+    out(result)
 
 
 def cmd_registry_update(track_dir, tracks_md_path):
