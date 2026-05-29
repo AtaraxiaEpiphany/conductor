@@ -191,27 +191,47 @@ def out_compact(obj):
     print(" | ".join(parts))
 
 
+def _index_map(state):
+    """Build a compact index→name map for error messages."""
+    lines = []
+    for pi, ph in enumerate(state.get("phases", [])):
+        lines.append(f"  Phase {pi}: {ph.get('name', '?')}")
+        for ti, tk in enumerate(ph.get("tasks", [])):
+            status = tk.get("status", "?")
+            lines.append(f"    Task {ti}: [{status}] {tk.get('name', '?')}")
+            for si, sub in enumerate(tk.get("subtasks", [])):
+                ss = sub.get("status", "?")
+                lines.append(f"      Subtask {si}: [{ss}] {sub.get('name', '?')}")
+    return "\n".join(lines)
+
+
 def target(state, p, t, s=None):
     try:
         task = state["phases"][p]["tasks"][t]
     except IndexError:
         n_phases = len(state.get("phases", []))
+        idx_info = _index_map(state)
         if p >= n_phases:
             raise IndexError(
-                f"Phase index {p} out of range (track has {n_phases} phases). "
-                f"Run 'track-state validate --fix' to correct indices.") from None
+                f"Phase index {p} out of range (0-based, track has {n_phases} phases). "
+                f"Run 'track-state validate --fix' to correct state.\n"
+                f"Available indices:\n{idx_info}") from None
         n_tasks = len(state["phases"][p].get("tasks", []))
         raise IndexError(
-            f"Task index {t} out of range in phase {p} (has {n_tasks} tasks). "
-            f"Run 'track-state validate --fix' to correct indices.") from None
+            f"Task index {t} out of range in phase {p} (0-based, has {n_tasks} tasks). "
+            f"Run 'track-state validate --fix' to correct state.\n"
+            f"Available indices:\n{idx_info}") from None
     if s is not None and "subtasks" in task:
         try:
             return task["subtasks"][s]
         except IndexError:
             n_subs = len(task["subtasks"])
+            idx_info = _index_map(state)
             raise IndexError(
-                f"Subtask index {s} out of range in P{p}:T{t} (has {n_subs} subtasks). "
-                f"Run 'track-state validate --fix' to correct indices.") from None
+                f"Subtask index {s} out of range in P{p}:T{t} "
+                f"(0-based, has {n_subs} subtasks). "
+                f"Run 'track-state validate --fix' to correct state.\n"
+                f"Available indices:\n{idx_info}") from None
     return task
 
 
@@ -1490,6 +1510,33 @@ def _ensure_note(track_dir, state, pi, ti, si, tgt):
         _write_git_note_basic(track_dir, sha, state, pi, ti, si)
     except (ImportError, FileNotFoundError, PermissionError):
         pass  # Git unavailable or permission denied
+
+
+def cmd_indices(track_dir):
+    """Print phase/task/subtask index mapping for the track."""
+    state = load(track_dir)
+    phases = state.get("phases", [])
+    if not phases:
+        out(dict(indices=[]))
+        return
+
+    result = []
+    for pi, ph in enumerate(phases):
+        phase_info = dict(
+            index=pi, name=ph.get("name", "?"), status=ph.get("status", "?"),
+            tasks=[])
+        for ti, tk in enumerate(ph.get("tasks", [])):
+            task_info = dict(
+                index=ti, name=tk.get("name", "?"), status=tk.get("status", "?"),
+                subtasks=[])
+            for si, sub in enumerate(tk.get("subtasks", [])):
+                task_info["subtasks"].append(dict(
+                    index=si, name=sub.get("name", "?"),
+                    status=sub.get("status", "?")))
+            phase_info["tasks"].append(task_info)
+        result.append(phase_info)
+
+    out(dict(indices=result))
 
 
 def cmd_lock(track_dir, p, t, s=None):
@@ -3191,6 +3238,8 @@ def flag(args, name):
 
 _BOOL_FLAGS = {"--compact", "--fix"}
 
+_INDEX_FLAGS = {"--phase", "--task", "--subtask"}
+
 
 def positional(args):
     """Extract positional args, skipping flags and their values."""
@@ -3202,13 +3251,104 @@ def positional(args):
             continue
         if a.startswith("--"):
             if "=" in a:
-                # --flag=value form: skip the arg itself, no value to consume
                 continue
             if a not in _BOOL_FLAGS:
                 skip = True
             continue
         result.append(a)
     return result
+
+
+def _maybe_fix_one_based(track_dir, pi_str, ti_str, si_str):
+    """Detect likely 1-based usage and auto-convert to 0-based.
+
+    plan.md uses 1-based phase numbers ("Phase 1", "Phase 2"), but the CLI
+    uses 0-based indices. This detects the common off-by-one mistake and
+    corrects it silently, printing a warning to stderr.
+    """
+    try:
+        pi = int(pi_str)
+        ti = int(ti_str) if ti_str is not None else None
+    except (ValueError, TypeError):
+        return pi_str, ti_str, si_str
+
+    state_path = Path(track_dir) / "track-state.json"
+    if not state_path.exists():
+        return pi_str, ti_str, si_str
+
+    try:
+        with open(state_path) as f:
+            state = json.load(f)
+    except (json.JSONDecodeError, FileNotFoundError):
+        return pi_str, ti_str, si_str
+
+    phases = state.get("phases", [])
+    n_phases = len(phases)
+    phase_fixed = False
+
+    # Phase: if pi == n_phases, likely 1-based (max 0-based index is n-1)
+    if n_phases > 0 and pi == n_phases and pi > 0:
+        pi -= 1
+        pi_str = str(pi)
+        phase_fixed = True
+
+    # Only cascade task/subtask fixes if phase was actually corrected.
+    # This avoids false positives when phase was already valid but task
+    # happened to equal n_tasks by coincidence.
+    if ti is not None and phase_fixed:
+        phase = phases[pi] if 0 <= pi < n_phases else None
+        if phase:
+            tasks = phase.get("tasks", [])
+            n_tasks = len(tasks)
+            if n_tasks > 0 and ti == n_tasks and ti > 0:
+                ti -= 1
+                ti_str = str(ti)
+
+            if si_str is not None:
+                try:
+                    si = int(si_str)
+                except (ValueError, TypeError):
+                    si = None
+                if si is not None and 0 <= ti < n_tasks:
+                    subs = tasks[ti].get("subtasks", [])
+                    n_subs = len(subs)
+                    if n_subs > 0 and si == n_subs and si > 0:
+                        si -= 1
+                        si_str = str(si)
+
+    if phase_fixed:
+        print(f"WARNING: Auto-converted 1-based indices to 0-based: "
+              f"phase={pi}, task={ti_str}"
+              + (f", subtask={si_str}" if si_str is not None else ""),
+              file=sys.stderr)
+
+    return pi_str, ti_str, si_str
+
+
+def resolve_indices(pos, args):
+    """Resolve phase/task/subtask from both positional args and named flags.
+
+    Named flags (--phase, --task, --subtask) take priority over positional.
+    Also accepts --phase-index/--task-index/--subtask-index as aliases.
+    Returns (phase, task, subtask) — subtask may be None.
+    """
+    # Check named flags (primary and --*-index aliases)
+    pi = (flag(args, "--phase")
+          or flag(args, "--phase-index"))
+    ti = (flag(args, "--task")
+          or flag(args, "--task-index"))
+    si = (flag(args, "--subtask")
+          or flag(args, "--subtask-index"))
+
+    # Fallback to positional
+    if pi is None and len(pos) >= 1:
+        pi = pos[0]
+    if ti is None and len(pos) >= 2:
+        ti = pos[1]
+    if si is None and len(pos) >= 3:
+        si = pos[2]
+
+    return pi, ti, si
 
 
 COMMAND_HELP = {
@@ -3224,17 +3364,23 @@ COMMAND_HELP = {
                       "One-call dispatch: next + parent-complete + tag routing"),
     "recover": ("recover <track-dir> [--compact]",
                 "Recover current in_progress task after interruption"),
-    "lock": ("lock <track-dir> <phase> <task> [<subtask>]",
+    "lock": ("lock <track-dir> <phase> <task> [<subtask>]\n"
+             "       lock <track-dir> --phase <n> --task <n> [--subtask <n>]",
              "Set task/subtask status to in_progress"),
-    "complete": ("complete <track-dir> <phase> <task> [<subtask>] --sha <sha>",
+    "complete": ("complete <track-dir> <phase> <task> [<subtask>] --sha <sha>\n"
+                 "         complete <track-dir> --phase <n> --task <n> [--subtask <n>] --sha <sha>",
                  "Mark task completed with commit SHA"),
-    "fail": ("fail <track-dir> <phase> <task> [<subtask>] --summary <text>",
+    "fail": ("fail <track-dir> <phase> <task> [<subtask>] --summary <text>\n"
+             "     fail <track-dir> --phase <n> --task <n> [--subtask <n>] --summary <text>",
              "Mark task failed (increments retry_count)"),
-    "skip": ("skip <track-dir> <phase> <task> [<subtask>] --reason <text>",
+    "skip": ("skip <track-dir> <phase> <task> [<subtask>] --reason <text>\n"
+             "     skip <track-dir> --phase <n> --task <n> [--subtask <n>] --reason <text>",
              "Skip task with reason"),
-    "defer": ("defer <track-dir> <phase> <task> [<subtask>] --reason <text>",
+    "defer": ("defer <track-dir> <phase> <task> [<subtask>] --reason <text>\n"
+              "      defer <track-dir> --phase <n> --task <n> [--subtask <n>] --reason <text>",
               "Defer task for later verification"),
-    "block": ("block <track-dir> <phase> <task> [<subtask>] --reason <text>",
+    "block": ("block <track-dir> <phase> <task> [<subtask>] --reason <text>\n"
+              "      block <track-dir> --phase <n> --task <n> [--subtask <n>] --reason <text>",
               "Block task with reason"),
     "reset": ("reset <track-dir> --scope <task|phase|track> [--phase <n>] [--task <n>]",
               "Reset task(s) to pending, clearing completion fields and syncing plan"),
@@ -3278,11 +3424,13 @@ COMMAND_HELP = {
                    "Check if all tasks in a phase are in terminal state"),
     "add-checkpoint": ("add-checkpoint <track-dir> <phase> <sha>",
                        "Add/update checkpoint SHA for a phase in plan.md"),
+    "indices": ("indices <track-dir>",
+                "Print phase/task/subtask index mapping for the track"),
 }
 
 _COMMAND_GROUPS = [
     ("Lifecycle", ["init", "start", "finalize", "archive"]),
-    ("Navigation", ["next", "dispatch-next", "recover"]),
+    ("Navigation", ["next", "dispatch-next", "recover", "indices"]),
     ("State Mutations", ["lock", "complete", "fail", "skip", "defer", "block", "reset"]),
     ("Sync & Registry", ["sync-plan", "sync-handoff", "registry-update"]),
     ("Handoff", ["get-handoff", "append-handoff"]),
@@ -3338,50 +3486,61 @@ def main():
     args = sys.argv[3:]
     pos = positional(args)
 
+    # Commands that need phase/task/subtask index resolution
+    _INDEX_COMMANDS = {"lock", "complete", "fail", "skip", "block", "defer"}
+
     try:
-        if cmd == "next":
+        if cmd in _INDEX_COMMANDS:
+            p, t, s = resolve_indices(pos, args)
+            if p is None or t is None:
+                out(dict(
+                    error="Missing phase/task index. Provide positional args or named flags.",
+                    hint="Usage: track-state %s <dir> <phase> <task> [<subtask>] "
+                         "OR --phase N --task N [--subtask N]" % cmd))
+                sys.exit(1)
+
+            # Auto-correct likely 1-based indices (plan.md uses 1-based phase numbers)
+            p, t, s = _maybe_fix_one_based(track_dir, p, t, s)
+
+            if cmd == "lock":
+                cmd_lock(track_dir, p, t, s)
+            elif cmd == "complete":
+                cov = flag(args, "--coverage")
+                dev = flag(args, "--deviations")
+                try:
+                    cov_val = int(cov) if cov else None
+                    dev_val = int(dev) if dev else None
+                except ValueError:
+                    out(dict(error=f"--coverage and --deviations require integers, got: {cov!r} {dev!r}"))
+                    sys.exit(1)
+                cmd_complete(track_dir, p, t, s,
+                             flag(args, "--sha"),
+                             coverage=cov_val,
+                             deviations=dev_val)
+            elif cmd == "fail":
+                cmd_fail(track_dir, p, t, s,
+                         flag(args, "--summary") or "")
+            elif cmd == "skip":
+                cmd_skip(track_dir, p, t, s,
+                         flag(args, "--reason") or "")
+            elif cmd == "block":
+                cmd_block(track_dir, p, t, s,
+                          flag(args, "--reason") or "")
+            elif cmd == "defer":
+                cmd_defer(track_dir, p, t, s,
+                          flag(args, "--reason") or "")
+
+        elif cmd == "next":
             cmd_next(track_dir, compact="--compact" in args)
         elif cmd == "dispatch-next":
             cmd_dispatch_next(track_dir)
         elif cmd == "recover":
             cmd_recover(track_dir, compact="--compact" in args)
-        elif cmd == "lock":
-            cmd_lock(track_dir, pos[0], pos[1], pos[2] if len(pos) > 2 else None)
-        elif cmd == "complete":
-            cov = flag(args, "--coverage")
-            dev = flag(args, "--deviations")
-            try:
-                cov_val = int(cov) if cov else None
-                dev_val = int(dev) if dev else None
-            except ValueError:
-                out(dict(error=f"--coverage and --deviations require integers, got: {cov!r} {dev!r}"))
-                sys.exit(1)
-            cmd_complete(track_dir, pos[0], pos[1],
-                         pos[2] if len(pos) > 2 else None,
-                         flag(args, "--sha"),
-                         coverage=cov_val,
-                         deviations=dev_val)
-        elif cmd == "fail":
-            cmd_fail(track_dir, pos[0], pos[1],
-                     pos[2] if len(pos) > 2 else None,
-                     flag(args, "--summary") or "")
-        elif cmd == "skip":
-            cmd_skip(track_dir, pos[0], pos[1],
-                     pos[2] if len(pos) > 2 else None,
-                     flag(args, "--reason") or "")
-        elif cmd == "block":
-            cmd_block(track_dir, pos[0], pos[1],
-                      pos[2] if len(pos) > 2 else None,
-                      flag(args, "--reason") or "")
         elif cmd == "reset":
             scope = flag(args, "--scope") or "task"
             cmd_reset(track_dir, scope,
                       flag(args, "--phase"),
                       flag(args, "--task"))
-        elif cmd == "defer":
-            cmd_defer(track_dir, pos[0], pos[1],
-                      pos[2] if len(pos) > 2 else None,
-                      flag(args, "--reason") or "")
         elif cmd == "deferred-report":
             cmd_deferred_report(track_dir)
         elif cmd == "sync-plan":
@@ -3393,6 +3552,8 @@ def main():
             cmd_registry_update(track_dir, pos[0])
         elif cmd == "start":
             cmd_start(track_dir)
+        elif cmd == "indices":
+            cmd_indices(track_dir)
         elif cmd == "validate":
             cmd_validate(track_dir, fix="--fix" in args)
         elif cmd == "phase-done":
@@ -3447,8 +3608,22 @@ def main():
         else:
             print(f"Unknown command: {cmd}", file=sys.stderr)
             sys.exit(1)
+    except SystemExit:
+        raise
+    except IndexError as e:
+        msg = str(e)
+        if msg == "list index out of range":
+            out(dict(
+                error="Internal index error — this usually means a missing or "
+                      "incorrect positional argument.",
+                hint="Use --phase N --task N [--subtask N] flags or check "
+                     "'track-state indices <track-dir>' for valid indices"))
+        else:
+            out(dict(error=msg,
+                     hint="Run 'track-state validate --fix' to correct state"))
+        sys.exit(1)
     except Exception as e:
-        out(dict(error=str(e)))
+        out(dict(error=f"{type(e).__name__}: {e}"))
         sys.exit(1)
 
 

@@ -79,12 +79,46 @@ track-state recover <track-dir>
 
 ---
 
+### indices
+
+Print the phase/task/subtask index mapping for the track. Useful for verifying correct indices before calling mutation commands.
+
+```bash
+track-state indices <track-dir>
+```
+
+**Output**:
+```json
+{
+  "indices": [
+    {
+      "index": 0,
+      "name": "Phase 1: Setup",
+      "status": "pending",
+      "tasks": [
+        {
+          "index": 0,
+          "name": "Create project",
+          "status": "completed",
+          "subtasks": []
+        }
+      ]
+    }
+  ]
+}
+```
+
+---
+
 ### lock
 
 Set task to in_progress and update indices.
 
 ```bash
+# Positional (0-based indices):
 track-state lock <track-dir> <phase> <task> [subtask]
+# Named flags:
+track-state lock <track-dir> --phase <n> --task <n> [--subtask <n>]
 ```
 
 **Output**: `{ "ok": true }`
@@ -96,7 +130,10 @@ track-state lock <track-dir> <phase> <task> [subtask]
 Set task to completed and check parent completion. Updates current indices.
 
 ```bash
+# Positional (0-based indices):
 track-state complete <track-dir> <phase> <task> [subtask] --sha <sha>
+# Named flags:
+track-state complete <track-dir> --phase <n> --task <n> [--subtask <n>] --sha <sha>
 ```
 
 **Output**:
@@ -110,6 +147,7 @@ track-state complete <track-dir> <phase> <task> [subtask] --sha <sha>
 **Behavior notes**:
 - Auto-completes remaining non-terminal subtasks when completing a parent task directly, inheriting the parent's resolved SHA
 - Updates `current_phase_index`/`current_task_index`/`current_subtask_index` for recovery tracking
+- 1-based indices are auto-detected and corrected (e.g. phase 3 with 3 phases → phase 2)
 
 ---
 
@@ -118,7 +156,10 @@ track-state complete <track-dir> <phase> <task> [subtask] --sha <sha>
 Set task to failed and increment retry count.
 
 ```bash
+# Positional (0-based indices):
 track-state fail <track-dir> <phase> <task> [subtask] --summary <text>
+# Named flags:
+track-state fail <track-dir> --phase <n> --task <n> [--subtask <n>] --summary <text>
 ```
 
 **Output**:
@@ -135,7 +176,10 @@ track-state fail <track-dir> <phase> <task> [subtask] --summary <text>
 Set task to skipped.
 
 ```bash
+# Positional (0-based indices):
 track-state skip <track-dir> <phase> <task> [subtask] --reason <text>
+# Named flags:
+track-state skip <track-dir> --phase <n> --task <n> [--subtask <n>] --reason <text>
 ```
 
 **Output**: `{ "ok": true }`
@@ -147,7 +191,10 @@ track-state skip <track-dir> <phase> <task> [subtask] --reason <text>
 Set task to blocked.
 
 ```bash
+# Positional (0-based indices):
 track-state block <track-dir> <phase> <task> [subtask] --reason <text>
+# Named flags:
+track-state block <track-dir> --phase <n> --task <n> [--subtask <n>] --reason <text>
 ```
 
 **Output**: `{ "ok": true }`
@@ -159,7 +206,10 @@ track-state block <track-dir> <phase> <task> [subtask] --reason <text>
 Set task to deferred.
 
 ```bash
+# Positional (0-based indices):
 track-state defer <track-dir> <phase> <task> [subtask] --reason <text>
+# Named flags:
+track-state defer <track-dir> --phase <n> --task <n> [--subtask <n>] --reason <text>
 ```
 
 **Output**:

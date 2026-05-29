@@ -207,7 +207,8 @@ def main():
         valid, error = check_f4_rule(state_file)
         if not valid:
             print(f"[F4 ERROR] Track '{track_id}': {error}")
-            print("  Fix: Run git log to find SHAs, then track-state complete <dir> <p> <t> --sha <sha>.")
+            print("  Fix: Run git log to find SHAs, then track-state complete <dir> <p> <t> --sha <sha>")
+            print("        or: track-state complete <dir> --phase <p> --task <t> --sha <sha>")
             errors += 1
         else:
             print(f"[F4 PASS] Track '{track_id}' has required SHAs for terminal tasks")

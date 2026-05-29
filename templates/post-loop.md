@@ -23,8 +23,8 @@ track-state deferred-report "<track_dir>"
 ```
 
 `count == 0` → skip. Otherwise present each deferred task via `AskUserQuestion`:
-- "Verify completed" → `track-state complete --sha ""`
-- "Skip" → `track-state skip --reason 'User verified not needed'`
+- "Verify completed" → `track-state complete "<track_dir>" --phase <p> --task <t> --sha ""`
+- "Skip" → `track-state skip "<track_dir>" --phase <p> --task <t> --reason 'User verified not needed'`
 - "Defer" → no action
 
 After → `track-state sync-plan "<track_dir>"` + commit.

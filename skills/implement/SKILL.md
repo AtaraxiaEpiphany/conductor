@@ -119,7 +119,7 @@ Parent auto-completed with failed subtasks (no other work remains). Announce:
 ### 3.5b Action: `defer_manual`
 
 ```bash
-track-state defer "<track_dir>" <p> <t> --reason 'Deferred: manual task requires human verification'
+track-state defer "<track_dir>" --phase <p> --task <t> --reason 'Deferred: manual task requires human verification'
 track-state sync-plan "<track_dir>"
 git commit -m "chore(conductor): Defer manual task '<name>'"
 ```
