@@ -328,7 +328,12 @@ def cmd_dispatch_prepare(track_dir):
     if fixes:
         print(f"Dispatch-prepare auto-fixed {len(fixes)} issue(s): {'; '.join(fixes)}", file=sys.stderr)
 
-    nxt = cmd_next(track_dir)
+    # Find next task directly — avoid calling cmd_next() which prints to stdout,
+    # causing duplicate JSON output that confuses the orchestrator.
+    execution_mode = state.get("execution_mode", "interactive")
+    nxt = _find_next_task(state)
+    nxt["execution_mode"] = execution_mode
+
     if nxt.get("phase", -1) < 0:
         out(dict(action="done", next=nxt))
         return

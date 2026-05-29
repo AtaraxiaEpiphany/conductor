@@ -131,6 +131,8 @@ def _parse_plan_structure(plan_path):
         if tm and current_phase is not None:
             indent = tm.group(1)
             rest = _clean_trailing_markers(tm.group(2).strip())
+            # Strip trailing HTML comments so absorbed task names stay clean
+            rest = re.sub(r'\s*<!--.*?-->\s*$', '', rest).rstrip()
             is_subtask = len(indent) > 0
 
             if is_subtask:

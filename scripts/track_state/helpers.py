@@ -117,13 +117,17 @@ def extract_tags(name):
     """Extract task tags like [Docs], [Config] from name.
 
     Tags should be at the start or end of the task name, not in the middle.
+    HTML comments are stripped before matching to avoid false positives
+    from tag-like text inside <!-- ... --> annotations.
     Returns unique tags in the order they appear.
     """
     if not name:
         return []
+    # Strip HTML comments to prevent false-positive matches from AC/TC annotations
+    clean_name = re.sub(r'<!--.*?-->', '', name)
     # Match tags at start or end, avoid middle-of-sentence matches
     pattern = r'(^|\s)\[(Explore|Docs|Config|Chore|Manual)\](\s|$)'
-    matches = re.findall(pattern, name)
+    matches = re.findall(pattern, clean_name)
     # Extract tag names and preserve order while removing duplicates
     seen = set()
     result = []
