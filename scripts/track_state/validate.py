@@ -1,6 +1,7 @@
 """State validation and auto-fix operations."""
 import re
 from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .core import load, save
@@ -221,7 +222,110 @@ def _fix_indices(state):
 
     return fixes
 
-def _auto_fix(state, track_dir=None, errors=None):
+
+def _fix_stale_in_progress(state, threshold_hours=24):
+    """Reset in_progress tasks that haven't been updated within threshold.
+
+    Handles agent crashes that leave tasks stuck as in_progress indefinitely.
+    Returns list of fixes applied.
+    """
+    fixes = []
+    try:
+        state_updated = datetime.fromisoformat(state.get("updated_at", ""))
+    except (ValueError, TypeError):
+        return fixes
+
+    now = datetime.now(timezone.utc)
+    if state_updated.tzinfo is None:
+        state_updated = state_updated.replace(tzinfo=timezone.utc)
+    age_hours = (now - state_updated).total_seconds() / 3600
+
+    if age_hours < threshold_hours:
+        return fixes
+
+    for pi, phase in enumerate(state.get("phases", [])):
+        for ti, task in enumerate(phase.get("tasks", [])):
+            if task.get("status") == "in_progress":
+                _reset_task(task)
+                fixes.append(
+                    f"P{pi}.T{ti}.{task.get('name', '?')}: "
+                    f"reset stale in_progress → pending ({age_hours:.0f}h old)")
+            for si, sub in enumerate(task.get("subtasks", [])):
+                if sub.get("status") == "in_progress":
+                    _reset_task(sub)
+                    fixes.append(
+                        f"P{pi}.T{ti}.S{si}.{sub.get('name', '?')}: "
+                        f"reset stale in_progress → pending ({age_hours:.0f}h old)")
+
+    return fixes
+
+
+def _fix_terminal_current_indices(state):
+    """Advance current_*_index past terminal tasks to the next pending task.
+
+    If current indices point to a completed/failed/skipped task, scan forward
+    through phases and tasks to find the next dispatchable target.
+    Returns list of fixes applied.
+    """
+    fixes = []
+    phases = state.get("phases", [])
+    cpi = state.get("current_phase_index", -1)
+    cti = state.get("current_task_index", -1)
+
+    if cpi < 0 or cti < 0:
+        return fixes
+
+    # Check if current target is actually still active
+    if cpi < len(phases):
+        tasks = phases[cpi].get("tasks", [])
+        if cti < len(tasks):
+            task = tasks[cti]
+            if task["status"] not in TERMINAL_FOR_PARENT:
+                return fixes  # Current task is still active
+
+            # Check subtask index too
+            csi = state.get("current_subtask_index")
+            if csi is not None and "subtasks" in task:
+                if csi < len(task["subtasks"]):
+                    if task["subtasks"][csi]["status"] not in TERMINAL_FOR_PARENT:
+                        return fixes  # Current subtask is still active
+
+    # Scan forward from current position for next pending task
+    for pi in range(len(phases)):
+        tasks = phases[pi].get("tasks", [])
+        for ti in range(len(tasks)):
+            task = tasks[ti]
+            if task["status"] == "pending":
+                state["current_phase_index"] = pi
+                state["current_task_index"] = ti
+                state.pop("current_subtask_index", None)
+                fixes.append(
+                    f"current indices: ({cpi},{cti}) → ({pi},{ti}) "
+                    f"(advanced past terminal task)")
+                return fixes
+            # Check for pending subtasks in in_progress parents
+            if task["status"] == "in_progress" and "subtasks" in task:
+                for si, sub in enumerate(task["subtasks"]):
+                    if sub["status"] in ("pending", "in_progress"):
+                        state["current_phase_index"] = pi
+                        state["current_task_index"] = ti
+                        state["current_subtask_index"] = si
+                        fixes.append(
+                            f"current indices: ({cpi},{cti}) → ({pi},{ti},{si}) "
+                            f"(advanced to active subtask)")
+                        return fixes
+
+    # No pending tasks found — clear indices
+    if cpi >= 0 or cti >= 0:
+        state["current_phase_index"] = -1
+        state["current_task_index"] = -1
+        state.pop("current_subtask_index", None)
+        fixes.append("current indices: cleared (no pending tasks remain)")
+
+    return fixes
+
+
+def _auto_fix(state, track_dir=None, errors=None, stale_threshold_hours=24):
     """Auto-fix repairable inconsistencies. Returns list of fixes applied."""
     fixes = []
     errors = errors or []
@@ -233,6 +337,9 @@ def _auto_fix(state, track_dir=None, errors=None):
     if track_dir:
         plan_fixes = _fix_plan_mismatches(track_dir, state, errors)
         fixes.extend(plan_fixes)
+
+    # Reset stale in_progress tasks
+    fixes.extend(_fix_stale_in_progress(state, threshold_hours=stale_threshold_hours))
 
     for pi, phase in enumerate(state.get("phases", [])):
         tasks = phase.get("tasks", [])
@@ -256,6 +363,9 @@ def _auto_fix(state, track_dir=None, errors=None):
             phase["status"] = best
             fixes.append(f"Phase {pi+1} '{phase.get('name', '?')}': '{old}' → '{best}' (all tasks terminal)")
 
+    # Advance indices past terminal tasks (after all other fixes)
+    fixes.extend(_fix_terminal_current_indices(state))
+
     if fixes:
         state["updated_at"] = now_iso()
 
@@ -274,7 +384,7 @@ def _run_all_checks(track_dir, state, errors, warnings):
         )
     if state["status"] not in ("new", "in_progress", "completed", "archived", "blocked", "cancelled"):
         errors.append(
-            f"Invalid track status: '{state['status']}'. Valid statuses: new, in_progress, completed, archived, blocked, cancelled. "
+            f"Invalid track status: '{state['status']}. Valid statuses: new, in_progress, completed, archived, blocked, cancelled. "
             f"Run track-state start/finalize/archive to transition."
         )
 
@@ -326,7 +436,11 @@ def _run_all_checks(track_dir, state, errors, warnings):
 
 
 def cmd_validate(track_dir, fix=False):
-    """Validate track-state.json and plan.md against structural and semantic rules."""
+    """Validate track-state.json and plan.md against structural and semantic rules.
+
+    Always runs auto-fix analysis and reports what WOULD be fixed.
+    With --fix, persists fixes to disk and re-validates.
+    """
     errors = []
     warnings = []
     try:
@@ -347,30 +461,71 @@ def cmd_validate(track_dir, fix=False):
 
     _run_all_checks(track_dir, state, errors, warnings)
 
-    # Auto-fix if requested — run for both errors and warnings
-    fixes = []
-    if fix and (errors or warnings):
-        fixes = _auto_fix(state, track_dir=track_dir, errors=errors)
-        if fixes:
-            save(track_dir, state)
-            _do_sync_plan(track_dir, state)
+    # Always run auto-fix analysis (dry-run)
+    fixes = _auto_fix(state, track_dir=track_dir, errors=errors)
 
-            # Re-validate after fixes with FULL check suite
-            new_errors = []
-            new_warnings = []
-            try:
-                fixed_state = load(track_dir)
-            except Exception:
-                fixed_state = state
-            _run_all_checks(track_dir, fixed_state, new_errors, new_warnings)
-            out(dict(
-                valid=len(new_errors) == 0,
-                errors=new_errors if new_errors != errors else errors,
-                warnings=new_warnings if new_warnings != warnings else warnings,
-                fixes=fixes,
-                fixed=True,
-            ))
-            return
+    if fix and fixes:
+        # Persist fixes
+        save(track_dir, state)
+        _do_sync_plan(track_dir, state)
 
-    out(dict(valid=len(errors) == 0, errors=errors, warnings=warnings, fixes=fixes))
+        # Re-validate after fixes
+        new_errors = []
+        new_warnings = []
+        try:
+            fixed_state = load(track_dir)
+        except Exception:
+            fixed_state = state
+        _run_all_checks(track_dir, fixed_state, new_errors, new_warnings)
+        out(dict(
+            valid=len(new_errors) == 0,
+            errors=new_errors if new_errors != errors else errors,
+            warnings=new_warnings if new_warnings != warnings else warnings,
+            fixes=fixes,
+            fixed=True,
+        ))
+        return
+
+    out(dict(
+        valid=len(errors) == 0,
+        errors=errors,
+        warnings=warnings,
+        fixes=fixes,
+        fixable=len(fixes) > 0,
+    ))
+
+
+def ensure_healthy(track_dir):
+    """Load, validate, auto-fix, save, and re-validate.
+
+    Returns (state, fixes, errors) after applying all repairs.
+    Used by dispatch/recover to guarantee a clean state before operating.
+    """
+    errors = []
+    warnings = []
+    try:
+        state = load(track_dir)
+    except Exception as e:
+        return None, [], [f"Cannot read track-state.json: {e}"]
+
+    # Check required fields — can't auto-fix these
+    for field in ["track_id", "type", "status", "phases"]:
+        if field not in state:
+            errors.append(f"Missing required field: {field}")
+    if errors:
+        return state, [], errors
+
+    _run_all_checks(track_dir, state, errors, warnings)
+    fixes = _auto_fix(state, track_dir=track_dir, errors=errors)
+
+    if fixes:
+        save(track_dir, state)
+        _do_sync_plan(track_dir, state)
+        # Reload after save to get the persisted version
+        try:
+            state = load(track_dir)
+        except Exception:
+            pass
+
+    return state, fixes, errors
 

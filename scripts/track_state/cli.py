@@ -139,7 +139,7 @@ COMMAND_HELP = {
     "dispatch-next": ("dispatch-next <track-dir>",
                       "One-call dispatch: next + parent-complete + tag routing"),
     "recover": ("recover <track-dir> [--compact]",
-                "Recover current in_progress task after interruption"),
+                "Recover current task after interruption (auto-fixes state, advances past terminal)"),
     "lock": ("lock <track-dir> <phase> <task> [<subtask>]\n"
              "       lock <track-dir> --phase <n> --task <n> [--subtask <n>]",
              "Set task/subtask status to in_progress"),
@@ -187,7 +187,7 @@ COMMAND_HELP = {
     "record-summary": ("record-summary <track-dir>",
                        "Record compact task summary (stdin JSON) for post-compaction recovery"),
     "validate": ("validate <track-dir> [--fix]",
-                 "Validate state consistency; --fix auto-repairs warnings"),
+                 "Validate state; always reports auto-fix analysis, --fix persists repairs"),
     "gc": ("gc <track-dir>",
            "Garbage collection: clean orphaned artifacts, detect stale state"),
     "shas": ("shas <track-dir>",

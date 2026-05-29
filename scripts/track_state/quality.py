@@ -8,6 +8,7 @@ from pathlib import Path
 from .core import load, save
 from .helpers import out, now_iso, conductor_dir, _reset_task
 from .handoff import _ensure_handoff_index
+from .validate import _fix_stale_in_progress, _parse_plan_structure
 
 
 def _checklist_status(track_dir):
@@ -43,10 +44,39 @@ def cmd_checklist_verify(track_dir):
 # ── Init (Track Creation) ────────────────────────────────────────────
 
 
+def _validate_plan_structure(plan):
+    """Validate PLAN_STRUCTURE input before building state. Returns list of errors."""
+    errors = []
+    phases = plan.get("phases")
+    if not isinstance(phases, list) or len(phases) == 0:
+        errors.append("PLAN_STRUCTURE must have at least 1 phase")
+        return errors
+    for pi, phase in enumerate(phases):
+        if not phase.get("name"):
+            errors.append(f"Phase {pi}: missing name")
+        tasks = phase.get("tasks")
+        if not isinstance(tasks, list) or len(tasks) == 0:
+            errors.append(f"Phase {pi} '{phase.get('name', '?')}': must have at least 1 task")
+            continue
+        for ti, task in enumerate(tasks):
+            if not task.get("name"):
+                errors.append(f"Phase {pi} Task {ti}: missing name")
+            for si, sub in enumerate(task.get("subtasks", [])):
+                if isinstance(sub, dict) and not sub.get("name"):
+                    errors.append(f"Phase {pi} Task {ti} Subtask {si}: missing name")
+    return errors
+
+
 def cmd_init(track_dir, plan_structure_json, track_id, track_type, description, execution_mode=None):
     """Create track-state.json and index.md from PLAN_STRUCTURE.
     Returns compact result — eliminates duplicate JSON generation in orchestrator."""
     plan = json.loads(plan_structure_json)
+
+    errors = _validate_plan_structure(plan)
+    if errors:
+        out(dict(ok=False, errors=errors))
+        return
+
     track_path = Path(track_dir)
     track_path.mkdir(parents=True, exist_ok=True)
 
@@ -103,8 +133,38 @@ def cmd_init(track_dir, plan_structure_json, track_id, track_type, description, 
     # Create initial handoff.md
     _ensure_handoff_index(str(track_path), state)
 
+    # Cross-validate plan.md vs track-state.json for task/subtask count mismatches
+    warnings = []
+    plan_path = track_path / "plan.md"
+    if plan_path.exists():
+        try:
+            plan_struct = _parse_plan_structure(plan_path)
+            for pi, state_phase in enumerate(phases):
+                plan_phase = plan_struct.get(pi + 1)
+                if plan_phase is None:
+                    warnings.append(f"Phase {pi+1}: heading missing in plan.md")
+                    continue
+                state_tasks = state_phase.get("tasks", [])
+                plan_tasks = plan_phase["tasks"]
+                if len(plan_tasks) != len(state_tasks):
+                    warnings.append(
+                        f"Phase {pi+1}: plan.md has {len(plan_tasks)} tasks, "
+                        f"state has {len(state_tasks)}")
+                for ti in range(min(len(state_tasks), len(plan_tasks))):
+                    state_subs = len(state_tasks[ti].get("subtasks", []))
+                    plan_subs = len(plan_tasks[ti].get("subtasks", []))
+                    if plan_subs != state_subs:
+                        warnings.append(
+                            f"P{pi}.T{ti}: plan.md has {plan_subs} subtasks, "
+                            f"state has {state_subs}")
+        except Exception:
+            pass
+
     task_count = sum(len(p.get("tasks", [])) for p in phases)
-    out(dict(ok=True, track_id=track_id, phases=len(phases), tasks=task_count))
+    result = dict(ok=True, track_id=track_id, phases=len(phases), tasks=task_count)
+    if warnings:
+        result["warnings"] = warnings
+    out(result)
 
 
 # ── Handoff Commands ─────────────────────────────────────────────────────
@@ -282,19 +342,25 @@ def cmd_gc(track_dir):
         out(dict(fixes=fixes, stale_count=0, age_hours=0))
         return
     now = datetime.now(timezone.utc)
-    updated = datetime.fromisoformat(state.get("updated_at", now.isoformat()))
+    try:
+        updated = datetime.fromisoformat(state.get("updated_at", now.isoformat()))
+        if updated.tzinfo is None:
+            updated = updated.replace(tzinfo=timezone.utc)
+    except (ValueError, TypeError):
+        updated = now
     age_hours = (now - updated).total_seconds() / 3600
 
+    # Count stale tasks for reporting
     stale_tasks = []
-    for pi, phase in enumerate(state.get("phases", [])):
-        for ti, task in enumerate(phase.get("tasks", [])):
-            if task.get("status") == "in_progress":
-                stale_tasks.append(f"P{pi}.T{ti}: {task.get('name', '?')}")
-            for si, sub in enumerate(task.get("subtasks", [])):
-                if sub.get("status") == "in_progress":
-                    stale_tasks.append(f"P{pi}.T{ti}.S{si}: {sub.get('name', '?')}")
-
-    if stale_tasks and age_hours > 24:
-        fixes.append(f"Stale in_progress tasks detected ({age_hours:.0f}h old): {'; '.join(stale_tasks)}")
+    if age_hours > 24:
+        for pi, phase in enumerate(state.get("phases", [])):
+            for ti, task in enumerate(phase.get("tasks", [])):
+                if task.get("status") == "in_progress":
+                    stale_tasks.append(f"P{pi}.T{ti}: {task.get('name', '?')}")
+                for si, sub in enumerate(task.get("subtasks", [])):
+                    if sub.get("status") == "in_progress":
+                        stale_tasks.append(f"P{pi}.T{ti}.S{si}: {sub.get('name', '?')}")
+        if stale_tasks:
+            fixes.append(f"Stale in_progress tasks detected ({age_hours:.0f}h old): {'; '.join(stale_tasks)}")
 
     out(dict(fixes=fixes, stale_count=len(stale_tasks), age_hours=round(age_hours, 1)))

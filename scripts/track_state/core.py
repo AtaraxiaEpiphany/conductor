@@ -1,5 +1,6 @@
 """Core state I/O: load/save track-state.json."""
 import json
+import shutil
 from pathlib import Path
 
 
@@ -8,8 +9,16 @@ def _lock_file_path(track_dir):
     return Path(track_dir) / ".track-state.lock"
 
 
+def _backup_path(track_dir):
+    """Path to the backup file used for corruption recovery."""
+    return Path(track_dir) / "track-state.json.bak"
+
+
 def load(track_dir):
-    """Load track-state.json with shared lock for concurrent access safety."""
+    """Load track-state.json with shared lock for concurrent access safety.
+
+    Falls back to .bak on JSON corruption.
+    """
     state_file = Path(track_dir) / "track-state.json"
     lock_path = _lock_file_path(track_dir)
     lock_fd = None
@@ -19,9 +28,25 @@ def load(track_dir):
         fcntl.flock(lock_fd.fileno(), fcntl.LOCK_SH)
     except (ImportError, AttributeError, OSError):
         pass
-    try:
-        with open(state_file, "r") as f:
+
+    def _read(path):
+        with open(path, "r") as f:
             return json.load(f)
+
+    try:
+        try:
+            return _read(state_file)
+        except json.JSONDecodeError:
+            bak = _backup_path(track_dir)
+            if bak.exists():
+                try:
+                    data = _read(bak)
+                    # Restore backup to main file so subsequent loads succeed
+                    shutil.copy2(str(bak), str(state_file))
+                    return data
+                except (json.JSONDecodeError, OSError):
+                    pass
+            raise
     finally:
         if lock_fd is not None:
             try:
@@ -35,6 +60,7 @@ def load(track_dir):
 def save(track_dir, state):
     """Save track-state.json with exclusive lock using atomic write pattern.
 
+    Creates a .bak backup of the current file before overwriting.
     Uses a separate lock file (.track-state.lock) so that the lock persists
     across the os.replace() call (which swaps the inode of track-state.json,
     rendering locks on that file's fd ineffective).
@@ -80,6 +106,12 @@ def save(track_dir, state):
             temp_file.close()
 
         os.replace(temp_file_name, str(state_file))
+
+        # Create backup after successful write so next corruption has a fallback
+        try:
+            shutil.copy2(str(state_file), str(_backup_path(track_dir)))
+        except OSError:
+            pass
     finally:
         if lock_fd is not None:
             try:

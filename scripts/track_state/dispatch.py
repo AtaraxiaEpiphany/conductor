@@ -19,7 +19,7 @@ from .git_ops import (
 from .handoff import (
     _append_execution_record, _append_deviation_legacy, _append_failure_legacy,
 )
-from .validate import _fix_plan_mismatches
+from .validate import _fix_plan_mismatches, ensure_healthy
 
 
 def _find_next_task(state):
@@ -108,6 +108,11 @@ def cmd_next(track_dir, compact=False):
 def cmd_dispatch_next(track_dir):
     """One-call dispatch decision: next + parent-complete resolution + tag routing.
     Returns action enum for orchestrator to switch on."""
+    # Auto-fix state before dispatching
+    _, fixes, _ = ensure_healthy(track_dir)
+    if fixes:
+        print(f"Dispatch auto-fixed {len(fixes)} issue(s): {'; '.join(fixes)}", file=sys.stderr)
+
     # Loop instead of recursion to avoid stack overflow on many parent-complete tasks
     max_iterations = 50
     for _ in range(max_iterations):
@@ -221,17 +226,35 @@ def cmd_dispatch_next(track_dir):
              status="error"))
 
 def cmd_recover(track_dir, compact=False):
-    state = load(track_dir)
+    """Recover current task after interruption, with auto-fix and smart advancement.
+
+    1. Runs ensure_healthy() to validate and auto-fix state.
+    2. If current indices point to a terminal task, advances to next pending.
+    3. Includes fixes_applied in output for caller visibility.
+    """
+    state, fixes, verrors = ensure_healthy(track_dir)
+    if state is None:
+        result = dict(status="error", errors=verrors)
+        if compact:
+            print("ERROR")
+        else:
+            out(result)
+        return
+
+    if fixes:
+        print(f"Recover auto-fixed {len(fixes)} issue(s): {'; '.join(fixes)}", file=sys.stderr)
+
     pi = state.get("current_phase_index", -1)
     ti = state.get("current_task_index", -1)
     si = state.get("current_subtask_index")
 
     if pi < 0 or ti < 0:
         result = dict(status="no_active_task")
-        # Check if any phase needs a checkpoint (scan all phases)
         checkpoint_pending = _any_phase_needs_checkpoint(track_dir, state)
         if checkpoint_pending is not None:
             result["phase_checkpoint_pending"] = checkpoint_pending
+        if fixes:
+            result["fixes_applied"] = fixes
         if compact:
             print("NO_ACTIVE_TASK")
         else:
@@ -242,16 +265,18 @@ def cmd_recover(track_dir, compact=False):
         task = state["phases"][pi]["tasks"][ti]
     except IndexError:
         result = dict(status="no_active_task")
-        # Check if any phase needs a checkpoint (scan all phases)
         checkpoint_pending = _any_phase_needs_checkpoint(track_dir, state)
         if checkpoint_pending is not None:
             result["phase_checkpoint_pending"] = checkpoint_pending
+        if fixes:
+            result["fixes_applied"] = fixes
         if compact:
             print("NO_ACTIVE_TASK")
         else:
             out(result)
         return
 
+    # Resolve subtask or flat task
     if si is not None and "subtasks" in task and len(task["subtasks"]) > 0:
         si = min(si, len(task["subtasks"]) - 1)
         tgt = task["subtasks"][si]
@@ -279,9 +304,10 @@ def cmd_recover(track_dir, compact=False):
         tags=sub_tags,
         execution_mode=state.get("execution_mode", "interactive"),
     )
+    if fixes:
+        result["fixes_applied"] = fixes
 
-    # Check if any phase needs a checkpoint — scan ALL phases, not just current.
-    # This ensures missed checkpoints from interrupted sessions are always recovered.
+    # Check if any phase needs a checkpoint — scan ALL phases
     checkpoint_pending = _any_phase_needs_checkpoint(track_dir, state)
     if checkpoint_pending is not None:
         result["phase_checkpoint_pending"] = checkpoint_pending
@@ -294,12 +320,13 @@ def cmd_recover(track_dir, compact=False):
 
 def cmd_dispatch_prepare(track_dir):
     """Lock + sync-plan + return commit message template. Reduces CLI round trips."""
-    # Auto-reconcile plan.md changes before dispatch
-    state = load(track_dir)
-    fixes = _fix_plan_mismatches(track_dir, state)
+    # Auto-fix state (includes plan reconciliation + all other fixes)
+    state, fixes, _ = ensure_healthy(track_dir)
+    if state is None:
+        out(dict(action="error", error="Cannot read track-state.json"))
+        return
     if fixes:
-        state["updated_at"] = now_iso()
-        save(track_dir, state)
+        print(f"Dispatch-prepare auto-fixed {len(fixes)} issue(s): {'; '.join(fixes)}", file=sys.stderr)
 
     nxt = cmd_next(track_dir)
     if nxt.get("phase", -1) < 0:

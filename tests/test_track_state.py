@@ -1,0 +1,395 @@
+"""Tests for track_state: recover/resume, auto-fix, backup, init validation."""
+import json
+import shutil
+import tempfile
+import io
+import sys
+from pathlib import Path
+from unittest import TestCase, main
+
+from scripts.track_state.core import load, save
+from scripts.track_state.validate import (
+    _fix_stale_in_progress, _fix_terminal_current_indices,
+    _auto_fix, cmd_validate, ensure_healthy,
+)
+from scripts.track_state.dispatch import cmd_recover, cmd_dispatch_next
+from scripts.track_state.quality import cmd_init, _validate_plan_structure
+
+
+def _out捕获(fn, *args, **kwargs):
+    """Capture stdout from a function call. Returns (result_json, stderr_text)."""
+    old_out, old_err = sys.stdout, sys.stderr
+    sys.stdout = io.StringIO()
+    sys.stderr = io.StringIO()
+    try:
+        fn(*args, **kwargs)
+        return json.loads(sys.stdout.getvalue()), sys.stderr.getvalue()
+    finally:
+        sys.stdout, sys.stderr = old_out, old_err
+
+
+def _make_state(**overrides):
+    """Build a minimal valid state dict."""
+    state = {
+        "track_id": "test",
+        "type": "feature",
+        "status": "in_progress",
+        "description": "test track",
+        "current_phase_index": 0,
+        "current_task_index": 0,
+        "updated_at": "2026-05-29T00:00:00+00:00",
+        "phases": [
+            {
+                "name": "Phase 1",
+                "status": "pending",
+                "tasks": [
+                    {"name": "Task A", "status": "pending"},
+                    {"name": "Task B", "status": "pending"},
+                ],
+            }
+        ],
+    }
+    state.update(overrides)
+    return state
+
+
+def _make_track_dir(state=None, plan_content=None):
+    """Create a temp track dir with optional state and plan.md."""
+    d = tempfile.mkdtemp()
+    if plan_content:
+        Path(d, "plan.md").write_text(plan_content)
+    else:
+        Path(d, "plan.md").write_text("# Plan\n\n## Phase 1: Build\n- [ ] Task A\n- [ ] Task B\n")
+    if state:
+        save(d, state)
+    return d
+
+
+class TestBackupFallback(TestCase):
+    """core.py: backup-on-save and fallback-load."""
+
+    def test_backup_created_on_first_save(self):
+        d = tempfile.mkdtemp()
+        save(d, _make_state())
+        self.assertTrue((Path(d) / "track-state.json.bak").exists())
+        shutil.rmtree(d)
+
+    def test_fallback_on_corruption(self):
+        d = _make_track_dir(_make_state())
+        state_file = Path(d) / "track-state.json"
+        # Corrupt main file
+        state_file.write_text("{corrupted!!!")
+        # Should fall back to backup
+        recovered = load(d)
+        self.assertEqual(recovered["track_id"], "test")
+        # Main file should be restored
+        with open(state_file) as f:
+            self.assertEqual(json.load(f)["track_id"], "test")
+        shutil.rmtree(d)
+
+    def test_double_corruption_raises(self):
+        d = _make_track_dir(_make_state())
+        state_file = Path(d) / "track-state.json"
+        bak_file = Path(d) / "track-state.json.bak"
+        state_file.write_text("{bad")
+        bak_file.write_text("{also bad")
+        with self.assertRaises(json.JSONDecodeError):
+            load(d)
+        shutil.rmtree(d)
+
+
+class TestFixStaleInProgress(TestCase):
+    """validate.py: _fix_stale_in_progress."""
+
+    def test_recent_state_no_fix(self):
+        state = _make_state(updated_at="2026-05-29T12:00:00+00:00")
+        state["phases"][0]["tasks"][0]["status"] = "in_progress"
+        fixes = _fix_stale_in_progress(state, threshold_hours=24)
+        self.assertEqual(fixes, [])
+
+    def test_stale_task_reset_to_pending(self):
+        state = _make_state(updated_at="2020-01-01T00:00:00+00:00")
+        state["phases"][0]["tasks"][0]["status"] = "in_progress"
+        fixes = _fix_stale_in_progress(state, threshold_hours=24)
+        self.assertEqual(len(fixes), 1)
+        self.assertEqual(state["phases"][0]["tasks"][0]["status"], "pending")
+
+    def test_stale_subtask_reset(self):
+        state = _make_state(updated_at="2020-01-01T00:00:00+00:00")
+        state["phases"][0]["tasks"][0]["subtasks"] = [
+            {"name": "Sub A", "status": "in_progress"}
+        ]
+        state["phases"][0]["tasks"][0]["status"] = "in_progress"
+        fixes = _fix_stale_in_progress(state, threshold_hours=24)
+        self.assertEqual(len(fixes), 2)
+        self.assertEqual(state["phases"][0]["tasks"][0]["subtasks"][0]["status"], "pending")
+
+
+class TestFixTerminalCurrentIndices(TestCase):
+    """validate.py: _fix_terminal_current_indices."""
+
+    def test_active_task_no_fix(self):
+        state = _make_state(current_phase_index=0, current_task_index=0)
+        state["phases"][0]["tasks"][0]["status"] = "in_progress"
+        fixes = _fix_terminal_current_indices(state)
+        self.assertEqual(fixes, [])
+
+    def test_terminal_advances_to_next_pending(self):
+        state = _make_state(current_phase_index=0, current_task_index=0)
+        state["phases"][0]["tasks"][0]["status"] = "completed"
+        state["phases"][0]["tasks"][0]["commit_sha"] = "abc1234"
+        fixes = _fix_terminal_current_indices(state)
+        self.assertEqual(len(fixes), 1)
+        self.assertEqual(state["current_phase_index"], 0)
+        self.assertEqual(state["current_task_index"], 1)
+
+    def test_all_terminal_clears_indices(self):
+        state = _make_state(current_phase_index=0, current_task_index=0)
+        for t in state["phases"][0]["tasks"]:
+            t["status"] = "completed"
+            t["commit_sha"] = "abc1234"
+        fixes = _fix_terminal_current_indices(state)
+        self.assertTrue(len(fixes) > 0)
+        self.assertEqual(state["current_phase_index"], -1)
+        self.assertEqual(state["current_task_index"], -1)
+
+    def test_negative_indices_no_fix(self):
+        state = _make_state(current_phase_index=-1, current_task_index=-1)
+        fixes = _fix_terminal_current_indices(state)
+        self.assertEqual(fixes, [])
+
+
+class TestAutoFix(TestCase):
+    """validate.py: _auto_fix comprehensive."""
+
+    def test_clamps_out_of_range_indices(self):
+        state = _make_state(current_phase_index=99, current_task_index=99)
+        fixes = _auto_fix(state)
+        self.assertTrue(any("clamped" in f for f in fixes))
+
+    def test_stale_and_terminal_combined(self):
+        state = _make_state(
+            updated_at="2020-01-01T00:00:00+00:00",
+            current_phase_index=0, current_task_index=0,
+        )
+        state["phases"][0]["tasks"][0]["status"] = "in_progress"
+        fixes = _auto_fix(state)
+        # Should reset stale + potentially adjust indices
+        self.assertTrue(len(fixes) >= 1)
+        self.assertEqual(state["phases"][0]["tasks"][0]["status"], "pending")
+
+
+class TestCmdValidate(TestCase):
+    """validate.py: cmd_validate always-run auto-fix."""
+
+    def test_dry_run_reports_fixable(self):
+        d = _make_track_dir(_make_state(
+            updated_at="2020-01-01T00:00:00+00:00",
+            current_phase_index=0, current_task_index=0,
+        ))
+        state = load(d)
+        state["phases"][0]["tasks"][0]["status"] = "in_progress"
+        save(d, state)
+
+        result, _ = _out捕获(cmd_validate, d)
+        # Dry-run: reports fixes but does NOT persist
+        self.assertTrue(result.get("fixable"))
+        self.assertTrue(len(result.get("fixes", [])) > 0)
+        self.assertNotIn("fixed", result)  # no "fixed" key in dry-run
+        # State should NOT be changed (dry-run)
+        unchanged = load(d)
+        self.assertEqual(unchanged["phases"][0]["tasks"][0]["status"], "in_progress")
+        shutil.rmtree(d)
+
+    def test_fix_flag_persists(self):
+        d = _make_track_dir(_make_state(
+            updated_at="2020-01-01T00:00:00+00:00",
+            current_phase_index=0, current_task_index=0,
+        ))
+        state = load(d)
+        state["phases"][0]["tasks"][0]["status"] = "in_progress"
+        save(d, state)
+
+        result, _ = _out捕获(cmd_validate, d, fix=True)
+        self.assertTrue(result.get("fixed"))
+        fixed = load(d)
+        self.assertEqual(fixed["phases"][0]["tasks"][0]["status"], "pending")
+        shutil.rmtree(d)
+
+
+class TestEnsureHealthy(TestCase):
+    """validate.py: ensure_healthy."""
+
+    def test_returns_state_and_fixes(self):
+        d = _make_track_dir(_make_state())
+        state, fixes, errors = ensure_healthy(d)
+        self.assertIsNotNone(state)
+        self.assertEqual(errors, [])
+        shutil.rmtree(d)
+
+    def test_fixes_stale_and_saves(self):
+        d = _make_track_dir(_make_state(
+            updated_at="2020-01-01T00:00:00+00:00",
+            current_phase_index=0, current_task_index=0,
+        ))
+        state = load(d)
+        state["phases"][0]["tasks"][0]["status"] = "in_progress"
+        save(d, state)
+
+        state, fixes, errors = ensure_healthy(d)
+        self.assertTrue(len(fixes) > 0)
+        reloaded = load(d)
+        self.assertEqual(reloaded["phases"][0]["tasks"][0]["status"], "pending")
+        shutil.rmtree(d)
+
+    def test_returns_none_on_missing_file(self):
+        state, fixes, errors = ensure_healthy("/nonexistent/path")
+        self.assertIsNone(state)
+        self.assertTrue(len(errors) > 0)
+
+
+class TestCmdRecover(TestCase):
+    """dispatch.py: cmd_recover with auto-fix and terminal advancement."""
+
+    def test_healthy_state_returns_current(self):
+        d = _make_track_dir(_make_state(
+            current_phase_index=0, current_task_index=0,
+        ))
+        state = load(d)
+        state["phases"][0]["tasks"][0]["status"] = "in_progress"
+        save(d, state)
+
+        result, _ = _out捕获(cmd_recover, d)
+        self.assertEqual(result["status"], "in_progress")
+        self.assertEqual(result["name"], "Task A")
+        shutil.rmtree(d)
+
+    def test_terminal_indices_auto_advance(self):
+        d = _make_track_dir(_make_state(
+            current_phase_index=0, current_task_index=0,
+        ))
+        state = load(d)
+        state["phases"][0]["tasks"][0]["status"] = "completed"
+        state["phases"][0]["tasks"][0]["commit_sha"] = "abc1234"
+        save(d, state)
+
+        result, _ = _out捕获(cmd_recover, d)
+        self.assertEqual(result["name"], "Task B")
+        self.assertEqual(result["phase"], 0)
+        self.assertEqual(result["task"], 1)
+        self.assertTrue(len(result.get("fixes_applied", [])) > 0)
+        shutil.rmtree(d)
+
+    def test_no_active_task_when_all_done(self):
+        d = _make_track_dir(_make_state(
+            current_phase_index=0, current_task_index=0,
+        ))
+        state = load(d)
+        for t in state["phases"][0]["tasks"]:
+            t["status"] = "completed"
+            t["commit_sha"] = "abc1234"
+        save(d, state)
+
+        result, _ = _out捕获(cmd_recover, d)
+        self.assertEqual(result["status"], "no_active_task")
+        shutil.rmtree(d)
+
+    def test_fixes_applied_in_output(self):
+        d = _make_track_dir(_make_state(
+            updated_at="2020-01-01T00:00:00+00:00",
+            current_phase_index=0, current_task_index=0,
+        ))
+        state = load(d)
+        state["phases"][0]["tasks"][0]["status"] = "in_progress"
+        save(d, state)
+
+        result, stderr = _out捕获(cmd_recover, d)
+        self.assertIn("fixes_applied", result)
+        self.assertTrue(len(result["fixes_applied"]) > 0)
+        self.assertIn("auto-fixed", stderr)
+        shutil.rmtree(d)
+
+
+class TestDispatchNextAutoFix(TestCase):
+    """dispatch.py: cmd_dispatch_next auto-fixes before dispatch."""
+
+    def test_auto_fixes_before_dispatch(self):
+        d = _make_track_dir(_make_state(
+            updated_at="2020-01-01T00:00:00+00:00",
+            current_phase_index=0, current_task_index=0,
+        ))
+        state = load(d)
+        state["phases"][0]["tasks"][0]["status"] = "in_progress"
+        save(d, state)
+
+        result, stderr = _out捕获(cmd_dispatch_next, d)
+        self.assertIn("auto-fixed", stderr)
+        self.assertEqual(result.get("action"), "dispatch_executor")
+        shutil.rmtree(d)
+
+
+class TestInitValidation(TestCase):
+    """quality.py: _validate_plan_structure and plan.md cross-check."""
+
+    def test_valid_structure(self):
+        plan = {"phases": [{"name": "P1", "tasks": [{"name": "T1"}]}]}
+        errors = _validate_plan_structure(plan)
+        self.assertEqual(errors, [])
+
+    def test_empty_phases(self):
+        errors = _validate_plan_structure({"phases": []})
+        self.assertEqual(len(errors), 1)
+        self.assertIn("at least 1 phase", errors[0])
+
+    def test_missing_phase_name(self):
+        errors = _validate_plan_structure({"phases": [{"tasks": [{"name": "T1"}]}]})
+        self.assertTrue(any("missing name" in e for e in errors))
+
+    def test_empty_tasks(self):
+        errors = _validate_plan_structure({"phases": [{"name": "P1", "tasks": []}]})
+        self.assertTrue(any("at least 1 task" in e for e in errors))
+
+    def test_missing_task_name(self):
+        errors = _validate_plan_structure({"phases": [{"name": "P1", "tasks": [{}]}]})
+        self.assertTrue(any("missing name" in e for e in errors))
+
+    def test_missing_subtask_name(self):
+        errors = _validate_plan_structure(
+            {"phases": [{"name": "P1", "tasks": [{"name": "T1", "subtasks": [{"name": ""}]}]}]})
+        self.assertTrue(any("Subtask" in e for e in errors))
+
+    def test_init_rejects_bad_structure(self):
+        d = tempfile.mkdtemp()
+        result, _ = _out捕获(cmd_init, d, '{"phases": []}', 't1', 'feature', 'desc')
+        self.assertFalse(result["ok"])
+        self.assertTrue(len(result["errors"]) > 0)
+        shutil.rmtree(d)
+
+    def test_init_warns_on_plan_mismatch(self):
+        d = tempfile.mkdtemp()
+        Path(d, "plan.md").write_text(
+            "# Plan\n\n## Phase 1: Build\n- [ ] Task A\n- [ ] Task B\n- [ ] Task C\n")
+        structure = json.dumps({"phases": [
+            {"name": "Build", "tasks": [{"name": "Task A"}, {"name": "Task B"}]},
+        ]})
+        result, _ = _out捕获(cmd_init, d, structure, 't1', 'feature', 'desc')
+        self.assertTrue(result["ok"])
+        self.assertIn("warnings", result)
+        self.assertTrue(any("3 tasks" in w for w in result["warnings"]))
+        shutil.rmtree(d)
+
+    def test_init_no_warnings_when_matching(self):
+        d = tempfile.mkdtemp()
+        Path(d, "plan.md").write_text(
+            "# Plan\n\n## Phase 1: Build\n- [ ] Task A\n- [ ] Task B\n")
+        structure = json.dumps({"phases": [
+            {"name": "Build", "tasks": [{"name": "Task A"}, {"name": "Task B"}]},
+        ]})
+        result, _ = _out捕获(cmd_init, d, structure, 't1', 'feature', 'desc')
+        self.assertTrue(result["ok"])
+        self.assertNotIn("warnings", result)
+        shutil.rmtree(d)
+
+
+if __name__ == "__main__":
+    main()
