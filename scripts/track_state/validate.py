@@ -328,7 +328,8 @@ def _fix_terminal_current_indices(state):
 def _auto_fix(state, track_dir=None, errors=None, stale_threshold_hours=24):
     """Auto-fix repairable inconsistencies. Returns list of fixes applied."""
     fixes = []
-    errors = errors or []
+    if errors is None:
+        errors = []
 
     # Fix out-of-range indices
     fixes.extend(_fix_indices(state))
@@ -384,7 +385,7 @@ def _run_all_checks(track_dir, state, errors, warnings):
         )
     if state["status"] not in ("new", "in_progress", "completed", "archived", "blocked", "cancelled"):
         errors.append(
-            f"Invalid track status: '{state['status']}. Valid statuses: new, in_progress, completed, archived, blocked, cancelled. "
+            f"Invalid track status: '{state['status']}'. Valid statuses: new, in_progress, completed, archived, blocked, cancelled. "
             f"Run track-state start/finalize/archive to transition."
         )
 

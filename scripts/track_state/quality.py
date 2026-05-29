@@ -8,7 +8,7 @@ from pathlib import Path
 from .core import load, save
 from .helpers import out, now_iso, conductor_dir, _reset_task
 from .handoff import _ensure_handoff_index
-from .validate import _fix_stale_in_progress, _parse_plan_structure
+from .validate import _parse_plan_structure
 
 
 def _checklist_status(track_dir):
