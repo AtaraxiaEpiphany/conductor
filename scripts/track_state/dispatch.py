@@ -353,17 +353,70 @@ def _last_subtask_sha_from_state(track_dir, pi, ti):
         return ""
 
 
+def _synthesize_result_from_state(track_dir):
+    """Build a result dict from the currently locked task in track-state.json.
+
+    Used when .conductor/result.json is missing (e.g. explorer running in plan
+    mode could not write it). Derives phase/task/subtask/task_name from the
+    current_*_index fields set by dispatch-prepare's _do_lock call."""
+
+    state = load(track_dir)
+    pi = state.get("current_phase_index", -1)
+    ti = state.get("current_task_index", -1)
+
+    if pi < 0 or ti < 0:
+        return None
+
+    try:
+        task = state["phases"][pi]["tasks"][ti]
+    except (IndexError, KeyError):
+        return None
+
+    si = state.get("current_subtask_index")
+    if si is not None:
+        try:
+            tgt = task["subtasks"][si]
+            name = tgt["name"]
+        except (IndexError, KeyError):
+            tgt = task
+            name = task["name"]
+            si = None
+    else:
+        tgt = task
+        name = task["name"]
+
+    if tgt.get("status") != "in_progress":
+        return None
+
+    return dict(
+        status="SUCCESS",
+        commit_sha="",
+        summary="Synthesized from locked task (result.json missing)",
+        phase=pi,
+        task=ti,
+        subtask=si,
+        task_name=name,
+    )
+
+
 def cmd_dispatch_finalize(track_dir):
     """Process result + create conductor commit + sync-plan.
     Creates the conductor commit internally so each task/subtask gets a unique SHA.
-    Accepts --override key=value to patch result fields before processing."""
+    Accepts --override key=value to patch result fields before processing.
+    When result.json is missing, synthesizes result from the locked task in state."""
     result_path = conductor_dir(track_dir) / "result.json"
-    if not result_path.exists():
-        out(dict(error="No result file at .conductor/result.json"))
-        return
 
-    with open(result_path) as f:
-        r = json.load(f)
+    if result_path.exists():
+        with open(result_path) as f:
+            r = json.load(f)
+    else:
+        # Fallback: synthesize result from locked task in track-state.json
+        r = _synthesize_result_from_state(track_dir)
+        if r is None:
+            out(dict(error="No result file at .conductor/result.json and no locked task in state"))
+            return
+        print("NOTE: result.json missing — synthesized from locked task state",
+              file=sys.stderr)
 
     # Apply overrides: merge CLI-supplied values into result (only if currently empty/falsy)
     overrides = flag(sys.argv[3:], "--override")
