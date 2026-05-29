@@ -173,7 +173,7 @@ def cmd_dispatch_next(track_dir):
                 save(track_dir, state)
 
             # Check if ANY phase needs a checkpoint (not just the current one)
-            cp = _any_phase_needs_checkpoint(track_dir, load(track_dir))
+            cp = _any_phase_needs_checkpoint(track_dir, state)
             if cp is not None:
                 out(dict(action="dispatch_phase_checker", phase=cp,
                          execution_mode=execution_mode))
@@ -346,6 +346,9 @@ def cmd_dispatch_prepare(track_dir):
     if nxt.get("type") == "parent-complete":
         sha = _last_subtask_sha_from_state(track_dir, pi, ti)
         action = "parent-complete"
+    elif nxt.get("type") == "parent-stuck":
+        sha = _last_subtask_sha_from_state(track_dir, pi, ti)
+        action = "parent_stuck"
     elif "Manual" in tags:
         action = "defer"
     elif "Explore" in tags:
@@ -356,6 +359,10 @@ def cmd_dispatch_prepare(track_dir):
     if action == "parent-complete":
         out(dict(action=action, phase=pi, task=ti, name=name,
                  sha=sha, next=nxt))
+        return
+    if action == "parent_stuck":
+        out(dict(action=action, phase=pi, task=ti, name=name,
+                 sha=sha, execution_mode=execution_mode, next=nxt))
         return
     if action == "defer":
         # Auto-defer: lock not needed
@@ -520,14 +527,15 @@ def cmd_dispatch_finalize(track_dir):
 
         # Write git note AFTER conductor commit so it's on the same SHA track-state.json references
         r["commit_sha"] = final_sha
-        _write_git_note(track_dir, r, load(track_dir))
+        state = load(track_dir)
+        _write_git_note(track_dir, r, state)
 
         result = dict(status="success", sha=final_sha, parent_completed=parent_completed,
                       deviations=len(r.get("spec_deviation_detail", [])),
                       sync_count=synced, committed=committed)
 
         # Check if ANY phase needs checkpoint after this completion
-        checkpoint_pending = _any_phase_needs_checkpoint(track_dir, load(track_dir))
+        checkpoint_pending = _any_phase_needs_checkpoint(track_dir, state)
         if checkpoint_pending is not None:
             result["phase_checkpoint_pending"] = checkpoint_pending
 

@@ -125,13 +125,13 @@ def extract_tags(name):
         return []
     # Strip HTML comments to prevent false-positive matches from AC/TC annotations
     clean_name = re.sub(r'<!--.*?-->', '', name)
-    # Match tags at start or end, avoid middle-of-sentence matches
-    pattern = r'(^|\s)\[(Explore|Docs|Config|Chore|Manual)\](\s|$)'
+    # Use lookahead/lookbehind to avoid consuming whitespace between consecutive tags
+    pattern = r'(?<!\S)\[(Explore|Docs|Config|Chore|Manual)\](?!\S)'
     matches = re.findall(pattern, clean_name)
     # Extract tag names and preserve order while removing duplicates
     seen = set()
     result = []
-    for _, tag, _ in matches:
+    for tag in matches:
         if tag not in seen:
             seen.add(tag)
             result.append(tag)

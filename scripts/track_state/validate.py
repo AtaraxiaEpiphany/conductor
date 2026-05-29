@@ -130,9 +130,10 @@ def _parse_plan_structure(plan_path):
         tm = re.match(r"^(\s*)-\s+\[[ x~!>#\-d]\]\s+(.*)", stripped)
         if tm and current_phase is not None:
             indent = tm.group(1)
-            rest = _clean_trailing_markers(tm.group(2).strip())
-            # Strip trailing HTML comments so absorbed task names stay clean
-            rest = re.sub(r'\s*<!--.*?-->\s*$', '', rest).rstrip()
+            rest = tm.group(2).strip()
+            # Strip HTML comments before marker cleaning so SHA brackets are exposed
+            rest = re.sub(r'<!--.*?-->', '', rest).strip()
+            rest = _clean_trailing_markers(rest)
             is_subtask = len(indent) > 0
 
             if is_subtask:
