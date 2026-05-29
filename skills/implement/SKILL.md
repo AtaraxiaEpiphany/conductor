@@ -90,18 +90,18 @@ After return → **Section 3.6** (Phase Boundary).
 
 ```bash
 track-state dispatch-prepare "<track_dir>"
-git add -A && git commit -m "<commit_msg from dispatch-prepare>"
+git add -A && git diff --cached --quiet || git commit -m "<commit_msg from dispatch-prepare>"
 ```
 
 Dispatch `conductor:explorer`. Prompt: `TRACK_DIR={td} PHASE={p} TASK={t} NAME={name}`
 
-After return: commit exploration artifacts (`git add -A && git commit -m "docs(explore): {name}"`) → get SHA (`git rev-parse --short HEAD`) → `track-state dispatch-finalize "<track_dir>" --override commit_sha={sha}` → `dispatch-finalize` commits internally → **Section 3.7**.
+After return: commit exploration artifacts (`git add -A && git diff --cached --quiet || git commit -m "docs(explore): {name}"`) → get SHA (`git rev-parse --short HEAD`) → `track-state dispatch-finalize "<track_dir>" --override commit_sha={sha}` → `dispatch-finalize` commits internally → **Section 3.7**.
 
 ### 3.4 Action: `dispatch_executor`
 
 ```bash
 track-state dispatch-prepare "<track_dir>"
-git add -A && git commit -m "<commit_msg from dispatch-prepare>"
+git add -A && git diff --cached --quiet || git commit -m "<commit_msg from dispatch-prepare>"
 ```
 
 Dispatch `conductor:task-executor`. Prompt: `TRACK_DIR={td} PHASE={p} TASK={t} SUBTASK={s} NAME={name} ATTEMPT={n} MAX_RETRIES={m} IS_RETRY={bool}`
@@ -139,7 +139,7 @@ track-state dispatch-finalize "<track_dir>"
 `dispatch-finalize` creates the conductor commit internally. Do NOT commit separately.
 Output includes `committed: true/false` and optionally `phase_checkpoint_pending: <phase_index>`.
 
-**SUCCESS**: `committed: false` → announce `"conductor commit failed, result.json preserved"` → re-run `dispatch-finalize`. Deviations > 0 → announce. If `phase_checkpoint_pending` present → dispatch `conductor:phase-checker` immediately. Otherwise → **Section 3.7**.
+**SUCCESS**: `committed: false` → announce `"conductor commit failed, result.json preserved"` → re-run `dispatch-finalize` (max 3 attempts, then HALT with `"dispatch-finalize stuck"`). Deviations > 0 → announce. If `phase_checkpoint_pending` present → dispatch `conductor:phase-checker` immediately. Otherwise → **Section 3.7**.
 
 **FAILURE**: retry < max → re-dispatch (Section 3.1). retry >= max → dispatch `conductor:skip-analyst`. Skip-analyst result: `can_skip` → `track-state skip` or `block` → `sync-plan` → commit → Section 3.1 or HALT.
 

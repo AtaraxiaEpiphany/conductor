@@ -109,11 +109,6 @@ Present the manual verification plan to the user via `AskUserQuestion`:
 
 **Otherwise (continuous mode, default):**
 Skip user confirmation. Auto-record: `User confirmation skipped (continuous mode)`. Proceed to Step 6.
-Present the manual verification plan to the user via `AskUserQuestion`:
-
-> "Phase `{PHASE_NAME}` automated tests have passed. Please verify manually:\n\n{verification_steps}\n\nDoes this meet your expectations?"
-
-**PAUSE** and await the user's response. Do not proceed without confirmation.
 
 ### Step 6: Create Checkpoint Commit
 

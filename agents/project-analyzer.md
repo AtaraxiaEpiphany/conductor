@@ -83,11 +83,12 @@ Scan for known indicators:
 
 ## 4.0 OUTPUT FORMAT
 
-Return **exactly** this JSON block:
+### On Success
+
+Return **exactly** this JSON block (raw JSON, no code fences):
 
 ```
 ---ANALYSIS RESULT---
-```json
 {
   "project_type": "web_app|api|cli|library|mobile|desktop|other",
   "maturity": "brownfield",
@@ -120,7 +121,15 @@ Return **exactly** this JSON block:
   "suggested_styleguides": ["typescript", "python"],
   "suggested_workflow": "standard_tdd"
 }
+---END ANALYSIS RESULT---
 ```
+
+### On Failure
+
+```
+---ANALYSIS RESULT---
+STATUS: FAILURE
+REASON: <one-line description of what failed>
 ---END ANALYSIS RESULT---
 ```
 

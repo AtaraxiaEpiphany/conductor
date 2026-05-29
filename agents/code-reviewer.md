@@ -180,6 +180,17 @@ SUMMARY: <single sentence>
 
 `---REVIEW RESULT---` / `---END REVIEW RESULT---` delimiters are mandatory.
 
+### 4.3 Failure Format
+
+If a tool call fails and you cannot recover:
+
+```
+---REVIEW RESULT---
+STATUS: FAILURE
+REASON: <one-line description of what failed>
+---END REVIEW RESULT---
+```
+
 **Guidelines:**
 - Full findings go in the JSON file only.
 - Stdout must be exactly 4 lines (the terse summary).

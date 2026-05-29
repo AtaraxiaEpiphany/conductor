@@ -134,6 +134,15 @@ SUMMARY: <reason>
 ---END REVIEW RESULT---
 ```
 
+If a tool call fails and you cannot recover:
+
+```
+---REVIEW RESULT---
+STATUS: FAILURE
+REASON: <one-line description of what failed>
+---END REVIEW RESULT---
+```
+
 **Field definitions:**
 - `CHANGES_MADE`: `true` if any edits were applied to spec.md or plan.md.
 - `STRUCTURE_CHANGED`: `true` if plan.md phases/tasks were added, removed, or reordered (requires `track-state.json` regeneration by orchestrator).

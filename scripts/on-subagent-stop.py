@@ -117,6 +117,7 @@ def main():
             decision="block",
             reason=reason,
         )
+        return  # write_hook_output calls sys.exit — but be explicit for clarity
 
     # No failure detected — allow the subagent to stop normally
     write_hook_output()

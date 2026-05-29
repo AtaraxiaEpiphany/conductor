@@ -85,7 +85,7 @@ Write findings to `{TRACK_DIR}/exploration.md`. **This file is consumed by downs
   Examples: discovered features tangentially related but explicitly excluded
 ```
 
-**Append** if file exists (supports accumulation across multiple [Explore] tasks in a track).
+**Append** if file exists (supports accumulation across multiple [Explore] tasks in a track). Use `cat >>` when the file already exists, `cat >` when creating it for the first time.
 
 **Critical**: The "Out-of-Scope Notes" section allows explorer to contribute boundary findings that task-executor should respect as Layer 0 context.
 

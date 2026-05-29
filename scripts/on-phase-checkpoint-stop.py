@@ -20,7 +20,6 @@ def main():
 
     # Initialize logging
     log_file = init_logging("on-phase-checkpoint-stop")
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     # Log checkpoint event
     log_entry(log_file, f"session={session_id} event=phase_checkpoint_complete")

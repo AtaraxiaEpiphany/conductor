@@ -72,9 +72,8 @@ def has_test_failure(stdout: str, stderr: str, interrupted: bool) -> bool:
     ]
 
     combined = stdout + "\n" + stderr
-    combined_lower = combined.lower()
     for pattern in failure_patterns:
-        if re.search(pattern, combined_lower):
+        if re.search(pattern, combined, re.IGNORECASE):
             return True
 
     return False

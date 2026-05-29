@@ -99,7 +99,9 @@ I have analyzed your request. Here is the plan:
 ### 5.1 Execute Reverts
 
 1. `git revert --no-edit <sha>` for each commit, most recent first.
-2. Handle merge conflicts: halt and provide manual instructions.
+2. Handle merge conflicts:
+   - **First conflict:** attempt `git revert --continue` after resolving.
+   - **Second conflict or unresolvable:** `git revert --abort` to undo the partial revert, then provide manual instructions with the remaining SHAs. Do NOT leave the repo in a half-reverted state.
 
 ### 5.2 Update track-state.json
 

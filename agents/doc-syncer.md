@@ -217,6 +217,15 @@ SUMMARY: <one-line summary of changes made, or "No updates required">
 ---END RESULT---
 ```
 
+### On Failure
+
+```
+---DOC SYNC RESULT---
+STATUS: FAILURE
+REASON: <one-line description of what failed>
+---END RESULT---
+```
+
 **The `---DOC SYNC RESULT---` / `---END RESULT---` delimiters are mandatory.**
 
 ---

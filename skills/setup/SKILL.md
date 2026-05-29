@@ -140,7 +140,7 @@ Parse `---REVIEW RESULT---` block. If `STATUS: CANCELLED` → halt. If `STRUCTUR
      --description '<desc>'
    ```
 3. **Update Tracks Registry:** Append new entry.
-4. Save state: `3.4_track_artifacts_created`.
+4. Save state: `3.5_track_artifacts_created`.
 
 ### 3.6 Final Commit
 

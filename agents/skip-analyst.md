@@ -1,7 +1,7 @@
 ---
 name: skip-analyst
 description: Analyzes whether a repeatedly failed track task can be safely skipped. Dispatched by the conductor:implement orchestrator when retry count is exhausted.
-tools: Read, Grep, Glob
+tools: Read, Grep, Glob, Bash
 model: haiku
 effort: low
 maxTurns: 15
@@ -78,18 +78,27 @@ Based on the analysis, determine:
 
 ## 4.0 OUTPUT FORMAT
 
-Return **exactly** this JSON block. The orchestrator parses this to decide next actions.
+Return **exactly** this JSON block (raw JSON, no code fences). The orchestrator parses this to decide next actions.
+
+### On Success
 
 ```
 ---SKIP ANALYSIS---
-```json
 {
   "can_skip": true,
   "impact": "description of downstream impact if skipped",
   "recommendation": "skip",
   "reasoning": "detailed reasoning for the recommendation"
 }
+---END ANALYSIS---
 ```
+
+### On Failure
+
+```
+---SKIP ANALYSIS---
+STATUS: FAILURE
+REASON: <one-line description of what failed>
 ---END ANALYSIS---
 ```
 

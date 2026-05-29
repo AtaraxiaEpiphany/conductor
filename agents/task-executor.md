@@ -137,7 +137,7 @@ Refactor under passing tests. Rerun to confirm no regressions.
 
 Stage + commit: `<type>(<scope>): <description>`
 
-Git notes (audit trail) are written automatically by the orchestrator via `track-state process-result`. You do NOT write git notes.
+Git notes (audit trail) are written automatically by the orchestrator via `track-state dispatch-finalize`. You do NOT write git notes.
 
 ---
 
