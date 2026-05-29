@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 
 from .core import load
-from .helpers import conductor_dir, now_iso, out, _safe_task_name
+from .helpers import conductor_dir, now_iso, out, _safe_task_name, _display_loc
 
 
 def _get_handoff_dir(track_dir):
@@ -13,8 +13,12 @@ def _get_handoff_dir(track_dir):
     return handoff_dir
 
 def _get_handoff_file(track_dir, phase, task):
-    """Get handoff file path for a specific task: P{N}T{M}.md"""
-    return _get_handoff_dir(track_dir) / f"P{phase}T{task}.md"
+    """Get handoff file path for a specific task (1-based display names)."""
+    try:
+        p1, t1 = int(phase) + 1, int(task) + 1
+    except (ValueError, TypeError):
+        p1, t1 = phase, task
+    return _get_handoff_dir(track_dir) / f"P{p1}T{t1}.md"
 
 def _ensure_handoff_index(track_dir, state=None):
     """Ensure handoff.md index exists. Create if missing."""
@@ -117,7 +121,7 @@ def _sync_handoff_index(track_dir, state=None):
         for ti, task in enumerate(phase.get("tasks", [])):
             total_tasks += 1
             task_status = task.get("status", "pending")
-            task_name = task.get("name", f"Task {ti}")
+            task_name = task.get("name", f"Task {ti + 1}")
 
             if task_status == "completed":
                 completed_tasks += 1
@@ -140,15 +144,15 @@ def _sync_handoff_index(track_dir, state=None):
             retry_info = f" ({retry_count}/3)" if retry_count > 0 else ""
 
             task_rows.append(
-                f"| {ti}. | {task_emoji} {task_name}{retry_info} | "
-                f"[P{pi}T{ti}](.conductor/handoff/P{pi}T{ti}.md) |"
+                f"| {ti + 1}. | {task_emoji} {task_name}{retry_info} | "
+                f"[{_display_loc(pi, ti)}](.conductor/handoff/P{pi + 1}T{ti + 1}.md) |"
             )
 
             # Count subtasks
             for si, sub in enumerate(task.get("subtasks", [])):
                 total_tasks += 1
                 sub_status = sub.get("status", "pending")
-                sub_name = sub.get("name", f"Subtask {si}")
+                sub_name = sub.get("name", f"Subtask {si + 1}")
 
                 if sub_status == "completed":
                     completed_tasks += 1
@@ -173,7 +177,7 @@ def _sync_handoff_index(track_dir, state=None):
     current_phase = state.get("current_phase_index", -1)
     current_task = state.get("current_task_index", -1)
 
-    current_focus = f"Phase {current_phase + 1}, Task {current_task}" if current_phase >= 0 else "Initializing"
+    current_focus = f"Phase {current_phase + 1}, Task {current_task + 1}" if current_phase >= 0 and current_task >= 0 else "Initializing"
 
     content = f"""# Handoff: {track_id}
 
@@ -227,15 +231,15 @@ def _write_task_handoff(track_dir, phase, task, content, state=None):
     # Get task context
     try:
         task_obj = state["phases"][int(phase)]["tasks"][int(task)]
-        task_name = task_obj.get("name", f"Task {task}")
+        task_name = task_obj.get("name", f"Task {int(task) + 1}")
         phase_name = state["phases"][int(phase)].get("name", f"Phase {int(phase)+1}")
     except (IndexError, KeyError):
-        task_name = f"Task {task}"
+        task_name = f"Task {int(task) + 1}"
         phase_name = f"Phase {int(phase)+1}"
 
     # If file doesn't exist, create header
     if not handoff_file.exists():
-        header = f"""# Phase {int(phase)+1} Task {int(task)}: {task_name}
+        header = f"""# Phase {int(phase)+1} Task {int(task)+1}: {task_name}
 
 **Phase**: {phase_name}
 **Status**: pending
@@ -321,7 +325,7 @@ def _append_execution_record(track_dir, phase, task, subtask, result_data, state
 
     # Determine section to write to
     if subtask is not None:
-        section_header = f"\n## Subtask {int(subtask)}: {task_name}\n\n{record}\n"
+        section_header = f"\n## Subtask {int(subtask) + 1}: {task_name}\n\n{record}\n"
     else:
         section_header = f"\n## Execution Record\n\n{record}\n"
 
@@ -393,24 +397,25 @@ def cmd_get_handoff(track_dir, phase, task, subtask=None):
 
     # If subtask specified, extract only that section
     if subtask is not None:
+        sub_1based = int(subtask) + 1
         lines = content.split("\n")
         result = []
         capturing = False
         for line in lines:
-            if line.strip().startswith(f"## Subtask {int(subtask)}:") or \
-               line.strip().startswith(f"### Subtask {int(subtask)}:"):
+            if line.strip().startswith(f"## Subtask {sub_1based}:") or \
+               line.strip().startswith(f"### Subtask {sub_1based}:"):
                 capturing = True
             if capturing:
                 result.append(line)
                 # Stop at next section
                 if line.startswith("## ") and not \
-                   (line.startswith(f"## Subtask {int(subtask)}:") or \
-                    line.startswith(f"### Subtask {int(subtask)}:")):
+                   (line.startswith(f"## Subtask {sub_1based}:") or \
+                    line.startswith(f"### Subtask {sub_1based}:")):
                     result.pop()  # Remove the next section header
                     break
 
         if not result:
-            out(dict(error=f"Subtask {subtask} not found in handoff"))
+            out(dict(error=f"Subtask {sub_1based} not found in handoff"))
             return
 
         content = "\n".join(result)
@@ -440,9 +445,9 @@ def cmd_append_handoff(track_dir, phase, task, entry_type, content_json, subtask
     # Get task context
     try:
         task_obj = state["phases"][int(phase)]["tasks"][int(task)]
-        task_name = task_obj.get("name", f"Task {task}")
+        task_name = task_obj.get("name", f"Task {int(task) + 1}")
     except (IndexError, KeyError):
-        task_name = f"Task {task}"
+        task_name = f"Task {int(task) + 1}"
 
     # Build entry based on type
     if entry_type == "explore":
@@ -518,7 +523,7 @@ def cmd_append_handoff(track_dir, phase, task, entry_type, content_json, subtask
 
     # Add subtask header if needed
     if subtask is not None:
-        section = f"\n## Subtask {int(subtask)}: {task_name}\n\n{entry}\n"
+        section = f"\n## Subtask {int(subtask) + 1}: {task_name}\n\n{entry}\n"
     else:
         section = entry
 

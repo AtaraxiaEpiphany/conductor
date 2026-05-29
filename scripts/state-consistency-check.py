@@ -59,7 +59,9 @@ def get_track_handoff_info(state_file: Path) -> Optional[str]:
     ti = state.get("current_task_index", -1)
     mode = state.get("execution_mode", "interactive")
 
-    return f'- Track {track_id}: status={status}, position=P{pi}.T{ti}, mode={mode}'
+    if pi < 0 or ti < 0:
+        return f'- Track {track_id}: status={status}, position=N/A, mode={mode}'
+    return f'- Track {track_id}: status={status}, position=P{pi + 1}.T{ti + 1}, mode={mode}'
 
 
 def write_session_handoff(data_dir: Path, handoff_data: str) -> None:

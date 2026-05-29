@@ -40,7 +40,7 @@ def _do_complete(track_dir, p, t, s=None, sha=None):
                    if sub["status"] not in TERMINAL_FOR_PARENT]
         if pending:
             raise ValueError(
-                f"Cannot complete P{pi}:T{ti} — {len(pending)} subtask(s) still "
+                f"Cannot complete P{pi + 1}.T{ti + 1} — {len(pending)} subtask(s) still "
                 f"non-terminal: {pending[0]}"
                 + (f" (+{len(pending)-1} more)" if len(pending) > 1 else "")
             )

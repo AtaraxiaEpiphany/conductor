@@ -362,7 +362,7 @@ def cmd_dispatch_prepare(track_dir):
     # Lock + sync-plan for explore/execute
     _do_lock(track_dir, pi, ti, si)
     synced = _do_sync_plan(track_dir)
-    commit_msg = f"chore(conductor): Start task '{name}' [{pi}.{ti}]"
+    commit_msg = f"chore(conductor): Start task '{name}' [P{pi + 1}.T{ti + 1}]"
 
     out(dict(action=action, phase=pi, task=ti, subtask=si, name=name,
              tags=tags, sync_count=synced, commit_msg=commit_msg,

@@ -30,16 +30,16 @@ def _validate_state_consistency(state, errors, warnings):
         if phase["status"] in TERMINAL_FOR_PARENT and not all_terminal:
             warnings.append(f"{pname}: phase terminal but tasks still in progress")
 
-        in_progress = [t.get("name", f"P{pi}.T{ti}")
+        in_progress = [t.get("name", f"P{pi + 1}.T{ti + 1}")
                        for ti, t in enumerate(tasks) if t["status"] == "in_progress"]
         if len(in_progress) > 1:
             warnings.append(f"{pname}: multiple in_progress tasks ({', '.join(in_progress)})")
 
         for ti, task in enumerate(tasks):
-            tname = task.get("name", f"P{pi}.T{ti}")
+            tname = task.get("name", f"P{pi + 1}.T{ti + 1}")
 
             if task["status"] in TERMINAL_STATUSES:
-                pending_subs = [s.get("name", f"S{si}")
+                pending_subs = [s.get("name", f"S{si + 1}")
                                 for si, s in enumerate(task.get("subtasks", []))
                                 if s["status"] in ("pending", "in_progress")]
                 if pending_subs:
@@ -94,7 +94,7 @@ def _validate_plan_consistency(track_dir, state, errors, warnings):
             state_sub_count = len(tasks[ti].get("subtasks", []))
             plan_sub_count = len(plan_tasks[ti].get("subtasks", []))
             if plan_sub_count != state_sub_count:
-                tname = tasks[ti].get("name", f"P{pi}.T{ti}")
+                tname = tasks[ti].get("name", f"P{pi + 1}.T{ti + 1}")
                 errors.append(
                     f"{tname}: plan.md has {plan_sub_count} subtasks, state has {state_sub_count}")
 
@@ -176,13 +176,13 @@ def _fix_plan_mismatches(track_dir, state, errors=None):
                     sub_name = plan_subs[si]["name"]
                     state_subs.append({"name": sub_name, "status": "pending"})
                     fixes.append(
-                        f"P{pi}.T{ti}.S{si}: added subtask from plan.md as pending")
+                        f"P{pi + 1}.T{ti + 1}.S{si + 1}: added subtask from plan.md as pending")
             else:
                 # Task doesn't exist in state — add it
                 new_task = {"name": pt["name"], "status": "pending", "subtasks": pt["subtasks"]}
                 state_tasks.append(new_task)
                 fixes.append(
-                    f"P{pi}.T{ti}.{pt['name']}: added task from plan.md as pending "
+                    f"P{pi + 1}.T{ti + 1}.{pt['name']}: added task from plan.md as pending "
                     f"({len(pt['subtasks'])} subtasks)")
 
     return fixes
@@ -248,13 +248,13 @@ def _fix_stale_in_progress(state, threshold_hours=24):
             if task.get("status") == "in_progress":
                 _reset_task(task)
                 fixes.append(
-                    f"P{pi}.T{ti}.{task.get('name', '?')}: "
+                    f"P{pi + 1}.T{ti + 1}.{task.get('name', '?')}: "
                     f"reset stale in_progress → pending ({age_hours:.0f}h old)")
             for si, sub in enumerate(task.get("subtasks", [])):
                 if sub.get("status") == "in_progress":
                     _reset_task(sub)
                     fixes.append(
-                        f"P{pi}.T{ti}.S{si}.{sub.get('name', '?')}: "
+                        f"P{pi + 1}.T{ti + 1}.S{si + 1}.{sub.get('name', '?')}: "
                         f"reset stale in_progress → pending ({age_hours:.0f}h old)")
 
     return fixes
@@ -300,7 +300,7 @@ def _fix_terminal_current_indices(state):
                 state["current_task_index"] = ti
                 state.pop("current_subtask_index", None)
                 fixes.append(
-                    f"current indices: ({cpi},{cti}) → ({pi},{ti}) "
+                    f"current indices: P{cpi + 1}.T{cti + 1} → P{pi + 1}.T{ti + 1} "
                     f"(advanced past terminal task)")
                 return fixes
             # Check for pending subtasks in in_progress parents
@@ -311,7 +311,7 @@ def _fix_terminal_current_indices(state):
                         state["current_task_index"] = ti
                         state["current_subtask_index"] = si
                         fixes.append(
-                            f"current indices: ({cpi},{cti}) → ({pi},{ti},{si}) "
+                            f"current indices: P{cpi + 1}.T{cti + 1} → P{pi + 1}.T{ti + 1}.S{si + 1} "
                             f"(advanced to active subtask)")
                         return fixes
 
@@ -354,7 +354,7 @@ def _auto_fix(state, track_dir=None, errors=None, stale_threshold_hours=24):
                         old = sub["status"]
                         sub["status"] = task["status"]
                         fixes.append(
-                            f"P{pi}.T{ti}.{sub.get('name', '?')}: "
+                            f"P{pi + 1}.T{ti + 1}.{sub.get('name', '?')}: "
                             f"subtask '{old}' → '{task['status']}' (parent propagation)")
 
         if _is_phase_terminal(phase) and phase["status"] not in TERMINAL_FOR_PARENT:
@@ -401,7 +401,7 @@ def _run_all_checks(track_dir, state, errors, warnings):
     for pi, phase in enumerate(state.get("phases", [])):
         pname = phase.get("name", f"Phase {pi+1}")
         if "name" not in phase:
-            errors.append(f"Phase {pi}: missing name")
+            errors.append(f"Phase {pi + 1}: missing name")
         if "status" not in phase:
             errors.append(f"{pname}: missing status")
         elif phase["status"] not in TASK_STATUSES:
@@ -411,16 +411,16 @@ def _run_all_checks(track_dir, state, errors, warnings):
             continue
 
         for ti, task in enumerate(phase["tasks"]):
-            tname = task.get("name", f"P{pi}.T{ti}")
+            tname = task.get("name", f"P{pi + 1}.T{ti + 1}")
             if "name" not in task:
-                errors.append(f"Phase {pi} Task {ti}: missing name")
+                errors.append(f"Phase {pi + 1} Task {ti + 1}: missing name")
             if "status" not in task:
                 errors.append(f"{tname}: missing status")
             elif task["status"] not in TASK_STATUSES:
                 errors.append(f"{tname}: invalid status '{task['status']}'")
 
             for si, sub in enumerate(task.get("subtasks", [])):
-                sname = sub.get("name", f"P{pi}.T{ti}.S{si}")
+                sname = sub.get("name", f"P{pi + 1}.T{ti + 1}.S{si + 1}")
                 if "status" not in sub:
                     errors.append(f"{sname}: missing status")
                 elif sub["status"] not in TASK_STATUSES:

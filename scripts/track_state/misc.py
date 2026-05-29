@@ -179,7 +179,7 @@ def cmd_add_checkpoint(track_dir, p, sha):
             result.append(stripped)
 
     if not found:
-        out(dict(error=f"Phase {p} heading not found in plan.md"))
+        out(dict(error=f"Phase {int(p) + 1} heading not found in plan.md"))
         return
 
     with open(plan_path, "w") as f:
@@ -328,6 +328,10 @@ def cmd_record_summary(track_dir):
         except (json.JSONDecodeError, ValueError):
             pass
 
-    summaries[f"P{p}.T{t}"] = {"sha": sha, "status": status, "summary": summary}
+    try:
+        key = f"P{int(p) + 1}.T{int(t) + 1}"
+    except (ValueError, TypeError):
+        key = f"P{p}.T{t}"
+    summaries[key] = {"sha": sha, "status": status, "summary": summary}
     summaries_path.write_text(json.dumps(summaries, indent=2))
-    out(dict(ok=True, recorded=f"P{p}.T{t}"))
+    out(dict(ok=True, recorded=key))

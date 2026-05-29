@@ -16,7 +16,7 @@ def cmd_complete(track_dir, p, t, s=None, sha=None,
     # create a conductor commit (allow-empty) to guarantee a unique SHA
     if si is not None and sha and _has_sibling_sha(state, pi, ti, si, sha):
         _do_sync_plan(track_dir, state)
-        commit_msg = f"chore(conductor): Dedup SHA for P{pi}:T{ti}:S{si}"
+        commit_msg = f"chore(conductor): Dedup SHA for P{pi + 1}.T{ti + 1}.S{si + 1}"
         _git_commit(track_dir, commit_msg, allow_empty=True)
         new_sha = _git_head_sha(track_dir)
         if new_sha and new_sha != sha:

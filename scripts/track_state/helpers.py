@@ -32,6 +32,14 @@ def out(obj):
     print(json.dumps(obj, ensure_ascii=False))
 
 
+def _display_loc(pi, ti, si=None):
+    """Format 0-based indices as 1-based display string: P1.T3 or P1.T3.S2."""
+    loc = f"P{int(pi) + 1}.T{int(ti) + 1}"
+    if si is not None:
+        loc += f".S{int(si) + 1}"
+    return loc
+
+
 def out_compact(obj):
     """Ultra-compact single-line output for --compact mode."""
     if obj.get("phase", -1) < 0:
@@ -43,7 +51,7 @@ def out_compact(obj):
     ttype = obj.get("type", "?")
     tags = ",".join(obj.get("tags", []))
     status = obj.get("status", "")
-    loc = f"P{p}.T{t}" + (f".S{s}" if s is not None else "")
+    loc = _display_loc(p, t, s) if isinstance(p, int) and isinstance(t, int) else f"P{p}.T{t}"
     parts = [loc, name, ttype]
     if tags:
         parts.append(f"tags=[{tags}]")
@@ -56,16 +64,16 @@ def out_compact(obj):
 
 
 def _index_map(state):
-    """Build a compact index→name map for error messages."""
+    """Build a compact index→name map for error messages. Uses 1-based display."""
     lines = []
     for pi, ph in enumerate(state.get("phases", [])):
-        lines.append(f"  Phase {pi}: {ph.get('name', '?')}")
+        lines.append(f"  Phase {pi + 1}: {ph.get('name', '?')}")
         for ti, tk in enumerate(ph.get("tasks", [])):
             status = tk.get("status", "?")
-            lines.append(f"    Task {ti}: [{status}] {tk.get('name', '?')}")
+            lines.append(f"    Task {ti + 1}: [{status}] {tk.get('name', '?')}")
             for si, sub in enumerate(tk.get("subtasks", [])):
                 ss = sub.get("status", "?")
-                lines.append(f"      Subtask {si}: [{ss}] {sub.get('name', '?')}")
+                lines.append(f"      Subtask {si + 1}: [{ss}] {sub.get('name', '?')}")
     return "\n".join(lines)
 
 
@@ -77,12 +85,12 @@ def target(state, p, t, s=None):
         idx_info = _index_map(state)
         if p >= n_phases:
             raise IndexError(
-                f"Phase index {p} out of range (0-based, track has {n_phases} phases). "
+                f"Phase index {p + 1} out of range (track has {n_phases} phases). "
                 f"Run 'track-state validate --fix' to correct state.\n"
                 f"Available indices:\n{idx_info}") from None
         n_tasks = len(state["phases"][p].get("tasks", []))
         raise IndexError(
-            f"Task index {t} out of range in phase {p} (0-based, has {n_tasks} tasks). "
+            f"Task index {t + 1} out of range in phase {p + 1} (has {n_tasks} tasks). "
             f"Run 'track-state validate --fix' to correct state.\n"
             f"Available indices:\n{idx_info}") from None
     if s is not None and "subtasks" in task:
@@ -92,8 +100,8 @@ def target(state, p, t, s=None):
             n_subs = len(task["subtasks"])
             idx_info = _index_map(state)
             raise IndexError(
-                f"Subtask index {s} out of range in P{p}:T{t} "
-                f"(0-based, has {n_subs} subtasks). "
+                f"Subtask index {s + 1} out of range in P{p + 1}.T{t + 1} "
+                f"(has {n_subs} subtasks). "
                 f"Run 'track-state validate --fix' to correct state.\n"
                 f"Available indices:\n{idx_info}") from None
     return task

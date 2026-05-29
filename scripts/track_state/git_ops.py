@@ -27,9 +27,16 @@ def _write_git_note(track_dir, result_data, state):
     cov_tool = result_data.get("coverage_tool", "")
     deviations = result_data.get("spec_deviation_detail", [])
 
-    loc = f"P{phase}.T{task}"
-    if subtask is not None:
-        loc += f".S{subtask}"
+    try:
+        p_val, t_val = int(phase), int(task)
+        loc = f"P{p_val + 1}.T{t_val + 1}"
+        if subtask is not None:
+            loc += f".S{int(subtask) + 1}"
+    except (ValueError, TypeError):
+        # Non-numeric values (e.g. "?") — show as-is for degraded output
+        loc = f"P{phase}.T{task}"
+        if subtask is not None:
+            loc += f".S{subtask}"
 
     lines = [f"[Conductor] {task_name} ({loc})"]
     lines.append(f"Summary: {summary}")
@@ -78,9 +85,9 @@ def _write_git_note_basic(track_dir, sha, state, pi, ti, si=None):
     except (IndexError, KeyError):
         task_name = "unknown"
 
-    loc = f"P{pi}.T{ti}"
+    loc = f"P{pi + 1}.T{ti + 1}"
     if si is not None:
-        loc += f".S{si}"
+        loc += f".S{si + 1}"
 
     # Get files from git diff
     files = ""

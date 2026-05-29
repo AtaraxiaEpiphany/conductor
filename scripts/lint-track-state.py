@@ -42,11 +42,11 @@ def check_f1_rule(state_file: Path) -> tuple[bool, Optional[str]]:
     for pi, phase in enumerate(state.get("phases", [])):
         for ti, task in enumerate(phase.get("tasks", [])):
             if task.get("status") == "in_progress":
-                active_tasks.append(f"P{pi}.T{ti}")
+                active_tasks.append(f"P{pi + 1}.T{ti + 1}")
             # Check subtasks
             for si, sub in enumerate(task.get("subtasks", [])):
                 if sub.get("status") == "in_progress":
-                    active_tasks.append(f"P{pi}.T{ti}.S{si}")
+                    active_tasks.append(f"P{pi + 1}.T{ti + 1}.S{si + 1}")
 
     if len(active_tasks) > 2:
         return False, (
@@ -86,13 +86,13 @@ def check_f4_rule(state_file: Path) -> tuple[bool, Optional[str]]:
         for ti, task in enumerate(phase.get("tasks", [])):
             if task.get("status") in terminal_statuses:
                 if not task.get("commit_sha"):
-                    missing_shas.append(f'P{pi}.T{ti}: {task.get("name", "?")}')
+                    missing_shas.append(f'P{pi + 1}.T{ti + 1}: {task.get("name", "?")}')
 
             # Check subtasks
             for si, sub in enumerate(task.get("subtasks", [])):
                 if sub.get("status") in terminal_statuses:
                     if not sub.get("commit_sha"):
-                        missing_shas.append(f'P{pi}.T{ti}.S{si}: {sub.get("name", "?")}')
+                        missing_shas.append(f'P{pi + 1}.T{ti + 1}.S{si + 1}: {sub.get("name", "?")}')
 
     if missing_shas:
         return False, f"VIOLATION: Missing commit SHAs for terminal tasks: {'; '.join(missing_shas)}"
