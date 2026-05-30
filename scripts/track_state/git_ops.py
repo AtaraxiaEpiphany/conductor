@@ -198,7 +198,8 @@ def _has_sibling_sha(state, pi, ti, si, sha):
 
 
 def _update_task_sha(track_dir, p, t, s, sha):
-    """Update commit_sha for a specific task/subtask and re-sync plan."""
+    """Update commit_sha for a specific task/subtask and re-sync plan.
+    Returns the updated state so callers avoid a redundant load()."""
     state = load(track_dir)
     pi, ti = int(p), int(t)
     si = int(s) if s is not None else None
@@ -209,6 +210,7 @@ def _update_task_sha(track_dir, p, t, s, sha):
         tgt["commit_sha"] = sha
     save(track_dir, state)
     _do_sync_plan(track_dir, state)
+    return state
 
 
 def _recover_git_notes(track_dir, state):

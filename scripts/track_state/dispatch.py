@@ -427,9 +427,13 @@ def _synthesize_result_from_state(track_dir):
     if tgt.get("status") != "in_progress":
         return None
 
+    # Best-effort: capture HEAD SHA so the code commit is recorded
+    # even when the subagent failed to write result.json
+    head_sha = _git_head_sha(track_dir) or ""
+
     return dict(
         status="SUCCESS",
-        commit_sha="",
+        commit_sha=head_sha,
         summary="Synthesized from locked task (result.json missing)",
         phase=pi,
         task=ti,
@@ -509,6 +513,10 @@ def cmd_dispatch_finalize(track_dir):
         final_sha = code_sha
         if committed:
             final_sha = _git_head_sha(track_dir) or code_sha
+        # If subagent provided no code SHA but conductor committed, store conductor SHA
+        if committed and not code_sha and final_sha:
+            state = _update_task_sha(track_dir, p, t, s, final_sha)
+
         # Deduplicate: if SHA collides with a sibling subtask, force a unique SHA
         if _has_sibling_sha(state, p, t, s, final_sha):
             _git_commit(track_dir, f"chore(conductor): Dedup '{task_name}' [{final_sha}]",
@@ -516,7 +524,7 @@ def cmd_dispatch_finalize(track_dir):
             dedup_sha = _git_head_sha(track_dir)
             if dedup_sha and dedup_sha != final_sha:
                 final_sha = dedup_sha
-                _update_task_sha(track_dir, p, t, s, final_sha)
+                state = _update_task_sha(track_dir, p, t, s, final_sha)
 
         # Delete result.json after all commits succeed
         # If commit failed, result.json is preserved for manual recovery

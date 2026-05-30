@@ -391,5 +391,120 @@ class TestInitValidation(TestCase):
         shutil.rmtree(d)
 
 
+class TestDispatchFinalizeShaWriteback(TestCase):
+    """dispatch.py: cmd_dispatch_finalize writes conductor SHA when code_sha is empty."""
+
+    def _make_git_track_dir(self):
+        """Create a temp dir with git repo, track-state.json, and plan.md."""
+        import subprocess
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d)
+        subprocess.run(["git", "init", d], capture_output=True, check=True)
+        subprocess.run(["git", "-C", d, "config", "user.email", "test@test.com"],
+                        capture_output=True, check=True)
+        subprocess.run(["git", "-C", d, "config", "user.name", "Test"],
+                        capture_output=True, check=True)
+        # Initial commit so HEAD exists
+        Path(d, "README.md").write_text("# test")
+        subprocess.run(["git", "-C", d, "add", "README.md"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", d, "commit", "-m", "init"], capture_output=True, check=True)
+
+        plan_text = "# Plan\n\n## Phase 1: Build\n- [ ] Task A\n- [ ] Task B\n"
+        Path(d, "plan.md").write_text(plan_text)
+
+        state = _make_state()
+        state["phases"][0]["tasks"][0]["status"] = "in_progress"
+        save(d, state)
+        return d
+
+    def test_sha_writeback_when_code_sha_empty(self):
+        """When subagent provides no commit_sha, conductor commit SHA is stored."""
+        from scripts.track_state.dispatch import cmd_dispatch_finalize
+
+        d = self._make_git_track_dir()
+        # Create result.json with SUCCESS but empty commit_sha
+        cond_dir = Path(d, ".conductor")
+        cond_dir.mkdir(exist_ok=True)
+        result = {
+            "status": "SUCCESS",
+            "commit_sha": "",
+            "summary": "Done",
+            "phase": 0,
+            "task": 0,
+            "subtask": None,
+            "task_name": "Task A",
+        }
+        (cond_dir / "result.json").write_text(json.dumps(result))
+
+        out, _ = _out捕获(cmd_dispatch_finalize, d)
+        self.assertEqual(out.get("status"), "success")
+        self.assertTrue(out.get("committed"))
+
+        # Verify track-state.json has a non-empty commit_sha
+        state = load(d)
+        sha = state["phases"][0]["tasks"][0].get("commit_sha", "")
+        self.assertTrue(len(sha) == 7, f"Expected 7-char SHA, got: '{sha}'")
+
+        # Verify plan.md has the SHA annotation
+        plan = Path(d, "plan.md").read_text()
+        self.assertIn(f"[{sha}]", plan)
+
+    def test_code_sha_preserved_when_provided(self):
+        """When subagent provides a commit_sha, it is preserved in track-state.json."""
+        from scripts.track_state.dispatch import cmd_dispatch_finalize
+
+        d = self._make_git_track_dir()
+        # Create result.json with a code commit_sha
+        cond_dir = Path(d, ".conductor")
+        cond_dir.mkdir(exist_ok=True)
+        result = {
+            "status": "SUCCESS",
+            "commit_sha": "abc1234",
+            "summary": "Done",
+            "phase": 0,
+            "task": 0,
+            "subtask": None,
+            "task_name": "Task A",
+        }
+        (cond_dir / "result.json").write_text(json.dumps(result))
+
+        out, _ = _out捕获(cmd_dispatch_finalize, d)
+        self.assertEqual(out.get("status"), "success")
+
+        # code_sha should be preserved (not replaced by conductor commit SHA)
+        state = load(d)
+        sha = state["phases"][0]["tasks"][0].get("commit_sha", "")
+        self.assertEqual(sha, "abc1234")
+
+    def test_synthesized_result_captures_head_sha(self):
+        """When result.json is missing, synthesized result captures HEAD SHA."""
+        from scripts.track_state.dispatch import cmd_dispatch_finalize
+
+        d = self._make_git_track_dir()
+        # Simulate a code commit by the subagent
+        Path(d, "code.ts").write_text("// impl")
+        import subprocess
+        subprocess.run(["git", "-C", d, "add", "code.ts"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", d, "commit", "-m", "feat: implement task"],
+                        capture_output=True, check=True)
+        head_sha = subprocess.run(
+            ["git", "-C", d, "rev-parse", "--short=7", "HEAD"],
+            capture_output=True, text=True, check=True
+        ).stdout.strip()
+
+        # NO result.json — dispatch-finalize must synthesize from state
+        out, _ = _out捕获(cmd_dispatch_finalize, d)
+        self.assertEqual(out.get("status"), "success")
+
+        # The synthesized result should have captured the HEAD SHA
+        state = load(d)
+        sha = state["phases"][0]["tasks"][0].get("commit_sha", "")
+        self.assertEqual(sha, head_sha, f"Expected HEAD SHA {head_sha}, got '{sha}'")
+
+        # Verify plan.md has the SHA annotation
+        plan = Path(d, "plan.md").read_text()
+        self.assertIn(f"[{sha}]", plan)
+
+
 if __name__ == "__main__":
     main()
