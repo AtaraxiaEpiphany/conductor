@@ -7,13 +7,13 @@ from .core import load, save
 from .helpers import (
     out, out_compact, now_iso, extract_tags, _inherit_tags,
     conductor_dir, _store_evidence, _last_subtask_sha, _any_phase_needs_checkpoint,
-    flag,
+    flag, _normalize_sha,
 )
 from .constants import AUTO_COMPLETE_OK
 from .mutations import _do_lock, _do_complete, _do_fail
 from .sync import _do_sync_plan
 from .git_ops import (
-    _git_commit, _git_head_sha, _write_git_note, _ensure_note,
+    _git_commit, _git_commit_ensured, _git_head_sha, _write_git_note, _ensure_note,
     _has_sibling_sha, _update_task_sha, _recover_git_notes,
 )
 from .handoff import (
@@ -151,7 +151,7 @@ def cmd_dispatch_next(track_dir):
             # Create conductor commit for parent completion (before note so note targets final SHA)
             parent_name = parent_task.get("name", "unknown")
             commit_msg = f"chore(conductor): Complete parent '{parent_name}' [{sha}]"
-            committed = _git_commit(track_dir, commit_msg)
+            committed = _git_commit_ensured(track_dir, commit_msg)
             if not committed:
                 print(f"WARNING: conductor commit failed for parent-complete of '{parent_name}'",
                       file=sys.stderr)
@@ -196,7 +196,7 @@ def cmd_dispatch_next(track_dir):
             _do_sync_plan(track_dir, state)
             parent_name = parent_task.get("name", "unknown")
             commit_msg = f"chore(conductor): Complete stuck parent '{parent_name}' [{sha}]"
-            _git_commit(track_dir, commit_msg)
+            committed = _git_commit_ensured(track_dir, commit_msg)
             final_sha = _git_head_sha(track_dir) or sha
             if final_sha != sha:
                 state = load(track_dir)
@@ -482,7 +482,7 @@ def cmd_dispatch_finalize(track_dir):
     state = load(track_dir)
 
     if status == "SUCCESS":
-        code_sha = r.get("commit_sha", "")
+        code_sha = _normalize_sha(r.get("commit_sha", ""))
         try:
             parent_completed = _do_complete(track_dir, p, t, s, code_sha)
         except ValueError as e:
@@ -506,7 +506,7 @@ def cmd_dispatch_finalize(track_dir):
 
         # Create conductor commit to get a unique SHA per task/subtask
         commit_msg = f"chore(conductor): Complete '{task_name}' [{code_sha}]"
-        committed = _git_commit(track_dir, commit_msg)
+        committed = _git_commit_ensured(track_dir, commit_msg)
         if not committed:
             print(f"WARNING: conductor commit failed for '{task_name}'",
                   file=sys.stderr)

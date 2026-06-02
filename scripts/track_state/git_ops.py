@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 from .core import load, save
-from .helpers import target, now_iso, _store_evidence, conductor_dir
+from .helpers import target, now_iso, _store_evidence, conductor_dir, _normalize_sha
 from .sync import _do_sync_plan
 
 
@@ -168,6 +168,19 @@ def _git_commit(track_dir, message, allow_empty=False):
         return False
 
 
+def _git_commit_ensured(track_dir, message):
+    """Commit with allow-empty fallback for guaranteed SHA creation.
+
+    Tries a normal commit first (staged changes only). If nothing is staged,
+    retries with --allow-empty so every caller gets a unique SHA.
+    Returns True if a commit was created.
+    """
+    committed = _git_commit(track_dir, message)
+    if not committed:
+        committed = _git_commit(track_dir, message, allow_empty=True)
+    return committed
+
+
 def _git_head_sha(track_dir):
     """Get 7-char short SHA of current HEAD. Returns None on failure."""
     try:
@@ -211,6 +224,42 @@ def _update_task_sha(track_dir, p, t, s, sha):
     save(track_dir, state)
     _do_sync_plan(track_dir, state)
     return state
+
+
+def _find_conductor_shas(track_dir):
+    """Build a mapping of task_name -> SHA from recent conductor completion commits.
+
+    Single git-log invocation fetches all recent conductor commits;
+    Python-side parsing avoids regex issues with special chars in task names.
+    Returns dict {task_name: 7-char SHA}. First (most recent) match wins.
+    """
+    shas = {}
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["git", "log", "--all", "--format=%h %s", "--grep",
+             "chore(conductor): Complete", "-50"],
+            capture_output=True, text=True, cwd=track_dir, timeout=10
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            return shas
+        for line in result.stdout.strip().split('\n'):
+            parts = line.split(' ', 1)
+            if len(parts) < 2:
+                continue
+            sha, msg = parts
+            # Extract task name from "chore(conductor): Complete 'name' [...]"
+            # or "chore(conductor): Complete parent 'name' [...]"
+            # or "chore(conductor): Complete stuck parent 'name' [...]"
+            m = re.search(r"Complete(?:\s+\w+)*\s+'([^']+)'", msg)
+            if m:
+                name = m.group(1)
+                norm = _normalize_sha(sha)
+                if norm and name not in shas:
+                    shas[name] = norm
+    except Exception:
+        pass
+    return shas
 
 
 def _recover_git_notes(track_dir, state):

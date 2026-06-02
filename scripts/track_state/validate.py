@@ -11,6 +11,7 @@ from .helpers import (
 )
 from .constants import TERMINAL_STATUSES, TERMINAL_FOR_PARENT
 from .sync import _do_sync_plan
+from .git_ops import _find_conductor_shas
 
 
 def _validate_state_consistency(state, errors, warnings):
@@ -48,7 +49,7 @@ def _validate_state_consistency(state, errors, warnings):
                         f"{', '.join(pending_subs)}")
 
             if task["status"] == "completed" and not task.get("commit_sha"):
-                warnings.append(f"{tname}: completed but no commit_sha")
+                warnings.append(f"{tname}: completed but no commit_sha (run 'validate --fix' to attempt recovery)")
 
 
 def _validate_plan_consistency(track_dir, state, errors, warnings):
@@ -263,6 +264,32 @@ def _fix_stale_in_progress(state, threshold_hours=24):
     return fixes
 
 
+def _fix_missing_shas(state, track_dir):
+    """Recover missing commit SHAs for completed tasks.
+
+    Fetches all conductor completion commits from git log in a single call,
+    then matches task names. Returns list of fixes applied.
+    """
+    sha_map = _find_conductor_shas(track_dir)
+    if not sha_map:
+        return []
+
+    fixes = []
+    for pi, phase in enumerate(state.get("phases", [])):
+        for ti, task in enumerate(phase.get("tasks", [])):
+            # Check both the task itself and its subtasks in one pass
+            items = [(task, f"P{pi + 1}.T{ti + 1}")]
+            for si, sub in enumerate(task.get("subtasks", [])):
+                items.append((sub, f"P{pi + 1}.T{ti + 1}.S{si + 1}"))
+            for item, label in items:
+                if item.get("status") == "completed" and not item.get("commit_sha"):
+                    sha = sha_map.get(item.get("name", ""))
+                    if sha:
+                        item["commit_sha"] = sha
+                        fixes.append(f"{label}: recovered SHA {sha}")
+    return fixes
+
+
 def _fix_terminal_current_indices(state):
     """Advance current_*_index past terminal tasks to the next pending task.
 
@@ -369,6 +396,10 @@ def _auto_fix(state, track_dir=None, errors=None, stale_threshold_hours=24):
 
     # Advance indices past terminal tasks (after all other fixes)
     fixes.extend(_fix_terminal_current_indices(state))
+
+    # Recover missing SHAs for completed tasks (searches git log)
+    if track_dir:
+        fixes.extend(_fix_missing_shas(state, track_dir))
 
     if fixes:
         state["updated_at"] = now_iso()

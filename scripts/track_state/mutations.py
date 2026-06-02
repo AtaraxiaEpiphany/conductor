@@ -1,6 +1,6 @@
 """State mutation operations: lock, complete, fail, skip, block, defer."""
 from .core import load, save
-from .helpers import target, clean, now_iso, out, _last_subtask_sha, _reset_task, _propagate_to_subtasks, _any_phase_needs_checkpoint
+from .helpers import target, clean, now_iso, out, _last_subtask_sha, _reset_task, _propagate_to_subtasks, _any_phase_needs_checkpoint, _normalize_sha
 from .constants import TERMINAL_FOR_PARENT, AUTO_COMPLETE_OK
 
 
@@ -47,7 +47,7 @@ def _do_complete(track_dir, p, t, s=None, sha=None):
 
     tgt["status"] = "completed"
     # For parent-complete (si=None) with empty sha, inherit from last subtask
-    resolved_sha = sha or ""
+    resolved_sha = _normalize_sha(sha) or ""
     if not resolved_sha and si is None and "subtasks" in tgt:
         resolved_sha = _last_subtask_sha(tgt)
     tgt["commit_sha"] = resolved_sha

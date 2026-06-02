@@ -113,6 +113,16 @@ def clean(tgt, keep):
             tgt.pop(k, None)
 
 
+def _normalize_sha(sha):
+    """Normalize a git SHA to 7-char short form for consistent storage."""
+    if not sha or not isinstance(sha, str):
+        return ""
+    sha = sha.strip()
+    if not re.match(r"^[0-9a-f]+$", sha):
+        return ""
+    return sha[:7]
+
+
 def extract_tags(name):
     """Extract task tags like [Docs], [Config] from name.
 
