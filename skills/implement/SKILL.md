@@ -66,7 +66,7 @@ If state changed → commit: `chore(conductor): Fix state consistency after reco
 
 If recover output contains `phase_checkpoint_pending: <phase_index>`:
 - Dispatch `conductor:phase-checker` with `TRACK_DIR TRACK_ID PHASE=<phase_index> EXECUTION_MODE`
-- After return → **Section 3.6** (Phase Boundary)
+- After return → **Section 3.7** (Phase Boundary)
 
 ---
 

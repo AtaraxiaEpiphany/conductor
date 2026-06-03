@@ -46,9 +46,10 @@ def _find_next_task(state):
                                           tags=extract_tags(task["name"]))
                         else:
                             # Parent has failed subtasks — record as stuck but keep looking
-                            stuck = dict(phase=pi, task=ti, subtask=None,
-                                         name=task["name"], type="parent-stuck",
-                                         tags=extract_tags(task["name"]))
+                            if stuck is None:
+                                stuck = dict(phase=pi, task=ti, subtask=None,
+                                             name=task["name"], type="parent-stuck",
+                                             tags=extract_tags(task["name"]))
                 else:
                     result = dict(phase=pi, task=ti, subtask=None,
                                   name=task["name"], type="flat",
@@ -78,6 +79,11 @@ def _find_next_task(state):
                                               name=task["name"], type="parent-complete",
                                               tags=extract_tags(task["name"]))
                             else:
+                                # Parent has failed subtasks — record as stuck but keep looking
+                                if stuck is None:
+                                    stuck = dict(phase=pi, task=ti, subtask=None,
+                                                 name=task["name"], type="parent-stuck",
+                                                 tags=extract_tags(task["name"]))
                                 continue
                     else:
                         result = dict(phase=pi, task=ti, subtask=None,
@@ -119,16 +125,17 @@ def cmd_dispatch_next(track_dir):
         state = load(track_dir)
         execution_mode = state.get("execution_mode", "interactive")
 
+        # Check if any phase needs a checkpoint before doing anything else
+        cp = _any_phase_needs_checkpoint(track_dir, state)
+        if cp is not None:
+            out(dict(action="dispatch_phase_checker", phase=cp,
+                     execution_mode=execution_mode))
+            return
+
         # Find next task
         result = _find_next_task(state)
 
         if result.get("phase", -1) < 0:
-            # No more tasks — check if any phase needs a checkpoint before finalizing
-            checkpoint_pending = _any_phase_needs_checkpoint(track_dir, state)
-            if checkpoint_pending is not None:
-                out(dict(action="dispatch_phase_checker", phase=checkpoint_pending,
-                         execution_mode=execution_mode))
-                return
             out(dict(action="finalize"))
             return
 
@@ -172,12 +179,6 @@ def cmd_dispatch_next(track_dir):
                 parent_tgt["evidence"] = {"coverage_pct": None, "tc_coverage": "", "deviations": 0}
                 save(track_dir, state)
 
-            # Check if ANY phase needs a checkpoint (not just the current one)
-            cp = _any_phase_needs_checkpoint(track_dir, state)
-            if cp is not None:
-                out(dict(action="dispatch_phase_checker", phase=cp,
-                         execution_mode=execution_mode))
-                return
             continue
 
         if rtype == "parent-stuck":
