@@ -37,7 +37,7 @@ track-state next <track-dir>
 **Output**:
 ```json
 {
-  "phase": 0,
+  "phase": 1,
   "task": 1,
   "subtask": null,
   "name": "Implement login form",
@@ -63,7 +63,7 @@ track-state recover <track-dir>
 ```json
 {
   "status": "in_progress",
-  "phase": 0,
+  "phase": 1,
   "task": 1,
   "subtask": null,
   "name": "Implement login form",
@@ -92,12 +92,12 @@ track-state indices <track-dir>
 {
   "indices": [
     {
-      "index": 0,
+      "index": 1,
       "name": "Phase 1: Setup",
       "status": "pending",
       "tasks": [
         {
-          "index": 0,
+          "index": 1,
           "name": "Create project",
           "status": "completed",
           "subtasks": []
@@ -115,7 +115,7 @@ track-state indices <track-dir>
 Set task to in_progress and update indices.
 
 ```bash
-# Positional (0-based indices):
+# Positional:
 track-state lock <track-dir> <phase> <task> [subtask]
 # Named flags:
 track-state lock <track-dir> --phase <n> --task <n> [--subtask <n>]
@@ -130,7 +130,7 @@ track-state lock <track-dir> --phase <n> --task <n> [--subtask <n>]
 Set task to completed and check parent completion. Updates current indices.
 
 ```bash
-# Positional (0-based indices):
+# Positional:
 track-state complete <track-dir> <phase> <task> [subtask] --sha <sha>
 # Named flags:
 track-state complete <track-dir> --phase <n> --task <n> [--subtask <n>] --sha <sha>
@@ -147,7 +147,6 @@ track-state complete <track-dir> --phase <n> --task <n> [--subtask <n>] --sha <s
 **Behavior notes**:
 - Auto-completes remaining non-terminal subtasks when completing a parent task directly, inheriting the parent's resolved SHA
 - Updates `current_phase_index`/`current_task_index`/`current_subtask_index` for recovery tracking
-- 1-based indices are auto-detected and corrected (e.g. phase 3 with 3 phases → phase 2)
 
 ---
 
@@ -156,7 +155,7 @@ track-state complete <track-dir> --phase <n> --task <n> [--subtask <n>] --sha <s
 Set task to failed and increment retry count.
 
 ```bash
-# Positional (0-based indices):
+# Positional:
 track-state fail <track-dir> <phase> <task> [subtask] --summary <text>
 # Named flags:
 track-state fail <track-dir> --phase <n> --task <n> [--subtask <n>] --summary <text>
@@ -176,7 +175,7 @@ track-state fail <track-dir> --phase <n> --task <n> [--subtask <n>] --summary <t
 Set task to skipped.
 
 ```bash
-# Positional (0-based indices):
+# Positional:
 track-state skip <track-dir> <phase> <task> [subtask] --reason <text>
 # Named flags:
 track-state skip <track-dir> --phase <n> --task <n> [--subtask <n>] --reason <text>
@@ -191,7 +190,7 @@ track-state skip <track-dir> --phase <n> --task <n> [--subtask <n>] --reason <te
 Set task to blocked.
 
 ```bash
-# Positional (0-based indices):
+# Positional:
 track-state block <track-dir> <phase> <task> [subtask] --reason <text>
 # Named flags:
 track-state block <track-dir> --phase <n> --task <n> [--subtask <n>] --reason <text>
@@ -206,7 +205,7 @@ track-state block <track-dir> --phase <n> --task <n> [--subtask <n>] --reason <t
 Set task to deferred.
 
 ```bash
-# Positional (0-based indices):
+# Positional:
 track-state defer <track-dir> <phase> <task> [subtask] --reason <text>
 # Named flags:
 track-state defer <track-dir> --phase <n> --task <n> [--subtask <n>] --reason <text>
@@ -336,7 +335,7 @@ track-state add-checkpoint <track-dir> <phase> --sha <sha>
 ```json
 {
   "ok": true,
-  "phase": 0,
+  "phase": 1,
   "sha": "a1b2c3d"
 }
 ```
@@ -345,7 +344,7 @@ track-state add-checkpoint <track-dir> <phase> --sha <sha>
 
 ### finalize
 
-Set indices to -1, compute track-level status, verify checklist, compute quality score.
+Set indices to 0, compute track-level status, verify checklist, compute quality score.
 
 ```bash
 track-state finalize <track-dir>

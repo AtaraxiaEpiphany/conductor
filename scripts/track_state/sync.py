@@ -22,9 +22,9 @@ def _do_sync_plan(track_dir, state=None):
         lines = f.readlines()
 
     result = []
-    phase_idx = -1
-    task_idx = -1
-    subtask_idx = -1
+    phase_idx = 0
+    task_idx = 0
+    subtask_idx = 0
     synced = 0
     absorbed = 0
 
@@ -33,15 +33,15 @@ def _do_sync_plan(track_dir, state=None):
 
         pm = re.match(r"^##\s+Phase\s+(\d+)\b", stripped)
         if pm:
-            phase_idx = int(pm.group(1)) - 1
-            task_idx = -1
-            subtask_idx = -1
+            phase_idx = int(pm.group(1))
+            task_idx = 0
+            subtask_idx = 0
             result.append(stripped)
             continue
 
         tm = re.match(r"^(\s*)-\s+\[([ x~!>#\-d])\]\s+(.*)", stripped)
         if tm:
-            if phase_idx < 0:
+            if phase_idx < 1:
                 # Task line found before any Phase heading — skip
                 result.append(stripped)
                 continue
@@ -55,14 +55,14 @@ def _do_sync_plan(track_dir, state=None):
             try:
                 if is_subtask:
                     subtask_idx += 1
-                    sub = state["phases"][phase_idx]["tasks"][task_idx]["subtasks"][subtask_idx]
+                    sub = state["phases"][phase_idx - 1]["tasks"][task_idx - 1]["subtasks"][subtask_idx - 1]
                     # Always show the subtask's OWN status, even if parent is completed
                     marker = MARKER_MAP.get(sub["status"], " ")
                     sha = sub.get("commit_sha", "")
                 else:
                     task_idx += 1
-                    subtask_idx = -1
-                    t = state["phases"][phase_idx]["tasks"][task_idx]
+                    subtask_idx = 0
+                    t = state["phases"][phase_idx - 1]["tasks"][task_idx - 1]
                     marker = MARKER_MAP.get(t["status"], " ")
                     sha = t.get("commit_sha", "")
 
@@ -75,9 +75,9 @@ def _do_sync_plan(track_dir, state=None):
                 continue
             except (IndexError, KeyError):
                 # Untracked subtask: auto-absorb into state as pending
-                if is_subtask and phase_idx >= 0 and task_idx >= 0:
+                if is_subtask and phase_idx >= 1 and task_idx >= 1:
                     try:
-                        parent_task = state["phases"][phase_idx]["tasks"][task_idx]
+                        parent_task = state["phases"][phase_idx - 1]["tasks"][task_idx - 1]
                         parent_subs = parent_task.setdefault("subtasks", [])
                         # Always absorb as 'pending' so the dispatcher sees new work.
                         # If parent was terminal, reopen it so the new subtask
@@ -98,8 +98,8 @@ def _do_sync_plan(track_dir, state=None):
                     except (IndexError, KeyError):
                         pass
                     print(
-                        f"WARNING: Untracked subtask in plan.md at Phase {phase_idx + 1}, "
-                        f"Task {task_idx + 1}, subtask index {subtask_idx + 1}: "
+                        f"WARNING: Untracked subtask in plan.md at Phase {phase_idx}, "
+                        f"Task {task_idx}, subtask index {subtask_idx}: "
                         f"{rest_clean[:60]}{'...' if len(rest_clean) > 60 else ''}",
                         file=sys.stderr,
                     )

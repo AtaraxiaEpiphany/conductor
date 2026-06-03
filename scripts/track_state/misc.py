@@ -31,15 +31,15 @@ def cmd_reset(track_dir, scope, p=None, t=None):
             out(dict(error="task scope requires phase and task index"))
             sys.exit(1)
         pi, ti = int(p), int(t)
-        if pi < 0 or ti < 0:
-            out(dict(error=f"Negative indices not allowed: phase={pi}, task={ti}"))
+        if pi < 1 or ti < 1:
+            out(dict(error=f"Indices must be >= 1: phase={pi}, task={ti}"))
             sys.exit(1)
         tgt = target(state, pi, ti)
         _reset_task(tgt)
         for sub in tgt.get("subtasks", []):
             _reset_task(sub)
         # If parent phase was terminal, bring it back to in_progress
-        parent_phase = state["phases"][pi]
+        parent_phase = state["phases"][pi - 1]
         if parent_phase.get("status") in TERMINAL_FOR_PARENT:
             parent_phase["status"] = "in_progress"
         state["current_phase_index"] = pi
@@ -51,21 +51,21 @@ def cmd_reset(track_dir, scope, p=None, t=None):
             out(dict(error="phase scope requires phase index"))
             sys.exit(1)
         pi = int(p)
-        if pi < 0:
-            out(dict(error=f"Negative index not allowed: phase={pi}"))
+        if pi < 1:
+            out(dict(error=f"Index must be >= 1: phase={pi}"))
             sys.exit(1)
         phases = state.get("phases", [])
-        if pi >= len(phases):
+        if pi > len(phases):
             out(dict(error=f"Phase index {pi} out of range (track has {len(phases)} phases)"))
             sys.exit(1)
-        phase = phases[pi]
+        phase = phases[pi - 1]
         for task in phase.get("tasks", []):
             _reset_task(task)
             for sub in task.get("subtasks", []):
                 _reset_task(sub)
         phase["status"] = "in_progress"
         state["current_phase_index"] = pi
-        state["current_task_index"] = 0
+        state["current_task_index"] = 1
         state.pop("current_subtask_index", None)
 
     elif scope == "track":
@@ -75,8 +75,8 @@ def cmd_reset(track_dir, scope, p=None, t=None):
                 for sub in task.get("subtasks", []):
                     _reset_task(sub)
             phase["status"] = "in_progress"
-        state["current_phase_index"] = 0
-        state["current_task_index"] = 0
+        state["current_phase_index"] = 1
+        state["current_task_index"] = 1
         state.pop("current_subtask_index", None)
         state["status"] = "in_progress"
 
@@ -100,15 +100,15 @@ def cmd_indices(track_dir):
         return
 
     result = []
-    for pi, ph in enumerate(phases):
+    for pi, ph in enumerate(phases, 1):
         phase_info = dict(
             index=pi, name=ph.get("name", "?"), status=ph.get("status", "?"),
             tasks=[])
-        for ti, tk in enumerate(ph.get("tasks", [])):
+        for ti, tk in enumerate(ph.get("tasks", []), 1):
             task_info = dict(
                 index=ti, name=tk.get("name", "?"), status=tk.get("status", "?"),
                 subtasks=[])
-            for si, sub in enumerate(tk.get("subtasks", [])):
+            for si, sub in enumerate(tk.get("subtasks", []), 1):
                 task_info["subtasks"].append(dict(
                     index=si, name=sub.get("name", "?"),
                     status=sub.get("status", "?")))
@@ -161,7 +161,7 @@ def cmd_add_checkpoint(track_dir, p, sha):
         lines = f.readlines()
 
     result = []
-    phase_num = int(p) + 1  # Convert to 1-based for heading match
+    phase_num = int(p)  # Already 1-based
     found = False
 
     for line in lines:
@@ -179,7 +179,7 @@ def cmd_add_checkpoint(track_dir, p, sha):
             result.append(stripped)
 
     if not found:
-        out(dict(error=f"Phase {int(p) + 1} heading not found in plan.md"))
+        out(dict(error=f"Phase {int(p)} heading not found in plan.md"))
         return
 
     with open(plan_path, "w") as f:
@@ -194,15 +194,15 @@ def cmd_deferred_report(track_dir):
     """List all deferred tasks with their context for final verification."""
     state = load(track_dir)
     deferred = []
-    for pi, phase in enumerate(state["phases"]):
-        for ti, task in enumerate(phase["tasks"]):
+    for pi, phase in enumerate(state["phases"], 1):
+        for ti, task in enumerate(phase["tasks"], 1):
             if task["status"] == "deferred":
                 deferred.append(dict(
                     phase=pi, task=ti, subtask=None,
                     name=task["name"], reason=task.get("defer_reason", ""),
                     phase_name=phase["name"],
                 ))
-            for si, sub in enumerate(task.get("subtasks", [])):
+            for si, sub in enumerate(task.get("subtasks", []), 1):
                 if sub["status"] == "deferred":
                     deferred.append(dict(
                         phase=pi, task=ti, subtask=si,
@@ -213,7 +213,7 @@ def cmd_deferred_report(track_dir):
 
 def cmd_phase_done(track_dir, p):
     state = load(track_dir)
-    phase = state["phases"][int(p)]
+    phase = state["phases"][int(p) - 1]
     terminal = TERMINAL_FOR_PARENT
     total = 0
     done = 0
@@ -329,7 +329,7 @@ def cmd_record_summary(track_dir):
             pass
 
     try:
-        key = f"P{int(p) + 1}.T{int(t) + 1}"
+        key = f"P{int(p)}.T{int(t)}"
     except (ValueError, TypeError):
         key = f"P{p}.T{t}"
     summaries[key] = {"sha": sha, "status": status, "summary": summary}

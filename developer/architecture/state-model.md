@@ -135,14 +135,14 @@ Conductor uses a hierarchical state model with three levels:
   "updated_at": "2026-05-09T14:30:00Z",
   "phases": [
     {
-      "phase_index": 0,
+      "phase_index": 1,
       "name": "Phase 1: Authentication",
       "status": "in_progress",
       "checkpoint_sha": null,
       "tasks": [
         {
-          "task_index": 0,
-          "phase_index": 0,
+          "task_index": 1,
+          "phase_index": 1,
           "name": "Setup auth middleware",
           "status": "completed",
           "sha": "a1b2c3d",
@@ -152,8 +152,8 @@ Conductor uses a hierarchical state model with three levels:
           "subtasks": []
         },
         {
-          "task_index": 1,
-          "phase_index": 0,
+          "task_index": 2,
+          "phase_index": 1,
           "name": "Implement login flow",
           "status": "in_progress",
           "sha": null,
@@ -162,7 +162,7 @@ Conductor uses a hierarchical state model with three levels:
           "tags": [],
           "subtasks": [
             {
-              "subtask_index": 0,
+              "subtask_index": 1,
               "parent_task": 1,
               "name": "Create login form UI",
               "status": "completed",
@@ -172,7 +172,7 @@ Conductor uses a hierarchical state model with three levels:
               "tags": []
             },
             {
-              "subtask_index": 1,
+              "subtask_index": 2,
               "parent_task": 1,
               "name": "Connect form to API",
               "status": "in_progress",
@@ -187,9 +187,9 @@ Conductor uses a hierarchical state model with three levels:
     }
   ],
   "current_indices": {
-    "phase": 0,
-    "task": 1,
-    "subtask": 1
+    "phase": 1,
+    "task": 2,
+    "subtask": 2
   },
   "quality_score": null,
   "checkpoint_pending": false
@@ -293,8 +293,8 @@ At session end, active state is written to `session-handoff.md`:
 
 ### user-login
 - Status: in_progress
-- Current Phase: 0
-- Current Task: 1
+- Current Phase: 1
+- Current Task: 2
 - Last Action: dispatch_executor
 ```
 

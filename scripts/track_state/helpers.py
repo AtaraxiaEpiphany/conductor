@@ -33,16 +33,16 @@ def out(obj):
 
 
 def _display_loc(pi, ti, si=None):
-    """Format 0-based indices as 1-based display string: P1.T3 or P1.T3.S2."""
-    loc = f"P{int(pi) + 1}.T{int(ti) + 1}"
+    """Format 1-based indices as display string: P1.T3 or P1.T3.S2."""
+    loc = f"P{int(pi)}.T{int(ti)}"
     if si is not None:
-        loc += f".S{int(si) + 1}"
+        loc += f".S{int(si)}"
     return loc
 
 
 def out_compact(obj):
     """Ultra-compact single-line output for --compact mode."""
-    if obj.get("phase", -1) < 0:
+    if obj.get("phase", 0) < 1:
         print("ALL_DONE")
         return
     p, t = obj.get("phase", "?"), obj.get("task", "?")
@@ -66,41 +66,41 @@ def out_compact(obj):
 def _index_map(state):
     """Build a compact index→name map for error messages. Uses 1-based display."""
     lines = []
-    for pi, ph in enumerate(state.get("phases", [])):
-        lines.append(f"  Phase {pi + 1}: {ph.get('name', '?')}")
-        for ti, tk in enumerate(ph.get("tasks", [])):
+    for pi, ph in enumerate(state.get("phases", []), 1):
+        lines.append(f"  Phase {pi}: {ph.get('name', '?')}")
+        for ti, tk in enumerate(ph.get("tasks", []), 1):
             status = tk.get("status", "?")
-            lines.append(f"    Task {ti + 1}: [{status}] {tk.get('name', '?')}")
-            for si, sub in enumerate(tk.get("subtasks", [])):
+            lines.append(f"    Task {ti}: [{status}] {tk.get('name', '?')}")
+            for si, sub in enumerate(tk.get("subtasks", []), 1):
                 ss = sub.get("status", "?")
-                lines.append(f"      Subtask {si + 1}: [{ss}] {sub.get('name', '?')}")
+                lines.append(f"      Subtask {si}: [{ss}] {sub.get('name', '?')}")
     return "\n".join(lines)
 
 
 def target(state, p, t, s=None):
     try:
-        task = state["phases"][p]["tasks"][t]
+        task = state["phases"][p - 1]["tasks"][t - 1]
     except IndexError:
         n_phases = len(state.get("phases", []))
         idx_info = _index_map(state)
-        if p >= n_phases:
+        if p < 1 or p > n_phases:
             raise IndexError(
-                f"Phase index {p + 1} out of range (track has {n_phases} phases). "
+                f"Phase index {p} out of range (track has {n_phases} phases). "
                 f"Run 'track-state validate --fix' to correct state.\n"
                 f"Available indices:\n{idx_info}") from None
-        n_tasks = len(state["phases"][p].get("tasks", []))
+        n_tasks = len(state["phases"][p - 1].get("tasks", []))
         raise IndexError(
-            f"Task index {t + 1} out of range in phase {p + 1} (has {n_tasks} tasks). "
+            f"Task index {t} out of range in phase {p} (has {n_tasks} tasks). "
             f"Run 'track-state validate --fix' to correct state.\n"
             f"Available indices:\n{idx_info}") from None
     if s is not None and "subtasks" in task:
         try:
-            return task["subtasks"][s]
+            return task["subtasks"][s - 1]
         except IndexError:
             n_subs = len(task["subtasks"])
             idx_info = _index_map(state)
             raise IndexError(
-                f"Subtask index {s + 1} out of range in P{p + 1}.T{t + 1} "
+                f"Subtask index {s} out of range in P{p}.T{t} "
                 f"(has {n_subs} subtasks). "
                 f"Run 'track-state validate --fix' to correct state.\n"
                 f"Available indices:\n{idx_info}") from None
@@ -186,15 +186,15 @@ def _clean_trailing_markers(text):
 def _safe_task_name(state, phase_idx, task_idx):
     """Safely get task name from state, returning '...' on any index error."""
     try:
-        if not state or phase_idx < 0 or task_idx < 0:
+        if not state or phase_idx < 1 or task_idx < 1:
             return '...'
         phases = state.get('phases', [])
-        if phase_idx >= len(phases):
+        if phase_idx > len(phases):
             return '...'
-        tasks = phases[phase_idx].get('tasks', [])
-        if task_idx >= len(tasks):
+        tasks = phases[phase_idx - 1].get('tasks', [])
+        if task_idx > len(tasks):
             return '...'
-        return tasks[task_idx].get('name', '...')
+        return tasks[task_idx - 1].get('name', '...')
     except (IndexError, KeyError, TypeError):
         return '...'
 
@@ -234,7 +234,7 @@ def _extract_tags_for_task(state, phase_str, task_str):
     """Extract tags from task name for gate exemption checks."""
     try:
         pi, ti = int(phase_str), int(task_str)
-        task = state["phases"][pi]["tasks"][ti]
+        task = state["phases"][pi - 1]["tasks"][ti - 1]
         return extract_tags(task["name"])
     except (IndexError, KeyError, ValueError):
         return []
@@ -258,11 +258,11 @@ def _phase_needs_checkpoint(track_dir, state, phase_index):
 
     Returns phase index if checkpoint is needed, None otherwise."""
     # Skip invalid phase indices
-    if phase_index < 0:
+    if phase_index < 1:
         return None
 
     try:
-        phase = state["phases"][phase_index]
+        phase = state["phases"][phase_index - 1]
     except (IndexError, KeyError):
         return None
 
@@ -286,8 +286,7 @@ def _phase_needs_checkpoint(track_dir, state, phase_index):
         return phase_index
 
     # Check for checkpoint marker: [checkpoint: <sha>]
-    phase_num = phase_index + 1  # Convert to 1-based for heading match
-    pattern = rf"^##\s+Phase\s+{phase_num}\b.*\[checkpoint:\s*[0-9a-f]+\]"
+    pattern = rf"^##\s+Phase\s+{phase_index}\b.*\[checkpoint:\s*[0-9a-f]+\]"
     if re.search(pattern, content, re.MULTILINE):
         return None  # Checkpoint exists
 
@@ -296,7 +295,7 @@ def _phase_needs_checkpoint(track_dir, state, phase_index):
 
 def _any_phase_needs_checkpoint(track_dir, state):
     """Check if any phase needs a checkpoint. Returns first phase index that needs one, or None."""
-    for pi in range(len(state.get("phases", []))):
+    for pi, _phase in enumerate(state.get("phases", []), 1):
         if _phase_needs_checkpoint(track_dir, state, pi) is not None:
             return pi
     return None

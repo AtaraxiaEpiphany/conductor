@@ -41,12 +41,12 @@ def positional(args):
     return result
 
 
-def _maybe_fix_one_based(track_dir, pi_str, ti_str, si_str):
-    """Detect likely 1-based usage and auto-convert to 0-based.
+def _fix_zero_based_input(track_dir, pi_str, ti_str, si_str):
+    """Detect likely 0-based usage and auto-convert to 1-based.
 
-    plan.md uses 1-based phase numbers ("Phase 1", "Phase 2"), but the CLI
-    uses 0-based indices. This detects the common off-by-one mistake and
-    corrects it silently, printing a warning to stderr.
+    Indices are 1-based throughout the system. This detects the common
+    off-by-one mistake of passing 0-based indices and corrects it,
+    printing a warning to stderr.
     """
     try:
         pi = int(pi_str)
@@ -68,18 +68,18 @@ def _maybe_fix_one_based(track_dir, pi_str, ti_str, si_str):
     n_phases = len(phases)
     phase_fixed = False
 
-    if n_phases > 0 and pi == n_phases and pi > 0:
-        pi -= 1
+    if n_phases > 0 and pi == 0:
+        pi = 1
         pi_str = str(pi)
         phase_fixed = True
 
     if ti is not None and phase_fixed:
-        phase = phases[pi] if 0 <= pi < n_phases else None
+        phase = phases[pi - 1] if 1 <= pi <= n_phases else None
         if phase:
             tasks = phase.get("tasks", [])
             n_tasks = len(tasks)
-            if n_tasks > 0 and ti == n_tasks and ti > 0:
-                ti -= 1
+            if n_tasks > 0 and ti == 0:
+                ti = 1
                 ti_str = str(ti)
 
             if si_str is not None:
@@ -87,15 +87,15 @@ def _maybe_fix_one_based(track_dir, pi_str, ti_str, si_str):
                     si = int(si_str)
                 except (ValueError, TypeError):
                     si = None
-                if si is not None and 0 <= ti < n_tasks:
-                    subs = tasks[ti].get("subtasks", [])
+                if si is not None and si == 0 and 1 <= ti <= n_tasks:
+                    subs = tasks[ti - 1].get("subtasks", [])
                     n_subs = len(subs)
-                    if n_subs > 0 and si == n_subs and si > 0:
-                        si -= 1
+                    if n_subs > 0:
+                        si = 1
                         si_str = str(si)
 
     if phase_fixed:
-        print(f"WARNING: Auto-converted 1-based indices to 0-based: "
+        print(f"WARNING: Auto-converted 0-based indices to 1-based: "
               f"phase={pi}, task={ti_str}"
               + (f", subtask={si_str}" if si_str is not None else ""),
               file=sys.stderr)
@@ -272,7 +272,7 @@ def main():
                          "OR --phase N --task N [--subtask N]" % cmd))
                 sys.exit(1)
 
-            p, t, s = _maybe_fix_one_based(track_dir, p, t, s)
+            p, t, s = _fix_zero_based_input(track_dir, p, t, s)
 
             if cmd == "lock":
                 cmd_lock(track_dir, p, t, s)

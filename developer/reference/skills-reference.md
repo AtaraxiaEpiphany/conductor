@@ -705,7 +705,7 @@ All skills interact with `track-state.json` as the authoritative state source:
   "type": "feature",
   "status": "active",
   "description": "Add authentication flow",
-  "current_phase_index": 0,
+  "current_phase_index": 1,
   "current_task_index": 2,
   "execution_mode": "interactive",
   "updated_at": "2026-05-12T10:30:00Z",

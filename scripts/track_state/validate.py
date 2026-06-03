@@ -17,8 +17,8 @@ from .git_ops import _find_conductor_shas
 def _validate_state_consistency(state, errors, warnings):
     """Check semantic consistency within track-state.json."""
 
-    for pi, phase in enumerate(state.get("phases", [])):
-        pname = phase.get("name", f"Phase {pi+1}")
+    for pi, phase in enumerate(state.get("phases", []), 1):
+        pname = phase.get("name", f"Phase {pi}")
         tasks = phase.get("tasks", [])
 
         if not tasks:
@@ -31,17 +31,17 @@ def _validate_state_consistency(state, errors, warnings):
         if phase["status"] in TERMINAL_FOR_PARENT and not all_terminal:
             warnings.append(f"{pname}: phase terminal but tasks still in progress")
 
-        in_progress = [t.get("name", f"P{pi + 1}.T{ti + 1}")
-                       for ti, t in enumerate(tasks) if t["status"] == "in_progress"]
+        in_progress = [t.get("name", f"P{pi}.T{ti}")
+                       for ti, t in enumerate(tasks, 1) if t["status"] == "in_progress"]
         if len(in_progress) > 1:
             warnings.append(f"{pname}: multiple in_progress tasks ({', '.join(in_progress)})")
 
-        for ti, task in enumerate(tasks):
-            tname = task.get("name", f"P{pi + 1}.T{ti + 1}")
+        for ti, task in enumerate(tasks, 1):
+            tname = task.get("name", f"P{pi}.T{ti}")
 
             if task["status"] in TERMINAL_STATUSES:
-                pending_subs = [s.get("name", f"S{si + 1}")
-                                for si, s in enumerate(task.get("subtasks", []))
+                pending_subs = [s.get("name", f"S{si}")
+                                for si, s in enumerate(task.get("subtasks", []), 1)
                                 if s["status"] in ("pending", "in_progress")]
                 if pending_subs:
                     warnings.append(
@@ -74,10 +74,10 @@ def _validate_plan_consistency(track_dir, state, errors, warnings):
                 phase_num = int(m.group(1))
                 has_checkpoint[phase_num] = bool(re.search(r"\[checkpoint:\s*[0-9a-f]{7}\]", line))
 
-    for pi, phase in enumerate(state.get("phases", [])):
-        pname = phase.get("name", f"Phase {pi+1}")
+    for pi, phase in enumerate(state.get("phases", []), 1):
+        pname = phase.get("name", f"Phase {pi}")
         tasks = phase.get("tasks", [])
-        phase_num = pi + 1
+        phase_num = pi
 
         plan_phase = plan_struct.get(phase_num)
         if plan_phase is None:
@@ -95,7 +95,7 @@ def _validate_plan_consistency(track_dir, state, errors, warnings):
             state_sub_count = len(tasks[ti].get("subtasks", []))
             plan_sub_count = len(plan_tasks[ti].get("subtasks", []))
             if plan_sub_count != state_sub_count:
-                tname = tasks[ti].get("name", f"P{pi + 1}.T{ti + 1}")
+                tname = tasks[ti].get("name", f"P{pi}.T{ti + 1}")
                 errors.append(
                     f"{tname}: plan.md has {plan_sub_count} subtasks, state has {state_sub_count}")
 
@@ -162,9 +162,9 @@ def _fix_plan_mismatches(track_dir, state, errors=None):
         return []
 
     fixes = []
-    for pi, state_phase in enumerate(state.get("phases", [])):
+    for pi, state_phase in enumerate(state.get("phases", []), 1):
         # Match by phase number (1-indexed in plan headings) to handle gaps
-        plan_phase = plan_struct.get(pi + 1)
+        plan_phase = plan_struct.get(pi)
         if plan_phase is None:
             continue
         state_tasks = state_phase.setdefault("tasks", [])
@@ -180,13 +180,13 @@ def _fix_plan_mismatches(track_dir, state, errors=None):
                     sub_name = plan_subs[si]["name"]
                     state_subs.append({"name": sub_name, "status": "pending"})
                     fixes.append(
-                        f"P{pi + 1}.T{ti + 1}.S{si + 1}: added subtask from plan.md as pending")
+                        f"P{pi}.T{ti + 1}.S{si + 1}: added subtask from plan.md as pending")
             else:
                 # Task doesn't exist in state — add it
                 new_task = {"name": pt["name"], "status": "pending", "subtasks": pt["subtasks"]}
                 state_tasks.append(new_task)
                 fixes.append(
-                    f"P{pi + 1}.T{ti + 1}.{pt['name']}: added task from plan.md as pending "
+                    f"P{pi}.T{ti + 1}.{pt['name']}: added task from plan.md as pending "
                     f"({len(pt['subtasks'])} subtasks)")
 
     return fixes
@@ -196,27 +196,27 @@ def _fix_indices(state):
     fixes = []
     phases = state.get("phases", [])
 
-    cpi = state.get("current_phase_index", -1)
-    if cpi >= len(phases):
-        state["current_phase_index"] = len(phases) - 1 if phases else -1
+    cpi = state.get("current_phase_index", 0)
+    if cpi > len(phases):
+        state["current_phase_index"] = len(phases) if phases else 0
         fixes.append(f"current_phase_index: {cpi} → {state['current_phase_index']} (clamped)")
 
-    cti = state.get("current_task_index", -1)
-    fixed_pi = state.get("current_phase_index", -1)
-    if fixed_pi >= 0 and fixed_pi < len(phases):
-        max_tasks = len(phases[fixed_pi].get("tasks", []))
-        if cti >= max_tasks:
-            state["current_task_index"] = max_tasks - 1 if max_tasks > 0 else -1
+    cti = state.get("current_task_index", 0)
+    fixed_pi = state.get("current_phase_index", 0)
+    if fixed_pi >= 1 and fixed_pi <= len(phases):
+        max_tasks = len(phases[fixed_pi - 1].get("tasks", []))
+        if cti > max_tasks:
+            state["current_task_index"] = max_tasks if max_tasks > 0 else 0
             fixes.append(f"current_task_index: {cti} → {state['current_task_index']} (clamped)")
 
     csi = state.get("current_subtask_index")
-    if csi is not None and fixed_pi >= 0 and fixed_pi < len(phases):
-        fixed_ti = state.get("current_task_index", -1)
-        if fixed_ti >= 0:
-            tasks = phases[fixed_pi].get("tasks", [])
-            if fixed_ti < len(tasks):
-                subs = tasks[fixed_ti].get("subtasks", [])
-                if csi >= len(subs):
+    if csi is not None and fixed_pi >= 1 and fixed_pi <= len(phases):
+        fixed_ti = state.get("current_task_index", 0)
+        if fixed_ti >= 1:
+            tasks = phases[fixed_pi - 1].get("tasks", [])
+            if fixed_ti <= len(tasks):
+                subs = tasks[fixed_ti - 1].get("subtasks", [])
+                if csi > len(subs):
                     state.pop("current_subtask_index", None)
                     fixes.append(f"current_subtask_index: {csi} → removed (out of range)")
 
@@ -247,18 +247,18 @@ def _fix_stale_in_progress(state, threshold_hours=24):
     if age_hours < threshold_hours:
         return fixes
 
-    for pi, phase in enumerate(state.get("phases", [])):
-        for ti, task in enumerate(phase.get("tasks", [])):
+    for pi, phase in enumerate(state.get("phases", []), 1):
+        for ti, task in enumerate(phase.get("tasks", []), 1):
             if task.get("status") == "in_progress":
                 _reset_task(task)
                 fixes.append(
-                    f"P{pi + 1}.T{ti + 1}.{task.get('name', '?')}: "
+                    f"P{pi}.T{ti}.{task.get('name', '?')}: "
                     f"reset stale in_progress → pending ({age_hours:.0f}h old)")
-            for si, sub in enumerate(task.get("subtasks", [])):
+            for si, sub in enumerate(task.get("subtasks", []), 1):
                 if sub.get("status") == "in_progress":
                     _reset_task(sub)
                     fixes.append(
-                        f"P{pi + 1}.T{ti + 1}.S{si + 1}.{sub.get('name', '?')}: "
+                        f"P{pi}.T{ti}.S{si}.{sub.get('name', '?')}: "
                         f"reset stale in_progress → pending ({age_hours:.0f}h old)")
 
     return fixes
@@ -275,12 +275,12 @@ def _fix_missing_shas(state, track_dir):
         return []
 
     fixes = []
-    for pi, phase in enumerate(state.get("phases", [])):
-        for ti, task in enumerate(phase.get("tasks", [])):
+    for pi, phase in enumerate(state.get("phases", []), 1):
+        for ti, task in enumerate(phase.get("tasks", []), 1):
             # Check both the task itself and its subtasks in one pass
-            items = [(task, f"P{pi + 1}.T{ti + 1}")]
-            for si, sub in enumerate(task.get("subtasks", [])):
-                items.append((sub, f"P{pi + 1}.T{ti + 1}.S{si + 1}"))
+            items = [(task, f"P{pi}.T{ti}")]
+            for si, sub in enumerate(task.get("subtasks", []), 1):
+                items.append((sub, f"P{pi}.T{ti}.S{si}"))
             for item, label in items:
                 if item.get("status") == "completed" and not item.get("commit_sha"):
                     sha = sha_map.get(item.get("name", ""))
@@ -299,56 +299,56 @@ def _fix_terminal_current_indices(state):
     """
     fixes = []
     phases = state.get("phases", [])
-    cpi = state.get("current_phase_index", -1)
-    cti = state.get("current_task_index", -1)
+    cpi = state.get("current_phase_index", 0)
+    cti = state.get("current_task_index", 0)
 
-    if cpi < 0 or cti < 0:
+    if cpi < 1 or cti < 1:
         return fixes
 
     # Check if current target is actually still active
-    if cpi < len(phases):
-        tasks = phases[cpi].get("tasks", [])
-        if cti < len(tasks):
-            task = tasks[cti]
+    if cpi <= len(phases):
+        tasks = phases[cpi - 1].get("tasks", [])
+        if cti <= len(tasks):
+            task = tasks[cti - 1]
             if task["status"] not in TERMINAL_FOR_PARENT:
                 return fixes  # Current task is still active
 
             # Check subtask index too
             csi = state.get("current_subtask_index")
             if csi is not None and "subtasks" in task:
-                if csi < len(task["subtasks"]):
-                    if task["subtasks"][csi]["status"] not in TERMINAL_FOR_PARENT:
+                if csi <= len(task["subtasks"]):
+                    if task["subtasks"][csi - 1]["status"] not in TERMINAL_FOR_PARENT:
                         return fixes  # Current subtask is still active
 
     # Scan forward from current position for next pending task
-    for pi in range(len(phases)):
-        tasks = phases[pi].get("tasks", [])
-        for ti in range(len(tasks)):
-            task = tasks[ti]
+    for pi in range(1, len(phases) + 1):
+        tasks = phases[pi - 1].get("tasks", [])
+        for ti in range(1, len(tasks) + 1):
+            task = tasks[ti - 1]
             if task["status"] == "pending":
                 state["current_phase_index"] = pi
                 state["current_task_index"] = ti
                 state.pop("current_subtask_index", None)
                 fixes.append(
-                    f"current indices: P{cpi + 1}.T{cti + 1} → P{pi + 1}.T{ti + 1} "
+                    f"current indices: P{cpi}.T{cti} → P{pi}.T{ti} "
                     f"(advanced past terminal task)")
                 return fixes
             # Check for pending subtasks in in_progress parents
             if task["status"] == "in_progress" and "subtasks" in task:
-                for si, sub in enumerate(task["subtasks"]):
+                for si, sub in enumerate(task["subtasks"], 1):
                     if sub["status"] in ("pending", "in_progress"):
                         state["current_phase_index"] = pi
                         state["current_task_index"] = ti
                         state["current_subtask_index"] = si
                         fixes.append(
-                            f"current indices: P{cpi + 1}.T{cti + 1} → P{pi + 1}.T{ti + 1}.S{si + 1} "
+                            f"current indices: P{cpi}.T{cti} → P{pi}.T{ti}.S{si} "
                             f"(advanced to active subtask)")
                         return fixes
 
     # No pending tasks found — clear indices
-    if cpi >= 0 or cti >= 0:
-        state["current_phase_index"] = -1
-        state["current_task_index"] = -1
+    if cpi >= 1 or cti >= 1:
+        state["current_phase_index"] = 0
+        state["current_task_index"] = 0
         state.pop("current_subtask_index", None)
         fixes.append("current indices: cleared (no pending tasks remain)")
 
@@ -372,19 +372,19 @@ def _auto_fix(state, track_dir=None, errors=None, stale_threshold_hours=24):
     # Reset stale in_progress tasks
     fixes.extend(_fix_stale_in_progress(state, threshold_hours=stale_threshold_hours))
 
-    for pi, phase in enumerate(state.get("phases", [])):
+    for pi, phase in enumerate(state.get("phases", []), 1):
         tasks = phase.get("tasks", [])
         if not tasks:
             continue
 
-        for ti, task in enumerate(tasks):
+        for ti, task in enumerate(tasks, 1):
             if task["status"] in TERMINAL_FOR_PARENT and "subtasks" in task:
                 for sub in task["subtasks"]:
                     if sub["status"] not in TERMINAL_FOR_PARENT:
                         old = sub["status"]
                         sub["status"] = task["status"]
                         fixes.append(
-                            f"P{pi + 1}.T{ti + 1}.{sub.get('name', '?')}: "
+                            f"P{pi}.T{ti}.{sub.get('name', '?')}: "
                             f"subtask '{old}' → '{task['status']}' (parent propagation)")
 
         if _is_phase_terminal(phase) and phase["status"] not in TERMINAL_FOR_PARENT:
@@ -392,7 +392,7 @@ def _auto_fix(state, track_dir=None, errors=None, stale_threshold_hours=24):
             best = Counter(task_statuses).most_common(1)[0][0]
             old = phase["status"]
             phase["status"] = best
-            fixes.append(f"Phase {pi+1} '{phase.get('name', '?')}': '{old}' → '{best}' (all tasks terminal)")
+            fixes.append(f"Phase {pi} '{phase.get('name', '?')}': '{old}' → '{best}' (all tasks terminal)")
 
     # Advance indices past terminal tasks (after all other fixes)
     fixes.extend(_fix_terminal_current_indices(state))
@@ -424,18 +424,18 @@ def _run_all_checks(track_dir, state, errors, warnings):
         )
 
     # Index checks
-    cpi = state.get("current_phase_index", -1)
-    cti = state.get("current_task_index", -1)
-    if cpi < -1 or cpi >= len(state.get("phases", [])):
+    cpi = state.get("current_phase_index", 0)
+    cti = state.get("current_task_index", 0)
+    if cpi < 0 or cpi > len(state.get("phases", [])):
         errors.append(f"current_phase_index {cpi} out of range")
-    if cti < -1:
+    if cti < 0:
         errors.append(f"current_task_index {cti} out of range")
 
     # Phase validation
-    for pi, phase in enumerate(state.get("phases", [])):
-        pname = phase.get("name", f"Phase {pi+1}")
+    for pi, phase in enumerate(state.get("phases", []), 1):
+        pname = phase.get("name", f"Phase {pi}")
         if "name" not in phase:
-            errors.append(f"Phase {pi + 1}: missing name")
+            errors.append(f"Phase {pi}: missing name")
         if "status" not in phase:
             errors.append(f"{pname}: missing status")
         elif phase["status"] not in TASK_STATUSES:
@@ -444,17 +444,17 @@ def _run_all_checks(track_dir, state, errors, warnings):
             errors.append(f"{pname}: missing tasks array")
             continue
 
-        for ti, task in enumerate(phase["tasks"]):
-            tname = task.get("name", f"P{pi + 1}.T{ti + 1}")
+        for ti, task in enumerate(phase["tasks"], 1):
+            tname = task.get("name", f"P{pi}.T{ti}")
             if "name" not in task:
-                errors.append(f"Phase {pi + 1} Task {ti + 1}: missing name")
+                errors.append(f"Phase {pi} Task {ti}: missing name")
             if "status" not in task:
                 errors.append(f"{tname}: missing status")
             elif task["status"] not in TASK_STATUSES:
                 errors.append(f"{tname}: invalid status '{task['status']}'")
 
-            for si, sub in enumerate(task.get("subtasks", [])):
-                sname = sub.get("name", f"P{pi + 1}.T{ti + 1}.S{si + 1}")
+            for si, sub in enumerate(task.get("subtasks", []), 1):
+                sname = sub.get("name", f"P{pi}.T{ti}.S{si}")
                 if "status" not in sub:
                     errors.append(f"{sname}: missing status")
                 elif sub["status"] not in TASK_STATUSES:

@@ -114,7 +114,7 @@ After return → **Section 3.6**.
 
 Parent auto-completed with failed subtasks (no other work remains). Announce:
 
-`"⚠️ Parent '{name}' completed with failed subtasks — check P{phase+1}.T{task+1}"`
+`"⚠️ Parent '{name}' completed with failed subtasks — check P{phase}.T{task}"`
 
 `track-state sync-plan "<track_dir>"` → commit → **Section 3.7**.
 

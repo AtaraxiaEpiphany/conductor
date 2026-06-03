@@ -4,6 +4,16 @@ from .helpers import target, clean, now_iso, out, _last_subtask_sha, _reset_task
 from .constants import TERMINAL_FOR_PARENT, AUTO_COMPLETE_OK
 
 
+def _set_current_indices(state, pi, ti, si=None):
+    """Update current_*_index fields so recovery always points to the latest state."""
+    state["current_phase_index"] = pi
+    state["current_task_index"] = ti
+    if si is not None:
+        state["current_subtask_index"] = si
+    else:
+        state.pop("current_subtask_index", None)
+
+
 def _do_lock(track_dir, p, t, s=None):
     state = load(track_dir)
     pi, ti = int(p), int(t)
@@ -13,15 +23,11 @@ def _do_lock(track_dir, p, t, s=None):
     tgt["status"] = "in_progress"
     clean(tgt, {"status"})
 
-    state["current_phase_index"] = pi
-    state["current_task_index"] = ti
+    _set_current_indices(state, pi, ti, si)
     if si is not None:
-        state["current_subtask_index"] = si
-        parent = state["phases"][pi]["tasks"][ti]
+        parent = state["phases"][pi - 1]["tasks"][ti - 1]
         if parent["status"] != "in_progress":
             parent["status"] = "in_progress"
-    else:
-        state.pop("current_subtask_index", None)
 
     state["updated_at"] = now_iso()
     save(track_dir, state)
@@ -40,7 +46,7 @@ def _do_complete(track_dir, p, t, s=None, sha=None):
                    if sub["status"] not in TERMINAL_FOR_PARENT]
         if pending:
             raise ValueError(
-                f"Cannot complete P{pi + 1}.T{ti + 1} — {len(pending)} subtask(s) still "
+                f"Cannot complete P{pi}.T{ti} — {len(pending)} subtask(s) still "
                 f"non-terminal: {pending[0]}"
                 + (f" (+{len(pending)-1} more)" if len(pending) > 1 else "")
             )
@@ -56,7 +62,7 @@ def _do_complete(track_dir, p, t, s=None, sha=None):
 
     parent_completed = False
     if si is not None:
-        parent = state["phases"][pi]["tasks"][ti]
+        parent = state["phases"][pi - 1]["tasks"][ti - 1]
         if all(sub["status"] in AUTO_COMPLETE_OK for sub in parent.get("subtasks", [])):
             # Inherit SHA from last completed subtask if parent SHA is empty
             parent_sha = sha or _last_subtask_sha(parent)
@@ -67,18 +73,7 @@ def _do_complete(track_dir, p, t, s=None, sha=None):
             parent_completed = True
 
     # Update current indices so recovery always points to the latest state
-    if parent_completed:
-        # Parent was auto-completed — clear subtask index since parent is done
-        state["current_phase_index"] = pi
-        state["current_task_index"] = ti
-        state.pop("current_subtask_index", None)
-    else:
-        state["current_phase_index"] = pi
-        state["current_task_index"] = ti
-        if si is not None:
-            state["current_subtask_index"] = si
-        else:
-            state.pop("current_subtask_index", None)
+    _set_current_indices(state, pi, ti, None if parent_completed else si)
 
     state["updated_at"] = now_iso()
     save(track_dir, state)
@@ -97,12 +92,7 @@ def _do_fail(track_dir, p, t, s=None, summary=""):
     clean(tgt, {"status", "retry_count", "last_failure_summary"})
 
     # Update current indices so recovery always points to the latest state
-    state["current_phase_index"] = pi
-    state["current_task_index"] = ti
-    if si is not None:
-        state["current_subtask_index"] = si
-    else:
-        state.pop("current_subtask_index", None)
+    _set_current_indices(state, pi, ti, si)
 
     state["updated_at"] = now_iso()
     save(track_dir, state)
@@ -122,12 +112,7 @@ def _do_skip(track_dir, p, t, s=None, reason=""):
         _propagate_to_subtasks(tgt, "skipped", "skip_analysis", reason)
 
     # Update current indices so recovery always points to the latest state
-    state["current_phase_index"] = pi
-    state["current_task_index"] = ti
-    if si is not None:
-        state["current_subtask_index"] = si
-    else:
-        state.pop("current_subtask_index", None)
+    _set_current_indices(state, pi, ti, si)
 
     state["updated_at"] = now_iso()
     save(track_dir, state)
@@ -146,12 +131,7 @@ def _do_block(track_dir, p, t, s=None, reason=""):
         _propagate_to_subtasks(tgt, "blocked", "skip_analysis", reason)
 
     # Update current indices so recovery always points to the latest state
-    state["current_phase_index"] = pi
-    state["current_task_index"] = ti
-    if si is not None:
-        state["current_subtask_index"] = si
-    else:
-        state.pop("current_subtask_index", None)
+    _set_current_indices(state, pi, ti, si)
 
     state["updated_at"] = now_iso()
     save(track_dir, state)
@@ -168,7 +148,7 @@ def _do_defer(track_dir, p, t, s=None, reason=""):
 
     parent_deferred = False
     if si is not None:
-        parent = state["phases"][pi]["tasks"][ti]
+        parent = state["phases"][pi - 1]["tasks"][ti - 1]
         if all(sub["status"] in TERMINAL_FOR_PARENT for sub in parent.get("subtasks", [])):
             parent["status"] = "deferred"
             parent["defer_reason"] = "All subtasks deferred or completed"
@@ -178,12 +158,7 @@ def _do_defer(track_dir, p, t, s=None, reason=""):
         _propagate_to_subtasks(tgt, "deferred", "defer_reason", reason)
 
     # Update current indices so recovery always points to the latest state
-    state["current_phase_index"] = pi
-    state["current_task_index"] = ti
-    if si is not None:
-        state["current_subtask_index"] = si
-    else:
-        state.pop("current_subtask_index", None)
+    _set_current_indices(state, pi, ti, si)
 
     state["updated_at"] = now_iso()
     save(track_dir, state)

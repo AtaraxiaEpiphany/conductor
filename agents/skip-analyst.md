@@ -28,8 +28,8 @@ The orchestrator provides these parameters:
 | ------------- | ------------------------------------ |
 | `TRACK_DIR`   | Absolute path to the track directory |
 | `TRACK_ID`    | Track identifier                     |
-| `PHASE_INDEX` | Phase index of the failed task       |
-| `TASK_INDEX`  | Task index within the phase          |
+| `PHASE_INDEX` | Phase index of the failed task (1-based) |
+| `TASK_INDEX`  | Task index within the phase (1-based)    |
 | `TASK_NAME`   | Name of the failed task              |
 | `RETRY_COUNT` | Number of failed attempts            |
 

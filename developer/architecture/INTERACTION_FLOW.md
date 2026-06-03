@@ -142,7 +142,7 @@ stateDiagram-v2
 graph TB
     subgraph "Orchestrator (Minimal Context)"
         Orch[Orchestrator Agent]
-        Orch -.->|dispatches| DispatchPrompt["TRACK_DIR=/path<br/>PHASE=0<br/>TASK=1<br/>NAME=task_name"]
+        Orch -.->|dispatches| DispatchPrompt["TRACK_DIR=/path<br/>PHASE=1<br/>TASK=1<br/>NAME=task_name"]
     end
 
     subgraph "Subagent (Self-Loaded Context)"

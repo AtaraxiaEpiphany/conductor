@@ -51,7 +51,7 @@
 
 ```bash
 Agent(
-    prompt="TRACK_DIR=/abs/path PHASE=0 TASK=1 NAME=task_name ATTEMPT=1 MAX_RETRIES=3 IS_RETRY=false",
+    prompt="TRACK_DIR=/abs/path PHASE=1 TASK=1 NAME=task_name ATTEMPT=1 MAX_RETRIES=3 IS_RETRY=false",
     subagent_type="conductor:task-executor"
 )
 ```
@@ -61,7 +61,7 @@ Agent(
 | Parameter | Required | Description | Example |
 |-----------|------------|-------------|----------|
 | `TRACK_DIR` | Yes | Absolute path to track directory | `/project/conductor/tracks/auth-flow` |
-| `PHASE` | Yes | Phase index (0-based) | `0` |
+| `PHASE` | Yes | Phase index (1-based) | `1` |
 | `TASK` | Yes | Task index within phase | `1` |
 | `SUBTASK` | No | Subtask index, or null for flat tasks | `null` |
 | `NAME` | Yes | Human-readable task name | `"Implement OAuth2 login"` |
@@ -124,7 +124,7 @@ All `track-state` commands return JSON:
   "status": "completed",
   "sha": "a1b2c3d",
   "parent_completed": true,
-  "phase": 0,
+  "phase": 1,
   "task": 1,
   "subtask": null,
   "retry_count": 0,

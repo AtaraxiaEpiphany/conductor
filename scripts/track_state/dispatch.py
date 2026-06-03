@@ -27,12 +27,12 @@ def _find_next_task(state):
     result = None
     stuck = None
     # Pass 1: in_progress tasks (recovery / dispatch continuation)
-    for pi, phase in enumerate(state["phases"]):
-        for ti, task in enumerate(phase["tasks"]):
+    for pi, phase in enumerate(state["phases"], 1):
+        for ti, task in enumerate(phase["tasks"], 1):
             if task["status"] == "in_progress":
                 subs = task.get("subtasks")
                 if subs:
-                    for si, sub in enumerate(subs):
+                    for si, sub in enumerate(subs, 1):
                         if sub["status"] in ("in_progress", "pending"):
                             result = dict(phase=pi, task=ti, subtask=si,
                                           name=sub["name"], type="subtask",
@@ -60,12 +60,12 @@ def _find_next_task(state):
             break
     # Pass 2: pending tasks (new dispatch)
     if not result:
-        for pi, phase in enumerate(state["phases"]):
-            for ti, task in enumerate(phase["tasks"]):
+        for pi, phase in enumerate(state["phases"], 1):
+            for ti, task in enumerate(phase["tasks"], 1):
                 if task["status"] == "pending":
                     subs = task.get("subtasks")
                     if subs:
-                        for si, sub in enumerate(subs):
+                        for si, sub in enumerate(subs, 1):
                             if sub["status"] in ("in_progress", "pending"):
                                 result = dict(phase=pi, task=ti, subtask=si,
                                               name=sub["name"], type="subtask",
@@ -96,7 +96,7 @@ def _find_next_task(state):
     if not result:
         result = stuck
     if not result:
-        result = dict(phase=-1, task=-1, subtask=None, name=None, type=None, tags=[])
+        result = dict(phase=0, task=0, subtask=None, name=None, type=None, tags=[])
     return result
 
 
@@ -135,7 +135,7 @@ def cmd_dispatch_next(track_dir):
         # Find next task
         result = _find_next_task(state)
 
-        if result.get("phase", -1) < 0:
+        if result.get("phase", 0) < 1:
             out(dict(action="finalize"))
             return
 
@@ -145,7 +145,7 @@ def cmd_dispatch_next(track_dir):
 
         if rtype == "parent-complete":
             # Auto-complete parent, resolve SHA from subtasks, then loop again
-            parent_task = state["phases"][result["phase"]]["tasks"][result["task"]]
+            parent_task = state["phases"][result["phase"] - 1]["tasks"][result["task"] - 1]
             sha = _last_subtask_sha(parent_task)
             try:
                 _do_complete(track_dir, result["phase"], result["task"], None, sha)
@@ -165,13 +165,13 @@ def cmd_dispatch_next(track_dir):
             final_sha = _git_head_sha(track_dir) or sha
             if final_sha != sha:
                 state = load(track_dir)
-                state["phases"][result["phase"]]["tasks"][result["task"]]["commit_sha"] = final_sha
+                state["phases"][result["phase"] - 1]["tasks"][result["task"] - 1]["commit_sha"] = final_sha
                 save(track_dir, state)
                 _do_sync_plan(track_dir, state)
 
             # Write git note AFTER conductor commit so it targets the same SHA track-state.json references
             state = load(track_dir)
-            parent_tgt = state["phases"][result["phase"]]["tasks"][result["task"]]
+            parent_tgt = state["phases"][result["phase"] - 1]["tasks"][result["task"] - 1]
             _ensure_note(track_dir, state, result["phase"], result["task"], None, parent_tgt)
 
             # Store minimal evidence for parent if none exists
@@ -184,7 +184,7 @@ def cmd_dispatch_next(track_dir):
         if rtype == "parent-stuck":
             # Parent has failed subtasks and no other work exists.
             # Auto-complete using TERMINAL_FOR_PARENT (includes 'failed') as fallback.
-            parent_task = state["phases"][result["phase"]]["tasks"][result["task"]]
+            parent_task = state["phases"][result["phase"] - 1]["tasks"][result["task"] - 1]
             sha = _last_subtask_sha(parent_task)
             try:
                 _do_complete(track_dir, result["phase"], result["task"], None, sha)
@@ -201,12 +201,12 @@ def cmd_dispatch_next(track_dir):
             final_sha = _git_head_sha(track_dir) or sha
             if final_sha != sha:
                 state = load(track_dir)
-                state["phases"][result["phase"]]["tasks"][result["task"]]["commit_sha"] = final_sha
+                state["phases"][result["phase"] - 1]["tasks"][result["task"] - 1]["commit_sha"] = final_sha
                 save(track_dir, state)
                 _do_sync_plan(track_dir, state)
 
             # Write git note for stuck parent (same as parent-complete path)
-            parent_tgt = state["phases"][result["phase"]]["tasks"][result["task"]]
+            parent_tgt = state["phases"][result["phase"] - 1]["tasks"][result["task"] - 1]
             _ensure_note(track_dir, state, result["phase"], result["task"], None, parent_tgt)
 
             out(dict(action="parent_stuck", phase=result["phase"], task=result["task"],
@@ -249,11 +249,11 @@ def cmd_recover(track_dir, compact=False):
     if fixes:
         print(f"Recover auto-fixed {len(fixes)} issue(s): {'; '.join(fixes)}", file=sys.stderr)
 
-    pi = state.get("current_phase_index", -1)
-    ti = state.get("current_task_index", -1)
+    pi = state.get("current_phase_index", 0)
+    ti = state.get("current_task_index", 0)
     si = state.get("current_subtask_index")
 
-    if pi < 0 or ti < 0:
+    if pi < 1 or ti < 1:
         result = dict(status="no_active_task")
         checkpoint_pending = _any_phase_needs_checkpoint(track_dir, state)
         if checkpoint_pending is not None:
@@ -267,7 +267,7 @@ def cmd_recover(track_dir, compact=False):
         return
 
     try:
-        task = state["phases"][pi]["tasks"][ti]
+        task = state["phases"][pi - 1]["tasks"][ti - 1]
     except IndexError:
         result = dict(status="no_active_task")
         checkpoint_pending = _any_phase_needs_checkpoint(track_dir, state)
@@ -283,8 +283,8 @@ def cmd_recover(track_dir, compact=False):
 
     # Resolve subtask or flat task
     if si is not None and "subtasks" in task and len(task["subtasks"]) > 0:
-        si = min(si, len(task["subtasks"]) - 1)
-        tgt = task["subtasks"][si]
+        si = min(si, len(task["subtasks"]))
+        tgt = task["subtasks"][si - 1]
         name = tgt["name"]
         ttype = "subtask"
     else:
@@ -339,7 +339,7 @@ def cmd_dispatch_prepare(track_dir):
     nxt = _find_next_task(state)
     nxt["execution_mode"] = execution_mode
 
-    if nxt.get("phase", -1) < 0:
+    if nxt.get("phase", 0) < 1:
         out(dict(action="done", next=nxt))
         return
     pi, ti = nxt["phase"], nxt["task"]
@@ -388,7 +388,7 @@ def cmd_dispatch_prepare(track_dir):
     if is_resume:
         commit_msg = None  # Already started — skip the start commit
     else:
-        commit_msg = f"chore(conductor): Start task '{name}' [P{pi + 1}.T{ti + 1}]"
+        commit_msg = f"chore(conductor): Start task '{name}' [P{pi}.T{ti}]"
 
     out(dict(action=action, phase=pi, task=ti, subtask=si, name=name,
              tags=tags, sync_count=synced, commit_msg=commit_msg,
@@ -401,7 +401,7 @@ def _last_subtask_sha_from_state(track_dir, pi, ti):
     """Get last completed subtask SHA for parent-complete."""
     state = load(track_dir)
     try:
-        parent = state["phases"][pi]["tasks"][ti]
+        parent = state["phases"][pi - 1]["tasks"][ti - 1]
         return _last_subtask_sha(parent)
     except (IndexError, KeyError):
         return ""
@@ -415,21 +415,21 @@ def _synthesize_result_from_state(track_dir):
     current_*_index fields set by dispatch-prepare's _do_lock call."""
 
     state = load(track_dir)
-    pi = state.get("current_phase_index", -1)
-    ti = state.get("current_task_index", -1)
+    pi = state.get("current_phase_index", 0)
+    ti = state.get("current_task_index", 0)
 
-    if pi < 0 or ti < 0:
+    if pi < 1 or ti < 1:
         return None
 
     try:
-        task = state["phases"][pi]["tasks"][ti]
+        task = state["phases"][pi - 1]["tasks"][ti - 1]
     except (IndexError, KeyError):
         return None
 
     si = state.get("current_subtask_index")
     if si is not None:
         try:
-            tgt = task["subtasks"][si]
+            tgt = task["subtasks"][si - 1]
             name = tgt["name"]
         except (IndexError, KeyError):
             tgt = task
@@ -488,8 +488,8 @@ def cmd_dispatch_finalize(track_dir):
 
     status = r.get("status", "").upper()
     # Resolve phase/task/subtask indices.
-    # Default to result.json (may be 1-based from task-executor), then override
-    # with locked indices from track-state.json (always 0-based, set by dispatch-prepare)
+    # Default to result.json (1-based from task-executor), then override
+    # with locked indices from track-state.json (1-based, set by dispatch-prepare)
     # if they point to an in_progress task.
     p = str(r.get("phase") if r.get("phase") is not None else "")
     t = str(r.get("task") if r.get("task") is not None else "")
@@ -499,11 +499,11 @@ def cmd_dispatch_finalize(track_dir):
     locked_pi = state.get("current_phase_index")
     locked_ti = state.get("current_task_index")
     locked_si = state.get("current_subtask_index")
-    if locked_pi is not None and locked_ti is not None and locked_pi >= 0 and locked_ti >= 0:
+    if locked_pi is not None and locked_ti is not None and locked_pi >= 1 and locked_ti >= 1:
         try:
-            locked_tgt = state["phases"][locked_pi]["tasks"][locked_ti]
+            locked_tgt = state["phases"][locked_pi - 1]["tasks"][locked_ti - 1]
             if locked_si is not None:
-                locked_tgt = locked_tgt["subtasks"][locked_si]
+                locked_tgt = locked_tgt["subtasks"][locked_si - 1]
             if locked_tgt.get("status") == "in_progress":
                 p = str(locked_pi)
                 t = str(locked_ti)

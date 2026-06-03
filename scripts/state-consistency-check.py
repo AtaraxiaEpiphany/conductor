@@ -30,15 +30,15 @@ def find_stale_in_progress_tasks(state_file: Path) -> list[str]:
         return []
 
     stale = []
-    for pi, phase in enumerate(state.get("phases", [])):
-        for ti, task in enumerate(phase.get("tasks", [])):
+    for pi, phase in enumerate(state.get("phases", []), 1):
+        for ti, task in enumerate(phase.get("tasks", []), 1):
             if task.get("status") == "in_progress":
                 name = task.get("name", "")
-                stale.append(f'Phase {pi+1} Task {ti+1}: {name}')
-            for si, sub in enumerate(task.get("subtasks", [])):
+                stale.append(f'Phase {pi} Task {ti}: {name}')
+            for si, sub in enumerate(task.get("subtasks", []), 1):
                 if sub.get("status") == "in_progress":
                     name = sub.get("name", "")
-                    stale.append(f'Phase {pi+1} Task {ti+1}.{si+1}: {name}')
+                    stale.append(f'Phase {pi} Task {ti}.{si}: {name}')
 
     return stale
 
@@ -55,13 +55,13 @@ def get_track_handoff_info(state_file: Path) -> Optional[str]:
     if status in ("completed", "archived", "cancelled"):
         return None
 
-    pi = state.get("current_phase_index", -1)
-    ti = state.get("current_task_index", -1)
+    pi = state.get("current_phase_index", 0)
+    ti = state.get("current_task_index", 0)
     mode = state.get("execution_mode", "interactive")
 
-    if pi < 0 or ti < 0:
+    if pi < 1 or ti < 1:
         return f'- Track {track_id}: status={status}, position=N/A, mode={mode}'
-    return f'- Track {track_id}: status={status}, position=P{pi + 1}.T{ti + 1}, mode={mode}'
+    return f'- Track {track_id}: status={status}, position=P{pi}.T{ti}, mode={mode}'
 
 
 def write_session_handoff(data_dir: Path, handoff_data: str) -> None:

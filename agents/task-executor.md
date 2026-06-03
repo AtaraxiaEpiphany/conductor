@@ -31,9 +31,9 @@ CRITICAL: Validate every tool call. On failure → halt → report FAILURE.
 | Parameter | Description |
 |-----------|-------------|
 | `TRACK_DIR` | Absolute path to track directory |
-| `PHASE` | Phase index |
-| `TASK` | Task index within phase |
-| `SUBTASK` | Subtask index within task, or `null` for flat tasks |
+| `PHASE` | Phase index (1-based) |
+| `TASK` | Task index within phase (1-based) |
+| `SUBTASK` | Subtask index within task (1-based), or `null` for flat tasks |
 | `NAME` | Human-readable task name |
 | `ATTEMPT` | Current attempt (1=fresh, 2+=retry) |
 | `MAX_RETRIES` | Maximum retries |
@@ -57,7 +57,7 @@ This layer provides architecture understanding before reading task specifics —
 
 ### Layer 1: Task Identity (READ FIRST)
 
-Read `{TRACK_DIR}/plan.md`. Find your task at `## Phase {PHASE+1}`, locate task `{TASK}`.
+Read `{TRACK_DIR}/plan.md`. Find your task at `## Phase {PHASE}`, locate task `{TASK}`.
 
 Extract from task line:
 - Task description and annotations (`<!-- AC-n, TC-n.n -->`)

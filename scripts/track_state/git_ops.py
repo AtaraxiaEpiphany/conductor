@@ -29,9 +29,9 @@ def _write_git_note(track_dir, result_data, state):
 
     try:
         p_val, t_val = int(phase), int(task)
-        loc = f"P{p_val + 1}.T{t_val + 1}"
+        loc = f"P{p_val}.T{t_val}"
         if subtask is not None:
-            loc += f".S{int(subtask) + 1}"
+            loc += f".S{int(subtask)}"
     except (ValueError, TypeError):
         # Non-numeric values (e.g. "?") — show as-is for degraded output
         loc = f"P{phase}.T{task}"
@@ -81,16 +81,16 @@ def _write_git_note_basic(track_dir, sha, state, pi, ti, si=None):
         return
 
     try:
-        tgt = state["phases"][pi]["tasks"][ti]
+        tgt = state["phases"][pi - 1]["tasks"][ti - 1]
         if si is not None:
-            tgt = tgt["subtasks"][si]
+            tgt = tgt["subtasks"][si - 1]
         task_name = tgt.get("name", "unknown")
     except (IndexError, KeyError):
         task_name = "unknown"
 
-    loc = f"P{pi + 1}.T{ti + 1}"
+    loc = f"P{pi}.T{ti}"
     if si is not None:
-        loc += f".S{si + 1}"
+        loc += f".S{si}"
 
     # Get files from git diff
     files = ""
@@ -207,8 +207,8 @@ def _has_sibling_sha(state, pi, ti, si, sha):
     if si is None or not sha:
         return False
     try:
-        task = state["phases"][int(pi)]["tasks"][int(ti)]
-        for i, sub in enumerate(task.get("subtasks", [])):
+        task = state["phases"][int(pi) - 1]["tasks"][int(ti) - 1]
+        for i, sub in enumerate(task.get("subtasks", []), 1):
             if i != int(si) and sub.get("commit_sha") == sha:
                 return True
     except (IndexError, KeyError, ValueError):
@@ -222,9 +222,9 @@ def _update_task_sha(track_dir, p, t, s, sha):
     state = load(track_dir)
     pi, ti = int(p), int(t)
     si = int(s) if s is not None else None
-    tgt = state["phases"][pi]["tasks"][ti]
+    tgt = state["phases"][pi - 1]["tasks"][ti - 1]
     if si is not None:
-        tgt["subtasks"][si]["commit_sha"] = sha
+        tgt["subtasks"][si - 1]["commit_sha"] = sha
     else:
         tgt["commit_sha"] = sha
     save(track_dir, state)
@@ -274,14 +274,14 @@ def _recover_git_notes(track_dir, state):
     checks if each commit has a git note, writes one if missing."""
     try:
         import subprocess
-        for pi, phase in enumerate(state.get("phases", [])):
-            for ti, task in enumerate(phase.get("tasks", [])):
+        for pi, phase in enumerate(state.get("phases", []), 1):
+            for ti, task in enumerate(phase.get("tasks", []), 1):
                 # Check flat task
                 if task.get("status") == "completed" and task.get("commit_sha"):
                     _ensure_note(track_dir, state, pi, ti, None, task)
 
                 # Check subtasks
-                for si, sub in enumerate(task.get("subtasks", [])):
+                for si, sub in enumerate(task.get("subtasks", []), 1):
                     if sub.get("status") == "completed" and sub.get("commit_sha"):
                         _ensure_note(track_dir, state, pi, ti, si, sub)
     except (ImportError, FileNotFoundError):
@@ -319,11 +319,11 @@ def _ensure_note(track_dir, state, pi, ti, si, tgt):
                     r = json.load(f)
                 rp, rt = r.get("phase"), r.get("task")
                 rs = r.get("subtask")
-                # Match by indices (handles 0-based from dispatch-prepare)
+                # Match by indices (1-based)
                 if str(rp) == str(pi) and str(rt) == str(ti) and ((rs is None and si is None) or str(rs) == str(si)):
                     _write_git_note(track_dir, r, state)
                     return
-                # Fallback: match by task_name (handles 1-based phase from task-executor)
+                # Fallback: match by task_name
                 r_name = r.get("task_name", "")
                 if r_name == tgt.get("name", ""):
                     # Pass corrected indices so _write_git_note computes correct P/T location

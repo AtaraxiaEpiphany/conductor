@@ -15,7 +15,7 @@ def _get_handoff_dir(track_dir):
 def _get_handoff_file(track_dir, phase, task):
     """Get handoff file path for a specific task (1-based display names)."""
     try:
-        p1, t1 = int(phase) + 1, int(task) + 1
+        p1, t1 = int(phase), int(task)
     except (ValueError, TypeError):
         p1, t1 = phase, task
     return _get_handoff_dir(track_dir) / f"P{p1}T{t1}.md"
@@ -103,8 +103,8 @@ def _sync_handoff_index(track_dir, state=None):
 
     phase_sections = []
 
-    for pi, phase in enumerate(state.get("phases", [])):
-        phase_name = phase.get("name", f"Phase {pi+1}")
+    for pi, phase in enumerate(state.get("phases", []), 1):
+        phase_name = phase.get("name", f"Phase {pi}")
         phase_status = phase.get("status", "pending")
 
         # Determine phase emoji
@@ -118,10 +118,10 @@ def _sync_handoff_index(track_dir, state=None):
             phase_emoji = "⏸️"
 
         task_rows = []
-        for ti, task in enumerate(phase.get("tasks", [])):
+        for ti, task in enumerate(phase.get("tasks", []), 1):
             total_tasks += 1
             task_status = task.get("status", "pending")
-            task_name = task.get("name", f"Task {ti + 1}")
+            task_name = task.get("name", f"Task {ti}")
 
             if task_status == "completed":
                 completed_tasks += 1
@@ -144,15 +144,15 @@ def _sync_handoff_index(track_dir, state=None):
             retry_info = f" ({retry_count}/3)" if retry_count > 0 else ""
 
             task_rows.append(
-                f"| {ti + 1}. | {task_emoji} {task_name}{retry_info} | "
-                f"[{_display_loc(pi, ti)}](.conductor/handoff/P{pi + 1}T{ti + 1}.md) |"
+                f"| {ti}. | {task_emoji} {task_name}{retry_info} | "
+                f"[{_display_loc(pi, ti)}](.conductor/handoff/P{pi}T{ti}.md) |"
             )
 
             # Count subtasks
-            for si, sub in enumerate(task.get("subtasks", [])):
+            for si, sub in enumerate(task.get("subtasks", []), 1):
                 total_tasks += 1
                 sub_status = sub.get("status", "pending")
-                sub_name = sub.get("name", f"Subtask {si + 1}")
+                sub_name = sub.get("name", f"Subtask {si}")
 
                 if sub_status == "completed":
                     completed_tasks += 1
@@ -166,7 +166,7 @@ def _sync_handoff_index(track_dir, state=None):
         if task_rows:
             table_header = "| # | Task | Details |\n|---|------|---------|"
             phase_sections.append(
-                f"### Phase {pi+1}: {phase_name} {phase_emoji}\n\n"
+                f"### Phase {pi}: {phase_name} {phase_emoji}\n\n"
                 f"{table_header}\n" +
                 "\n".join(task_rows)
             )
@@ -174,16 +174,16 @@ def _sync_handoff_index(track_dir, state=None):
     # Build updated index
     track_id = state.get("track_id", "unknown")
     description = state.get("description", "")
-    current_phase = state.get("current_phase_index", -1)
-    current_task = state.get("current_task_index", -1)
+    current_phase = state.get("current_phase_index", 0)
+    current_task = state.get("current_task_index", 0)
 
-    current_focus = f"Phase {current_phase + 1}, Task {current_task + 1}" if current_phase >= 0 and current_task >= 0 else "Initializing"
+    current_focus = f"Phase {current_phase}, Task {current_task}" if current_phase >= 1 and current_task >= 1 else "Initializing"
 
     content = f"""# Handoff: {track_id}
 
 **Track ID**: {track_id}
 **Description**: {description}
-**Status**: Phase {current_phase + 1}/{len(state.get('phases', []))} | {total_tasks - completed_tasks} tasks remaining
+**Status**: Phase {current_phase}/{len(state.get('phases', []))} | {total_tasks - completed_tasks} tasks remaining
 **Updated**: {now_iso()}
 
 ---
@@ -198,7 +198,7 @@ def _sync_handoff_index(track_dir, state=None):
 | Blocked | {blocked_tasks} tasks |
 
 ### Current Focus
-**Phase {current_phase + 1}**: Next task
+**Phase {current_phase}**: Next task
 **Next**: {_safe_task_name(state, current_phase, current_task)}
 
 ### Risk Radar
@@ -230,16 +230,16 @@ def _write_task_handoff(track_dir, phase, task, content, state=None):
 
     # Get task context
     try:
-        task_obj = state["phases"][int(phase)]["tasks"][int(task)]
-        task_name = task_obj.get("name", f"Task {int(task) + 1}")
-        phase_name = state["phases"][int(phase)].get("name", f"Phase {int(phase)+1}")
+        task_obj = state["phases"][int(phase) - 1]["tasks"][int(task) - 1]
+        task_name = task_obj.get("name", f"Task {int(task)}")
+        phase_name = state["phases"][int(phase) - 1].get("name", f"Phase {int(phase)}")
     except (IndexError, KeyError):
-        task_name = f"Task {int(task) + 1}"
-        phase_name = f"Phase {int(phase)+1}"
+        task_name = f"Task {int(task)}"
+        phase_name = f"Phase {int(phase)}"
 
     # If file doesn't exist, create header
     if not handoff_file.exists():
-        header = f"""# Phase {int(phase)+1} Task {int(task)+1}: {task_name}
+        header = f"""# Phase {int(phase)} Task {int(task)}: {task_name}
 
 **Phase**: {phase_name}
 **Status**: pending
@@ -325,7 +325,7 @@ def _append_execution_record(track_dir, phase, task, subtask, result_data, state
 
     # Determine section to write to
     if subtask is not None:
-        section_header = f"\n## Subtask {int(subtask) + 1}: {task_name}\n\n{record}\n"
+        section_header = f"\n## Subtask {int(subtask)}: {task_name}\n\n{record}\n"
     else:
         section_header = f"\n## Execution Record\n\n{record}\n"
 
@@ -397,7 +397,7 @@ def cmd_get_handoff(track_dir, phase, task, subtask=None):
 
     # If subtask specified, extract only that section
     if subtask is not None:
-        sub_1based = int(subtask) + 1
+        sub_1based = int(subtask)
         lines = content.split("\n")
         result = []
         capturing = False
@@ -444,10 +444,10 @@ def cmd_append_handoff(track_dir, phase, task, entry_type, content_json, subtask
 
     # Get task context
     try:
-        task_obj = state["phases"][int(phase)]["tasks"][int(task)]
-        task_name = task_obj.get("name", f"Task {int(task) + 1}")
+        task_obj = state["phases"][int(phase) - 1]["tasks"][int(task) - 1]
+        task_name = task_obj.get("name", f"Task {int(task)}")
     except (IndexError, KeyError):
-        task_name = f"Task {int(task) + 1}"
+        task_name = f"Task {int(task)}"
 
     # Build entry based on type
     if entry_type == "explore":
@@ -523,7 +523,7 @@ def cmd_append_handoff(track_dir, phase, task, entry_type, content_json, subtask
 
     # Add subtask header if needed
     if subtask is not None:
-        section = f"\n## Subtask {int(subtask) + 1}: {task_name}\n\n{entry}\n"
+        section = f"\n## Subtask {int(subtask)}: {task_name}\n\n{entry}\n"
     else:
         section = entry
 

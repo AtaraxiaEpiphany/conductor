@@ -35,15 +35,15 @@
     },
     "current_phase_index": {
       "type": "integer",
-      "minimum": -1
+      "minimum": 0
     },
     "current_task_index": {
       "type": "integer",
-      "minimum": -1
+      "minimum": 0
     },
     "current_subtask_index": {
       "type": ["integer", "null"],
-      "minimum": -1
+      "minimum": 0
     },
     "updated_at": {
       "type": "string",

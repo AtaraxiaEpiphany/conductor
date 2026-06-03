@@ -29,15 +29,15 @@ CRITICAL: Validate every tool call. On failure → halt → report FAILURE.
 | Parameter | Description |
 |-----------|-------------|
 | `TRACK_DIR` | Absolute path to track directory |
-| `PHASE` | Phase index |
-| `TASK` | Task index |
+| `PHASE` | Phase index (1-based) |
+| `TASK` | Task index (1-based) |
 | `NAME` | Task name |
 
 ---
 
 ## 3.0 SELF-LOAD CONTEXT
 
-1. Read `{TRACK_DIR}/plan.md` — find task at `## Phase {PHASE+1}`, task `{TASK}`.
+1. Read `{TRACK_DIR}/plan.md` — find task at `## Phase {PHASE}`, task `{TASK}`.
 2. Read `{TRACK_DIR}/spec.md` — understand overall track goal.
 3. Derive investigation scope from task description.
 

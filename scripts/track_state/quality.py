@@ -17,17 +17,17 @@ def _checklist_status(track_dir):
     total = 0
     verified = 0
     unverified = []
-    for pi, phase in enumerate(state.get("phases", [])):
-        for ti, task in enumerate(phase.get("tasks", [])):
+    for pi, phase in enumerate(state.get("phases", []), 1):
+        for ti, task in enumerate(phase.get("tasks", []), 1):
             total += 1
-            key = f"P{pi + 1}.T{ti + 1} {task['name']}"
+            key = f"P{pi}.T{ti} {task['name']}"
             if task["status"] == "completed":
                 verified += 1
             else:
                 unverified.append(key)
-            for si, sub in enumerate(task.get("subtasks", [])):
+            for si, sub in enumerate(task.get("subtasks", []), 1):
                 total += 1
-                subkey = f"P{pi + 1}.T{ti + 1}.S{si + 1} {sub['name']}"
+                subkey = f"P{pi}.T{ti}.S{si} {sub['name']}"
                 if sub["status"] == "completed":
                     verified += 1
                 else:
@@ -51,19 +51,19 @@ def _validate_plan_structure(plan):
     if not isinstance(phases, list) or len(phases) == 0:
         errors.append("PLAN_STRUCTURE must have at least 1 phase")
         return errors
-    for pi, phase in enumerate(phases):
+    for pi, phase in enumerate(phases, 1):
         if not phase.get("name"):
-            errors.append(f"Phase {pi + 1}: missing name")
+            errors.append(f"Phase {pi}: missing name")
         tasks = phase.get("tasks")
         if not isinstance(tasks, list) or len(tasks) == 0:
-            errors.append(f"Phase {pi + 1} '{phase.get('name', '?')}': must have at least 1 task")
+            errors.append(f"Phase {pi} '{phase.get('name', '?')}': must have at least 1 task")
             continue
-        for ti, task in enumerate(tasks):
+        for ti, task in enumerate(tasks, 1):
             if not task.get("name"):
-                errors.append(f"Phase {pi + 1} Task {ti + 1}: missing name")
-            for si, sub in enumerate(task.get("subtasks", [])):
+                errors.append(f"Phase {pi} Task {ti}: missing name")
+            for si, sub in enumerate(task.get("subtasks", []), 1):
                 if isinstance(sub, dict) and not sub.get("name"):
-                    errors.append(f"Phase {pi + 1} Task {ti + 1} Subtask {si + 1}: missing name")
+                    errors.append(f"Phase {pi} Task {ti} Subtask {si}: missing name")
     return errors
 
 
@@ -99,8 +99,8 @@ def cmd_init(track_dir, plan_structure_json, track_id, track_type, description, 
         "type": track_type,
         "status": "new",
         "description": description,
-        "current_phase_index": 0,
-        "current_task_index": 0,
+        "current_phase_index": 1,
+        "current_task_index": 1,
         "updated_at": now_iso(),
         "phases": phases,
     }
@@ -139,23 +139,23 @@ def cmd_init(track_dir, plan_structure_json, track_id, track_type, description, 
     if plan_path.exists():
         try:
             plan_struct = _parse_plan_structure(plan_path)
-            for pi, state_phase in enumerate(phases):
-                plan_phase = plan_struct.get(pi + 1)
+            for pi, state_phase in enumerate(phases, 1):
+                plan_phase = plan_struct.get(pi)
                 if plan_phase is None:
-                    warnings.append(f"Phase {pi+1}: heading missing in plan.md")
+                    warnings.append(f"Phase {pi}: heading missing in plan.md")
                     continue
                 state_tasks = state_phase.get("tasks", [])
                 plan_tasks = plan_phase["tasks"]
                 if len(plan_tasks) != len(state_tasks):
                     warnings.append(
-                        f"Phase {pi+1}: plan.md has {len(plan_tasks)} tasks, "
+                        f"Phase {pi}: plan.md has {len(plan_tasks)} tasks, "
                         f"state has {len(state_tasks)}")
                 for ti in range(min(len(state_tasks), len(plan_tasks))):
                     state_subs = len(state_tasks[ti].get("subtasks", []))
                     plan_subs = len(plan_tasks[ti].get("subtasks", []))
                     if plan_subs != state_subs:
                         warnings.append(
-                            f"P{pi + 1}.T{ti + 1}: plan.md has {plan_subs} subtasks, "
+                            f"P{pi}.T{ti + 1}: plan.md has {plan_subs} subtasks, "
                             f"state has {state_subs}")
         except Exception:
             pass
@@ -184,8 +184,8 @@ def cmd_start(track_dir):
 
 def cmd_finalize(track_dir):
     state = load(track_dir)
-    state["current_phase_index"] = -1
-    state["current_task_index"] = -1
+    state["current_phase_index"] = 0
+    state["current_task_index"] = 0
     state.pop("current_subtask_index", None)
 
     statuses = []
@@ -353,13 +353,13 @@ def cmd_gc(track_dir):
     # Count stale tasks for reporting
     stale_tasks = []
     if age_hours > 24:
-        for pi, phase in enumerate(state.get("phases", [])):
-            for ti, task in enumerate(phase.get("tasks", [])):
+        for pi, phase in enumerate(state.get("phases", []), 1):
+            for ti, task in enumerate(phase.get("tasks", []), 1):
                 if task.get("status") == "in_progress":
-                    stale_tasks.append(f"P{pi + 1}.T{ti + 1}: {task.get('name', '?')}")
-                for si, sub in enumerate(task.get("subtasks", [])):
+                    stale_tasks.append(f"P{pi}.T{ti}: {task.get('name', '?')}")
+                for si, sub in enumerate(task.get("subtasks", []), 1):
                     if sub.get("status") == "in_progress":
-                        stale_tasks.append(f"P{pi + 1}.T{ti + 1}.S{si + 1}: {sub.get('name', '?')}")
+                        stale_tasks.append(f"P{pi}.T{ti}.S{si}: {sub.get('name', '?')}")
         if stale_tasks:
             fixes.append(f"Stale in_progress tasks detected ({age_hours:.0f}h old): {'; '.join(stale_tasks)}")
 

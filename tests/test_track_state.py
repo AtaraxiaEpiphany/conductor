@@ -16,7 +16,7 @@ from scripts.track_state.dispatch import cmd_recover, cmd_dispatch_next
 from scripts.track_state.quality import cmd_init, _validate_plan_structure
 
 
-def _out捕获(fn, *args, **kwargs):
+def _out_captured(fn, *args, **kwargs):
     """Capture stdout from a function call. Returns (result_json, stderr_text)."""
     old_out, old_err = sys.stdout, sys.stderr
     sys.stdout = io.StringIO()
@@ -35,9 +35,9 @@ def _make_state(**overrides):
         "type": "feature",
         "status": "in_progress",
         "description": "test track",
-        "current_phase_index": 0,
-        "current_task_index": 0,
-        "updated_at": "2026-05-29T00:00:00+00:00",
+        "current_phase_index": 1,
+        "current_task_index": 1,
+        "updated_at": "2026-06-04T00:00:00+00:00",
         "phases": [
             {
                 "name": "Phase 1",
@@ -102,7 +102,7 @@ class TestFixStaleInProgress(TestCase):
     """validate.py: _fix_stale_in_progress."""
 
     def test_recent_state_no_fix(self):
-        state = _make_state(updated_at="2026-05-29T12:00:00+00:00")
+        state = _make_state(updated_at="2026-06-04T00:00:00+00:00")
         state["phases"][0]["tasks"][0]["status"] = "in_progress"
         fixes = _fix_stale_in_progress(state, threshold_hours=24)
         self.assertEqual(fixes, [])
@@ -129,32 +129,32 @@ class TestFixTerminalCurrentIndices(TestCase):
     """validate.py: _fix_terminal_current_indices."""
 
     def test_active_task_no_fix(self):
-        state = _make_state(current_phase_index=0, current_task_index=0)
+        state = _make_state(current_phase_index=1, current_task_index=1)
         state["phases"][0]["tasks"][0]["status"] = "in_progress"
         fixes = _fix_terminal_current_indices(state)
         self.assertEqual(fixes, [])
 
     def test_terminal_advances_to_next_pending(self):
-        state = _make_state(current_phase_index=0, current_task_index=0)
+        state = _make_state(current_phase_index=1, current_task_index=1)
         state["phases"][0]["tasks"][0]["status"] = "completed"
         state["phases"][0]["tasks"][0]["commit_sha"] = "abc1234"
         fixes = _fix_terminal_current_indices(state)
         self.assertEqual(len(fixes), 1)
-        self.assertEqual(state["current_phase_index"], 0)
-        self.assertEqual(state["current_task_index"], 1)
+        self.assertEqual(state["current_phase_index"], 1)
+        self.assertEqual(state["current_task_index"], 2)
 
     def test_all_terminal_clears_indices(self):
-        state = _make_state(current_phase_index=0, current_task_index=0)
+        state = _make_state(current_phase_index=1, current_task_index=1)
         for t in state["phases"][0]["tasks"]:
             t["status"] = "completed"
             t["commit_sha"] = "abc1234"
         fixes = _fix_terminal_current_indices(state)
         self.assertTrue(len(fixes) > 0)
-        self.assertEqual(state["current_phase_index"], -1)
-        self.assertEqual(state["current_task_index"], -1)
+        self.assertEqual(state["current_phase_index"], 0)
+        self.assertEqual(state["current_task_index"], 0)
 
-    def test_negative_indices_no_fix(self):
-        state = _make_state(current_phase_index=-1, current_task_index=-1)
+    def test_zero_indices_no_fix(self):
+        state = _make_state(current_phase_index=0, current_task_index=0)
         fixes = _fix_terminal_current_indices(state)
         self.assertEqual(fixes, [])
 
@@ -166,6 +166,8 @@ class TestAutoFix(TestCase):
         state = _make_state(current_phase_index=99, current_task_index=99)
         fixes = _auto_fix(state)
         self.assertTrue(any("clamped" in f for f in fixes))
+        self.assertEqual(state["current_phase_index"], 1)
+        self.assertEqual(state["current_task_index"], 2)
 
     def test_stale_and_terminal_combined(self):
         state = _make_state(
@@ -185,13 +187,13 @@ class TestCmdValidate(TestCase):
     def test_dry_run_reports_fixable(self):
         d = _make_track_dir(_make_state(
             updated_at="2020-01-01T00:00:00+00:00",
-            current_phase_index=0, current_task_index=0,
+            current_phase_index=1, current_task_index=1,
         ))
         state = load(d)
         state["phases"][0]["tasks"][0]["status"] = "in_progress"
         save(d, state)
 
-        result, _ = _out捕获(cmd_validate, d)
+        result, _ = _out_captured(cmd_validate, d)
         # Dry-run: reports fixes but does NOT persist
         self.assertTrue(result.get("fixable"))
         self.assertTrue(len(result.get("fixes", [])) > 0)
@@ -204,13 +206,13 @@ class TestCmdValidate(TestCase):
     def test_fix_flag_persists(self):
         d = _make_track_dir(_make_state(
             updated_at="2020-01-01T00:00:00+00:00",
-            current_phase_index=0, current_task_index=0,
+            current_phase_index=1, current_task_index=1,
         ))
         state = load(d)
         state["phases"][0]["tasks"][0]["status"] = "in_progress"
         save(d, state)
 
-        result, _ = _out捕获(cmd_validate, d, fix=True)
+        result, _ = _out_captured(cmd_validate, d, fix=True)
         self.assertTrue(result.get("fixed"))
         fixed = load(d)
         self.assertEqual(fixed["phases"][0]["tasks"][0]["status"], "pending")
@@ -230,7 +232,7 @@ class TestEnsureHealthy(TestCase):
     def test_fixes_stale_and_saves(self):
         d = _make_track_dir(_make_state(
             updated_at="2020-01-01T00:00:00+00:00",
-            current_phase_index=0, current_task_index=0,
+            current_phase_index=1, current_task_index=1,
         ))
         state = load(d)
         state["phases"][0]["tasks"][0]["status"] = "in_progress"
@@ -253,36 +255,36 @@ class TestCmdRecover(TestCase):
 
     def test_healthy_state_returns_current(self):
         d = _make_track_dir(_make_state(
-            current_phase_index=0, current_task_index=0,
+            current_phase_index=1, current_task_index=1,
         ))
         state = load(d)
         state["phases"][0]["tasks"][0]["status"] = "in_progress"
         save(d, state)
 
-        result, _ = _out捕获(cmd_recover, d)
+        result, _ = _out_captured(cmd_recover, d)
         self.assertEqual(result["status"], "in_progress")
         self.assertEqual(result["name"], "Task A")
         shutil.rmtree(d)
 
     def test_terminal_indices_auto_advance(self):
         d = _make_track_dir(_make_state(
-            current_phase_index=0, current_task_index=0,
+            current_phase_index=1, current_task_index=1,
         ))
         state = load(d)
         state["phases"][0]["tasks"][0]["status"] = "completed"
         state["phases"][0]["tasks"][0]["commit_sha"] = "abc1234"
         save(d, state)
 
-        result, _ = _out捕获(cmd_recover, d)
+        result, _ = _out_captured(cmd_recover, d)
         self.assertEqual(result["name"], "Task B")
-        self.assertEqual(result["phase"], 0)
-        self.assertEqual(result["task"], 1)
+        self.assertEqual(result["phase"], 1)
+        self.assertEqual(result["task"], 2)
         self.assertTrue(len(result.get("fixes_applied", [])) > 0)
         shutil.rmtree(d)
 
     def test_no_active_task_when_all_done(self):
         d = _make_track_dir(_make_state(
-            current_phase_index=0, current_task_index=0,
+            current_phase_index=1, current_task_index=1,
         ))
         state = load(d)
         for t in state["phases"][0]["tasks"]:
@@ -290,20 +292,20 @@ class TestCmdRecover(TestCase):
             t["commit_sha"] = "abc1234"
         save(d, state)
 
-        result, _ = _out捕获(cmd_recover, d)
+        result, _ = _out_captured(cmd_recover, d)
         self.assertEqual(result["status"], "no_active_task")
         shutil.rmtree(d)
 
     def test_fixes_applied_in_output(self):
         d = _make_track_dir(_make_state(
             updated_at="2020-01-01T00:00:00+00:00",
-            current_phase_index=0, current_task_index=0,
+            current_phase_index=1, current_task_index=1,
         ))
         state = load(d)
         state["phases"][0]["tasks"][0]["status"] = "in_progress"
         save(d, state)
 
-        result, stderr = _out捕获(cmd_recover, d)
+        result, stderr = _out_captured(cmd_recover, d)
         self.assertIn("fixes_applied", result)
         self.assertTrue(len(result["fixes_applied"]) > 0)
         self.assertIn("auto-fixed", stderr)
@@ -316,13 +318,13 @@ class TestDispatchNextAutoFix(TestCase):
     def test_auto_fixes_before_dispatch(self):
         d = _make_track_dir(_make_state(
             updated_at="2020-01-01T00:00:00+00:00",
-            current_phase_index=0, current_task_index=0,
+            current_phase_index=1, current_task_index=1,
         ))
         state = load(d)
         state["phases"][0]["tasks"][0]["status"] = "in_progress"
         save(d, state)
 
-        result, stderr = _out捕获(cmd_dispatch_next, d)
+        result, stderr = _out_captured(cmd_dispatch_next, d)
         self.assertIn("auto-fixed", stderr)
         self.assertEqual(result.get("action"), "dispatch_executor")
         shutil.rmtree(d)
@@ -360,7 +362,7 @@ class TestInitValidation(TestCase):
 
     def test_init_rejects_bad_structure(self):
         d = tempfile.mkdtemp()
-        result, _ = _out捕获(cmd_init, d, '{"phases": []}', 't1', 'feature', 'desc')
+        result, _ = _out_captured(cmd_init, d, '{"phases": []}', 't1', 'feature', 'desc')
         self.assertFalse(result["ok"])
         self.assertTrue(len(result["errors"]) > 0)
         shutil.rmtree(d)
@@ -372,7 +374,7 @@ class TestInitValidation(TestCase):
         structure = json.dumps({"phases": [
             {"name": "Build", "tasks": [{"name": "Task A"}, {"name": "Task B"}]},
         ]})
-        result, _ = _out捕获(cmd_init, d, structure, 't1', 'feature', 'desc')
+        result, _ = _out_captured(cmd_init, d, structure, 't1', 'feature', 'desc')
         self.assertTrue(result["ok"])
         self.assertIn("warnings", result)
         self.assertTrue(any("3 tasks" in w for w in result["warnings"]))
@@ -385,7 +387,7 @@ class TestInitValidation(TestCase):
         structure = json.dumps({"phases": [
             {"name": "Build", "tasks": [{"name": "Task A"}, {"name": "Task B"}]},
         ]})
-        result, _ = _out捕获(cmd_init, d, structure, 't1', 'feature', 'desc')
+        result, _ = _out_captured(cmd_init, d, structure, 't1', 'feature', 'desc')
         self.assertTrue(result["ok"])
         self.assertNotIn("warnings", result)
         shutil.rmtree(d)
@@ -429,14 +431,14 @@ class TestDispatchFinalizeShaWriteback(TestCase):
             "status": "SUCCESS",
             "commit_sha": "",
             "summary": "Done",
-            "phase": 0,
-            "task": 0,
+            "phase": 1,
+            "task": 1,
             "subtask": None,
             "task_name": "Task A",
         }
         (cond_dir / "result.json").write_text(json.dumps(result))
 
-        out, _ = _out捕获(cmd_dispatch_finalize, d)
+        out, _ = _out_captured(cmd_dispatch_finalize, d)
         self.assertEqual(out.get("status"), "success")
         self.assertTrue(out.get("committed"))
 
@@ -461,14 +463,14 @@ class TestDispatchFinalizeShaWriteback(TestCase):
             "status": "SUCCESS",
             "commit_sha": "abc1234",
             "summary": "Done",
-            "phase": 0,
-            "task": 0,
+            "phase": 1,
+            "task": 1,
             "subtask": None,
             "task_name": "Task A",
         }
         (cond_dir / "result.json").write_text(json.dumps(result))
 
-        out, _ = _out捕获(cmd_dispatch_finalize, d)
+        out, _ = _out_captured(cmd_dispatch_finalize, d)
         self.assertEqual(out.get("status"), "success")
 
         # code_sha should be preserved (not replaced by conductor commit SHA)
@@ -493,7 +495,7 @@ class TestDispatchFinalizeShaWriteback(TestCase):
         ).stdout.strip()
 
         # NO result.json — dispatch-finalize must synthesize from state
-        out, _ = _out捕获(cmd_dispatch_finalize, d)
+        out, _ = _out_captured(cmd_dispatch_finalize, d)
         self.assertEqual(out.get("status"), "success")
 
         # The synthesized result should have captured the HEAD SHA
