@@ -7,7 +7,7 @@ from .core import load, save
 from .helpers import (
     out, out_compact, now_iso, extract_tags, _inherit_tags,
     conductor_dir, _store_evidence, _last_subtask_sha, _any_phase_needs_checkpoint,
-    flag, _normalize_sha,
+    flag, _normalize_sha, target,
 )
 from .constants import AUTO_COMPLETE_OK
 from .mutations import _do_lock, _do_complete, _do_fail
@@ -373,12 +373,22 @@ def cmd_dispatch_prepare(track_dir):
         return
 
     # Lock + sync-plan for explore/execute
+    # Detect resume: if the target is already in_progress, this is a recovery
+    # from a previous interrupted run — avoid duplicate "Start task" commits.
+    tgt = target(state, pi, ti, si)
+    is_resume = tgt.get("status") == "in_progress"
+
     _do_lock(track_dir, pi, ti, si)
     synced = _do_sync_plan(track_dir)
-    commit_msg = f"chore(conductor): Start task '{name}' [P{pi + 1}.T{ti + 1}]"
+
+    if is_resume:
+        commit_msg = None  # Already started — skip the start commit
+    else:
+        commit_msg = f"chore(conductor): Start task '{name}' [P{pi + 1}.T{ti + 1}]"
 
     out(dict(action=action, phase=pi, task=ti, subtask=si, name=name,
              tags=tags, sync_count=synced, commit_msg=commit_msg,
+             is_resume=is_resume,
              execution_mode=nxt.get("execution_mode", "interactive"),
              next=nxt))
 

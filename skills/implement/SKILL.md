@@ -90,7 +90,8 @@ After return → **Section 3.6** (Phase Boundary).
 
 ```bash
 track-state dispatch-prepare "<track_dir>"
-git add -A && git diff --cached --quiet || git commit -m "<commit_msg from dispatch-prepare>"
+# Only commit start if commit_msg is present (null on resume — avoids duplicate start commits)
+if commit_msg: git add -A && git diff --cached --quiet || git commit -m "<commit_msg>"
 ```
 
 Dispatch `conductor:explorer`. Prompt: `TRACK_DIR={td} PHASE={p} TASK={t} NAME={name}`
@@ -101,7 +102,8 @@ After return: commit exploration artifacts (`git add -A && git diff --cached --q
 
 ```bash
 track-state dispatch-prepare "<track_dir>"
-git add -A && git diff --cached --quiet || git commit -m "<commit_msg from dispatch-prepare>"
+# Only commit start if commit_msg is present (null on resume — avoids duplicate start commits)
+if commit_msg: git add -A && git diff --cached --quiet || git commit -m "<commit_msg>"
 ```
 
 Dispatch `conductor:task-executor`. Prompt: `TRACK_DIR={td} PHASE={p} TASK={t} SUBTASK={s} NAME={name} ATTEMPT={n} MAX_RETRIES={m} IS_RETRY={bool}`
