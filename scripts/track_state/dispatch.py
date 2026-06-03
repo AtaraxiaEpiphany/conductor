@@ -205,6 +205,10 @@ def cmd_dispatch_next(track_dir):
                 save(track_dir, state)
                 _do_sync_plan(track_dir, state)
 
+            # Write git note for stuck parent (same as parent-complete path)
+            parent_tgt = state["phases"][result["phase"]]["tasks"][result["task"]]
+            _ensure_note(track_dir, state, result["phase"], result["task"], None, parent_tgt)
+
             out(dict(action="parent_stuck", phase=result["phase"], task=result["task"],
                      name=parent_name, sha=final_sha,
                      execution_mode=execution_mode))
@@ -483,14 +487,31 @@ def cmd_dispatch_finalize(track_dir):
                 r[k] = v
 
     status = r.get("status", "").upper()
-    p = str(r.get("phase", ""))
-    t = str(r.get("task", ""))
-    s = r.get("subtask")
-    if s is not None:
-        s = str(s)
-    task_name = r.get("task_name", "unknown")
+    # Resolve phase/task/subtask indices.
+    # Default to result.json (may be 1-based from task-executor), then override
+    # with locked indices from track-state.json (always 0-based, set by dispatch-prepare)
+    # if they point to an in_progress task.
+    p = str(r.get("phase") if r.get("phase") is not None else "")
+    t = str(r.get("task") if r.get("task") is not None else "")
+    s = str(r.get("subtask")) if r.get("subtask") is not None else None
 
     state = load(track_dir)
+    locked_pi = state.get("current_phase_index")
+    locked_ti = state.get("current_task_index")
+    locked_si = state.get("current_subtask_index")
+    if locked_pi is not None and locked_ti is not None and locked_pi >= 0 and locked_ti >= 0:
+        try:
+            locked_tgt = state["phases"][locked_pi]["tasks"][locked_ti]
+            if locked_si is not None:
+                locked_tgt = locked_tgt["subtasks"][locked_si]
+            if locked_tgt.get("status") == "in_progress":
+                p = str(locked_pi)
+                t = str(locked_ti)
+                s = str(locked_si) if locked_si is not None else None
+        except (IndexError, KeyError):
+            pass  # keep result.json defaults
+
+    task_name = r.get("task_name", "unknown")
 
     if status == "SUCCESS":
         code_sha = _normalize_sha(r.get("commit_sha", ""))
@@ -544,9 +565,14 @@ def cmd_dispatch_finalize(track_dir):
         else:
             print(f"WARNING: result.json preserved due to commit failure", file=sys.stderr)
 
-        # Write git note AFTER conductor commit so it's on the same SHA track-state.json references
-        r["commit_sha"] = final_sha
-        state = load(track_dir)
+        # Write git note using the SHA stored in track-state.json (not the conductor commit SHA).
+        # This ensures `git notes show <plan_sha>` works since plan.md shows the same SHA.
+        try:
+            note_tgt = target(state, int(p), int(t), int(s) if s is not None else None)
+            note_sha = note_tgt.get("commit_sha", "") or final_sha
+        except (IndexError, KeyError):
+            note_sha = final_sha
+        r["commit_sha"] = note_sha
         _write_git_note(track_dir, r, state)
 
         result = dict(status="success", sha=final_sha, parent_completed=parent_completed,

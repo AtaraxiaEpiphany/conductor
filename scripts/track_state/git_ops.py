@@ -11,7 +11,7 @@ from .sync import _do_sync_plan
 
 def _write_git_note(track_dir, result_data, state):
     """Write human-readable git note for the task's commit.
-    Best-effort: silently skips on any error (no SHA, git unavailable, etc.)."""
+    Best-effort: logs warnings on failure, silently skips if SHA missing."""
     sha = result_data.get("commit_sha", "")
     if not sha or sha == "N/A":
         return
@@ -62,18 +62,21 @@ def _write_git_note(track_dir, result_data, state):
             capture_output=True, text=True, cwd=track_dir, timeout=5
         ).stdout.strip()
         if not full_sha:
+            print(f"WARNING: git note skipped — cannot resolve SHA '{sha}'", file=sys.stderr)
             return
-        subprocess.run(
+        result = subprocess.run(
             ["git", "notes", "add", "-f", "-m", note, full_sha],
             capture_output=True, text=True, cwd=track_dir, timeout=5
         )
-    except (ImportError, subprocess.SubprocessError, FileNotFoundError, PermissionError, subprocess.TimeoutExpired):
-        pass  # Git unavailable or permission denied
+        if result.returncode != 0:
+            print(f"WARNING: git notes add failed for {sha}: {result.stderr.strip()}", file=sys.stderr)
+    except (ImportError, subprocess.SubprocessError, FileNotFoundError, PermissionError, subprocess.TimeoutExpired) as e:
+        print(f"WARNING: git note write error for {sha}: {e}", file=sys.stderr)
 
 
 def _write_git_note_basic(track_dir, sha, state, pi, ti, si=None):
     """Write a basic git note from track-state.json + git when result.json is unavailable.
-    Used during recovery. Best-effort: silently skips on any error."""
+    Used during recovery. Best-effort: logs warnings on failure."""
     if not sha:
         return
 
@@ -118,6 +121,7 @@ def _write_git_note_basic(track_dir, sha, state, pi, ti, si=None):
             capture_output=True, text=True, cwd=track_dir, timeout=5
         ).stdout.strip()
         if not full_sha:
+            print(f"WARNING: git note skipped — cannot resolve SHA '{sha}'", file=sys.stderr)
             return
         # Only write if no note exists
         existing = subprocess.run(
@@ -125,12 +129,14 @@ def _write_git_note_basic(track_dir, sha, state, pi, ti, si=None):
             capture_output=True, text=True, cwd=track_dir, timeout=5
         )
         if existing.returncode != 0:
-            subprocess.run(
+            result = subprocess.run(
                 ["git", "notes", "add", "-f", "-m", note, full_sha],
                 capture_output=True, text=True, cwd=track_dir, timeout=5
             )
-    except (ImportError, subprocess.SubprocessError, FileNotFoundError, PermissionError, subprocess.TimeoutExpired):
-        pass  # Git unavailable or permission denied
+            if result.returncode != 0:
+                print(f"WARNING: git notes add failed for {sha}: {result.stderr.strip()}", file=sys.stderr)
+    except (ImportError, subprocess.SubprocessError, FileNotFoundError, PermissionError, subprocess.TimeoutExpired) as e:
+        print(f"WARNING: git note write error for {sha}: {e}", file=sys.stderr)
 
 
 def _git_commit(track_dir, message, allow_empty=False):
@@ -313,14 +319,21 @@ def _ensure_note(track_dir, state, pi, ti, si, tgt):
                     r = json.load(f)
                 rp, rt = r.get("phase"), r.get("task")
                 rs = r.get("subtask")
+                # Match by indices (handles 0-based from dispatch-prepare)
                 if str(rp) == str(pi) and str(rt) == str(ti) and ((rs is None and si is None) or str(rs) == str(si)):
                     _write_git_note(track_dir, r, state)
+                    return
+                # Fallback: match by task_name (handles 1-based phase from task-executor)
+                r_name = r.get("task_name", "")
+                if r_name == tgt.get("name", ""):
+                    # Pass corrected indices so _write_git_note computes correct P/T location
+                    _write_git_note(track_dir, {**r, "phase": pi, "task": ti, "subtask": si}, state)
                     return
             except (FileNotFoundError, json.JSONDecodeError):
                 pass  # Result file missing or invalid
 
         # Fall back to basic note from track-state.json + git
         _write_git_note_basic(track_dir, sha, state, pi, ti, si)
-    except (ImportError, FileNotFoundError, PermissionError):
-        pass  # Git unavailable or permission denied
+    except (ImportError, subprocess.SubprocessError, FileNotFoundError, PermissionError, subprocess.TimeoutExpired) as e:
+        print(f"WARNING: _ensure_note failed for {sha}: {e}", file=sys.stderr)
 
