@@ -28,12 +28,14 @@ RESULT_PATTERN = (
 )
 
 NO_RESULT_MESSAGE = (
-    "[Conductor] Subagent completed. No structured result block found. "
-    "Check .conductor/ for artifacts."
+    "[Conductor] Subagent completed without structured result block. "
+    "Proceed with dispatch-finalize — it handles missing results."
 )
 
 NO_RESULT_WARN = (
-    "[Conductor] Subagent output filtered: no ---RESULT--- block detected in response."
+    "[Conductor] No ---RESULT--- block detected in subagent output. "
+    "ALWAYS proceed with dispatch-finalize — it will synthesize a result, "
+    "write handoff records, and handle the failure path automatically."
 )
 
 NO_RESULT_OK = (

@@ -232,6 +232,46 @@ def _update_task_sha(track_dir, p, t, s, sha):
     return state
 
 
+def _is_start_commit(track_dir):
+    """Check if HEAD commit message matches a conductor 'Start task' pattern.
+
+    Returns True when HEAD is a Start commit, meaning the task-executor
+    produced no implementation commits of its own."""
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["git", "log", "-1", "--format=%s"],
+            capture_output=True, text=True, cwd=track_dir, timeout=5
+        )
+        msg = result.stdout.strip()
+        return bool(re.match(r"^chore\(conductor\): Start task ", msg))
+    except Exception:
+        return False
+
+
+def _git_uncommitted_files(track_dir):
+    """Get list of unstaged, staged, and untracked files in the working tree.
+
+    Returns sorted list of repo-relative file paths, excluding conductor-managed
+    files (track-state.json, plan.md, .conductor/, issues.md, handoff.md).
+    Uses git status --porcelain to cover all three categories in one call."""
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            capture_output=True, text=True, cwd=track_dir, timeout=5
+        )
+        # --porcelain: "XY PATH" per line; Y=space→unstaged, M/A→staged, ?→untracked
+        files = {line[3:] for line in result.stdout.splitlines() if len(line) > 3}
+    except Exception:
+        files = set()
+    # Exclude conductor-managed files — only report implementation files
+    conductor_prefixes = ("track-state", "plan.md", ".conductor/",
+                          "issues.md", "handoff.md")
+    return sorted(f for f in files
+                  if not any(f.startswith(p) or f == p for p in conductor_prefixes))
+
+
 def _find_conductor_shas(track_dir):
     """Build a mapping of task_name -> SHA from recent conductor completion commits.
 

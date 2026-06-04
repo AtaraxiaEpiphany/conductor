@@ -91,6 +91,12 @@ If `SUBTASK` is not null, append: `--subtask {SUBTASK}`.
 Read the returned `content` field — it contains ONLY your task/subtask's execution history.
 Do NOT repeat the same approach. Focus on "Suggested Next Step" from previous attempts.
 
+**Check for salvageable work**: The previous attempt may have left uncommitted files in the working tree. The handoff record will list them under "What Was Done". Run `git status` to see the current state. If partial work exists:
+- Review it — decide if it's usable or should be discarded
+- If usable → build on top of it (no need to redo working code)
+- If broken → `git checkout -- <file>` to discard and start fresh
+- NEVER leave broken partial code in place hoping it will work
+
 ---
 
 ## 4.0 TDD WORKFLOW

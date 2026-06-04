@@ -134,6 +134,8 @@ If NOT found → **Section 3.7**.
 
 ### 3.6 Process Result (after task-executor)
 
+**ALWAYS** call `dispatch-finalize` after the task-executor returns — even when no result block was detected in the output or the subagent output looks incomplete. `dispatch-finalize` handles the missing result.json case by synthesizing a result from state: it detects whether the agent committed code (→ SUCCESS) or produced nothing (→ FAILURE with handoff record for retry context).
+
 ```bash
 track-state dispatch-finalize "<track_dir>"
 ```

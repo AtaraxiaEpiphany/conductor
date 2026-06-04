@@ -15,6 +15,7 @@ from .sync import _do_sync_plan
 from .git_ops import (
     _git_commit, _git_commit_ensured, _git_head_sha, _write_git_note, _ensure_note,
     _has_sibling_sha, _update_task_sha, _recover_git_notes,
+    _is_start_commit, _git_uncommitted_files,
 )
 from .handoff import (
     _append_execution_record, _append_deviation_legacy, _append_failure_legacy,
@@ -410,9 +411,16 @@ def _last_subtask_sha_from_state(track_dir, pi, ti):
 def _synthesize_result_from_state(track_dir):
     """Build a result dict from the currently locked task in track-state.json.
 
-    Used when .conductor/result.json is missing (e.g. explorer running in plan
-    mode could not write it). Derives phase/task/subtask/task_name from the
-    current_*_index fields set by dispatch-prepare's _do_lock call."""
+    Used when .conductor/result.json is missing (agent exhausted turns or lost
+    context before reaching Section 6.0). Derives phase/task/subtask/task_name
+    from the current_*_index fields set by dispatch-prepare's _do_lock call.
+
+    Smart detection:
+    - If agent committed implementation code → SUCCESS with HEAD SHA
+    - If only uncommitted changes → FAILURE with partial-work details
+    - If no work at all → FAILURE with "agent produced no result"
+    The FAILURE path ensures handoff records are written so retry agents get context.
+    """
 
     state = load(track_dir)
     pi = state.get("current_phase_index", 0)
@@ -442,19 +450,51 @@ def _synthesize_result_from_state(track_dir):
     if tgt.get("status") != "in_progress":
         return None
 
-    # Best-effort: capture HEAD SHA so the code commit is recorded
-    # even when the subagent failed to write result.json
     head_sha = _git_head_sha(track_dir) or ""
 
-    return dict(
-        status="SUCCESS",
-        commit_sha=head_sha,
-        summary="Synthesized from locked task (result.json missing)",
-        phase=pi,
-        task=ti,
-        subtask=si,
-        task_name=name,
-    )
+    # Detect whether the agent produced any real implementation work.
+    # If HEAD is still a "Start task" commit, the agent made no commits.
+    start_only = _is_start_commit(track_dir)
+    uncommitted = _git_uncommitted_files(track_dir)
+
+    if start_only:
+        # No implementation commit → FAILURE so callers write handoff/retry context.
+        if uncommitted:
+            what = ", ".join(uncommitted[:10])
+            if len(uncommitted) > 10:
+                what += f" (+{len(uncommitted) - 10} more)"
+            what_was_done = f"Partial work left uncommitted: {what}"
+            suggested = "Review and salvage uncommitted changes before retry"
+        else:
+            what_was_done = "No implementation work found in working tree"
+            suggested = "Re-dispatch from scratch"
+
+        return dict(
+            status="FAILURE",
+            commit_sha="N/A",
+            summary="Task executor did not produce result (exhausted turns or lost context)",
+            failure_detail={
+                "what_was_done": what_was_done,
+                "failure_reason": "Agent stopped without writing result.json or committing code",
+                "suggested_next_step": suggested,
+            },
+            phase=pi,
+            task=ti,
+            subtask=si,
+            task_name=name,
+        )
+    else:
+        # Agent committed implementation code but forgot to write result.json.
+        # This is a legitimate completion — synthesize SUCCESS.
+        return dict(
+            status="SUCCESS",
+            commit_sha=head_sha,
+            summary="Synthesized from locked task (result.json missing, implementation commit found)",
+            phase=pi,
+            task=ti,
+            subtask=si,
+            task_name=name,
+        )
 
 
 def cmd_dispatch_finalize(track_dir):
