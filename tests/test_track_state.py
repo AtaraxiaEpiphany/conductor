@@ -153,10 +153,25 @@ class TestFixTerminalCurrentIndices(TestCase):
         self.assertEqual(state["current_phase_index"], 0)
         self.assertEqual(state["current_task_index"], 0)
 
-    def test_zero_indices_no_fix(self):
+    def test_zero_indices_migrates_to_first_pending(self):
+        """Legacy 0-based cpi=0/cti=0 with pending tasks → scan forward to P1.T1."""
         state = _make_state(current_phase_index=0, current_task_index=0)
         fixes = _fix_terminal_current_indices(state)
+        self.assertEqual(len(fixes), 1)
+        self.assertIn("migrated to 1-based", fixes[0])
+        self.assertEqual(state["current_phase_index"], 1)
+        self.assertEqual(state["current_task_index"], 1)
+
+    def test_zero_indices_no_pending_stays_zero(self):
+        """cpi=0/cti=0 with all-terminal tasks → no migration (true sentinel)."""
+        state = _make_state(current_phase_index=0, current_task_index=0)
+        for t in state["phases"][0]["tasks"]:
+            t["status"] = "completed"
+            t["commit_sha"] = "abc1234"
+        fixes = _fix_terminal_current_indices(state)
         self.assertEqual(fixes, [])
+        self.assertEqual(state["current_phase_index"], 0)
+        self.assertEqual(state["current_task_index"], 0)
 
 
 class TestAutoFix(TestCase):
@@ -390,6 +405,111 @@ class TestInitValidation(TestCase):
         result, _ = _out_captured(cmd_init, d, structure, 't1', 'feature', 'desc')
         self.assertTrue(result["ok"])
         self.assertNotIn("warnings", result)
+        shutil.rmtree(d)
+
+
+class TestLegacy0BasedMigration(TestCase):
+    """validate.py: migration of old 0-based stored indices to 1-based."""
+
+    def _make_old_state(self, **overrides):
+        """Build a state dict mimicking old 0-based storage."""
+        state = {
+            "track_id": "legacy",
+            "type": "feature",
+            "status": "in_progress",
+            "description": "old 0-based track",
+            "current_phase_index": 0,
+            "current_task_index": 0,
+            "updated_at": "2026-06-04T00:00:00+00:00",
+            "phases": [
+                {
+                    "name": "Phase 1",
+                    "status": "pending",
+                    "tasks": [
+                        {"name": "Task A", "status": "pending"},
+                        {"name": "Task B", "status": "pending"},
+                    ],
+                },
+                {
+                    "name": "Phase 2",
+                    "status": "pending",
+                    "tasks": [
+                        {"name": "Task C", "status": "pending"},
+                    ],
+                },
+            ],
+        }
+        state.update(overrides)
+        return state
+
+    def test_validate_warns_on_legacy_zero_indices(self):
+        """Dry-run validate warns about legacy 0-based data with pending tasks."""
+        d = _make_track_dir(self._make_old_state())
+        result, _ = _out_captured(cmd_validate, d)
+        self.assertTrue(result["valid"])
+        self.assertTrue(any("legacy 0-based" in w for w in result["warnings"]))
+        self.assertTrue(result["fixable"])
+        self.assertTrue(any("migrated to 1-based" in f for f in result["fixes"]))
+        shutil.rmtree(d)
+
+    def test_validate_fix_migrates_zero_to_one(self):
+        """validate --fix migrates cpi=0/cti=0 to first pending task."""
+        d = _make_track_dir(self._make_old_state())
+        result, _ = _out_captured(cmd_validate, d, fix=True)
+        self.assertTrue(result["fixed"])
+        fixed = load(d)
+        self.assertEqual(fixed["current_phase_index"], 1)
+        self.assertEqual(fixed["current_task_index"], 1)
+        shutil.rmtree(d)
+
+    def test_validate_no_false_positive_on_sentinel(self):
+        """cpi=0/cti=0 with all tasks terminal does NOT trigger legacy warning."""
+        state = self._make_old_state()
+        for phase in state["phases"]:
+            phase["status"] = "completed"
+            for t in phase["tasks"]:
+                t["status"] = "completed"
+                t["commit_sha"] = "abc1234"
+        d = _make_track_dir(state)
+        result, _ = _out_captured(cmd_validate, d)
+        self.assertFalse(any("legacy 0-based" in w for w in result["warnings"]))
+        shutil.rmtree(d)
+
+    def test_off_by_one_auto_corrects_via_terminal_scan(self):
+        """Old cpi=1 pointing to completed phase gets advanced to next pending."""
+        state = self._make_old_state(current_phase_index=1, current_task_index=1)
+        state["phases"][0]["tasks"][0]["status"] = "completed"
+        state["phases"][0]["tasks"][0]["commit_sha"] = "abc1234"
+        state["phases"][0]["tasks"][1]["status"] = "completed"
+        state["phases"][0]["tasks"][1]["commit_sha"] = "def5678"
+        d = _make_track_dir(state)
+        result, _ = _out_captured(cmd_validate, d, fix=True)
+        fixed = load(d)
+        # Should advance past the all-terminal phase to Phase 2, Task C
+        self.assertEqual(fixed["current_phase_index"], 2)
+        self.assertEqual(fixed["current_task_index"], 1)
+        shutil.rmtree(d)
+
+    def test_ensure_healthy_migrates_legacy(self):
+        """ensure_healthy auto-migrates legacy 0-based indices."""
+        d = _make_track_dir(self._make_old_state())
+        state, fixes, errors = ensure_healthy(d)
+        self.assertTrue(any("migrated to 1-based" in f for f in fixes))
+        self.assertEqual(errors, [])
+        self.assertEqual(state["current_phase_index"], 1)
+        self.assertEqual(state["current_task_index"], 1)
+        shutil.rmtree(d)
+
+    def test_recover_migrates_legacy_and_dispatches(self):
+        """cmd_recover auto-fixes legacy 0-based data and returns the first task."""
+        d = _make_track_dir(self._make_old_state())
+        result, stderr = _out_captured(cmd_recover, d)
+        self.assertEqual(result["status"], "pending")
+        self.assertEqual(result["name"], "Task A")
+        self.assertEqual(result["phase"], 1)
+        self.assertEqual(result["task"], 1)
+        self.assertTrue(any("migrated to 1-based" in f
+                           for f in result.get("fixes_applied", [])))
         shutil.rmtree(d)
 
 

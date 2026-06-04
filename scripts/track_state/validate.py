@@ -295,6 +295,9 @@ def _fix_terminal_current_indices(state):
 
     If current indices point to a completed/failed/skipped task, scan forward
     through phases and tasks to find the next dispatchable target.
+
+    Also handles legacy 0-based stored indices: when current_phase_index is 0
+    but pending tasks exist, scans from the beginning to migrate to 1-based.
     Returns list of fixes applied.
     """
     fixes = []
@@ -302,11 +305,8 @@ def _fix_terminal_current_indices(state):
     cpi = state.get("current_phase_index", 0)
     cti = state.get("current_task_index", 0)
 
-    if cpi < 1 or cti < 1:
-        return fixes
-
-    # Check if current target is actually still active
-    if cpi <= len(phases):
+    # Check if current target is actually still active (only when both >= 1)
+    if cpi >= 1 and cti >= 1 and cpi <= len(phases):
         tasks = phases[cpi - 1].get("tasks", [])
         if cti <= len(tasks):
             task = tasks[cti - 1]
@@ -320,7 +320,11 @@ def _fix_terminal_current_indices(state):
                     if task["subtasks"][csi - 1]["status"] not in TERMINAL_FOR_PARENT:
                         return fixes  # Current subtask is still active
 
-    # Scan forward from current position for next pending task
+    # Build display label for old indices (0=sentinel → show "N/A")
+    _old = (f"P{cpi}.T{cti}" if cpi >= 1 else "N/A")
+
+    # Scan forward from the beginning for next pending task.
+    # Handles both: terminal current task AND legacy cpi=0 sentinel.
     for pi in range(1, len(phases) + 1):
         tasks = phases[pi - 1].get("tasks", [])
         for ti in range(1, len(tasks) + 1):
@@ -330,7 +334,9 @@ def _fix_terminal_current_indices(state):
                 state["current_task_index"] = ti
                 state.pop("current_subtask_index", None)
                 fixes.append(
-                    f"current indices: P{cpi}.T{cti} → P{pi}.T{ti} "
+                    f"current indices: {_old} → P{pi}.T{ti} "
+                    f"(migrated to 1-based)" if cpi < 1 else
+                    f"current indices: {_old} → P{pi}.T{ti} "
                     f"(advanced past terminal task)")
                 return fixes
             # Check for pending subtasks in in_progress parents
@@ -341,7 +347,9 @@ def _fix_terminal_current_indices(state):
                         state["current_task_index"] = ti
                         state["current_subtask_index"] = si
                         fixes.append(
-                            f"current indices: P{cpi}.T{cti} → P{pi}.T{ti}.S{si} "
+                            f"current indices: {_old} → P{pi}.T{ti}.S{si} "
+                            f"(migrated to 1-based)" if cpi < 1 else
+                            f"current indices: {_old} → P{pi}.T{ti}.S{si} "
                             f"(advanced to active subtask)")
                         return fixes
 
@@ -430,6 +438,19 @@ def _run_all_checks(track_dir, state, errors, warnings):
         errors.append(f"current_phase_index {cpi} out of range")
     if cti < 0:
         errors.append(f"current_task_index {cti} out of range")
+
+    # Legacy 0-based index detection: both indices 0 but pending tasks exist
+    if cpi == 0 and cti == 0:
+        has_pending = any(
+            t["status"] == "pending"
+            for p in state.get("phases", [])
+            for t in p.get("tasks", [])
+        )
+        if has_pending:
+            warnings.append(
+                "current_phase_index and current_task_index are both 0 but pending "
+                "tasks exist — likely legacy 0-based data "
+                "(run 'validate --fix' to migrate to 1-based)")
 
     # Phase validation
     for pi, phase in enumerate(state.get("phases", []), 1):
