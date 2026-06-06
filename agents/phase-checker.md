@@ -48,8 +48,8 @@ CRITICAL: You must validate the success of every tool call. If any tool call fai
 1. **Phase Checkpoint Protocol** — resolve via `conductor/workflow/phase-checkpoint.md` (relative to project root).
 2. **Plan** — `{TRACK_DIR}/plan.md` — find previous checkpoint SHA and phase scope.
 3. **Global Docs** — resolve via `conductor/index.md`:
-   - `conductor/overview/product.md`
-   - `conductor/overview/product-guidelines.md`
+   - `conductor/product/product.md`
+   - `conductor/product/product-guidelines.md`
 4. **Scoped Docs** (match to phase changes via git diff):
    - `git diff --name-only <prev_checkpoint> HEAD` → match changed files to scoped docs per `conductor/index.md` match strategies.
 

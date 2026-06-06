@@ -59,7 +59,7 @@
     ],
     "SubagentStart": [
       {
-        "matcher": "task-executor|code-reviewer|explorer|phase-checker|doc-syncer|skip-analyst|spec-planner|spec-reviewer|project-analyzer",
+        "matcher": "task-executor|code-reviewer|explorer|phase-checker|doc-syncer|doc-linter|skip-analyst|spec-planner|spec-reviewer|project-analyzer",
         "hooks": [
           {
             "type": "command",
@@ -81,7 +81,7 @@
         ]
       },
       {
-        "matcher": "code-reviewer|doc-syncer|skip-analyst|spec-planner|spec-reviewer|project-analyzer",
+        "matcher": "code-reviewer|doc-syncer|doc-linter|skip-analyst|spec-planner|spec-reviewer|project-analyzer",
         "hooks": [
           {
             "type": "command",

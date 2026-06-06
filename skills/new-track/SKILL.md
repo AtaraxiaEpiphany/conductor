@@ -12,7 +12,7 @@ model: sonnet
 ## 0.0 RESOLVE PATHS
 
 Key paths (resolve via `conductor/index.md` if non-default):
-- Product: `conductor/overview/product.md`
+- Product: `conductor/product/product.md`
 - Tech Stack: `conductor/design/tech-stack.md`
 - Tracks Registry: `conductor/tracks.md`
 - Workflow Index: `conductor/workflow/index.md`

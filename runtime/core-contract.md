@@ -121,3 +121,17 @@ Before EVERY code-modifying action, silently verify:
 4. Will this action leave the project in a consistent state?
 
 If any answer is **"no"** or **"unsure"** → STOP and re-evaluate.
+
+---
+
+## Documentation Conventions
+
+### Wikilink Format
+
+Cross-references between Conductor documents use `[[wikilinks]]`:
+
+- **Syntax:** `[[path/to/doc]]` — path relative to project root, without `.md` extension.
+- **Resolution:** append `.md` to the path and check file existence.
+- **Placement:** `## See Also` section at the bottom of each document.
+- **Bidirectionality:** when adding A→B, also add B→A.
+- **Used in:** overview.md knowledge base, doc-syncer cross-references, doc-linter orphan checks.

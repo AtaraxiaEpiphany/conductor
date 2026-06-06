@@ -6,8 +6,10 @@ Use this map when explicit links are missing. All new documents MUST be created 
 
 | Category        | Document Type           | Default Path Pattern                                       | Creation Rule                         |
 | :-------------- | :---------------------- | :--------------------------------------------------------- | :------------------------------------ |
-| **Overview**    | Product Definition      | `./conductor/overview/product.md`                          | Create if missing.                    |
-|                 | Product Guidelines      | `./conductor/overview/product-guidelines.md`               | Create if missing.                    |
+| **Product**     | Product Definition      | `./conductor/product/product.md`                           | Create if missing.                    |
+|                 | Product Guidelines      | `./conductor/product/product-guidelines.md`                | Create if missing.                    |
+|                 | Wiki Overview           | `./conductor/overview.md`                                  | Create if missing.                    |
+|                 | Wiki Log                | `./conductor/log.md`                                       | Create if missing.                    |
 | **Requirement** | PRD                     | `./conductor/requirement/prd/<name>.md`                    | **Create here** if missing.           |
 | **Design**      | Tech Stack              | `./conductor/design/tech-stack.md`                         | Create if missing.                    |
 |                 | UX/UI Spec              | `./conductor/requirement/ux-ui/design-spec.md`             | Create if missing.                    |

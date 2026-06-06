@@ -132,7 +132,7 @@ Map each AC to concrete test scenarios. These guide the conductor:task-executor'
 
 ### Project Context
 - [Tech Stack](conductor/design/tech-stack.md) — Framework choices, language decisions
-- [Product Guidelines](conductor/overview/product-guidelines.md) — UX requirements, brand voice
+- [Product Guidelines](conductor/product/product-guidelines.md) — UX requirements, brand voice
 
 ### Related Design Docs (if applicable)
 - [System Architecture](conductor/design/architecture/system-architecture.md) — Component boundaries
@@ -143,7 +143,7 @@ Map each AC to concrete test scenarios. These guide the conductor:task-executor'
 
 (For minimal references, use flat format below)
 - [Tech Stack](conductor/design/tech-stack.md) — Framework choices
-- [Product Guidelines](conductor/overview/product-guidelines.md) — UX voice
+- [Product Guidelines](conductor/product/product-guidelines.md) — UX voice
 ```
 
 **Rules:**

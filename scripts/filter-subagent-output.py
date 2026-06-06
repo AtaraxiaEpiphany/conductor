@@ -20,12 +20,10 @@ sys.path.insert(0, str(Path(__file__).parent / "lib"))
 from lib.hook_io import read_hook_input, write_hook_output
 from lib.constants import FAILURE_PATTERNS, RECOVERY_SUCCESS_PATTERNS
 
-# Pattern matches all conductor result block types
-RESULT_PATTERN = (
-    r'---(?:TASK RESULT|CHECKPOINT RESULT|SKIP ANALYSIS|DOC SYNC RESULT|'
-    r'REVIEW RESULT|SPEC PLAN RESULT|ANALYSIS RESULT)---.*?'
-    r'---(?:END RESULT|END ANALYSIS|END REVIEW RESULT|END SPEC PLAN RESULT|END ANALYSIS RESULT)---'
-)
+# Pattern matches all conductor result block types.
+# Open tags: uppercase words (e.g. TASK RESULT, DOC SYNC RESULT, SKIP ANALYSIS).
+# Close tags: END + uppercase words (e.g. END RESULT, END SPEC PLAN RESULT).
+RESULT_PATTERN = r'---[A-Z][A-Z ]+---.*?---END [A-Z ]+---'
 
 NO_RESULT_MESSAGE = (
     "[Conductor] Subagent completed without structured result block. "

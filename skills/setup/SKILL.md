@@ -11,7 +11,7 @@ model: sonnet
 ## 0.0 RESOLVE PATHS
 
 Key paths (resolve via `conductor/index.md` if non-default):
-- Product: `conductor/overview/product.md`
+- Product: `conductor/product/product.md`
 - Tech Stack: `conductor/design/tech-stack.md`
 - Tracks Registry: `conductor/tracks.md`
 - Workflow Index: `conductor/workflow/index.md`
@@ -43,11 +43,11 @@ CRITICAL: Validate every tool call. On failure → halt → announce.
 
 ### 2.1 Product Guide
 
-Interactive (up to 5 questions). Write to `conductor/overview/product.md`. Save state: `2.1_product_guide`.
+Interactive (up to 5 questions). Write to `conductor/product/product.md`. Save state: `2.1_product_guide`.
 
 ### 2.2 Product Guidelines
 
-Interactive. Write to `conductor/overview/product-guidelines.md`. Save state: `2.2_product_guidelines`.
+Interactive. Write to `conductor/product/product-guidelines.md`. Save state: `2.2_product_guidelines`.
 
 ### 2.3 Tech Stack & Style Guides
 
@@ -81,6 +81,8 @@ Save state: `2.3_tech_stack_styleguides`.
 4. **Testing strategy:** Copy `${CLAUDE_PLUGIN_ROOT}/templates/testing/strategy.md` → `conductor/workflow/testing/strategy.md`. Replace `{TEST_ROOT}` with the detected test directory (scan project for `tests/`, `__tests__/`, `test/`; default: `tests/`).
 5. Generate `conductor/workflow/index.md` listing all created files.
 6. Verify all referenced files exist.
+7. **Wiki Overview:** Read `${CLAUDE_PLUGIN_ROOT}/templates/wiki-overview.md`, write to `conductor/overview.md`. Replace `{TIMESTAMP}` with current ISO-8601 timestamp.
+8. **Wiki Log:** Read `${CLAUDE_PLUGIN_ROOT}/templates/wiki-log.md`, write to `conductor/log.md`.
 Save state: `2.4_workflow`.
 
 ### 2.5 Finalization

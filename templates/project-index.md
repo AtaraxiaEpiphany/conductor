@@ -6,12 +6,17 @@
 
 Always read in full. Provide baseline context for all tasks.
 
+<!-- WIKI: Summaries in the Purpose column are maintained by doc-syncer Phase 2.
+     Do not edit manually — they are regenerated during wiki synthesis. -->
+
 | Doc | Path | Purpose |
 |-----|------|---------|
-| Product Definition | conductor/overview/product.md | Product description and feature list |
-| Product Guidelines | conductor/overview/product-guidelines.md | Brand voice, UX strategy, design principles |
+| Product Definition | conductor/product/product.md | Product description and feature list |
+| Product Guidelines | conductor/product/product-guidelines.md | Brand voice, UX strategy, design principles |
 | Tech Stack | conductor/design/tech-stack.md | Technology stack, frameworks, and versions |
 | Glossary | conductor/resource/glossary.md | Domain terms and acronyms |
+| Wiki Overview | conductor/overview.md | Global synthesis regenerated after each track |
+| Wiki Log | conductor/log.md | Append-only chronological record of doc changes |
 
 ## Scoped Docs
 
