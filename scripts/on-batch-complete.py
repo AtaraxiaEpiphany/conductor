@@ -14,9 +14,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-# Add lib directory to path for imports
+# Add lib and track_state directories to path for imports
 sys.path.insert(0, str(Path(__file__).parent / "lib"))
+sys.path.insert(0, str(Path(__file__).parent / "track_state"))
 
+from track_state.constants import TERMINAL_FOR_PARENT
 from lib.hook_io import read_hook_input, write_simple_output
 from lib.logging import init_logging, log_entry
 from lib.json_utils import load_json_safe
@@ -342,9 +344,8 @@ def verify_phase_checkpoint(cwd: Path) -> Optional[str]:
             if not tasks:
                 continue
 
-            # Check if all tasks in this phase are terminal (completed/skipped/deferred/cancelled)
-            terminal_statuses = {"completed", "skipped", "deferred", "cancelled"}
-            all_terminal = all(t.get("status") in terminal_statuses for t in tasks)
+            # Check if all tasks in this phase are terminal
+            all_terminal = all(t.get("status") in TERMINAL_FOR_PARENT for t in tasks)
             if not all_terminal:
                 continue
 
@@ -356,23 +357,16 @@ def verify_phase_checkpoint(cwd: Path) -> Optional[str]:
                 f"P{pi}",
                 phase_name.lower(),
             ]
-            has_checkpoint = any(
-                pattern in git_log.lower()
-                for pattern in checkpoint_patterns
-                if "conductor(checkpoint)" in git_log.lower() or "checkpoint" in git_log.lower()
-            )
-
-            # More precise: look for checkpoint + phase indicator on same line
-            if not has_checkpoint:
-                for line in git_log.split('\n'):
-                    line_lower = line.lower()
-                    if "checkpoint" in line_lower:
-                        for pattern in checkpoint_patterns:
-                            if pattern in line_lower:
-                                has_checkpoint = True
-                                break
-                    if has_checkpoint:
-                        break
+            has_checkpoint = False
+            for line in git_log.split('\n'):
+                line_lower = line.lower()
+                if "checkpoint" in line_lower:
+                    for pattern in checkpoint_patterns:
+                        if pattern in line_lower:
+                            has_checkpoint = True
+                            break
+                if has_checkpoint:
+                    break
 
             if not has_checkpoint:
                 track_id = state.get("track_id", track_dir)

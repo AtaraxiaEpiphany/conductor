@@ -96,8 +96,6 @@ def collect_gc_metrics(cwd: Path, track_dirs: list[str]) -> Dict:
         "gc_warnings": [],
     }
 
-    now = datetime.now(timezone.utc)
-
     for track_dir in track_dirs:
         full_dir = cwd / track_dir
         state_file = full_dir / "track-state.json"
@@ -112,45 +110,22 @@ def collect_gc_metrics(cwd: Path, track_dirs: list[str]) -> Dict:
             metrics["archived_tracks"] += 1
             continue
 
-        # Count stale in_progress tasks (>24h)
-        updated_at = state.get("updated_at", "")
-        if updated_at:
-            try:
-                updated = datetime.fromisoformat(updated_at)
-                if updated.tzinfo is None:
-                    updated = updated.replace(tzinfo=timezone.utc)
-                age_hours = (now - updated).total_seconds() / 3600
-            except (ValueError, TypeError):
-                age_hours = 0
-        else:
-            age_hours = 0
-
+        # Single pass: count stale in_progress tasks and detect active tasks
+        has_active = False
         for phase in state.get("phases", []):
             for task in phase.get("tasks", []):
                 if task.get("status") == "in_progress":
                     metrics["stale_tasks"] += 1
+                    has_active = True
                 for sub in task.get("subtasks", []):
                     if sub.get("status") == "in_progress":
                         metrics["stale_tasks"] += 1
-
-        # Count orphaned result.json files
-        result_file = cond_dir / "result.json"
-        if result_file.exists():
-            # Check if any task is actually in_progress
-            has_active = False
-            for phase in state.get("phases", []):
-                for task in phase.get("tasks", []):
-                    if task.get("status") == "in_progress":
                         has_active = True
-                        break
-                    for sub in task.get("subtasks", []):
-                        if sub.get("status") == "in_progress":
-                            has_active = True
-                            break
-                if has_active:
-                    break
-            if not has_active:
-                metrics["orphaned_results"] += 1
+
+        # Count orphaned result.json files (result exists but no active tasks)
+        result_file = cond_dir / "result.json"
+        if result_file.exists() and not has_active:
+            metrics["orphaned_results"] += 1
 
     # Build gc_warnings
     if metrics["orphaned_results"] > 0:

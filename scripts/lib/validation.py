@@ -248,20 +248,12 @@ def validate_commit_message(command: str) -> tuple[bool, Optional[str]]:
     # Handles: git commit -m "message", git commit -m 'message', git commit -m message
     message = None
 
-    # Try double-quoted: -m "..."
-    match = re.search(r'git\s+commit\s+.*-m\s+"([^"]*)"', command, re.IGNORECASE)
+    match = re.search(
+        r'git\s+commit\s+.*-m\s+(?:"([^"]*)"|\'([^\']*)\'|(\S+))',
+        command, re.IGNORECASE
+    )
     if match:
-        message = match.group(1)
-    else:
-        # Try single-quoted: -m '...'
-        match = re.search(r"git\s+commit\s+.*-m\s+'([^']*)'", command, re.IGNORECASE)
-        if match:
-            message = match.group(1)
-        else:
-            # Try unquoted: -m <word>
-            match = re.search(r'git\s+commit\s+.*-m\s+(\S+)', command, re.IGNORECASE)
-            if match:
-                message = match.group(1)
+        message = match.group(1) or match.group(2) or match.group(3)
 
     if message is None:
         # No -m flag found — might be git commit (opens editor) or git commit -F file
