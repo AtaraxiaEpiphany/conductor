@@ -19,6 +19,8 @@ sys.path.insert(0, str(Path(__file__).parent / "lib"))
 
 from lib.hook_io import read_hook_input, write_simple_output
 from lib.logging import init_logging, log_entry
+from lib.json_utils import load_json_safe
+from lib.path_utils import find_tracks_registry, extract_track_dirs
 
 
 # Coverage detection patterns for common tools
@@ -269,6 +271,128 @@ def verify_coverage_gate(cwd: Path) -> Optional[str]:
     return None
 
 
+def should_verify_checkpoint(tool_calls: list[dict]) -> bool:
+    """Detect if a conductor task completion just happened.
+
+    Triggers only on track-state complete or skip commands, which indicate
+    a task transition that may need a phase checkpoint.
+
+    Args:
+        tool_calls: List of tool call dictionaries
+
+    Returns:
+        True if checkpoint verification should run
+    """
+    for tc in tool_calls:
+        if tc.get("tool_name") == "Bash":
+            cmd = tc.get("tool_input", {}).get("command", "")
+            if cmd and "track-state" in cmd:
+                cmd_lower = cmd.lower()
+                if "complete" in cmd_lower or "skip" in cmd_lower:
+                    return True
+    return False
+
+
+def verify_phase_checkpoint(cwd: Path) -> Optional[str]:
+    """Check if recently completed phases have checkpoint commits (V6 gate).
+
+    Scans git log for checkpoint commits and cross-references with
+    track-state to find completed phases missing checkpoints.
+
+    Args:
+        cwd: Working directory
+
+    Returns:
+        Warning message if missing checkpoints detected, None otherwise
+    """
+    tracks_file = find_tracks_registry(cwd)
+    if not tracks_file:
+        return None
+
+    track_dirs = extract_track_dirs(tracks_file)
+
+    # Get recent git log for checkpoint commits
+    try:
+        result = subprocess.run(
+            ["git", "log", "--oneline", "-30"],
+            capture_output=True, text=True, cwd=cwd, timeout=5
+        )
+        if result.returncode != 0:
+            return None
+        git_log = result.stdout
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return None
+
+    missing_checkpoints = []
+
+    for track_dir in track_dirs:
+        state_file = cwd / track_dir / "track-state.json"
+        state = load_json_safe(state_file)
+        if not state:
+            continue
+
+        # Only check tracks that are in_progress (not archived/completed)
+        track_status = state.get("status", "")
+        if track_status in ("archived", "cancelled"):
+            continue
+
+        phases = state.get("phases", [])
+        for pi, phase in enumerate(phases, 1):
+            tasks = phase.get("tasks", [])
+            if not tasks:
+                continue
+
+            # Check if all tasks in this phase are terminal (completed/skipped/deferred/cancelled)
+            terminal_statuses = {"completed", "skipped", "deferred", "cancelled"}
+            all_terminal = all(t.get("status") in terminal_statuses for t in tasks)
+            if not all_terminal:
+                continue
+
+            # Check if there's a checkpoint commit for this phase
+            phase_name = phase.get("name", f"Phase {pi}")
+            # Checkpoint commits contain: conductor(checkpoint) and the phase number or name
+            checkpoint_patterns = [
+                f"phase {pi}",
+                f"P{pi}",
+                phase_name.lower(),
+            ]
+            has_checkpoint = any(
+                pattern in git_log.lower()
+                for pattern in checkpoint_patterns
+                if "conductor(checkpoint)" in git_log.lower() or "checkpoint" in git_log.lower()
+            )
+
+            # More precise: look for checkpoint + phase indicator on same line
+            if not has_checkpoint:
+                for line in git_log.split('\n'):
+                    line_lower = line.lower()
+                    if "checkpoint" in line_lower:
+                        for pattern in checkpoint_patterns:
+                            if pattern in line_lower:
+                                has_checkpoint = True
+                                break
+                    if has_checkpoint:
+                        break
+
+            if not has_checkpoint:
+                track_id = state.get("track_id", track_dir)
+                completed_count = sum(1 for t in tasks if t.get("status") == "completed")
+                missing_checkpoints.append(
+                    f"{track_id} Phase {pi} ({completed_count}/{len(tasks)} tasks completed)"
+                )
+
+    if missing_checkpoints:
+        details = "; ".join(missing_checkpoints)
+        return (
+            f"[Conductor] V6 Warning: Phase checkpoint missing for: {details}. "
+            f"Phase-checker should have created a checkpoint commit. "
+            f"If tasks were completed without checkpoint, consider running "
+            f"track-state add-checkpoint to retroactively create one."
+        )
+
+    return None
+
+
 def main():
     """Main hook function"""
     # Read hook input
@@ -303,6 +427,14 @@ def main():
         coverage_msg = verify_coverage_gate(cwd)
         if coverage_msg:
             write_simple_output(additional_context=coverage_msg)
+            return
+
+    # Phase checkpoint verification (V6 gate)
+    # Only runs after track-state complete/skip operations
+    if should_verify_checkpoint(tool_calls):
+        checkpoint_msg = verify_phase_checkpoint(cwd)
+        if checkpoint_msg:
+            write_simple_output(additional_context=checkpoint_msg)
             return
 
     # Default output

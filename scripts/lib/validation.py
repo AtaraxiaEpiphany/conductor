@@ -5,7 +5,7 @@ Provides common validation and checking utilities.
 
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 
 # Dangerous git operations that should be blocked during active tracks
@@ -226,3 +226,66 @@ def validate_path_safe(path_str: str) -> tuple[bool, Optional[str]]:
         pass
 
     return True, None
+
+
+def validate_commit_message(command: str) -> tuple[bool, Optional[str]]:
+    """Validate git commit -m message follows conventional commit format.
+
+    Extracts the -m argument from a git commit command and checks it
+    matches: type(scope): description
+
+    Standard types: feat, fix, docs, style, refactor, test, chore
+
+    Args:
+        command: Full bash command string
+
+    Returns:
+        Tuple of (is_valid, suggested_fix). suggested_fix is None when valid.
+    """
+    from .constants import COMMIT_MSG_PATTERN, VALID_COMMIT_TYPES
+
+    # Extract the -m message from the command.
+    # Handles: git commit -m "message", git commit -m 'message', git commit -m message
+    message = None
+
+    # Try double-quoted: -m "..."
+    match = re.search(r'git\s+commit\s+.*-m\s+"([^"]*)"', command, re.IGNORECASE)
+    if match:
+        message = match.group(1)
+    else:
+        # Try single-quoted: -m '...'
+        match = re.search(r"git\s+commit\s+.*-m\s+'([^']*)'", command, re.IGNORECASE)
+        if match:
+            message = match.group(1)
+        else:
+            # Try unquoted: -m <word>
+            match = re.search(r'git\s+commit\s+.*-m\s+(\S+)', command, re.IGNORECASE)
+            if match:
+                message = match.group(1)
+
+    if message is None:
+        # No -m flag found — might be git commit (opens editor) or git commit -F file
+        return True, None
+
+    if re.match(COMMIT_MSG_PATTERN, message.strip()):
+        return True, None
+
+    # Build a suggested fix by trying to infer the type from context
+    # Common patterns agents produce that need correction
+    suggested = message.strip()
+
+    # Try to extract a scope from common conductor patterns
+    conductor_match = re.match(
+        r'(?:Start|Complete|Fail|Skip|Update|Sync|Archive|Finalize)\s+(.+)',
+        suggested, re.IGNORECASE
+    )
+    if conductor_match:
+        action = "chore"
+        scope = "conductor"
+        desc = suggested[0].lower() + suggested[1:]
+        suggested = f"{action}({scope}): {desc}"
+    else:
+        # Generic: wrap in chore(scope) — agent can adjust
+        suggested = f"fix(scope): {suggested}"
+
+    return False, suggested

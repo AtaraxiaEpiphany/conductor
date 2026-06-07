@@ -37,6 +37,19 @@ Dispatch `conductor:doc-syncer`. Prompt: `TRACK_DIR={track_dir} TRACK_ID={track_
 
 ---
 
+## 6.5 WIKI LINT
+
+Dispatch `conductor:doc-linter`. Prompt: `PROJECT_DIR={project_root}`.
+
+Parse `---DOC LINT RESULT---` block:
+- STATUS: PASS → announce "Wiki health check passed."
+- STATUS: WARN → present findings, recommend running `/conductor:wiki query <topic>` to investigate.
+- STATUS: FAIL → present findings, recommend manual review before archiving.
+
+If STATUS: FAILURE (agent error) → announce and continue (non-blocking).
+
+---
+
 ## 7.0 AUTO-REVIEW
 
 1. Get SHA range: `track-state shas "<track_dir>"`

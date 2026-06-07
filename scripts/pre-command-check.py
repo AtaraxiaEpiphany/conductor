@@ -20,7 +20,7 @@ from lib.hook_io import (
     get_cwd
 )
 from lib.json_utils import load_json_safe
-from lib.validation import is_dangerous_git_operation, contains_dangerous_pattern
+from lib.validation import is_dangerous_git_operation, contains_dangerous_pattern, validate_commit_message
 from lib.path_utils import find_tracks_registry, extract_track_dirs
 
 
@@ -159,6 +159,30 @@ def main():
             permission_decision_reason=permission_reason,
         )
         return
+
+    # Check for non-conventional commit messages (V10)
+    if re.search(r'git\s+commit\s+.*-m\s', command, re.IGNORECASE):
+        is_valid, suggested_fix = validate_commit_message(command)
+        if not is_valid:
+            additional_context = (
+                f'[Conductor] V10 Violation: Commit message does not follow conventional format. '
+                f'Expected: type(scope): description. '
+                f'Types: feat|fix|docs|style|refactor|test|chore. '
+                f'Suggested: {suggested_fix}'
+            )
+            permission_reason = (
+                f'Non-conventional commit message. '
+                f'Use format: type(scope): description. '
+                f'Suggested: {suggested_fix}'
+            )
+
+            write_hook_output(
+                hook_event_name="PreToolUse",
+                additional_context=additional_context,
+                permission_decision="ask",
+                permission_decision_reason=permission_reason,
+            )
+            return
 
     # Allow all other commands
     write_hook_output(hook_event_name="PreToolUse")

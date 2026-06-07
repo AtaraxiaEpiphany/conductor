@@ -12,7 +12,7 @@ import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional
 
 # Add lib directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent / "lib"))
@@ -64,7 +64,7 @@ def get_track_handoff_info(state_file: Path) -> Optional[str]:
     return f'- Track {track_id}: status={status}, position=P{pi}.T{ti}, mode={mode}'
 
 
-def write_session_handoff(data_dir: Path, handoff_data: str) -> None:
+def write_session_handoff(data_dir: Path, handoff_data: str, gc_summary: str = "") -> None:
     """Write session handoff file"""
     handoff_file = data_dir / "session-handoff.md"
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -73,11 +73,98 @@ def write_session_handoff(data_dir: Path, handoff_data: str) -> None:
         handoff_content = f"Last session ended: {timestamp}\n"
         handoff_content += "Active tracks:\n"
         handoff_content += handoff_data
+        if gc_summary:
+            handoff_content += f"\n{gc_summary}\n"
         handoff_content += "Run /conductor:implement to continue, or /conductor:status for overview."
 
         handoff_file.write_text(handoff_content, encoding="utf-8")
     elif handoff_file.exists():
         handoff_file.unlink()
+
+
+def collect_gc_metrics(cwd: Path, track_dirs: list[str]) -> Dict:
+    """Collect lightweight GC metrics across all tracks.
+
+    Returns dict with: total_tracks, archived_tracks, stale_tasks,
+    orphaned_result_files, gc_warnings.
+    """
+    metrics = {
+        "total_tracks": len(track_dirs),
+        "archived_tracks": 0,
+        "stale_tasks": 0,
+        "orphaned_results": 0,
+        "gc_warnings": [],
+    }
+
+    now = datetime.now(timezone.utc)
+
+    for track_dir in track_dirs:
+        full_dir = cwd / track_dir
+        state_file = full_dir / "track-state.json"
+        cond_dir = full_dir / ".conductor"
+
+        state = load_json_safe(state_file)
+        if not state:
+            continue
+
+        # Count archived tracks
+        if state.get("status") == "archived":
+            metrics["archived_tracks"] += 1
+            continue
+
+        # Count stale in_progress tasks (>24h)
+        updated_at = state.get("updated_at", "")
+        if updated_at:
+            try:
+                updated = datetime.fromisoformat(updated_at)
+                if updated.tzinfo is None:
+                    updated = updated.replace(tzinfo=timezone.utc)
+                age_hours = (now - updated).total_seconds() / 3600
+            except (ValueError, TypeError):
+                age_hours = 0
+        else:
+            age_hours = 0
+
+        for phase in state.get("phases", []):
+            for task in phase.get("tasks", []):
+                if task.get("status") == "in_progress":
+                    metrics["stale_tasks"] += 1
+                for sub in task.get("subtasks", []):
+                    if sub.get("status") == "in_progress":
+                        metrics["stale_tasks"] += 1
+
+        # Count orphaned result.json files
+        result_file = cond_dir / "result.json"
+        if result_file.exists():
+            # Check if any task is actually in_progress
+            has_active = False
+            for phase in state.get("phases", []):
+                for task in phase.get("tasks", []):
+                    if task.get("status") == "in_progress":
+                        has_active = True
+                        break
+                    for sub in task.get("subtasks", []):
+                        if sub.get("status") == "in_progress":
+                            has_active = True
+                            break
+                if has_active:
+                    break
+            if not has_active:
+                metrics["orphaned_results"] += 1
+
+    # Build gc_warnings
+    if metrics["orphaned_results"] > 0:
+        metrics["gc_warnings"].append(
+            f"[Conductor] {metrics['orphaned_results']} orphaned result.json file(s) detected. "
+            "Run track-state gc to clean."
+        )
+    if metrics["stale_tasks"] > 0:
+        metrics["gc_warnings"].append(
+            f"[Conductor] {metrics['stale_tasks']} stale in_progress task(s) detected. "
+            "Consider running track-state validate --fix."
+        )
+
+    return metrics
 
 
 def main():
@@ -94,6 +181,7 @@ def main():
 
     conductor_directory = cwd / "conductor"
     tracks_file = find_tracks_registry(cwd)
+    track_dirs = []
     if tracks_file:
         track_dirs = extract_track_dirs(tracks_file)
 
@@ -114,8 +202,24 @@ def main():
                 if track_info:
                         handoff_data += track_info + "\n"
 
+    # Collect GC metrics
+    gc_summary = ""
+    if track_dirs:
+        gc_metrics = collect_gc_metrics(cwd, track_dirs)
+        active = gc_metrics["total_tracks"] - gc_metrics["archived_tracks"]
+        gc_summary = (
+            f"Tracks: {active} active, {gc_metrics['archived_tracks']} archived, "
+            f"{gc_metrics['total_tracks']} total."
+        )
+        if gc_metrics["stale_tasks"] > 0 or gc_metrics["orphaned_results"] > 0:
+            gc_summary += (
+                f" GC: {gc_metrics['orphaned_results']} orphaned result(s), "
+                f"{gc_metrics['stale_tasks']} stale task(s)."
+            )
+        issues.extend(gc_metrics["gc_warnings"])
+
     # Write session handoff file
-    write_session_handoff(data_dir, handoff_data)
+    write_session_handoff(data_dir, handoff_data, gc_summary)
 
     # Output result — auto-detect event name (Stop or SubagentStop after auto-convert)
     if issues:
