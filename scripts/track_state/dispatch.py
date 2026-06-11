@@ -9,7 +9,7 @@ from .helpers import (
     conductor_dir, _store_evidence, _last_subtask_sha, _any_phase_needs_checkpoint,
     flag, _normalize_sha, target,
 )
-from .constants import AUTO_COMPLETE_OK
+from .constants import AUTO_COMPLETE_OK, MAX_RETRIES
 from .mutations import _do_lock, _do_complete, _do_fail
 from .sync import _do_sync_plan
 from .git_ops import (
@@ -394,6 +394,8 @@ def cmd_dispatch_prepare(track_dir):
     out(dict(action=action, phase=pi, task=ti, subtask=si, name=name,
              tags=tags, sync_count=synced, commit_msg=commit_msg,
              is_resume=is_resume,
+             retry_count=tgt.get("retry_count", 0),
+             last_failure_summary=tgt.get("last_failure_summary"),
              execution_mode=nxt.get("execution_mode", "interactive"),
              next=nxt))
 
@@ -482,6 +484,8 @@ def _synthesize_result_from_state(track_dir):
             task=ti,
             subtask=si,
             task_name=name,
+            attempt=tgt.get("retry_count", 0) + 1,
+            max_retries=MAX_RETRIES,
         )
     else:
         # Agent committed implementation code but forgot to write result.json.
@@ -494,6 +498,8 @@ def _synthesize_result_from_state(track_dir):
             task=ti,
             subtask=si,
             task_name=name,
+            attempt=tgt.get("retry_count", 0) + 1,
+            max_retries=MAX_RETRIES,
         )
 
 
@@ -642,7 +648,8 @@ def cmd_dispatch_finalize(track_dir):
         else:
             print(f"WARNING: result.json preserved due to commit failure", file=sys.stderr)
         out(dict(status="failure", retry_count=retry_count, summary=summary,
-                 sync_count=synced, committed=committed))
+                 sync_count=synced, committed=committed,
+                 phase=p, task=t, subtask=s))
 
     else:
         out(dict(error=f"Unknown status: {status}"))

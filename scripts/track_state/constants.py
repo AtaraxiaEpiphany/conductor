@@ -18,6 +18,9 @@ TERMINAL_STATUSES = {"completed", "skipped", "deferred", "blocked", "cancelled"}
 TERMINAL_FOR_PARENT = TERMINAL_STATUSES | {"failed"}
 AUTO_COMPLETE_OK = TERMINAL_STATUSES
 
+# Maximum retry attempts for a failed task before marking it permanently failed.
+MAX_RETRIES = 3
+
 _RE_TRAILING_MARKER = re.compile(
     r'\s*\[(?:N/A|verified|[0-9a-f]{7}(?:\s*,\s*[0-9a-f]{7})*)\]\s*$'
 )

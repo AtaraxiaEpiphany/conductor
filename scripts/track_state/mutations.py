@@ -1,7 +1,7 @@
 """State mutation operations: lock, complete, fail, skip, block, defer."""
 from .core import load, save
 from .helpers import target, clean, now_iso, out, _last_subtask_sha, _reset_task, _propagate_to_subtasks, _any_phase_needs_checkpoint, _normalize_sha
-from .constants import TERMINAL_FOR_PARENT, AUTO_COMPLETE_OK
+from .constants import TERMINAL_FOR_PARENT, AUTO_COMPLETE_OK, MAX_RETRIES
 
 
 def _set_current_indices(state, pi, ti, si=None):
@@ -21,7 +21,11 @@ def _do_lock(track_dir, p, t, s=None):
 
     tgt = target(state, pi, ti, si)
     tgt["status"] = "in_progress"
-    clean(tgt, {"status"})
+    # Preserve retry context so re-dispatched agents get IS_RETRY=true
+    keep = {"status"}
+    if tgt.get("retry_count", 0) > 0:
+        keep |= {"retry_count", "last_failure_summary"}
+    clean(tgt, keep)
 
     _set_current_indices(state, pi, ti, si)
     if si is not None:
@@ -79,16 +83,30 @@ def _do_complete(track_dir, p, t, s=None, sha=None):
     save(track_dir, state)
     return parent_completed
 
-def _do_fail(track_dir, p, t, s=None, summary=""):
-    """Returns retry_count."""
+def _do_fail(track_dir, p, t, s=None, summary="", retryable=True):
+    """Returns retry_count.
+
+    When retryable=True (default, used by dispatch-finalize) and retry_count
+    has not reached MAX_RETRIES, the task is re-queued as "pending" so
+    dispatch-next finds it for automatic re-dispatch. When retry_count reaches
+    MAX_RETRIES, or retryable=False (manual CLI fail), status is set to "failed"
+    permanently.
+    """
     state = load(track_dir)
     pi, ti = int(p), int(t)
     si = int(s) if s is not None else None
 
     tgt = target(state, pi, ti, si)
-    tgt["status"] = "failed"
     tgt["retry_count"] = tgt.get("retry_count", -1) + 1
     tgt["last_failure_summary"] = summary
+
+    if retryable and tgt["retry_count"] < MAX_RETRIES:
+        # Re-queue for retry — pending so dispatch-next finds it again.
+        # retry_count and last_failure_summary are preserved for the retry agent.
+        tgt["status"] = "pending"
+    else:
+        # Max retries exhausted or manual fail — permanently failed.
+        tgt["status"] = "failed"
     clean(tgt, {"status", "retry_count", "last_failure_summary"})
 
     # Update current indices so recovery always points to the latest state
@@ -169,7 +187,7 @@ def cmd_lock(track_dir, p, t, s=None):
     out(dict(ok=True))
 
 def cmd_fail(track_dir, p, t, s=None, summary=""):
-    retry_count = _do_fail(track_dir, p, t, s, summary)
+    retry_count = _do_fail(track_dir, p, t, s, summary, retryable=False)
     out(dict(retry_count=retry_count))
 
 def cmd_skip(track_dir, p, t, s=None, reason=""):

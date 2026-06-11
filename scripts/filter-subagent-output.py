@@ -121,7 +121,7 @@ def main():
         import time
         cwd = input_data.get("cwd") or str(Path.cwd())
         result_found = False
-        freshness_threshold = time.time() - 60  # 60 seconds
+        freshness_threshold = time.time() - 180  # 3 minutes (generous for long-running agents)
         try:
             base = Path(cwd)
             # Check direct .conductor/result.json first (most common path)

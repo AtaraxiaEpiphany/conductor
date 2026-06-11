@@ -4,6 +4,7 @@ import shutil
 import tempfile
 import io
 import sys
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from unittest import TestCase, main
 
@@ -29,7 +30,8 @@ def _out_captured(fn, *args, **kwargs):
 
 
 def _make_state(**overrides):
-    """Build a minimal valid state dict."""
+    """Build a minimal valid state dict. Default updated_at is 1 hour ago (recent)."""
+    _recent = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
     state = {
         "track_id": "test",
         "type": "feature",
@@ -37,7 +39,7 @@ def _make_state(**overrides):
         "description": "test track",
         "current_phase_index": 1,
         "current_task_index": 1,
-        "updated_at": "2026-06-04T00:00:00+00:00",
+        "updated_at": _recent,
         "phases": [
             {
                 "name": "Phase 1",
@@ -102,7 +104,8 @@ class TestFixStaleInProgress(TestCase):
     """validate.py: _fix_stale_in_progress."""
 
     def test_recent_state_no_fix(self):
-        state = _make_state(updated_at="2026-06-04T00:00:00+00:00")
+        _recent = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        state = _make_state(updated_at=_recent)
         state["phases"][0]["tasks"][0]["status"] = "in_progress"
         fixes = _fix_stale_in_progress(state, threshold_hours=24)
         self.assertEqual(fixes, [])
@@ -413,6 +416,7 @@ class TestLegacy0BasedMigration(TestCase):
 
     def _make_old_state(self, **overrides):
         """Build a state dict mimicking old 0-based storage."""
+        _recent = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
         state = {
             "track_id": "legacy",
             "type": "feature",
@@ -420,7 +424,7 @@ class TestLegacy0BasedMigration(TestCase):
             "description": "old 0-based track",
             "current_phase_index": 0,
             "current_task_index": 0,
-            "updated_at": "2026-06-04T00:00:00+00:00",
+            "updated_at": _recent,
             "phases": [
                 {
                     "name": "Phase 1",

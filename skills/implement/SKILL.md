@@ -54,6 +54,7 @@ Route by recover `status`:
 | Status | Action |
 |---|---|
 | `in_progress` | `git log` for post-start commit. Found → `complete --sha <sha>`. Not found → re-dispatch. |
+| `pending` + retry_count > 0 | Re-dispatch (retry). Pass `IS_RETRY=true` `ATTEMPT={retry_count+1}` `MAX_RETRIES=3` to task-executor. |
 | `failed` + retry < max | Re-dispatch. |
 | `failed` + retry >= max | Dispatch `conductor:skip-analyst`. |
 | `blocked` | Report → HALT. |
