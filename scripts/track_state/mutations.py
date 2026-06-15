@@ -21,11 +21,8 @@ def _do_lock(track_dir, p, t, s=None):
 
     tgt = target(state, pi, ti, si)
     tgt["status"] = "in_progress"
-    # Preserve retry context so re-dispatched agents get IS_RETRY=true
-    keep = {"status"}
-    if tgt.get("retry_count", 0) > 0:
-        keep |= {"retry_count", "last_failure_summary"}
-    clean(tgt, keep)
+    # retry_count/last_failure_summary are intrinsic task history, never reset on lock.
+    clean(tgt, {"status", "retry_count", "last_failure_summary"})
 
     _set_current_indices(state, pi, ti, si)
     if si is not None:

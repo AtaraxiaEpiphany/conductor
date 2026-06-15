@@ -29,9 +29,13 @@ def _out_captured(fn, *args, **kwargs):
         sys.stdout, sys.stderr = old_out, old_err
 
 
+def _recent_iso():
+    """ISO timestamp 1 hour ago — a 'recent' updated_at that won't trigger stale-fix."""
+    return (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+
+
 def _make_state(**overrides):
     """Build a minimal valid state dict. Default updated_at is 1 hour ago (recent)."""
-    _recent = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
     state = {
         "track_id": "test",
         "type": "feature",
@@ -39,7 +43,7 @@ def _make_state(**overrides):
         "description": "test track",
         "current_phase_index": 1,
         "current_task_index": 1,
-        "updated_at": _recent,
+        "updated_at": _recent_iso(),
         "phases": [
             {
                 "name": "Phase 1",
@@ -104,8 +108,7 @@ class TestFixStaleInProgress(TestCase):
     """validate.py: _fix_stale_in_progress."""
 
     def test_recent_state_no_fix(self):
-        _recent = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
-        state = _make_state(updated_at=_recent)
+        state = _make_state()
         state["phases"][0]["tasks"][0]["status"] = "in_progress"
         fixes = _fix_stale_in_progress(state, threshold_hours=24)
         self.assertEqual(fixes, [])
@@ -416,7 +419,6 @@ class TestLegacy0BasedMigration(TestCase):
 
     def _make_old_state(self, **overrides):
         """Build a state dict mimicking old 0-based storage."""
-        _recent = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
         state = {
             "track_id": "legacy",
             "type": "feature",
@@ -424,7 +426,7 @@ class TestLegacy0BasedMigration(TestCase):
             "description": "old 0-based track",
             "current_phase_index": 0,
             "current_task_index": 0,
-            "updated_at": _recent,
+            "updated_at": _recent_iso(),
             "phases": [
                 {
                     "name": "Phase 1",
