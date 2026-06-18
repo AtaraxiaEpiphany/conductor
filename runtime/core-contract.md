@@ -101,13 +101,20 @@ Conductor prefixes: `conductor(plan)` `conductor(checkpoint)` `chore(conductor)`
 | V4   | Skip Steps 4-7 (non-Explore tasks)         | F2, F3       |
 | V5   | Bundle test + implementation in one commit | F2           |
 | V6   | Skip phase checkpoint                      | F5           |
-| V7   | Derive state from plan.md                  | State Lock   |
+| V7   | Reconstruct/overwrite existing state from plan.md | State Lock   |
 | V8   | More than ONE parent `[~]` + ONE child `[~]` simultaneously | F1           |
 | V9   | Skip git notes                             | Audit        |
 | V10  | Non-conventional commit message            | Quality      |
 | V11  | Subagent modifying state                   | Orchestrator |
 
 **Recovery:** If you violate any → STOP → announce `WORKFLOW VIOLATION: <code>` → revert → restart from last valid step.
+
+**V7 — plan↔state direction.** `track-state.json` is the source of truth; `plan.md` is a derived mirror. The **state→plan** direction is always allowed (`sync-plan` rewrites plan markers from state). The **plan→state** direction is permitted **only** for:
+
+- **Bootstrap** — `init-from-plan` seeding initial state when none exists.
+- **Additive absorption** — `sync-plan` adding NEW subtasks (from plan lines with no state entry) as `pending`.
+
+Reconstructing or overwriting an existing task's status/SHA/completion from plan.md is the violation. `init-from-plan` refuses to overwrite existing state without `--force` (re-bootstrap discards all progress); repair existing state with the `track-state` CLI or `validate --fix` instead.
 
 ---
 

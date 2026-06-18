@@ -767,6 +767,42 @@ class TestInitFromPlan(TestCase):
                                   "feature", "demo track")
         self.assertNotIn("warnings", result)
 
+    def test_init_from_plan_refuses_to_overwrite_existing_state(self):
+        # V7: init must never reconstruct authoritative state from plan.md.
+        # Re-running on a track that already has state must refuse and preserve it.
+        d = self._plan(self.GOOD)
+        first, _ = _out_captured(cmd_init_from_plan, d, "orig_id", "feature", "desc", "interactive")
+        self.assertTrue(first["ok"])
+        # Simulate real progress the re-init must NOT destroy.
+        state = load(d)
+        state["phases"][0]["tasks"][0]["status"] = "completed"
+        state["phases"][0]["tasks"][0]["commit_sha"] = "abc1234"
+        save(d, state)
+
+        result, _ = _out_captured(cmd_init_from_plan, d, "new_id", "feature", "desc", "interactive")
+        self.assertFalse(result["ok"])
+        self.assertIn("overwrite", result.get("error", "").lower())
+
+        preserved = load(d)
+        self.assertEqual(preserved["track_id"], "orig_id")          # not reset
+        self.assertEqual(preserved["phases"][0]["tasks"][0]["status"], "completed")
+        self.assertEqual(preserved["phases"][0]["tasks"][0]["commit_sha"], "abc1234")
+
+    def test_init_from_plan_force_rebootstraps(self):
+        # --force is the explicit escape hatch: re-bootstrap discards progress.
+        d = self._plan(self.GOOD)
+        _out_captured(cmd_init_from_plan, d, "orig_id", "feature", "desc", "interactive")
+        state = load(d)
+        state["phases"][0]["tasks"][0]["status"] = "completed"
+        save(d, state)
+
+        result, _ = _out_captured(cmd_init_from_plan, d, "new_id", "feature", "desc",
+                                  "interactive", force=True)
+        self.assertTrue(result["ok"])
+        reset = load(d)
+        self.assertEqual(reset["track_id"], "new_id")               # overwritten
+        self.assertEqual(reset["phases"][0]["tasks"][0]["status"], "pending")  # progress discarded
+
 
 if __name__ == "__main__":
     main()
