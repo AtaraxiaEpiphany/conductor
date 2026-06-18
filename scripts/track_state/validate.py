@@ -12,6 +12,7 @@ from .helpers import (
 from .constants import TERMINAL_STATUSES, TERMINAL_FOR_PARENT
 from .sync import _do_sync_plan
 from .git_ops import _find_conductor_shas
+from .plan_parse import parse_plan, _PHASE_HEADING
 
 
 def _validate_state_consistency(state, errors, warnings):
@@ -69,7 +70,7 @@ def _validate_plan_consistency(track_dir, state, errors, warnings):
     has_checkpoint = {}
     with open(plan_path) as f:
         for line in f:
-            m = re.match(r"^##\s+Phase\s+(\d+)\b", line.rstrip("\n"))
+            m = _PHASE_HEADING.match(line.rstrip("\n"))
             if m:
                 phase_num = int(m.group(1))
                 has_checkpoint[phase_num] = bool(re.search(r"\[checkpoint:\s*[0-9a-f]{7}\]", line))
@@ -107,43 +108,21 @@ def _parse_plan_structure(plan_path):
     """Parse plan.md into a structure indexed by phase number.
 
     Returns dict mapping phase_number (int) to phase data. Each phase has
-    'tasks' list. Each task has 'name' and 'subtasks' list.
-    Names are cleaned (markers/SHAs stripped).
+    'tasks' list. Each task has 'name' and 'subtasks' list (subtasks carry a
+    placeholder 'status': 'pending'). Names are cleaned (markers/SHAs stripped).
+
+    Thin adapter over plan_parse.parse_plan — the single canonical parser —
+    preserving this shape for the cmd_init cross-check and _fix_plan_mismatches.
     """
-    with open(plan_path) as f:
-        lines = f.readlines()
-
+    parsed = parse_plan(plan_path)
     phases = {}
-    current_phase = None
-    current_task = None
-
-    for line in lines:
-        stripped = line.rstrip("\n")
-
-        pm = re.match(r"^##\s+Phase\s+(\d+)\b", stripped)
-        if pm:
-            phase_num = int(pm.group(1))
-            current_phase = {"tasks": []}
-            phases[phase_num] = current_phase
-            current_task = None
-            continue
-
-        tm = re.match(r"^(\s*)-\s+\[[ x~!>#\-d]\]\s+(.*)", stripped)
-        if tm and current_phase is not None:
-            indent = tm.group(1)
-            rest = tm.group(2).strip()
-            # Strip HTML comments before marker cleaning so SHA brackets are exposed
-            rest = re.sub(r'<!--.*?-->', '', rest).strip()
-            rest = _clean_trailing_markers(rest)
-            is_subtask = len(indent) > 0
-
-            if is_subtask:
-                if current_task is not None:
-                    current_task["subtasks"].append({"name": rest, "status": "pending"})
-            else:
-                current_task = {"name": rest, "subtasks": []}
-                current_phase["tasks"].append(current_task)
-
+    for ph in parsed["phases"]:
+        tasks = [
+            {"name": t["name"],
+             "subtasks": [{"name": s, "status": "pending"} for s in t["subtasks"]]}
+            for t in ph["tasks"]
+        ]
+        phases[ph["number"]] = {"tasks": tasks}
     return phases
 
 def _fix_plan_mismatches(track_dir, state, errors=None):
@@ -151,42 +130,49 @@ def _fix_plan_mismatches(track_dir, state, errors=None):
 
     Always attempts reconciliation regardless of validate errors — the function
     is idempotent (only adds, never removes) so running without errors is safe.
+
+    Matches tasks and subtasks by NAME (not position), so a plan subtask
+    inserted/reordered mid-list is absorbed correctly instead of mis-mapping to
+    a sibling's status or being duplicated.
     """
     plan_path = Path(track_dir) / "plan.md"
     if not plan_path.exists():
         return []
 
     try:
-        plan_struct = _parse_plan_structure(plan_path)
+        parsed = parse_plan(plan_path)
     except Exception:
         return []
 
     fixes = []
     for pi, state_phase in enumerate(state.get("phases", []), 1):
-        # Match by phase number (1-indexed in plan headings) to handle gaps
-        plan_phase = plan_struct.get(pi)
+        # Match the plan phase by NUMBER (1-indexed in headings) to skip gaps.
+        plan_phase = next((p for p in parsed["phases"] if p["number"] == pi), None)
         if plan_phase is None:
             continue
         state_tasks = state_phase.setdefault("tasks", [])
+        state_task_by_name = {t["name"]: t for t in state_tasks}
 
-        # Absorb missing tasks (plan has more than state)
-        for ti, pt in enumerate(plan_phase["tasks"]):
-            if ti < len(state_tasks):
-                # Task exists — check for missing subtasks
-                # setdefault ensures the list is attached to the task dict
-                state_subs = state_tasks[ti].setdefault("subtasks", [])
-                plan_subs = pt.get("subtasks", [])
-                for si in range(len(state_subs), len(plan_subs)):
-                    sub_name = plan_subs[si]["name"]
-                    state_subs.append({"name": sub_name, "status": "pending"})
-                    fixes.append(
-                        f"P{pi}.T{ti + 1}.S{si + 1}: added subtask from plan.md as pending")
+        for pt in plan_phase["tasks"]:
+            st = state_task_by_name.get(pt["name"])
+            if st is not None:
+                # Task exists — absorb missing subtasks by name.
+                state_subs = st.setdefault("subtasks", [])
+                existing = {s["name"] for s in state_subs}
+                for sub_name in pt["subtasks"]:
+                    if sub_name not in existing:
+                        state_subs.append({"name": sub_name, "status": "pending"})
+                        fixes.append(
+                            f"P{pi}.T'{pt['name']}': added subtask '{sub_name}' "
+                            f"from plan.md as pending")
             else:
-                # Task doesn't exist in state — add it
-                new_task = {"name": pt["name"], "status": "pending", "subtasks": pt["subtasks"]}
-                state_tasks.append(new_task)
+                # Task missing from state — add it (with its subtasks).
+                state_tasks.append({
+                    "name": pt["name"], "status": "pending",
+                    "subtasks": [{"name": s, "status": "pending"} for s in pt["subtasks"]],
+                })
                 fixes.append(
-                    f"P{pi}.T{ti + 1}.{pt['name']}: added task from plan.md as pending "
+                    f"P{pi}: added task '{pt['name']}' from plan.md as pending "
                     f"({len(pt['subtasks'])} subtasks)")
 
     return fixes

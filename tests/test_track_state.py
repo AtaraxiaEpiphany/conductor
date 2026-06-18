@@ -11,9 +11,10 @@ from unittest import TestCase, main
 from scripts.track_state.core import load, save
 from scripts.track_state.validate import (
     _fix_stale_in_progress, _fix_terminal_current_indices,
-    _auto_fix, cmd_validate, ensure_healthy,
+    _auto_fix, cmd_validate, ensure_healthy, _fix_plan_mismatches,
 )
 from scripts.track_state.dispatch import cmd_recover, cmd_dispatch_next
+from scripts.track_state.sync import _do_sync_plan
 from scripts.track_state.quality import cmd_init, cmd_init_from_plan, _validate_plan_structure
 from scripts.track_state.plan_parse import parse_plan, to_plan_structure
 
@@ -766,6 +767,89 @@ class TestInitFromPlan(TestCase):
         result, _ = _out_captured(cmd_init_from_plan, d, "demo_20260101",
                                   "feature", "demo track")
         self.assertNotIn("warnings", result)
+
+
+class TestPlanStateNameMatching(TestCase):
+    """Name-based plan<->state matching: a subtask inserted/reordered in
+    plan.md must absorb correctly, not mis-map to a sibling's status or
+    duplicate (the positional-index bug this replaces)."""
+
+    def _state(self, phase_name="Phase 1", tasks=None):
+        return {
+            "track_id": "t", "type": "feature", "status": "in_progress",
+            "current_phase_index": 1, "current_task_index": 1,
+            "updated_at": "2026-01-01T00:00:00+00:00",
+            "phases": [{"name": phase_name, "status": "in_progress", "tasks": tasks or []}],
+        }
+
+    def test_sync_absorbs_inserted_subtask_without_remapping_or_duplication(self):
+        # State has [A(completed), B(pending)]; plan inserts X between them.
+        # Name-matching must absorb X as pending WITHOUT taking B's status or
+        # duplicating B — the positional-index bug this replaces.
+        d = tempfile.mkdtemp()
+        Path(d, "plan.md").write_text(
+            "# Plan\n\n## Phase 1: P\n"
+            "- [ ] Task: build\n"
+            "  - [x] Subtask: A\n"
+            "  - [ ] Subtask: X\n"          # inserted — must absorb as pending
+            "  - [ ] Subtask: B\n"
+        )
+        tasks = [{"name": "build", "status": "in_progress", "subtasks": [
+            {"name": "Subtask: A", "status": "completed", "commit_sha": "aaaaaaa"},
+            {"name": "Subtask: B", "status": "pending"},
+        ]}]
+        save(d, self._state(tasks=tasks))
+
+        _do_sync_plan(d)
+
+        subs = load(d)["phases"][0]["tasks"][0]["subtasks"]
+        by_name = {s["name"]: s for s in subs}
+        # X absorbed exactly once; A/B unchanged (no mis-map, no duplication).
+        self.assertEqual(sorted(by_name), ["Subtask: A", "Subtask: B", "Subtask: X"])
+        self.assertEqual(sum(1 for s in subs if s["name"] == "Subtask: B"), 1)
+        self.assertEqual(by_name["Subtask: A"]["status"], "completed")   # not clobbered
+        self.assertEqual(by_name["Subtask: B"]["status"], "pending")     # not remapped
+        self.assertEqual(by_name["Subtask: X"]["status"], "pending")     # absorbed
+        # plan.md markers mirror state: A stays [x] (sha kept), X/B [ ].
+        plan = Path(d, "plan.md").read_text()
+        self.assertIn("[x] Subtask: A [aaaaaaa]", plan)
+        self.assertEqual(plan.count("- [ ] Subtask: X"), 1)
+        self.assertIn("- [ ] Subtask: B", plan)
+
+    def test_validate_fix_absorbs_by_name_without_duplication(self):
+        # State subtasks [B]; plan has [A, B]. Old positional code duplicated B;
+        # name-matching absorbs A and leaves B alone.
+        d = tempfile.mkdtemp()
+        Path(d, "plan.md").write_text(
+            "## Phase 1: P\n"
+            "- [ ] Task: build\n"
+            "  - [ ] Subtask: A\n"
+            "  - [ ] Subtask: B\n"
+        )
+        tasks = [{"name": "Task: build", "status": "in_progress", "subtasks": [
+            {"name": "Subtask: B", "status": "completed"},
+        ]}]
+        state = self._state(tasks=tasks)
+
+        fixes = _fix_plan_mismatches(d, state)
+
+        subs = state["phases"][0]["tasks"][0]["subtasks"]
+        names = [s["name"] for s in subs]
+        self.assertEqual(names, ["Subtask: B", "Subtask: A"])  # B kept, A appended
+        self.assertEqual(sum(1 for n in names if n == "Subtask: B"), 1)  # not duplicated
+        self.assertTrue(any("Subtask: A" in f for f in fixes))
+
+    def test_parse_plan_structure_delegates_to_canonical_parser(self):
+        # Consolidation: validate._parse_plan_structure now wraps plan_parse.
+        from scripts.track_state.validate import _parse_plan_structure
+        d = tempfile.mkdtemp()
+        Path(d, "plan.md").write_text(
+            "## Phase 2: P\n- [ ] Task: build\n  - [ ] Subtask: A\n"
+        )
+        struct = _parse_plan_structure(Path(d, "plan.md"))
+        self.assertEqual(list(struct.keys()), [2])              # keyed by phase NUMBER
+        self.assertEqual(struct[2]["tasks"][0]["name"], "Task: build")
+        self.assertEqual(struct[2]["tasks"][0]["subtasks"][0]["name"], "Subtask: A")
 
 
 if __name__ == "__main__":

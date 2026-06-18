@@ -1,18 +1,27 @@
-"""Plan.md sync operations."""
+"""Plan.md sync operations.
+
+Consolidated onto plan_parse.py's regexes (_PHASE_HEADING, _TASK_LINE) — the
+single canonical definition shared with validate.py and misc.py.
+"""
 import re
-import sys
 from pathlib import Path
 
 from .core import load, save
-from .helpers import now_iso, out, _clean_trailing_markers, _any_phase_needs_checkpoint
+from .helpers import now_iso, _clean_trailing_markers, _any_phase_needs_checkpoint
 from .constants import MARKER_MAP, SHA_MARKERS, TERMINAL_FOR_PARENT
+from .plan_parse import _PHASE_HEADING, _TASK_LINE
 
 
 def _do_sync_plan(track_dir, state=None):
     """Sync plan.md markers from state. Returns synced count.
 
-    Auto-absorbs plan.md subtask lines that have no corresponding entry
-    in track-state.json, adding them as pending so the dispatcher sees them.
+    Rewrites plan.md checkboxes to mirror track-state.json (state->plan, the
+    safe direction). Auto-absorbs plan.md subtask lines that have no same-named
+    entry in state, adding them as pending so the dispatcher sees them.
+
+    Subtasks are matched by NAME, not position, so a plan subtask inserted or
+    reordered mid-list absorbs correctly instead of mis-mapping to a sibling's
+    status or being duplicated.
     """
     if state is None:
         state = load(track_dir)
@@ -24,87 +33,74 @@ def _do_sync_plan(track_dir, state=None):
     result = []
     phase_idx = 0
     task_idx = 0
-    subtask_idx = 0
     synced = 0
     absorbed = 0
 
     for line in lines:
         stripped = line.rstrip("\n")
 
-        pm = re.match(r"^##\s+Phase\s+(\d+)\b", stripped)
-        if pm:
-            phase_idx = int(pm.group(1))
+        if _PHASE_HEADING.match(stripped):
+            phase_idx = int(_PHASE_HEADING.match(stripped).group(1))
             task_idx = 0
-            subtask_idx = 0
             result.append(stripped)
             continue
 
-        tm = re.match(r"^(\s*)-\s+\[([ x~!>#\-d])\]\s+(.*)", stripped)
+        tm = _TASK_LINE.match(stripped)
         if tm:
             if phase_idx < 1:
-                # Task line found before any Phase heading — skip
+                # Task/subtask before any Phase heading — preserve unchanged.
                 result.append(stripped)
                 continue
 
             indent = tm.group(1)
             rest = tm.group(3)
-            is_subtask = len(indent) > 0
-
             rest_clean = _clean_trailing_markers(rest)
+            if not rest_clean:
+                # Empty checkbox line — preserve unchanged (not a real task).
+                result.append(stripped)
+                continue
 
+            is_subtask = len(indent) > 0
+            if is_subtask and task_idx < 1:
+                # Subtask with no preceding parent task this phase — preserve.
+                result.append(stripped)
+                continue
+
+            marker = " "
+            sha = ""
             try:
                 if is_subtask:
-                    subtask_idx += 1
-                    sub = state["phases"][phase_idx - 1]["tasks"][task_idx - 1]["subtasks"][subtask_idx - 1]
-                    # Always show the subtask's OWN status, even if parent is completed
-                    marker = MARKER_MAP.get(sub["status"], " ")
-                    sha = sub.get("commit_sha", "")
-                else:
-                    task_idx += 1
-                    subtask_idx = 0
-                    t = state["phases"][phase_idx - 1]["tasks"][task_idx - 1]
-                    marker = MARKER_MAP.get(t["status"], " ")
-                    sha = t.get("commit_sha", "")
-
-                new_line = f"{indent}- [{marker}] {rest_clean}"
-                # Only append sha if it's a valid non-empty 7-char hex string
-                if sha and marker in SHA_MARKERS and re.match(r"^[0-9a-f]{7}$", sha):
-                    new_line += f" [{sha}]"
-                result.append(new_line)
-                synced += 1
-                continue
-            except (IndexError, KeyError):
-                # Untracked subtask: auto-absorb into state as pending
-                if is_subtask and phase_idx >= 1 and task_idx >= 1:
-                    try:
-                        parent_task = state["phases"][phase_idx - 1]["tasks"][task_idx - 1]
-                        parent_subs = parent_task.setdefault("subtasks", [])
-                        # Always absorb as 'pending' so the dispatcher sees new work.
-                        # If parent was terminal, reopen it so the new subtask
-                        # gets dispatched instead of being silently marked done.
-                        parent_subs.append({"name": rest_clean, "status": "pending"})
-                        if parent_task["status"] in TERMINAL_FOR_PARENT:
+                    parent_task = state["phases"][phase_idx - 1]["tasks"][task_idx - 1]
+                    parent_subs = parent_task.setdefault("subtasks", [])
+                    sub = next((s for s in parent_subs if s.get("name") == rest_clean), None)
+                    if sub is None:
+                        sub = {"name": rest_clean, "status": "pending"}
+                        parent_subs.append(sub)
+                        absorbed += 1
+                        # Reopen a terminal parent so the new subtask dispatches.
+                        if parent_task.get("status") in TERMINAL_FOR_PARENT:
                             parent_task["status"] = "in_progress"
                             for k in ("commit_sha", "completed_at"):
                                 parent_task.pop(k, None)
-                        absorbed += 1
-                        # Now retry the lookup with the absorbed entry
-                        sub = parent_subs[-1]
-                        marker = MARKER_MAP.get(sub["status"], " ")
-                        new_line = f"{indent}- [{marker}] {rest_clean}"
-                        result.append(new_line)
-                        synced += 1
-                        continue
-                    except (IndexError, KeyError):
-                        pass
-                    print(
-                        f"WARNING: Untracked subtask in plan.md at Phase {phase_idx}, "
-                        f"Task {task_idx}, subtask index {subtask_idx}: "
-                        f"{rest_clean[:60]}{'...' if len(rest_clean) > 60 else ''}",
-                        file=sys.stderr,
-                    )
+                    marker = MARKER_MAP.get(sub.get("status"), " ")
+                    sha = sub.get("commit_sha", "")
+                else:
+                    task_idx += 1
+                    t = state["phases"][phase_idx - 1]["tasks"][task_idx - 1]
+                    marker = MARKER_MAP.get(t.get("status"), " ")
+                    sha = t.get("commit_sha", "")
+            except (IndexError, KeyError):
+                # No matching state entry (e.g. a new top-level task not yet
+                # absorbed, or stale indices) — preserve the line unchanged.
                 result.append(stripped)
                 continue
+
+            new_line = f"{indent}- [{marker}] {rest_clean}"
+            if sha and marker in SHA_MARKERS and re.match(r"^[0-9a-f]{7}$", sha):
+                new_line += f" [{sha}]"
+            result.append(new_line)
+            synced += 1
+            continue
 
         result.append(stripped)
 
@@ -117,6 +113,7 @@ def _do_sync_plan(track_dir, state=None):
         save(track_dir, state)
 
     return synced
+
 
 def cmd_sync_plan(track_dir):
     synced = _do_sync_plan(track_dir)
