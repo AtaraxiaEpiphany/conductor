@@ -57,7 +57,7 @@ USER_ANSWERS={answers or N/A}
 RELATED_DOCS={paths or N/A}
 ```
 
-Parse `---SPEC PLAN RESULT---` block. Extract `PLAN_STRUCTURE`. Files are on disk.
+Parse `---SPEC PLAN RESULT---` block. Confirm `STATUS: SUCCESS` (halt on FAILURE and announce `SUMMARY`). `plan.md` and `spec.md` are now on disk — `PLAN_STRUCTURE` is **no longer required**: Section 2.6 derives the full task/subtask structure mechanically from `plan.md`, eliminating manual transcription.
 
 ### 2.4 Dispatch Spec-Reviewer
 
@@ -89,16 +89,15 @@ Store the user's choice as `$EXECUTION_MODE` for use in Section 2.6.
 
 1. **Check uniqueness:** List existing track dirs. If name matches → halt → suggest alternatives.
 2. **Track ID:** Format `shortname_YYYYMMDD`.
-3. **Initialize track:**
+3. **Initialize track** (structure derived mechanically from `plan.md` — the orchestrator never hand-extracts tasks/subtasks):
    ```bash
-   track-state init "<track_dir>" \
-     --plan-structure '<PLAN_STRUCTURE json>' \
+   track-state init-from-plan "<track_dir>" \
      --track-id <id> \
      --type <type> \
      --description '<desc>' \
      --execution-mode <interactive|continuous>
    ```
-   This creates `track-state.json` and `index.md` in one call.
+   This validates `plan.md` syntax and creates `track-state.json` + `index.md` in one call, extracting every task and subtask deterministically. On `ok: false` (malformed `plan.md`) → halt → announce the reported `errors`.
 4. **Update Tracks Registry:** Append entry to `conductor/tracks.md`.
 5. **Commit:**
    ```bash

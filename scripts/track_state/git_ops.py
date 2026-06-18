@@ -4,7 +4,7 @@ import re
 import sys
 from pathlib import Path
 
-from .core import load, save
+from .core import update
 from .helpers import target, now_iso, _store_evidence, conductor_dir, _normalize_sha
 from .sync import _do_sync_plan
 
@@ -219,15 +219,18 @@ def _has_sibling_sha(state, pi, ti, si, sha):
 def _update_task_sha(track_dir, p, t, s, sha):
     """Update commit_sha for a specific task/subtask and re-sync plan.
     Returns the updated state so callers avoid a redundant load()."""
-    state = load(track_dir)
     pi, ti = int(p), int(t)
     si = int(s) if s is not None else None
-    tgt = state["phases"][pi - 1]["tasks"][ti - 1]
-    if si is not None:
-        tgt["subtasks"][si - 1]["commit_sha"] = sha
-    else:
-        tgt["commit_sha"] = sha
-    save(track_dir, state)
+
+    def mutate(state):
+        tgt = state["phases"][pi - 1]["tasks"][ti - 1]
+        if si is not None:
+            tgt["subtasks"][si - 1]["commit_sha"] = sha
+        else:
+            tgt["commit_sha"] = sha
+        return state
+
+    state = update(track_dir, mutate)
     _do_sync_plan(track_dir, state)
     return state
 

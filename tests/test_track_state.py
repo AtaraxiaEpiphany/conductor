@@ -14,7 +14,8 @@ from scripts.track_state.validate import (
     _auto_fix, cmd_validate, ensure_healthy,
 )
 from scripts.track_state.dispatch import cmd_recover, cmd_dispatch_next
-from scripts.track_state.quality import cmd_init, _validate_plan_structure
+from scripts.track_state.quality import cmd_init, cmd_init_from_plan, _validate_plan_structure
+from scripts.track_state.plan_parse import parse_plan, to_plan_structure
 
 
 def _out_captured(fn, *args, **kwargs):
@@ -632,6 +633,139 @@ class TestDispatchFinalizeShaWriteback(TestCase):
         # Verify plan.md has the SHA annotation
         plan = Path(d, "plan.md").read_text()
         self.assertIn(f"[{sha}]", plan)
+
+
+class TestInitFromPlan(TestCase):
+    """plan_parse + cmd_init_from_plan: mechanical extraction + plan.md syntax checks."""
+
+    def _plan(self, body):
+        d = tempfile.mkdtemp()
+        Path(d, "plan.md").write_text(body)
+        return d
+
+    GOOD = (
+        "# Implementation Plan: Demo\n\n"
+        "## Phase 1: Foundation\n"
+        "- [ ] Task: Set up schemas <!-- AC-1, TC-1.1 -->\n"
+        "- [ ] Task: Build endpoints <!-- AC-2 -->\n"
+        "  - [ ] Subtask: GET endpoint\n"
+        "  - [ ] Subtask: POST endpoint\n"
+        "- [ ] [Manual] Task: Conductor - User Manual Verification 'Phase 1'\n\n"
+        "## Phase 2: Polish\n"
+        "- [ ] Task: Add tests <!-- AC-3 -->\n"
+        "- [ ] [Manual] Task: Conductor - User Manual Verification 'Phase 2'\n"
+    )
+
+    def test_parse_extracts_structure(self):
+        d = self._plan(self.GOOD)
+        parsed = parse_plan(Path(d, "plan.md"))
+        self.assertEqual(parsed["errors"], [])
+        self.assertEqual([p["name"] for p in parsed["phases"]], ["Foundation", "Polish"])
+        self.assertEqual(parsed["phases"][0]["tasks"][1]["subtasks"],
+                         ["Subtask: GET endpoint", "Subtask: POST endpoint"])
+
+    def test_parse_strips_html_comments_keeps_tags(self):
+        d = self._plan("## Phase 1: P\n- [ ] [Config] Task: thing <!-- AC-1 -->\n"
+                       "- [ ] [Manual] Task: verify\n")
+        parsed = parse_plan(Path(d, "plan.md"))
+        self.assertEqual(parsed["errors"], [])
+        name = parsed["phases"][0]["tasks"][0]["name"]
+        self.assertIn("[Config]", name)
+        self.assertNotIn("<!--", name)
+        self.assertNotIn("AC-1", name)
+
+    def test_error_bad_marker(self):
+        d = self._plan("## Phase 1: P\n- [X] Task: bad\n- [ ] [Manual] Task: v\n")
+        parsed = parse_plan(Path(d, "plan.md"))
+        self.assertTrue(any("invalid" in e and "[X]" in e for e in parsed["errors"]))
+
+    def test_error_task_before_phase(self):
+        d = self._plan("- [ ] Task: orphan\n\n## Phase 1: P\n- [ ] [Manual] Task: v\n")
+        parsed = parse_plan(Path(d, "plan.md"))
+        self.assertTrue(any("before any Phase" in e for e in parsed["errors"]))
+
+    def test_error_subtask_without_parent(self):
+        d = self._plan("## Phase 1: P\n  - [ ] Subtask: no parent\n- [ ] [Manual] Task: v\n")
+        parsed = parse_plan(Path(d, "plan.md"))
+        self.assertTrue(any("no parent task" in e for e in parsed["errors"]))
+
+    def test_error_non_contiguous_phases(self):
+        d = self._plan("## Phase 1: P\n- [ ] [Manual] Task: v\n\n"
+                       "## Phase 3: Q\n- [ ] [Manual] Task: v2\n")
+        parsed = parse_plan(Path(d, "plan.md"))
+        self.assertTrue(any("out of order" in e for e in parsed["errors"]))
+
+    def test_error_duplicate_phase(self):
+        d = self._plan("## Phase 1: P\n- [ ] [Manual] Task: v\n\n"
+                       "## Phase 1: Q\n- [ ] [Manual] Task: v2\n")
+        parsed = parse_plan(Path(d, "plan.md"))
+        self.assertTrue(any("duplicate phase" in e for e in parsed["errors"]))
+
+    def test_error_empty_phase(self):
+        d = self._plan("## Phase 1: P\n\n## Phase 2: Q\n- [ ] [Manual] Task: v\n")
+        parsed = parse_plan(Path(d, "plan.md"))
+        self.assertTrue(any("no tasks" in e for e in parsed["errors"]))
+
+    def test_warn_missing_manual(self):
+        d = self._plan("## Phase 1: P\n- [ ] Task: real work\n")
+        parsed = parse_plan(Path(d, "plan.md"))
+        self.assertEqual(parsed["errors"], [])
+        self.assertTrue(any("[Manual]" in w for w in parsed["warnings"]))
+
+    def test_to_plan_structure_shape(self):
+        d = self._plan(self.GOOD)
+        structure = to_plan_structure(parse_plan(Path(d, "plan.md")))
+        # Task WITH subtasks carries the key; task WITHOUT omits it.
+        p1 = structure["phases"][0]
+        self.assertNotIn("subtasks", p1["tasks"][0])
+        self.assertIn("subtasks", p1["tasks"][1])
+        self.assertEqual(len(p1["tasks"][1]["subtasks"]), 2)
+
+    def test_check_dry_run_writes_nothing(self):
+        d = self._plan(self.GOOD)
+        result, _ = _out_captured(cmd_init_from_plan, d, "demo_20260101",
+                                  "feature", "demo track", "interactive", check=True)
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["check"])
+        self.assertEqual(result["phases"], 2)
+        self.assertFalse((Path(d, "track-state.json")).exists())
+
+    def test_init_from_plan_creates_state(self):
+        d = self._plan(self.GOOD)
+        result, _ = _out_captured(cmd_init_from_plan, d, "demo_20260101",
+                                  "feature", "demo track", "interactive")
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["phases"], 2)
+        state = load(d)
+        self.assertEqual(state["track_id"], "demo_20260101")
+        self.assertEqual(state["execution_mode"], "interactive")
+        ph1 = state["phases"][0]
+        self.assertEqual(ph1["name"], "Foundation")
+        self.assertEqual(len(ph1["tasks"]), 3)  # 2 impl + 1 manual
+        self.assertEqual([t["name"] for t in ph1["tasks"][1]["subtasks"]],
+                         ["Subtask: GET endpoint", "Subtask: POST endpoint"])
+        self.assertTrue(all(t["status"] == "pending" for t in ph1["tasks"]))
+
+    def test_init_from_plan_rejects_malformed(self):
+        d = self._plan("## Phase 1: P\n- [X] bad\n")
+        result, _ = _out_captured(cmd_init_from_plan, d, "demo_20260101",
+                                  "feature", "demo track")
+        self.assertFalse(result["ok"])
+        self.assertFalse((Path(d, "track-state.json")).exists())
+
+    def test_init_from_plan_missing_file(self):
+        d = tempfile.mkdtemp()
+        result, _ = _out_captured(cmd_init_from_plan, d, "demo_20260101",
+                                  "feature", "demo track")
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("not found" in e for e in result["errors"]))
+
+    def test_init_from_plan_no_mismatch_warning(self):
+        # Structure derived from plan.md → count cross-check is clean by construction.
+        d = self._plan(self.GOOD)
+        result, _ = _out_captured(cmd_init_from_plan, d, "demo_20260101",
+                                  "feature", "demo track")
+        self.assertNotIn("warnings", result)
 
 
 if __name__ == "__main__":

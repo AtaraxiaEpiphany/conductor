@@ -10,7 +10,7 @@ from .cmd_complete import cmd_complete
 from .dispatch import cmd_next, cmd_dispatch_next, cmd_dispatch_prepare, cmd_dispatch_finalize, cmd_recover
 from .result import cmd_process_result, cmd_write_result
 from .validate import cmd_validate
-from .quality import cmd_init, cmd_start, cmd_finalize, cmd_archive, cmd_gc, cmd_checklist_verify
+from .quality import cmd_init, cmd_init_from_plan, cmd_start, cmd_finalize, cmd_archive, cmd_gc, cmd_checklist_verify
 from .misc import (
     cmd_reset, cmd_indices, cmd_shas, cmd_add_checkpoint,
     cmd_deferred_report, cmd_phase_done, cmd_registry_update,
@@ -20,7 +20,7 @@ from .handoff import cmd_get_handoff, cmd_sync_handoff, cmd_append_handoff
 from .sync import cmd_sync_plan
 
 
-_BOOL_FLAGS = {"--compact", "--fix"}
+_BOOL_FLAGS = {"--compact", "--fix", "--check"}
 
 
 def positional(args):
@@ -132,6 +132,10 @@ COMMAND_HELP = {
              "              --type <feature|bugfix|chore|docs> --description <text>\n"
              "              [--execution-mode <interactive|autonomous>]",
              "Create track-state.json and index.md from plan structure"),
+    "init-from-plan": ("init-from-plan <track-dir> --track-id <id>\n"
+                       "                  --type <feature|bugfix|chore|docs> --description <text>\n"
+                       "                  [--execution-mode <interactive|continuous>] [--check]",
+                       "Create track-state.json by parsing plan.md (validates plan syntax)"),
     "start": ("start <track-dir>",
               "Transition track from 'new' to 'in_progress'"),
     "next": ("next <track-dir> [--compact]",
@@ -205,7 +209,7 @@ COMMAND_HELP = {
 }
 
 _COMMAND_GROUPS = [
-    ("Lifecycle", ["init", "start", "finalize", "archive"]),
+    ("Lifecycle", ["init", "init-from-plan", "start", "finalize", "archive"]),
     ("Navigation", ["next", "dispatch-next", "recover", "indices"]),
     ("State Mutations", ["lock", "complete", "fail", "skip", "defer", "block", "reset"]),
     ("Sync & Registry", ["sync-plan", "sync-handoff", "registry-update"]),
@@ -362,6 +366,13 @@ def main():
                      flag(args, "--type") or "feature",
                      flag(args, "--description") or "",
                      flag(args, "--execution-mode"))
+        elif cmd == "init-from-plan":
+            cmd_init_from_plan(track_dir,
+                               flag(args, "--track-id") or "track",
+                               flag(args, "--type") or "feature",
+                               flag(args, "--description") or "",
+                               flag(args, "--execution-mode"),
+                               check="--check" in args)
         elif cmd == "get-handoff":
             cmd_get_handoff(track_dir, pos[0], pos[1],
                            flag(args, "--subtask"))

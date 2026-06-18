@@ -3,7 +3,7 @@ import json
 import sys
 from pathlib import Path
 
-from .core import load, save
+from .core import load, save, update
 from .helpers import (
     out, out_compact, now_iso, extract_tags, _inherit_tags,
     conductor_dir, _store_evidence, _last_subtask_sha, _any_phase_needs_checkpoint,
@@ -165,9 +165,10 @@ def cmd_dispatch_next(track_dir):
                       file=sys.stderr)
             final_sha = _git_head_sha(track_dir) or sha
             if final_sha != sha:
-                state = load(track_dir)
-                state["phases"][result["phase"] - 1]["tasks"][result["task"] - 1]["commit_sha"] = final_sha
-                save(track_dir, state)
+                def _record_parent_sha(state):
+                    state["phases"][result["phase"] - 1]["tasks"][result["task"] - 1]["commit_sha"] = final_sha
+                    return state
+                state = update(track_dir, _record_parent_sha)
                 _do_sync_plan(track_dir, state)
 
             # Write git note AFTER conductor commit so it targets the same SHA track-state.json references
@@ -201,9 +202,10 @@ def cmd_dispatch_next(track_dir):
             committed = _git_commit_ensured(track_dir, commit_msg)
             final_sha = _git_head_sha(track_dir) or sha
             if final_sha != sha:
-                state = load(track_dir)
-                state["phases"][result["phase"] - 1]["tasks"][result["task"] - 1]["commit_sha"] = final_sha
-                save(track_dir, state)
+                def _record_parent_sha(state):
+                    state["phases"][result["phase"] - 1]["tasks"][result["task"] - 1]["commit_sha"] = final_sha
+                    return state
+                state = update(track_dir, _record_parent_sha)
                 _do_sync_plan(track_dir, state)
 
             # Write git note for stuck parent (same as parent-complete path)
