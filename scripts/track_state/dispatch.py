@@ -577,7 +577,10 @@ def cmd_dispatch_finalize(track_dir):
         # Reload state after _do_complete modified the file
         state = load(track_dir)
 
-        _store_evidence(state, track_dir, p, t, s, r)
+        _store_evidence(track_dir, p, t, s, r)
+        # _store_evidence persisted under LOCK_EX; reload so the state we hand
+        # to _do_sync_plan reflects the just-written evidence.
+        state = load(track_dir)
 
         synced = _do_sync_plan(track_dir, state)
         _append_execution_record(track_dir, p, t, s, r, state)

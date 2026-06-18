@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-from .core import load, save
+from .core import load, save, update
 from .constants import (
     MARKER_MAP, SHA_MARKERS, TERMINAL_STATUSES,
     TERMINAL_FOR_PARENT, AUTO_COMPLETE_OK, _RE_TRAILING_MARKER, _RESET_FIELDS,
@@ -219,15 +219,24 @@ def _last_subtask_sha(task):
     return ""
 
 
-def _store_evidence(state, track_dir, p, t, s, r):
-    """Write evidence from result onto the completed task/subtask node."""
-    tgt = target(state, int(p), int(t), int(s) if s is not None else None)
-    tgt["evidence"] = {
-        "coverage_pct": r.get("coverage_pct"),
-        "tc_coverage": r.get("tc_coverage", ""),
-        "deviations": len(r.get("spec_deviation_detail", [])),
-    }
-    save(track_dir, state)
+def _store_evidence(track_dir, p, t, s, r):
+    """Write evidence from result onto the completed task/subtask node (atomic).
+
+    Uses update() so the evidence write can't lose a concurrent writer's change
+    (the TOCTOU gap the old load-elsewhere -> mutate -> save left open). Returns
+    the freshly-loaded, evidence-bearing state so callers that hand `state` to a
+    subsequent _do_sync_plan keep a consistent view (otherwise a sync absorb+save
+    would persist a state missing the evidence just written).
+    """
+    def mutate(state):
+        tgt = target(state, int(p), int(t), int(s) if s is not None else None)
+        tgt["evidence"] = {
+            "coverage_pct": r.get("coverage_pct"),
+            "tc_coverage": r.get("tc_coverage", ""),
+            "deviations": len(r.get("spec_deviation_detail", [])),
+        }
+        return state
+    return update(track_dir, mutate)
 
 
 def _extract_tags_for_task(state, phase_str, task_str):

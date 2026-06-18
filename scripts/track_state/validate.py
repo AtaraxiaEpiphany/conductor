@@ -4,7 +4,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .core import load, save
+from .core import load, update
 from .helpers import (
     out, now_iso, _is_phase_terminal, _clean_trailing_markers,
     _reset_task,
@@ -521,8 +521,14 @@ def cmd_validate(track_dir, fix=False):
     fixes = _auto_fix(state, track_dir=track_dir, errors=errors)
 
     if fix and fixes:
-        # Persist fixes
-        save(track_dir, state)
+        # Persist fixes atomically: re-apply _auto_fix to freshly-loaded state
+        # under LOCK_EX (it's idempotent, so re-applying on the just-loaded state
+        # reproduces the in-memory fixes without the load->mutate->save race).
+        # `fixes` for reporting comes from the dry-run call above.
+        def apply_fixes(fresh):
+            _auto_fix(fresh, track_dir=track_dir, errors=[])
+            return fresh
+        state = update(track_dir, apply_fixes)
         _do_sync_plan(track_dir, state)
 
         # Re-validate after fixes
@@ -575,9 +581,13 @@ def ensure_healthy(track_dir):
     fixes = _auto_fix(state, track_dir=track_dir, errors=errors)
 
     if fixes:
-        save(track_dir, state)
+        # Persist atomically (idempotent re-apply of _auto_fix under LOCK_EX).
+        def apply_fixes(fresh):
+            _auto_fix(fresh, track_dir=track_dir, errors=[])
+            return fresh
+        state = update(track_dir, apply_fixes)
         _do_sync_plan(track_dir, state)
-        # Reload after save to get the persisted version
+        # Reload after sync to get the persisted version
         try:
             state = load(track_dir)
         except Exception:

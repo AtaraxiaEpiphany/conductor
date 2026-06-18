@@ -1,5 +1,5 @@
 """cmd_complete: mutation that bridges to git/sync/notes."""
-from .core import load, save
+from .core import load, update
 from .helpers import target, out
 from .mutations import _do_complete
 from .sync import _do_sync_plan
@@ -38,18 +38,25 @@ def cmd_complete(track_dir, p, t, s=None, sha=None,
         return
     resolved_sha = tgt.get("commit_sha", sha or "")
 
-    # Store evidence (from --coverage/--deviations flags or minimal default)
-    if coverage is not None or deviations is not None:
-        if "evidence" not in tgt:
-            tgt["evidence"] = {"coverage_pct": None, "tc_coverage": "", "deviations": 0}
-        if coverage is not None:
-            tgt["evidence"]["coverage_pct"] = coverage
-        if deviations is not None:
-            tgt["evidence"]["deviations"] = deviations
-        save(track_dir, state)
-    elif "evidence" not in tgt:
-        tgt["evidence"] = {"coverage_pct": None, "tc_coverage": "", "deviations": 0}
-        save(track_dir, state)
+    # Store evidence (from --coverage/--deviations flags or minimal default).
+    # Persist atomically via update() so the evidence write can't lose a
+    # concurrent writer's change. `tgt` (resolved above) is reused only to
+    # decide WHETHER a write is needed — evidence presence is stable across
+    # the reload, so the check stays valid.
+    if coverage is not None or deviations is not None or "evidence" not in tgt:
+        def _set_evidence(state):
+            t2 = target(state, pi, ti, si)
+            ev = t2.get("evidence")
+            if ev is None:
+                ev = {"coverage_pct": None, "tc_coverage": "", "deviations": 0}
+                t2["evidence"] = ev
+            if coverage is not None:
+                ev["coverage_pct"] = coverage
+            if deviations is not None:
+                ev["deviations"] = deviations
+            return state
+        state = update(track_dir, _set_evidence)
+        tgt = target(state, pi, ti, si)
 
     # Write git note if missing
     _ensure_note(track_dir, state, pi, ti, si, tgt)
