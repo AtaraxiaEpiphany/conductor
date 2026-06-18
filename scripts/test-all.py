@@ -15,10 +15,6 @@ TEST_CASES = {
         "input": '{"tool_name":"Agent","tool_response":"---TASK RESULT---\\nSTATUS: SUCCESS\\nCOMMIT_SHA: abc1234\\n---END RESULT---"}',
         "expected_keys": ["hookSpecificOutput"]
     },
-    "git-notes-query.py": {
-        "args": ["--help"],
-        "type": "cli"
-    },
     "lint-track-state.py": {
         "args": ["/tmp"],
         "type": "cli",
