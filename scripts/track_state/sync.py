@@ -113,6 +113,13 @@ def _do_sync_plan(track_dir, state=None):
         f.write("\n")
 
     if absorbed > 0:
+        # NOTE: intentionally on plain save(), not update(). This site is the
+        # most entangled of the RMW paths: absorption is interleaved with the
+        # plan.md line rewrite above, and (pre-name-matching) absorption is
+        # positional and NOT idempotent — re-applying it inside update()'s
+        # reload could double-append. Migrating it cleanly wants name-matched
+        # absorption first, so this defers to that pass. The race is also the
+        # rarest: absorption only fires when plan.md has subtasks state lacks.
         state["updated_at"] = now_iso()
         save(track_dir, state)
 

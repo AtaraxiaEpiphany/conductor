@@ -130,7 +130,9 @@ def cmd_process_result(track_dir):
         # Reload state after _do_complete modified the file
         state = load(track_dir)
 
-        _store_evidence(state, track_dir, p, t, s, r)
+        _store_evidence(track_dir, p, t, s, r)
+        # _store_evidence persisted under LOCK_EX; reload for a consistent view.
+        state = load(track_dir)
 
         _do_sync_plan(track_dir, state)
 
