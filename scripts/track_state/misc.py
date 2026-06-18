@@ -14,6 +14,7 @@ from .sync import _do_sync_plan
 from .git_ops import _git_commit, _git_head_sha, _ensure_note
 from .constants import TERMINAL_FOR_PARENT
 from .quality import _checklist_status
+from .plan_parse import _PHASE_HEADING
 
 
 def cmd_reset(track_dir, scope, p=None, t=None):
@@ -167,8 +168,8 @@ def cmd_add_checkpoint(track_dir, p, sha):
     for line in lines:
         stripped = line.rstrip("\n")
         # Match phase heading: ## Phase 1: ... or ## Phase 1
-        pm = re.match(rf"^##\s+Phase\s+{phase_num}\b", stripped)
-        if pm:
+        pm = _PHASE_HEADING.match(stripped)
+        if pm and int(pm.group(1)) == phase_num:
             # Remove existing checkpoint if present
             base = re.sub(r"\s+\[checkpoint:\s*[0-9a-f]+\]$", "", stripped)
             # Add new checkpoint
