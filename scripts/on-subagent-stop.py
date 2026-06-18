@@ -97,30 +97,20 @@ def main():
     log_file = init_logging("on-subagent-stop")
     log_entry(log_file, f"session={session_id} agent={agent_type} event=subagent_stop")
 
-    # Detect failure patterns
+    # A valid result block is the subagent's structured handoff (SUCCESS or
+    # FAILURE). Once present, allow it to stop: dispatch-finalize processes the
+    # result and owns the cross-invocation retry decision via MAX_RETRIES.
+    # Blocking here used to force a re-attempt inside the same invocation even
+    # after a deliberate FAILURE report — task-executor's contract (§6.0/§7.0)
+    # says to "report FAILURE in your result block", but a result block
+    # containing "STATUS: FAILURE" tripped detect_failure() and looped the agent
+    # until maxTurns on every dispatch attempt.
+    if re.search(r'---END [A-Z ]+---', last_message):
+        write_hook_output()  # allow stop — orchestrator decides retry
+        return
+
+    # No result block: the failure is incidental/unstructured → force recovery.
     has_failure, pattern = detect_failure(last_message)
-
-    # Turn-exhaustion guard: task-executor must produce a result block.
-    # When the agent exhausts turns doing normal work, no failure pattern
-    # matches above — but it also never wrote result.json or the stdout
-    # result block. Block it and force immediate result reporting.
-    if not has_failure and agent_type == "task-executor":
-        if not re.search(r'---END [A-Z ]+---', last_message):
-            log_entry(
-                Path(log_file).parent / "subagent-failures.log",
-                f"session={session_id} agent={agent_type} no_result_block_detected"
-            )
-            reason = (
-                "[Conductor Recovery] You stopped without producing a result block. "
-                "IMMEDIATELY call track-state write-result (Section 6.0) and print "
-                "the ---TASK RESULT--- block. Report FAILURE if you cannot complete."
-            )
-            write_hook_output(
-                decision="block",
-                reason=reason,
-            )
-            return
-
     if has_failure:
         log_entry(
             Path(log_file).parent / "subagent-failures.log",
@@ -140,7 +130,25 @@ def main():
         )
         return  # write_hook_output calls sys.exit — but be explicit for clarity
 
-    # No failure detected — allow the subagent to stop normally
+    # task-executor stopped doing normal work without writing a result block
+    # (turn exhaustion / lost context) — block and force immediate reporting.
+    if agent_type == "task-executor":
+        log_entry(
+            Path(log_file).parent / "subagent-failures.log",
+            f"session={session_id} agent={agent_type} no_result_block_detected"
+        )
+        reason = (
+            "[Conductor Recovery] You stopped without producing a result block. "
+            "IMMEDIATELY call track-state write-result (Section 6.0) and print "
+            "the ---TASK RESULT--- block. Report FAILURE if you cannot complete."
+        )
+        write_hook_output(
+            decision="block",
+            reason=reason,
+        )
+        return
+
+    # Non-critical agent stopped cleanly without a result block.
     write_hook_output()
 
 
