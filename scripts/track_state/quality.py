@@ -9,6 +9,7 @@ from .core import load, save
 from .helpers import out, now_iso, conductor_dir, _reset_task
 from .handoff import _ensure_handoff_index
 from .validate import _parse_plan_structure
+from .plan_parse import parse_plan, to_plan_structure
 
 
 def _checklist_status(track_dir):
@@ -67,20 +68,40 @@ def _validate_plan_structure(plan):
     return errors
 
 
-def cmd_init(track_dir, plan_structure_json, track_id, track_type, description, execution_mode=None):
-    """Create track-state.json and index.md from PLAN_STRUCTURE.
-    Returns compact result — eliminates duplicate JSON generation in orchestrator."""
-    plan = json.loads(plan_structure_json)
+def _init_core(track_dir, plan, track_id, track_type, description, execution_mode=None,
+               force=False):
+    """Build track-state.json + index.md + handoff.md from a plan structure dict.
 
+    Returns the result dict without printing. Shared by cmd_init (JSON input)
+    and cmd_init_from_plan (parsed from plan.md).
+
+    Refuses to overwrite an existing track-state.json unless force=True: init is
+    a bootstrap, and reconstructing authoritative state (status/SHA/completion)
+    from plan.md is a V7 violation. force re-bootstraps, discarding all progress.
+    """
     errors = _validate_plan_structure(plan)
     if errors:
-        out(dict(ok=False, errors=errors))
-        return
+        return dict(ok=False, errors=errors)
 
     track_path = Path(track_dir)
     track_path.mkdir(parents=True, exist_ok=True)
 
-    # Build track-state.json from PLAN_STRUCTURE
+    # V7 guard: never reconstruct authoritative state from plan.md. init is a
+    # one-time bootstrap; running it on a track that already has state would
+    # silently reset every task to pending, destroying status/SHAs/history.
+    if (track_path / "track-state.json").exists() and not force:
+        return dict(
+            ok=False,
+            error=(
+                "track-state.json already exists for this track. init would "
+                "overwrite authoritative state (status, SHAs, retry history) by "
+                "reconstructing it from plan.md — a V7 violation. Re-bootstrap "
+                "intentionally with --force (discards all progress), or use "
+                "track-state CLI / validate --fix to repair."
+            ),
+        )
+
+    # Build track-state.json from the plan structure
     phases = []
     for phase in plan.get("phases", []):
         tasks = []
@@ -164,6 +185,64 @@ def cmd_init(track_dir, plan_structure_json, track_id, track_type, description, 
     result = dict(ok=True, track_id=track_id, phases=len(phases), tasks=task_count)
     if warnings:
         result["warnings"] = warnings
+    return result
+
+
+def cmd_init(track_dir, plan_structure_json, track_id, track_type, description, execution_mode=None, force=False):
+    """Create track-state.json and index.md from a PLAN_STRUCTURE JSON string.
+
+    Thin wrapper over _init_core; kept for backward compatibility with the
+    explicit `--plan-structure` init path.
+    """
+    plan = json.loads(plan_structure_json)
+    out(_init_core(track_dir, plan, track_id, track_type, description, execution_mode, force=force))
+
+
+def cmd_init_from_plan(track_dir, track_id, track_type, description,
+                       execution_mode=None, check=False, force=False):
+    """Create track-state.json by parsing <track-dir>/plan.md mechanically.
+
+    Validates plan.md syntax first — errors block initialization so a malformed
+    plan never produces state. This replaces the error-prone step of having the
+    LLM transcribe plan.md into a PLAN_STRUCTURE JSON: every task and subtask is
+    extracted deterministically.
+
+    With --check, validate and print the derived structure without writing.
+    """
+    plan_path = Path(track_dir) / "plan.md"
+    if not plan_path.exists():
+        out(dict(ok=False, errors=[f"plan.md not found at {plan_path}"]))
+        return
+
+    parsed = parse_plan(plan_path)
+    plan_warnings = list(parsed["warnings"])
+
+    if parsed["errors"]:
+        result = dict(ok=False, errors=parsed["errors"], source=str(plan_path))
+        if plan_warnings:
+            result["warnings"] = plan_warnings
+        out(result)
+        return
+
+    structure = to_plan_structure(parsed)
+    phase_count = len(structure["phases"])
+    task_count = sum(len(p["tasks"]) for p in structure["phases"])
+
+    if check:
+        result = dict(ok=True, check=True, source=str(plan_path),
+                      phases=phase_count, tasks=task_count,
+                      structure=structure)
+        if plan_warnings:
+            result["warnings"] = plan_warnings
+        out(result)
+        return
+
+    result = _init_core(track_dir, structure, track_id, track_type,
+                        description, execution_mode, force=force)
+    # Structure was derived from plan.md itself, so count cross-checks always
+    # pass; the only advisory notes are plan-syntax warnings from parse_plan.
+    if plan_warnings and result.get("ok"):
+        result["plan_warnings"] = plan_warnings
     out(result)
 
 
