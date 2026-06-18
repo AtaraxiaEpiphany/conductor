@@ -7,9 +7,9 @@ from .core import load, save
 from .helpers import (
     out, out_compact, now_iso, extract_tags, _inherit_tags,
     conductor_dir, _store_evidence, _last_subtask_sha, _any_phase_needs_checkpoint,
-    flag, _normalize_sha, target,
+    flag, _normalize_sha, target, _extract_tags_for_task, _tag_exempt_from_coverage,
 )
-from .constants import AUTO_COMPLETE_OK, MAX_RETRIES
+from .constants import AUTO_COMPLETE_OK, MAX_RETRIES, COVERAGE_THRESHOLD
 from .mutations import _do_lock, _do_complete, _do_fail
 from .sync import _do_sync_plan
 from .git_ops import (
@@ -522,6 +522,11 @@ def cmd_dispatch_finalize(track_dir):
         print("NOTE: result.json missing — synthesized from locked task state",
               file=sys.stderr)
 
+    # Whether the result came from a real result.json (vs synthesized). The F3
+    # coverage gate only applies to real, self-reported results — a synthesized
+    # result carries no coverage_pct and is a recovery case, not a coverage claim.
+    has_real_result = result_path.exists()
+
     # Apply overrides: merge CLI-supplied values into result (only if currently empty/falsy)
     overrides = flag(sys.argv[3:], "--override")
     if overrides:
@@ -560,6 +565,50 @@ def cmd_dispatch_finalize(track_dir):
     task_name = r.get("task_name", "unknown")
 
     if status == "SUCCESS":
+        # F3 coverage gate (server-side verification). For a real result.json on
+        # a non-exempt code task, require coverage_pct >= COVERAGE_THRESHOLD.
+        # Refuse to complete (return before _do_complete) so the orchestrator
+        # re-dispatches task-executor to raise coverage: the task stays
+        # in_progress and no conductor commit is created. Exempt tags
+        # ([Docs]/[Config]/[Chore]/[Manual]) and synthesized results skip it.
+        if has_real_result:
+            tags = _extract_tags_for_task(state, p, t)
+            if not _tag_exempt_from_coverage(tags):
+                cov = None
+                cov_raw = r.get("coverage_pct")
+                if cov_raw is not None:
+                    try:
+                        cov = float(cov_raw)
+                    except (TypeError, ValueError):
+                        cov = None
+                if cov is None or cov < COVERAGE_THRESHOLD:
+                    gap = ("coverage_pct not reported" if cov is None
+                           else f"{cov:.1f}% < {int(COVERAGE_THRESHOLD)}%")
+                    files = r.get("files_changed", "?")
+                    # Record the gap in the per-task handoff so the retry agent
+                    # (task-executor Layer 3.R via get-handoff) sees it.
+                    _append_execution_record(track_dir, p, t, s, {
+                        "task_name": task_name,
+                        "status": "COVERAGE_GATE_FAILED",
+                        "summary": (
+                            f"Coverage gate failed: {gap}. Add tests for the changed "
+                            f"files ({files}) and re-run coverage before reporting SUCCESS."
+                        ),
+                        "attempt": r.get("attempt", 1),
+                        "max_retries": r.get("max_retries", MAX_RETRIES),
+                    }, state)
+                    result_path.unlink(missing_ok=True)
+                    out(dict(
+                        status="coverage_gate_failed",
+                        coverage_pct=(round(cov, 1) if cov is not None else None),
+                        threshold=COVERAGE_THRESHOLD,
+                        phase=p, task=t, subtask=s, task_name=task_name,
+                        message=(
+                            f"Coverage gate failed: {gap} — task not complete; "
+                            "re-dispatch task-executor to raise coverage."
+                        ),
+                    ))
+                    return
         code_sha = _normalize_sha(r.get("commit_sha", ""))
         try:
             parent_completed = _do_complete(track_dir, p, t, s, code_sha)
