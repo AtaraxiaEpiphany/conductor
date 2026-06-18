@@ -346,55 +346,84 @@ def cmd_archive(track_dir):
     save(track_dir, state)
     out(dict(ok=True, status="archived"))
 
-def cmd_gc(track_dir):
-    """Garbage collection: clean orphaned artifacts and detect stale state."""
+def _has_in_progress_task(state):
+    """True if any task or subtask is in_progress (result.json may be in use)."""
+    for phase in state.get("phases", []):
+        for task in phase.get("tasks", []):
+            if task.get("status") == "in_progress":
+                return True
+            for sub in task.get("subtasks", []):
+                if sub.get("status") == "in_progress":
+                    return True
+    return False
+
+
+def _gc_safe_artifacts(track_dir, *, report_skips=False):
+    """Remove provably-safe orphaned artifacts from a track. Returns a fix list.
+
+    "Safe" means no judgment is required:
+      - orphaned temp files from interrupted save()/write-result
+        (.track-state.json.tmp*, .result.tmp.*) in the track and .conductor dirs
+      - orphaned .conductor/result.json, ONLY when state loads cleanly AND no
+        task is in_progress. If state is unreadable we conservatively skip — we
+        cannot confirm no active task is mid-processing.
+
+    Stale in_progress locks (>24h) are deliberately NOT touched here: resetting
+    them is a judgment call (abandoned vs. long-running) left to explicit
+    `recover` / `validate --fix`. Shared by `cmd_gc`, `cmd_gc_all`, and the
+    background Stop hook so manual, sweep, and automatic cleanup share one path.
+    """
     track_path = Path(track_dir)
     cond_dir = track_path / ".conductor"
     fixes = []
 
     # Clean orphaned temp files from interrupted save() / write-result operations
-    for pattern in [".track-state.json.tmp*", ".result.tmp.*"]:
+    for pattern in (".track-state.json.tmp*", ".result.tmp.*"):
         for tmp_file in track_path.glob(pattern):
             try:
                 tmp_file.unlink()
                 fixes.append(f"Removed orphaned temp file: {tmp_file.name}")
             except OSError:
                 pass
-    for tmp_file in cond_dir.glob(".result.tmp.*"):
-        try:
-            tmp_file.unlink()
-            fixes.append(f"Removed orphaned temp file: {tmp_file.name}")
-        except OSError:
-            pass
+    if cond_dir.exists():
+        for tmp_file in cond_dir.glob(".result.tmp.*"):
+            try:
+                tmp_file.unlink()
+                fixes.append(f"Removed orphaned temp file: {tmp_file.name}")
+            except OSError:
+                pass
 
-    # Load state once for all checks below
+    # Clean orphaned result.json (left from crashed sessions) only when we can
+    # confirm no task is actively processing it.
+    result_file = cond_dir / "result.json"
+    if result_file.exists():
+        try:
+            state = load(track_dir)
+        except Exception:
+            state = None
+        if state is not None and not _has_in_progress_task(state):
+            try:
+                result_file.unlink()
+                fixes.append("Removed orphaned .conductor/result.json")
+            except OSError:
+                pass
+        elif report_skips:
+            reason = ("active task may be processing it" if state is not None
+                      else "state unreadable")
+            fixes.append(f"Skipped .conductor/result.json ({reason})")
+
+    return fixes
+
+
+def cmd_gc(track_dir):
+    """Garbage collection: clean orphaned artifacts and detect stale state."""
+    fixes = _gc_safe_artifacts(track_dir, report_skips=True)
+
+    # Load state for the stale-detection half (judgment reporting only).
     try:
         state = load(track_dir)
     except (FileNotFoundError, json.JSONDecodeError):
         state = None
-
-    # Clean orphaned result.json files (left from crashed sessions)
-    # Only remove if no task is currently in_progress (i.e., no active processing)
-    result_file = cond_dir / "result.json"
-    if result_file.exists():
-        has_active = False
-        if state:
-            for phase in state.get("phases", []):
-                for task in phase.get("tasks", []):
-                    if task.get("status") == "in_progress":
-                        has_active = True
-                        break
-                    for sub in task.get("subtasks", []):
-                        if sub.get("status") == "in_progress":
-                            has_active = True
-                            break
-                if has_active:
-                    break
-        if not has_active:
-            result_file.unlink()
-            fixes.append("Removed orphaned .conductor/result.json")
-        else:
-            fixes.append("Skipped .conductor/result.json (active task may be processing it)")
 
     # Detect stale in_progress tasks (older than 24h)
     if state is None:

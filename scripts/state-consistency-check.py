@@ -15,12 +15,14 @@ from pathlib import Path
 from typing import Dict, Optional
 
 # Add lib directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).parent / "lib"))
 
 from lib.hook_io import read_hook_input, write_hook_output
 from lib.json_utils import load_json_safe
 from lib.env import get_data_dir
 from lib.path_utils import find_tracks_registry, extract_track_dirs
+from track_state.quality import _gc_safe_artifacts
 
 
 def find_stale_in_progress_tasks(state_file: Path) -> list[str]:
@@ -153,6 +155,7 @@ def main():
 
     issues = []
     handoff_data = ""
+    gc_cleaned = []
 
     conductor_directory = cwd / "conductor"
     tracks_file = find_tracks_registry(cwd)
@@ -164,6 +167,15 @@ def main():
             full_dir = cwd / track_dir
             state_file = full_dir / "track-state.json"
             plan_file = full_dir / "plan.md"
+
+            # Background safe-GC: remove orphaned temp files + stale result.json
+            # (only when no task is in_progress). Runs every stop so crashed-session
+            # artifacts don't accumulate. Stale in_progress locks are reported
+            # below, NOT reset (that is a judgment call for recover/validate --fix).
+            if state_file.exists():
+                gc_fixes = _gc_safe_artifacts(full_dir)
+                if gc_fixes:
+                    gc_cleaned.append((track_dir, gc_fixes))
 
             if state_file.exists() and plan_file.exists():
                 stale_locks = find_stale_in_progress_tasks(state_file)
@@ -190,6 +202,12 @@ def main():
             gc_summary += (
                 f" GC: {gc_metrics['orphaned_results']} orphaned result(s), "
                 f"{gc_metrics['stale_tasks']} stale task(s)."
+            )
+        if gc_cleaned:
+            cleaned_total = sum(len(fixes) for _, fixes in gc_cleaned)
+            gc_summary += (
+                f" Auto-GC cleaned {cleaned_total} orphaned artifact(s) "
+                f"across {len(gc_cleaned)} track(s)."
             )
         issues.extend(gc_metrics["gc_warnings"])
 
