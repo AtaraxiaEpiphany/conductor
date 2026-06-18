@@ -21,6 +21,9 @@ AUTO_COMPLETE_OK = TERMINAL_STATUSES
 # Maximum retry attempts for a failed task before marking it permanently failed.
 MAX_RETRIES = 3
 
+# Minimum test coverage percentage required to complete a non-exempt code task (F3 gate).
+COVERAGE_THRESHOLD = 80.0
+
 _RE_TRAILING_MARKER = re.compile(
     r'\s*\[(?:N/A|verified|[0-9a-f]{7}(?:\s*,\s*[0-9a-f]{7})*)\]\s*$'
 )

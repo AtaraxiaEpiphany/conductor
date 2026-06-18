@@ -146,6 +146,8 @@ Output includes `committed: true/false` and optionally `phase_checkpoint_pending
 
 **SUCCESS**: `committed: false` → announce `"conductor commit failed, result.json preserved"` → re-run `dispatch-finalize` (max 3 attempts, then HALT with `"dispatch-finalize stuck"`). Deviations > 0 → announce. If `phase_checkpoint_pending` present → dispatch `conductor:phase-checker` immediately. Otherwise → **Section 3.7**.
 
+**COVERAGE_GATE_FAILED** (`status: "coverage_gate_failed"`): the task reported SUCCESS but coverage is below the 80% gate (or `coverage_pct` was missing) — it is **not complete**. Announce `"coverage gate failed: {coverage_pct}% < 80% — task not complete"` (or `"coverage_pct missing"`). The task stays `in_progress`; do NOT call `track-state fail` (this is "not done yet", not a failure). Re-dispatch `conductor:task-executor` for the same task with `IS_RETRY=true` (Section 3.1) so its Layer 3.R `get-handoff` read surfaces the coverage gap and the files to test. Bound it: after `MAX_RETRIES` (3) consecutive `coverage_gate_failed` results for the same task, HALT with `"coverage gate stuck — needs human judgment"` (same pattern as `dispatch-finalize stuck`).
+
 **FAILURE**: retry < max → re-dispatch (Section 3.1). retry >= max → dispatch `conductor:skip-analyst`. Skip-analyst result: `can_skip` → `track-state skip` or `block` → `sync-plan` → commit → Section 3.1 or HALT.
 
 ### 3.7 Phase Boundary

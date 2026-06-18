@@ -272,7 +272,7 @@ def _write_task_handoff(track_dir, phase, task, content, state=None):
 *Dependencies and risks will be recorded as discovered.*
 
 """
-        handoff_file.write_text(header)
+        handoff_file.write_text(header + "\n" + content + "\n")
     else:
         # File exists, append or update
         existing = handoff_file.read_text()
