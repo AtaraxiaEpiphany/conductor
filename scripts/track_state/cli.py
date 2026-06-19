@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 from .core import load
+from .constants import EXECUTION_MODES
 from .helpers import out, flag
 from .mutations import cmd_lock, cmd_fail, cmd_skip, cmd_block, cmd_defer
 from .cmd_complete import cmd_complete
@@ -127,18 +128,21 @@ def resolve_indices(pos, args):
     return pi, ti, si
 
 
+# Rendered once from EXECUTION_MODES so help text can't drift from the enum.
+_EXEC_MODE_CHOICES = "|".join(EXECUTION_MODES)
+
 COMMAND_HELP = {
     "init": ("init <track-dir> --plan-structure <json> --track-id <id>\n"
              "              --type <feature|bugfix|chore|docs> --description <text>\n"
-             "              [--execution-mode <interactive|continuous>]",
+             f"              [--execution-mode <{_EXEC_MODE_CHOICES}>]",
              "Create track-state.json and index.md from plan structure"),
     "init-from-plan": ("init-from-plan <track-dir> --track-id <id>\n"
                        "                  --type <feature|bugfix|chore|docs> --description <text>\n"
-                       "                  [--execution-mode <interactive|continuous>] [--check]",
+                       f"                  [--execution-mode <{_EXEC_MODE_CHOICES}>] [--check]",
                        "Create track-state.json by parsing plan.md (validates plan syntax)"),
     "start": ("start <track-dir>",
               "Transition track from 'new' to 'in_progress'"),
-    "set-mode": ("set-mode <track-dir> --mode <interactive|continuous>",
+    "set-mode": (f"set-mode <track-dir> --mode <{_EXEC_MODE_CHOICES}>",
                  "Switch execution_mode on an existing track (no re-init)"),
     "next": ("next <track-dir> [--compact]",
              "Find the next task to execute (JSON or compact format)"),

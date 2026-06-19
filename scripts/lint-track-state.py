@@ -74,7 +74,6 @@ def check_f1_rule(state_file: Path) -> tuple[bool, Optional[str]]:
                 violations.append(
                     f"subtask {child} in_progress without its parent in_progress"
                 )
-                break
 
     if violations:
         return False, (

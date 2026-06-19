@@ -346,7 +346,8 @@ def validate_commit_message(command: str) -> tuple[bool, Optional[str]]:
     if message is None:
         return True, None
 
-    subject = message.strip().splitlines()[0] if message.strip() else ""
+    stripped = message.strip()
+    subject = stripped.splitlines()[0] if stripped else ""
     if re.match(COMMIT_MSG_PATTERN, subject):
         return True, None
 
