@@ -42,6 +42,25 @@ SAFE_CONTEXT_PATTERNS = [
 ]
 
 
+# Turn-exhaustion recovery instructions, appended after the shared
+# "[Conductor Recovery] You stopped without producing a result block." lead.
+# Each names the result-block tag + protocol section the agent must emit on the
+# recovery turn. The keys are also the set of agents the guard below covers
+# (single source of truth — add an agent here and the guard picks it up).
+NO_RESULT_RECOVERY = {
+    "task-executor": (
+        "IMMEDIATELY call track-state write-result (Section 6.0) and print "
+        "the ---TASK RESULT--- block. Report FAILURE if you cannot complete."
+    ),
+    "phase-checker": (
+        "IMMEDIATELY print the ---CHECKPOINT RESULT--- block (Section 8.0). "
+        "Report STATUS: FAILED with a one-line FAILURE_REASON if the checkpoint "
+        "protocol did not complete; do NOT create a checkpoint commit on this "
+        "recovery turn."
+    ),
+}
+
+
 def detect_failure(message: str) -> tuple[bool, Optional[str]]:
     """Detect failure patterns in message with reduced false positives.
 
@@ -103,31 +122,20 @@ def main():
     # Turn-exhaustion guard: critical agents must emit a result block.
     # When the agent exhausts turns mid-protocol, no failure pattern matches
     # above — but it also never wrote its result block. Block it and force
-    # immediate result reporting. Covers task-executor (---TASK RESULT---)
-    # and phase-checker (---CHECKPOINT RESULT---); both have maxTurns caps
-    # and multi-step protocols that can exhaust turns before emitting status,
-    # leaving the orchestrator with no parseable result. The recovery message
-    # is agent-specific so it names the correct block + protocol section.
-    if not has_failure and agent_type in ("task-executor", "phase-checker"):
+    # immediate result reporting. Covered agents + their agent-specific recovery
+    # message (block tag + protocol section) live in NO_RESULT_RECOVERY above;
+    # these agents have maxTurns caps and multi-step protocols that can exhaust
+    # turns before emitting status, leaving the orchestrator with no result.
+    if not has_failure and agent_type in NO_RESULT_RECOVERY:
         if not re.search(r'---END [A-Z ]+---', last_message):
             log_entry(
                 Path(log_file).parent / "subagent-failures.log",
                 f"session={session_id} agent={agent_type} no_result_block_detected"
             )
-            if agent_type == "phase-checker":
-                reason = (
-                    "[Conductor Recovery] You stopped without producing a result "
-                    "block. IMMEDIATELY print the ---CHECKPOINT RESULT--- block "
-                    "(Section 8.0). Report STATUS: FAILED with a one-line "
-                    "FAILURE_REASON if the checkpoint protocol did not complete; "
-                    "do NOT create a checkpoint commit on this recovery turn."
-                )
-            else:
-                reason = (
-                    "[Conductor Recovery] You stopped without producing a result block. "
-                    "IMMEDIATELY call track-state write-result (Section 6.0) and print "
-                    "the ---TASK RESULT--- block. Report FAILURE if you cannot complete."
-                )
+            reason = (
+                "[Conductor Recovery] You stopped without producing a result "
+                "block. " + NO_RESULT_RECOVERY[agent_type]
+            )
             write_hook_output(
                 decision="block",
                 reason=reason,

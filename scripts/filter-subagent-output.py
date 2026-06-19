@@ -11,6 +11,7 @@ Previously split across filter-subagent-output.py and on-subagent-result.py.
 import json
 import re
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -95,6 +96,37 @@ def detect_recovery_context(response: str) -> Optional[str]:
     return None
 
 
+def _is_fresh(path: Path, threshold: float) -> bool:
+    """True if `path` exists and was modified at/after `threshold` (epoch secs)."""
+    try:
+        return path.stat().st_mtime >= threshold
+    except OSError:
+        return False
+
+
+def _fresh_result_exists(cwd: str) -> bool:
+    """True if a result.json was freshly written (within 3 min) under `cwd`.
+
+    A subagent may write results via track-state write-result (to
+    conductor/tracks/<name>/.conductor/result.json) without wrapping its output
+    in ---RESULT--- delimiters. Only fresh files match, avoiding false positives
+    from stale files left by crashed sessions in other tracks.
+    """
+    threshold = time.time() - 180  # 3 minutes (generous for long-running agents)
+    try:
+        base = Path(cwd)
+        # Check direct .conductor/result.json first (most common path), then
+        # under conductor/tracks/*/ — short-circuit on the first fresh hit.
+        if _is_fresh(base / ".conductor" / "result.json", threshold):
+            return True
+        for p in base.glob("conductor/tracks/*/.conductor/result.json"):
+            if _is_fresh(p, threshold):
+                return True
+    except (TypeError, ValueError, OSError):
+        pass
+    return False
+
+
 def main():
     """Main hook function"""
     input_data = read_hook_input()
@@ -119,7 +151,7 @@ def main():
     # "code-simplifier:code-simplifier") — normalize to the bare name.
     tool_input = input_data.get("tool_input") or {}
     raw_type = tool_input.get("subagent_type", "") if isinstance(tool_input, dict) else ""
-    agent_type = raw_type.split(":")[-1] if raw_type else ""
+    agent_type = raw_type.split(":")[-1]
     uses_finalize = agent_type in DISPATCH_FINALIZE_AGENTS
 
     # --- Responsibility 1: Extract structured result blocks ---
@@ -144,29 +176,8 @@ def main():
     # missing block for them is simply a lost-status warning.
     if result is None and extra_context is None:
         if uses_finalize:
-            # The subagent may have written results via track-state write-result
-            # (to conductor/tracks/<name>/.conductor/result.json) without wrapping
-            # output in ---RESULT--- delimiters. Only match fresh result.json files
-            # to avoid false positives from stale files left by crashed sessions.
-            import time
             cwd = input_data.get("cwd") or str(Path.cwd())
-            result_found = False
-            freshness_threshold = time.time() - 180  # 3 minutes (generous for long-running agents)
-            try:
-                base = Path(cwd)
-                # Check direct .conductor/result.json first (most common path)
-                direct = base / ".conductor" / "result.json"
-                if direct.exists() and direct.stat().st_mtime >= freshness_threshold:
-                    result_found = True
-                # Then check under conductor/tracks/*/ — only fresh files
-                if not result_found:
-                    for p in base.glob("conductor/tracks/*/.conductor/result.json"):
-                        if p.exists() and p.stat().st_mtime >= freshness_threshold:
-                            result_found = True
-                            break
-            except (TypeError, ValueError, OSError):
-                pass
-            extra_context = NO_RESULT_OK if result_found else NO_RESULT_WARN
+            extra_context = NO_RESULT_OK if _fresh_result_exists(cwd) else NO_RESULT_WARN
         else:
             extra_context = NO_RESULT_WARN_GENERIC
 
