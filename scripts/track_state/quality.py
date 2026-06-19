@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .core import load, save
 from .helpers import out, now_iso, conductor_dir, _reset_task
+from .constants import EXECUTION_MODES
 from .handoff import _ensure_handoff_index
 from .validate import _parse_plan_structure
 from .plan_parse import parse_plan, to_plan_structure
@@ -86,6 +87,22 @@ def _ensure_conductor_gitignore(track_path):
     (cond / ".gitignore").write_text(_CONDUCTOR_GITIGNORE)
 
 
+def _mode_error(mode, allow_none=False):
+    """Return an error string if ``mode`` is not a valid execution mode, else None.
+
+    With ``allow_none`` (used by init, where None means "leave unset"), a null
+    mode is accepted. Without it (used by set-mode), None is rejected.
+    """
+    if mode is None:
+        if allow_none:
+            return None
+        return f"Missing execution_mode. Must be one of: {', '.join(EXECUTION_MODES)}."
+    if mode not in EXECUTION_MODES:
+        return (f"Invalid execution_mode {mode!r}. "
+                f"Must be one of: {', '.join(EXECUTION_MODES)}.")
+    return None
+
+
 def _init_core(track_dir, plan, track_id, track_type, description, execution_mode=None):
     """Build track-state.json + index.md + handoff.md from a plan structure dict.
 
@@ -95,6 +112,10 @@ def _init_core(track_dir, plan, track_id, track_type, description, execution_mod
     errors = _validate_plan_structure(plan)
     if errors:
         return dict(ok=False, errors=errors)
+
+    mode_err = _mode_error(execution_mode, allow_none=True)
+    if mode_err:
+        return dict(ok=False, errors=[mode_err])
 
     track_path = Path(track_dir)
     track_path.mkdir(parents=True, exist_ok=True)
@@ -262,6 +283,26 @@ def cmd_start(track_dir):
     state["updated_at"] = now_iso()
     save(track_dir, state)
     out(dict(ok=True, status="in_progress"))
+
+
+def cmd_set_mode(track_dir, mode):
+    """Set ``execution_mode`` on an existing track without re-initializing state.
+
+    Lets an in-progress track switch between pausing at phase checkpoints
+    (interactive) and auto-proceeding through all phases (continuous).
+    """
+    mode_err = _mode_error(mode, allow_none=False)
+    if mode_err:
+        out(dict(ok=False, error=mode_err))
+        return
+
+    state = load(track_dir)
+    previous = state.get("execution_mode", "interactive")
+    state["execution_mode"] = mode
+    state["updated_at"] = now_iso()
+    save(track_dir, state)
+    out(dict(ok=True, execution_mode=mode, previous=previous))
+
 
 def cmd_finalize(track_dir):
     state = load(track_dir)

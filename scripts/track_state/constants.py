@@ -21,6 +21,12 @@ AUTO_COMPLETE_OK = TERMINAL_STATUSES
 # Maximum retry attempts for a failed task before marking it permanently failed.
 MAX_RETRIES = 3
 
+# Execution modes for the implement skill (schema: track-state.schema.json).
+# interactive: pauses for user confirmation at each phase checkpoint.
+# continuous: auto-proceeds through all phases without pausing (phase-checker
+#             skips its confirmation gate; [Manual] tasks auto-defer).
+EXECUTION_MODES = ("interactive", "continuous")
+
 _RE_TRAILING_MARKER = re.compile(
     r'\s*\[(?:N/A|verified|[0-9a-f]{7}(?:\s*,\s*[0-9a-f]{7})*)\]\s*$'
 )

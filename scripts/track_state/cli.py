@@ -10,7 +10,7 @@ from .cmd_complete import cmd_complete
 from .dispatch import cmd_next, cmd_dispatch_next, cmd_dispatch_prepare, cmd_dispatch_finalize, cmd_recover
 from .result import cmd_process_result, cmd_write_result
 from .validate import cmd_validate
-from .quality import cmd_init, cmd_init_from_plan, cmd_start, cmd_finalize, cmd_archive, cmd_gc, cmd_checklist_verify
+from .quality import cmd_init, cmd_init_from_plan, cmd_start, cmd_set_mode, cmd_finalize, cmd_archive, cmd_gc, cmd_checklist_verify
 from .misc import (
     cmd_reset, cmd_indices, cmd_shas, cmd_add_checkpoint,
     cmd_deferred_report, cmd_phase_done, cmd_registry_update,
@@ -130,7 +130,7 @@ def resolve_indices(pos, args):
 COMMAND_HELP = {
     "init": ("init <track-dir> --plan-structure <json> --track-id <id>\n"
              "              --type <feature|bugfix|chore|docs> --description <text>\n"
-             "              [--execution-mode <interactive|autonomous>]",
+             "              [--execution-mode <interactive|continuous>]",
              "Create track-state.json and index.md from plan structure"),
     "init-from-plan": ("init-from-plan <track-dir> --track-id <id>\n"
                        "                  --type <feature|bugfix|chore|docs> --description <text>\n"
@@ -138,6 +138,8 @@ COMMAND_HELP = {
                        "Create track-state.json by parsing plan.md (validates plan syntax)"),
     "start": ("start <track-dir>",
               "Transition track from 'new' to 'in_progress'"),
+    "set-mode": ("set-mode <track-dir> --mode <interactive|continuous>",
+                 "Switch execution_mode on an existing track (no re-init)"),
     "next": ("next <track-dir> [--compact]",
              "Find the next task to execute (JSON or compact format)"),
     "dispatch-next": ("dispatch-next <track-dir>",
@@ -209,7 +211,7 @@ COMMAND_HELP = {
 }
 
 _COMMAND_GROUPS = [
-    ("Lifecycle", ["init", "init-from-plan", "start", "finalize", "archive"]),
+    ("Lifecycle", ["init", "init-from-plan", "start", "set-mode", "finalize", "archive"]),
     ("Navigation", ["next", "dispatch-next", "recover", "indices"]),
     ("State Mutations", ["lock", "complete", "fail", "skip", "defer", "block", "reset"]),
     ("Sync & Registry", ["sync-plan", "sync-handoff", "registry-update"]),
@@ -328,6 +330,8 @@ def main():
             cmd_registry_update(track_dir, pos[0])
         elif cmd == "start":
             cmd_start(track_dir)
+        elif cmd == "set-mode":
+            cmd_set_mode(track_dir, flag(args, "--mode"))
         elif cmd == "indices":
             cmd_indices(track_dir)
         elif cmd == "validate":

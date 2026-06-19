@@ -14,7 +14,7 @@ from scripts.track_state.validate import (
     _auto_fix, cmd_validate, ensure_healthy,
 )
 from scripts.track_state.dispatch import cmd_recover, cmd_dispatch_next
-from scripts.track_state.quality import cmd_init, cmd_init_from_plan, _validate_plan_structure
+from scripts.track_state.quality import cmd_init, cmd_init_from_plan, cmd_set_mode, _validate_plan_structure
 from scripts.track_state.plan_parse import parse_plan, to_plan_structure
 
 
@@ -766,6 +766,71 @@ class TestInitFromPlan(TestCase):
         result, _ = _out_captured(cmd_init_from_plan, d, "demo_20260101",
                                   "feature", "demo track")
         self.assertNotIn("warnings", result)
+
+
+class TestExecutionMode(TestCase):
+    """execution_mode enum validation at init + set-mode on an existing track."""
+
+    def _plan_dir(self, plan="# Plan\n\n## Phase 1: Build\n- [ ] Task A\n- [ ] Task B\n"):
+        d = tempfile.mkdtemp()
+        Path(d, "plan.md").write_text(plan)
+        return d
+
+    def test_init_accepts_continuous(self):
+        d = self._plan_dir()
+        result, _ = _out_captured(cmd_init_from_plan, d, "demo", "feature", "d", "continuous")
+        self.assertTrue(result["ok"])
+        self.assertEqual(load(d)["execution_mode"], "continuous")
+
+    def test_init_accepts_interactive(self):
+        d = self._plan_dir()
+        result, _ = _out_captured(cmd_init_from_plan, d, "demo", "feature", "d", "interactive")
+        self.assertTrue(result["ok"])
+        self.assertEqual(load(d)["execution_mode"], "interactive")
+
+    def test_init_rejects_autonomous(self):
+        # 'autonomous' was advertised by stale `init` help but is not a valid enum.
+        d = self._plan_dir()
+        result, _ = _out_captured(cmd_init_from_plan, d, "demo", "feature", "d", "autonomous")
+        self.assertFalse(result["ok"])
+        self.assertFalse((Path(d, "track-state.json")).exists())
+        self.assertTrue(any("execution_mode" in e for e in result["errors"]))
+
+    def test_init_rejects_typo(self):
+        d = self._plan_dir()
+        result, _ = _out_captured(cmd_init_from_plan, d, "demo", "feature", "d", "continuouos")
+        self.assertFalse(result["ok"])
+
+    def test_init_none_leaves_unset(self):
+        # None means "leave execution_mode unset" (back-compat) — not an error.
+        d = self._plan_dir()
+        result, _ = _out_captured(cmd_init_from_plan, d, "demo", "feature", "d", None)
+        self.assertTrue(result["ok"])
+
+    def test_set_mode_flips_interactive_to_continuous(self):
+        d = self._plan_dir()
+        _out_captured(cmd_init_from_plan, d, "demo", "feature", "d", "interactive")
+        result, _ = _out_captured(cmd_set_mode, d, "continuous")
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["previous"], "interactive")
+        self.assertEqual(result["execution_mode"], "continuous")
+        self.assertEqual(load(d)["execution_mode"], "continuous")
+
+    def test_set_mode_rejects_missing(self):
+        d = self._plan_dir()
+        _out_captured(cmd_init_from_plan, d, "demo", "feature", "d", "interactive")
+        result, _ = _out_captured(cmd_set_mode, d, None)
+        self.assertFalse(result["ok"])
+        # Unchanged.
+        self.assertEqual(load(d)["execution_mode"], "interactive")
+
+    def test_set_mode_rejects_invalid(self):
+        d = self._plan_dir()
+        _out_captured(cmd_init_from_plan, d, "demo", "feature", "d", "interactive")
+        result, _ = _out_captured(cmd_set_mode, d, "autonomous")
+        self.assertFalse(result["ok"])
+        # Unchanged.
+        self.assertEqual(load(d)["execution_mode"], "interactive")
 
 
 if __name__ == "__main__":
