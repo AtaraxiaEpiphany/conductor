@@ -217,7 +217,10 @@ def cmd_dispatch_next(track_dir):
 
         # Route by tags
         if "Manual" in tags:
-            action = "defer_manual"
+            # continuous: auto-defer (no human in the loop). interactive: surface
+            # to the user — a [Manual] task can't be auto-executed (task-executor
+            # has no Manual handling) and must not be silently deferred.
+            action = "defer_manual" if execution_mode == "continuous" else "manual_task"
         elif "Explore" in tags:
             action = "dispatch_explorer"
         else:
@@ -356,7 +359,7 @@ def cmd_dispatch_prepare(track_dir):
         sha = _last_subtask_sha_from_state(track_dir, pi, ti)
         action = "parent_stuck"
     elif "Manual" in tags:
-        action = "defer"
+        action = "defer" if execution_mode == "continuous" else "manual_task"
     elif "Explore" in tags:
         action = "explore"
     else:
@@ -370,8 +373,13 @@ def cmd_dispatch_prepare(track_dir):
         out(dict(action=action, phase=pi, task=ti, name=name,
                  sha=sha, execution_mode=execution_mode, next=nxt))
         return
+    if action == "manual_task":
+        # Interactive: surface to the user — no lock (manual tasks aren't executed).
+        out(dict(action="manual_task", phase=pi, task=ti, name=name,
+                 execution_mode=execution_mode, next=nxt))
+        return
     if action == "defer":
-        # Auto-defer: lock not needed
+        # Auto-defer (continuous): lock not needed
         out(dict(action="defer", phase=pi, task=ti, name=name,
                  reason="Deferred: manual task requires human verification",
                  next=nxt))

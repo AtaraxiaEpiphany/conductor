@@ -833,5 +833,45 @@ class TestExecutionMode(TestCase):
         self.assertEqual(load(d)["execution_mode"], "interactive")
 
 
+class TestManualTaskRouting(TestCase):
+    """dispatch.py: [Manual] routing is gated on execution_mode.
+
+    continuous auto-defers (no human in the loop); interactive surfaces the
+    task via a `manual_task` action so the orchestrator can ask the user.
+    """
+
+    def _track(self, mode):
+        state = _make_state(
+            execution_mode=mode,
+            current_phase_index=1,
+            current_task_index=1,
+            phases=[{
+                "name": "Phase 1",
+                "status": "pending",
+                "tasks": [{"name": "[Manual] verify UI", "status": "pending"}],
+            }],
+        )
+        plan = "# Plan\n\n## Phase 1: Build\n- [ ] [Manual] verify UI\n"
+        return _make_track_dir(state, plan_content=plan)
+
+    def test_interactive_surfaces_manual_task(self):
+        d = self._track("interactive")
+        try:
+            result, _ = _out_captured(cmd_dispatch_next, d)
+            self.assertEqual(result.get("action"), "manual_task")
+            self.assertEqual(result.get("execution_mode"), "interactive")
+        finally:
+            shutil.rmtree(d)
+
+    def test_continuous_auto_defers_manual_task(self):
+        d = self._track("continuous")
+        try:
+            result, _ = _out_captured(cmd_dispatch_next, d)
+            self.assertEqual(result.get("action"), "defer_manual")
+            self.assertEqual(result.get("execution_mode"), "continuous")
+        finally:
+            shutil.rmtree(d)
+
+
 if __name__ == "__main__":
     main()

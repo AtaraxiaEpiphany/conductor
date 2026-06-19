@@ -135,6 +135,15 @@ If found → dispatch `conductor:phase-checker` with `TRACK_DIR TRACK_ID PHASE=<
 
 If NOT found → **Section 3.7**.
 
+### 3.5c Action: `manual_task`
+
+(Interactive mode only — in continuous mode a `[Manual]` task emits `defer_manual`, see 3.5b.) A `[Manual]` task requires human verification and cannot be auto-executed, so it is surfaced to the user instead of silently deferred. Ask via `AskUserQuestion` whether to defer it for later or skip it, then run the matching command:
+
+- **Defer** → `track-state defer "<track_dir>" --phase <p> --task <t> --reason 'Deferred: manual task requires human verification'`
+- **Skip** → `track-state skip "<track_dir>" --phase <p> --task <t> --reason 'Skipped: manual task not required'`
+
+Then: `track-state sync-plan "<track_dir>"` → `git commit -m "chore(conductor): {Defer|Skip} manual task '<name>'"` → **Section 3.1** (dispatch-next detects any pending phase checkpoint and routes accordingly).
+
 ### 3.6 Process Result (after task-executor)
 
 **ALWAYS** call `dispatch-finalize` after the task-executor returns — even when no result block was detected in the output or the subagent output looks incomplete. `dispatch-finalize` handles the missing result.json case by synthesizing a result from state: it detects whether the agent committed code (→ SUCCESS) or produced nothing (→ FAILURE with handoff record for retry context).
