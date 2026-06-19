@@ -60,12 +60,17 @@ def has_test_failure(stdout: str, stderr: str, interrupted: bool) -> bool:
     if interrupted:
         return True
 
-    # Precise failure indicators — avoid matching "successfully", "without failure", etc.
+    # Precise failure indicators — avoid matching "successfully", "without
+    # failure", etc. Count-based patterns are anchored to a NON-ZERO count so
+    # the "0 failed"/"0 failures"/"Failed: 0" lines that all-green Jest/Vitest/
+    # dotnet summaries always print don't trip a false failure (which would
+    # inject "fix the implementation" guidance into a passing Green run).
     failure_patterns = [
-        r'\bFAILED\b',
-        r'\bFAILURES\b',
-        r'\d+\s+failed\b',
-        r'tests?\s+failed\b',
+        # Non-zero failure count, either order:
+        # "1 failed", "2 failures", "1 failing", "Failed: 1", "failures: 3".
+        r'[1-9]\d*\s*(?:failed|failures?|failing)\b',
+        r'(?:failed|failures?|failing)\b\s*:?\s*[1-9]\d*',
+        # Unambiguous structural signals.
         r'assertion\s+error',
         r'test\s+run\s+failed\b',
         r'runtime\s+error',
