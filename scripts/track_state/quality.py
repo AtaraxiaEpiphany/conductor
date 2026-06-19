@@ -68,6 +68,24 @@ def _validate_plan_structure(plan):
     return errors
 
 
+# Transient subagent artifacts that must never be swept into conductor commits.
+# result.json is written by task-executor/explorer and deleted by dispatch-finalize
+# each cycle; tracking it only churns git history (committed then re-deleted).
+_CONDUCTOR_GITIGNORE = """# Conductor runtime artifacts — transient, never commit.
+result.json
+.result.tmp.*
+"""
+
+
+def _ensure_conductor_gitignore(track_path):
+    """Write .conductor/.gitignore (idempotent) so transient subagent artifacts
+    are never staged by conductor commits. Self-contained per-track — no project
+    -root .gitignore dependency."""
+    cond = Path(track_path) / ".conductor"
+    cond.mkdir(parents=True, exist_ok=True)
+    (cond / ".gitignore").write_text(_CONDUCTOR_GITIGNORE)
+
+
 def _init_core(track_dir, plan, track_id, track_type, description, execution_mode=None):
     """Build track-state.json + index.md + handoff.md from a plan structure dict.
 
@@ -133,6 +151,10 @@ def _init_core(track_dir, plan, track_id, track_type, description, execution_mod
 
     # Create initial handoff.md
     _ensure_handoff_index(str(track_path), state)
+
+    # Ensure .conductor/.gitignore so transient subagent artifacts (result.json,
+    # .result.tmp.*) aren't swept into conductor commits.
+    _ensure_conductor_gitignore(track_path)
 
     # Cross-validate plan.md vs track-state.json for task/subtask count mismatches
     warnings = []

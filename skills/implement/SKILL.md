@@ -95,9 +95,11 @@ track-state dispatch-prepare "<track_dir>"
 if commit_msg: git add -A && git diff --cached --quiet || git commit -m "<commit_msg>"
 ```
 
-Dispatch `conductor:explorer`. Prompt: `TRACK_DIR={td} PHASE={p} TASK={t} NAME={name}`
+Dispatch `conductor:explorer`. Prompt: `TRACK_DIR={td} PHASE={p} TASK={t} SUBTASK={s} NAME={name}`
 
-After return: commit exploration artifacts (`git add -A && git diff --cached --quiet || git commit -m "docs(explore): {name}"`) → get SHA (`git rev-parse --short HEAD`) → `track-state dispatch-finalize "<track_dir>" --override commit_sha={sha}` → `dispatch-finalize` commits internally → **Section 3.7**.
+After return → `track-state dispatch-finalize "<track_dir>"` → **Section 3.7**.
+
+The explorer records findings via `track-state append-handoff` (→ `.conductor/handoff/`, the sanctioned channel) and writes `.conductor/result.json` (gitignored). Both are conductor-managed, so `dispatch-finalize`'s internal conductor commit stages them — **no separate `docs(explore)` commit, no `git add -A` sweep, no `--override commit_sha`**. The explorer's result ships `commit_sha: ""`; `dispatch-finalize` stores the conductor completion SHA for empty-sha explorer results. (This also kills the result.json history-churn bug: the transient file is no longer swept into a commit.)
 
 ### 3.4 Action: `dispatch_executor`
 

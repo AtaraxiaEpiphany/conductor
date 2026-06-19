@@ -45,15 +45,30 @@ CRITICAL: Validate every tool call. On failure → halt → report FAILURE.
 
 Load context **incrementally** — only what's needed for the current step. This minimizes your context footprint.
 
-### Layer 0: Exploration Map (OPTIONAL, READ FIRST)
+### Layer 0: Exploration Map (READ FIRST)
 
-Check if `{TRACK_DIR}/exploration.md` exists.
-- If YES → read it. This contains pre-computed investigation from `conductor:explorer`.
-  - Extract key findings, architecture context, gotchas, file inventory.
-  - Use this as your "map" before diving into task details.
-- If NO → skip. The map may not exist yet.
+Two scoped sources — read only what matches this task, never a whole blob.
 
-This layer provides architecture understanding before reading task specifics — "map before manual" principle.
+**(a) This task's Exploration Notes** (recorded by `conductor:explorer`):
+
+```bash
+track-state get-handoff {TRACK_DIR} {PHASE} {TASK} ${SUBTASK:+--subtask "$SUBTASK"}
+```
+
+Read the returned `content` and extract the `## Exploration Notes` section (Summary, Key Findings, Architecture, Gotchas & Constraints, Files Inventory, Recommended Approach, Out-of-Scope Notes). This is your per-task "map before manual." If no Exploration Notes exist yet → skip (a).
+
+**(b) Scoped design docs from the corpus:**
+
+Read `conductor/index.md` → the **Scoped Docs** table. For each entry whose **Match Strategy** matches this task's scope (areas/components named in the task description or spec ACs), open the matching doc. Typical routing:
+
+| Task scope / area | Read scoped doc |
+|---|---|
+| routes / controllers / api | `conductor/design/api-specs/index.md` (matching endpoint docs) |
+| models / migrations / schema | `conductor/design/database/index.md` |
+| services / lib / src (structural) | `conductor/design/architecture/system-architecture.md` |
+| components / pages / views | `conductor/requirement/ux-ui/design-spec.md` |
+
+Skip any scoped doc that does not exist or whose Match Strategy doesn't apply. Read only matching docs — never the whole corpus. (Retrieval is scoped on purpose: the durable architecture lives in the corpus and compounds across tracks via `doc-syncer`.)
 
 ### Layer 1: Task Identity (READ FIRST)
 
@@ -71,7 +86,7 @@ Read `{TRACK_DIR}/spec.md`. Using AC IDs from Layer 1:
 
 **Extract Out-of-Scope:**
 - Read the `Out of Scope` section if present in spec.md.
-- If Layer 0 (exploration.md) contains "Out-of-Scope Notes", integrate those boundaries too.
+- If Layer 0 Exploration Notes contain "Out-of-Scope Notes", integrate those boundaries too.
 
 **Boundary Enforcement:**
 - Do NOT implement features explicitly listed in Out-of-Scope.

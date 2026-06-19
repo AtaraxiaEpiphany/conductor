@@ -134,6 +134,25 @@ def check_state_consistency(state_file: Path) -> tuple[bool, Optional[str]]:
     return True, None
 
 
+def check_misplaced_docs(track_dir: Path) -> list:
+    """Flag non-meta .md files at the top of a track dir.
+
+    tracks/<track>/ is reserved for Spec/Plan/Meta (per the project's CLAUDE.md).
+    A stray .md there (e.g. an exploration dump, an analysis doc) means a producer
+    wrote to the wrong channel — durable findings belong in conductor/design/ or
+    conductor/resource/, scratch in .conductor/. Does NOT descend into .conductor/
+    (sanctioned working memory) or subdirs. Returns the stray filenames.
+    """
+    track_meta_docs = {"spec.md", "plan.md", "handoff.md", "index.md", "issues.md"}
+    stray = []
+    if not track_dir.is_dir():
+        return stray
+    for p in track_dir.iterdir():
+        if p.is_file() and p.suffix == ".md" and p.name not in track_meta_docs:
+            stray.append(p.name)
+    return stray
+
+
 def check_stale_state(state_file: Path) -> tuple[bool, Optional[str]]:
     """Check for stale state with in_progress tasks (>24h)
 
@@ -230,6 +249,16 @@ def main():
             warnings += 1
         else:
             print(f"[AGE PASS] Track '{track_id}' state is fresh")
+
+        # Misplaced docs (contract: tracks/<track>/ is Spec/Plan/Meta only)
+        stray = check_misplaced_docs(full_dir)
+        if stray:
+            print(f"[DOC WARN] Track '{track_id}': non-meta .md in track dir: {', '.join(stray)}")
+            print("  Fix: durable findings → conductor/design/ or conductor/resource/; "
+                  "scratch → .conductor/. tracks/<track>/ holds Spec/Plan/Meta only.")
+            warnings += 1
+        else:
+            print(f"[DOC PASS] Track '{track_id}' has only meta docs in track dir")
 
     # Summary
     print(f"\nLint complete: {errors} errors, {warnings} warnings.")

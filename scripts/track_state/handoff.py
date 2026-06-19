@@ -272,7 +272,7 @@ def _write_task_handoff(track_dir, phase, task, content, state=None):
 *Dependencies and risks will be recorded as discovered.*
 
 """
-        handoff_file.write_text(header)
+        handoff_file.write_text(header + "\n" + content + "\n")
     else:
         # File exists, append or update
         existing = handoff_file.read_text()
@@ -456,6 +456,24 @@ def cmd_append_handoff(track_dir, phase, task, entry_type, content_json, subtask
         architecture = content_data.get("architecture", "")
         gotchas = content_data.get("gotchas", [])
         recommended = content_data.get("recommended", "")
+        files_inventory = content_data.get("files_inventory", [])
+        out_of_scope = content_data.get("out_of_scope", [])
+        graduation = content_data.get("graduation_candidates", [])
+
+        # Files Inventory table (preserves the explorer's schema; Related Docs
+        # links into the conductor/design + conductor/resource corpus).
+        if files_inventory:
+            inv = ["| Path | Purpose | Key Exports | Related Docs |",
+                   "|------|---------|-------------|--------------|"]
+            for fi in files_inventory:
+                if isinstance(fi, dict):
+                    inv.append(f"| {fi.get('path', '')} | {fi.get('purpose', '')} | "
+                               f"{fi.get('key_exports', '')} | {fi.get('related_docs', '')} |")
+                else:
+                    inv.append(f"| {fi} | | | |")
+            inventory_md = "\n".join(inv)
+        else:
+            inventory_md = "_None_"
 
         entry = f"""
 ## Exploration Notes | {ts}
@@ -472,8 +490,17 @@ def cmd_append_handoff(track_dir, phase, task, entry_type, content_json, subtask
 ### Gotchas & Constraints
 {chr(10).join(f'- {g}' for g in gotchas) if gotchas else '- None'}
 
+### Files Inventory
+{inventory_md}
+
 ### Recommended Approach
 {recommended}
+
+### Out-of-Scope Notes
+{chr(10).join(f'- {o}' for o in out_of_scope) if out_of_scope else '_None_'}
+
+### Graduation Candidates (durable → corpus; for doc-syncer harvest)
+{chr(10).join(f'- {g}' for g in graduation) if graduation else '_None_'}
 """
 
     elif entry_type == "decision":
