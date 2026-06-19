@@ -100,21 +100,34 @@ def main():
     # Detect failure patterns
     has_failure, pattern = detect_failure(last_message)
 
-    # Turn-exhaustion guard: task-executor must produce a result block.
-    # When the agent exhausts turns doing normal work, no failure pattern
-    # matches above — but it also never wrote result.json or the stdout
-    # result block. Block it and force immediate result reporting.
-    if not has_failure and agent_type == "task-executor":
+    # Turn-exhaustion guard: critical agents must emit a result block.
+    # When the agent exhausts turns mid-protocol, no failure pattern matches
+    # above — but it also never wrote its result block. Block it and force
+    # immediate result reporting. Covers task-executor (---TASK RESULT---)
+    # and phase-checker (---CHECKPOINT RESULT---); both have maxTurns caps
+    # and multi-step protocols that can exhaust turns before emitting status,
+    # leaving the orchestrator with no parseable result. The recovery message
+    # is agent-specific so it names the correct block + protocol section.
+    if not has_failure and agent_type in ("task-executor", "phase-checker"):
         if not re.search(r'---END [A-Z ]+---', last_message):
             log_entry(
                 Path(log_file).parent / "subagent-failures.log",
                 f"session={session_id} agent={agent_type} no_result_block_detected"
             )
-            reason = (
-                "[Conductor Recovery] You stopped without producing a result block. "
-                "IMMEDIATELY call track-state write-result (Section 6.0) and print "
-                "the ---TASK RESULT--- block. Report FAILURE if you cannot complete."
-            )
+            if agent_type == "phase-checker":
+                reason = (
+                    "[Conductor Recovery] You stopped without producing a result "
+                    "block. IMMEDIATELY print the ---CHECKPOINT RESULT--- block "
+                    "(Section 8.0). Report STATUS: FAILED with a one-line "
+                    "FAILURE_REASON if the checkpoint protocol did not complete; "
+                    "do NOT create a checkpoint commit on this recovery turn."
+                )
+            else:
+                reason = (
+                    "[Conductor Recovery] You stopped without producing a result block. "
+                    "IMMEDIATELY call track-state write-result (Section 6.0) and print "
+                    "the ---TASK RESULT--- block. Report FAILURE if you cannot complete."
+                )
             write_hook_output(
                 decision="block",
                 reason=reason,

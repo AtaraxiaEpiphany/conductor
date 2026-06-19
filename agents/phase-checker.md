@@ -39,7 +39,7 @@ CRITICAL: You must validate the success of every tool call. If any tool call fai
 | `TRACK_DIR`       | Absolute path to the track directory                                |
 | `TRACK_ID`        | Track identifier (from dispatch or derivable from track-state.json) |
 | `PHASE_INDEX`     | Phase index (0-based)                                               |
-| `EXECUTION_MODE`  | `"continuous"` (default) or `"interactive"`                         |
+| `EXECUTION_MODE`  | `"interactive"` (default) or `"continuous"`                         |
 
 ---
 
@@ -107,7 +107,7 @@ Present the manual verification plan to the user via `AskUserQuestion`:
 
 **PAUSE** and await the user's response. Do not proceed without confirmation.
 
-**Otherwise (continuous mode, default):**
+**Otherwise (continuous mode):**
 Skip user confirmation. Auto-record: `User confirmation skipped (continuous mode)`. Proceed to Step 6.
 
 ### Step 6: Create Checkpoint Commit
