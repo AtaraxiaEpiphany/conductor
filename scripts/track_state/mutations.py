@@ -65,8 +65,11 @@ def _do_complete(track_dir, p, t, s=None, sha=None):
     if si is not None:
         parent = state["phases"][pi - 1]["tasks"][ti - 1]
         if all(sub["status"] in AUTO_COMPLETE_OK for sub in parent.get("subtasks", [])):
-            # Inherit SHA from last completed subtask if parent SHA is empty
-            parent_sha = sha or _last_subtask_sha(parent)
+            # Inherit SHA from last completed subtask if parent SHA is empty.
+            # Normalize like the subtask itself (line above) so the parent record
+            # matches the 7-char form siblings hold; a raw 40-char sha would
+            # otherwise drop out of plan.md [sha] markers and break sibling-dedup.
+            parent_sha = _normalize_sha(sha) or _last_subtask_sha(parent)
             parent["status"] = "completed"
             parent["commit_sha"] = parent_sha
             parent["completed_at"] = now_iso()
