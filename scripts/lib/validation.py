@@ -228,56 +228,126 @@ def validate_path_safe(path_str: str) -> tuple[bool, Optional[str]]:
     return True, None
 
 
+# --- commit-message extraction helpers -------------------------------------
+# Captures the value of the FIRST `git commit -m` argument. Quoted forms
+# (double/single) span newlines so multi-line messages are captured whole; a
+# bare -m value is a single whitespace-delimited token. The lazy `.*?` binds
+# the subject (-m) rather than a later body -m.
+_M_ARG_PATTERN = re.compile(
+    r'git\s+commit\s+.*?-m\s+(?:"([^"]*)"|\'([^\']*)\'|(\S+))',
+    re.IGNORECASE,
+)
+
+# Heredoc opener:  <<-, optional space, optional quotes, then the delimiter word.
+_HEREDOC_OPENER = re.compile(r'<<-?\s*[\'"]?(\w+)[\'"]?')
+
+# Shell constructs that make the literal message unknowable without execution:
+# command substitution $(…) or `…`, and variable expansion $NAME / ${…}.
+_DYNAMIC_PATTERN = re.compile(r'\$\(|`|\$\{|\$\w')
+
+
+def _extract_heredoc_body(text: str) -> Optional[str]:
+    """Return the body of a shell heredoc embedded in ``text``, else None.
+
+    Matches ``<<'EOF'`` / ``<<EOF`` / ``<<-EOF`` style openers and returns the
+    stripped lines up to the closing delimiter line (``EOF`` or the compact
+    ``EOF)`` that closes a ``$(cat <<'EOF' … EOF)`` substitution).
+    """
+    opener = _HEREDOC_OPENER.search(text)
+    if not opener:
+        return None
+    close = re.compile(rf'^{re.escape(opener.group(1))}\s*\)?\s*$')
+    body: List[str] = []
+    for line in text[opener.end():].splitlines():
+        if close.match(line.strip()):
+            return "\n".join(body).strip() or None
+        body.append(line)
+    return None
+
+
+def _extract_commit_message(command: str) -> Optional[str]:
+    """Extract the literal commit message from a ``git commit -m …`` command.
+
+    When the value is supplied via a shell heredoc (e.g. ``-m "$(cat <<'EOF'
+    … EOF)"``) the heredoc body is returned rather than the surrounding shell
+    syntax. Returns None when there is no ``-m`` argument, or when the value
+    relies on command/variable substitution and cannot be read statically — in
+    that case the caller should allow the commit through without blocking,
+    since blocking would be a false positive on shell syntax we cannot expand.
+    """
+    match = _M_ARG_PATTERN.search(command)
+    if not match:
+        return None
+    value = match.group(1) or match.group(2) or match.group(3)
+    if value is None:
+        return None
+
+    heredoc_body = _extract_heredoc_body(value)
+    if heredoc_body is not None:
+        value = heredoc_body
+
+    # Can't validate shell we'd have to execute to read.
+    if _DYNAMIC_PATTERN.search(value):
+        return None
+    return value
+
+
+def _build_commit_suggestion(subject: str) -> str:
+    """Build a conventional-format suggestion from a non-conforming subject."""
+    from .constants import VALID_COMMIT_TYPES
+
+    suggested = subject.strip()
+    if not suggested:
+        return "type(scope): description"
+
+    # Infer a conductor-scoped chore from common orchestration action verbs.
+    if re.match(
+        r'(?:Start|Complete|Fail|Skip|Update|Sync|Archive|Finalize)\s+',
+        suggested, re.IGNORECASE,
+    ):
+        desc = suggested[0].lower() + suggested[1:]
+        return f"chore(conductor): {desc}"
+
+    # Subject already has a valid type but a missing/malformed scope — repair
+    # just the scope instead of rewriting the whole line. (VALID_COMMIT_TYPES
+    # is already a capturing group, so group(1)=type, group(2)=rest.)
+    type_match = re.match(
+        rf'^{VALID_COMMIT_TYPES}\b[^\S(]*(.*)', suggested, re.IGNORECASE,
+    )
+    if type_match:
+        ctype = type_match.group(1).lower()
+        rest = type_match.group(2).lstrip(': ').strip()
+        return f"{ctype}(scope): {rest}" if rest else f"{ctype}(scope): description"
+
+    snippet = suggested[:80]
+    return f"fix(scope): {snippet}"
+
+
 def validate_commit_message(command: str) -> tuple[bool, Optional[str]]:
-    """Validate git commit -m message follows conventional commit format.
+    """Validate the first ``git commit -m`` message is conventional-commits.
 
-    Extracts the -m argument from a git commit command and checks it
-    matches: type(scope): description
+    The subject line must match ``type(scope): description`` where type is one
+    of feat, fix, docs, style, refactor, test, chore.
 
-    Standard types: feat, fix, docs, style, refactor, test, chore
+    Heredoc-built messages (``-m "$(cat <<'EOF' … EOF)"``) are parsed for their
+    literal body; messages assembled via command/variable substitution that
+    cannot be read statically are allowed through without blocking.
 
     Args:
         command: Full bash command string
 
     Returns:
-        Tuple of (is_valid, suggested_fix). suggested_fix is None when valid.
+        (is_valid, suggested_fix). ``suggested_fix`` is None when the message
+        is valid, or when it can't be determined statically.
     """
-    from .constants import COMMIT_MSG_PATTERN, VALID_COMMIT_TYPES
+    from .constants import COMMIT_MSG_PATTERN
 
-    # Extract the -m message from the command.
-    # Handles: git commit -m "message", git commit -m 'message', git commit -m message
-    message = None
-
-    match = re.search(
-        r'git\s+commit\s+.*-m\s+(?:"([^"]*)"|\'([^\']*)\'|(\S+))',
-        command, re.IGNORECASE
-    )
-    if match:
-        message = match.group(1) or match.group(2) or match.group(3)
-
+    message = _extract_commit_message(command)
     if message is None:
-        # No -m flag found — might be git commit (opens editor) or git commit -F file
         return True, None
 
-    if re.match(COMMIT_MSG_PATTERN, message.strip()):
+    subject = message.strip().splitlines()[0] if message.strip() else ""
+    if re.match(COMMIT_MSG_PATTERN, subject):
         return True, None
 
-    # Build a suggested fix by trying to infer the type from context
-    # Common patterns agents produce that need correction
-    suggested = message.strip()
-
-    # Try to extract a scope from common conductor patterns
-    conductor_match = re.match(
-        r'(?:Start|Complete|Fail|Skip|Update|Sync|Archive|Finalize)\s+(.+)',
-        suggested, re.IGNORECASE
-    )
-    if conductor_match:
-        action = "chore"
-        scope = "conductor"
-        desc = suggested[0].lower() + suggested[1:]
-        suggested = f"{action}({scope}): {desc}"
-    else:
-        # Generic: wrap in chore(scope) — agent can adjust
-        suggested = f"fix(scope): {suggested}"
-
-    return False, suggested
+    return False, _build_commit_suggestion(subject)
