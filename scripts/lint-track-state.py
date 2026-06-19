@@ -38,21 +38,48 @@ def check_f1_rule(state_file: Path) -> tuple[bool, Optional[str]]:
     if not valid:
         return False, f"Invalid state structure: {error}"
 
-    active_tasks = []
+    # F1/V8 contract: at most ONE parent task in_progress, and at most ONE
+    # child subtask in_progress — and that child must belong to the active
+    # parent. Counting parents and children into a single list and thresholding
+    # on ">2" is wrong: it admits two flat parents (2 = not > 2) and two
+    # children, both of which are V8 violations this backstop exists to catch.
+    active_parents = []   # "P{pi}.T{ti}"
+    active_children = []  # "P{pi}.T{ti}.S{si}"
     for pi, phase in enumerate(state.get("phases", []), 1):
         for ti, task in enumerate(phase.get("tasks", []), 1):
             if task.get("status") == "in_progress":
-                active_tasks.append(f"P{pi}.T{ti}")
-            # Check subtasks
+                active_parents.append(f"P{pi}.T{ti}")
             for si, sub in enumerate(task.get("subtasks", []), 1):
                 if sub.get("status") == "in_progress":
-                    active_tasks.append(f"P{pi}.T{ti}.S{si}")
+                    active_children.append(f"P{pi}.T{ti}.S{si}")
 
-    if len(active_tasks) > 2:
+    violations = []
+    if len(active_parents) > 1:
+        violations.append(
+            f"{len(active_parents)} parent tasks in_progress "
+            f"({', '.join(active_parents)})"
+        )
+    if len(active_children) > 1:
+        violations.append(
+            f"{len(active_children)} subtasks in_progress "
+            f"({', '.join(active_children)})"
+        )
+    # A child in_progress must belong to the (single) in_progress parent —
+    # defends against hand-edited/corrupt state where a child is active under
+    # a non-active parent (two units of work across different tasks).
+    if active_children:
+        active_parent_set = set(active_parents)
+        for child in active_children:
+            if child.rsplit(".S", 1)[0] not in active_parent_set:
+                violations.append(
+                    f"subtask {child} in_progress without its parent in_progress"
+                )
+                break
+
+    if violations:
         return False, (
-            f"VIOLATION: {len(active_tasks)} in_progress tasks "
-            f"(max 2 allowed: 1 parent task + 1 subtask). "
-            f"Tasks: {', '.join(active_tasks)}"
+            f"VIOLATION: F1 state lock — {'; '.join(violations)}. "
+            f"Allowed: max ONE parent task [~] + ONE of its child subtasks [~]."
         )
 
     return True, None
@@ -220,7 +247,7 @@ def main():
             print("  Fix: Run track-state recover to reset stale locks.")
             errors += 1
         else:
-            print(f"[F1 PASS] Track '{track_id}' has ≤2 in_progress tasks")
+            print(f"[F1 PASS] Track '{track_id}' has ≤1 in_progress parent + ≤1 child subtask")
 
         # F4: SHA Must Exist
         valid, error = check_f4_rule(state_file)
