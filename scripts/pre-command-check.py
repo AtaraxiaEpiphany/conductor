@@ -68,16 +68,130 @@ def find_track_state_violations(cwd: Path, command: str) -> list[str]:
     return violations
 
 
+def _iter_command_segments(command):
+    """Split a shell command string into independent top-level segments.
+
+    Segments are delimited by ``;``, ``&``, ``|``, and newlines that occur at
+    the TOP level — i.e. outside single/double quotes, ``$(...)`` substitutions,
+    and backticks — so a separator inside any of those does not start a new
+    segment. Redirection fd operators (``2>&1``, ``<&``) are not separators.
+
+    This is what lets the tamper check tell ``rm -f x; git diff track-state.json``
+    (two segments; the rm never touches track-state) apart from
+    ``rm "a;b" track-state.json`` (one segment; track-state really is removed).
+    """
+    segments = []
+    seg = []
+    quote = None           # '"' or "'" while inside a quote
+    subshell = 0           # depth of $(...) substitutions
+    backtick = False
+    i, n = 0, len(command)
+    while i < n:
+        ch = command[i]
+
+        # Inside a quote: consume verbatim until the matching close (honoring
+        # backslash escapes inside double quotes).
+        if quote:
+            seg.append(ch)
+            if ch == '\\' and quote == '"' and i + 1 < n:
+                seg.append(command[i + 1])
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+            i += 1
+            continue
+
+        if ch in ('"', "'"):
+            quote = ch
+            seg.append(ch)
+            i += 1
+            continue
+        if ch == '`':
+            backtick = not backtick
+            seg.append(ch)
+            i += 1
+            continue
+        if ch == '$' and i + 1 < n and command[i + 1] == '(':
+            subshell += 1
+            seg.append('$(')
+            i += 2
+            continue
+        if ch == ')' and subshell > 0:
+            subshell -= 1
+            seg.append(ch)
+            i += 1
+            continue
+        if subshell > 0 or backtick:
+            # Inside a substitution / backticks: separators stay verbatim.
+            seg.append(ch)
+            i += 1
+            continue
+
+        # Top-level separator?
+        sep_len = 0
+        if ch in (';', '\n'):
+            sep_len = 1
+        elif ch == '|' and i + 1 < n and command[i + 1] == ch:
+            sep_len = 2  # ||
+        elif ch == '|':
+            sep_len = 1
+        elif ch == '&' and i + 1 < n and command[i + 1] == ch:
+            sep_len = 2  # &&
+        elif ch == '&':
+            # Lone & is a background operator — unless it's a redirect fd
+            # (2>&1, <&, >&), in which case it binds to the redirection.
+            tail = ''.join(seg).rstrip()
+            if tail and tail[-1] in ('>', '<'):
+                seg.append(ch)
+                i += 1
+                continue
+            sep_len = 1
+
+        if sep_len:
+            text = ''.join(seg).strip()
+            if text:
+                segments.append(text)
+            seg = []
+            i += sep_len
+            continue
+
+        seg.append(ch)
+        i += 1
+
+    text = ''.join(seg).strip()
+    if text:
+        segments.append(text)
+    return segments
+
+
+# Matched WITHIN a single segment (see _iter_command_segments), so the gaps use
+# a plain .* — the segmenter, not the regex, enforces "no crossing separators".
+# re.DOTALL so a newline surviving inside a quoted segment can't break a match.
+_TRACK_STATE_MOD_PATTERNS = (
+    re.compile(r'(?:\brm\b|\bmv\b|git\s+rm\b).*track-state\.json',
+               re.IGNORECASE | re.DOTALL),
+    re.compile(r'\bsed\b.*track-state', re.IGNORECASE | re.DOTALL),
+    re.compile(r'\bpython\w*.*track-state.*\bwrite\b', re.IGNORECASE | re.DOTALL),
+)
+
+
 def is_direct_track_state_modification(command: str) -> bool:
-    """Check if command directly modifies track-state.json"""
-    patterns = [
-        r'(rm|mv|git\s+rm).*track-state\.json',
-        r'sed.*track-state',
-        r'python.*track-state.*write'
-    ]
-    for pattern in patterns:
-        if re.search(pattern, command, re.IGNORECASE):
-            return True
+    """Check if command directly modifies track-state.json.
+
+    Shell-aware: splits the command into top-level segments (respecting quotes,
+    ``$(...)`` and backticks) and only then pattern-matches, so a destructive
+    verb in one segment can't pair with a read-only track-state.json reference
+    in another (``rm -f x; git diff track-state.json`` is NOT a match) while a
+    quoted separator stays inside its segment (``rm "a;b" track-state.json``
+    IS a match). Leading word boundaries avoid substring hits (perform / used).
+    """
+    if not command:
+        return False
+    for segment in _iter_command_segments(command):
+        for pattern in _TRACK_STATE_MOD_PATTERNS:
+            if pattern.search(segment):
+                return True
     return False
 
 
