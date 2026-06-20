@@ -160,8 +160,10 @@ def main():
         )
         return
 
-    # Check for non-conventional commit messages (V10)
-    if re.search(r'git\s+commit\s+.*-m\s', command, re.IGNORECASE):
+    # Check for non-conventional commit messages (V10). The anchor matches the
+    # -m flag in any shell form (-m "x", -m"x", -m'x', -mx); the lookbehind
+    # avoids matching -m inside a word/flag like file-m.txt or --message=.
+    if re.search(r'git\s+commit\s+.*(?<![\w-])-m', command, re.IGNORECASE):
         is_valid, suggested_fix = validate_commit_message(command)
         if not is_valid:
             additional_context = (

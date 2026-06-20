@@ -126,6 +126,34 @@ class ValidateCommitMessageTests(TestCase):
         self.assertEqual((True, None),
                          validate_commit_message('git commit --no-verify -m "docs(r): tweak"'))
 
+    # --- No-space -m forms: `git commit -m"…"` / `-m'…'` / `-mfoo` previously
+    #     bypassed validation entirely (the gate and extractor both required
+    #     whitespace after -m), the most common shell shorthand slipping past V10.
+    def test_no_space_double_quoted_valid(self):
+        self.assertEqual((True, None),
+                         validate_commit_message('git commit -m"feat(auth): add login"'))
+
+    def test_no_space_double_quoted_invalid_flagged(self):
+        ok, suggested = validate_commit_message('git commit -m"random wip junk"')
+        self.assertFalse(ok)
+        self.assertEqual("fix(scope): random wip junk", suggested)
+
+    def test_no_space_single_quoted_invalid_flagged(self):
+        ok, suggested = validate_commit_message("git commit -m'bad subject line'")
+        self.assertFalse(ok)
+        self.assertEqual("fix(scope): bad subject line", suggested)
+
+    def test_attached_bare_value_invalid_flagged(self):
+        # `-mfoo` (git's short-option attached form) is also caught.
+        ok, _ = validate_commit_message('git commit -mrandom_junk_message')
+        self.assertFalse(ok)
+
+    def test_word_with_dash_m_is_not_a_flag(self):
+        # `-m` inside a filename/word must not be mistaken for the message flag.
+        # No real -m here → nothing to validate statically → allowed.
+        self.assertEqual((True, None),
+                         validate_commit_message('git commit file-m.txt'))
+
 
 if __name__ == "__main__":
     main()

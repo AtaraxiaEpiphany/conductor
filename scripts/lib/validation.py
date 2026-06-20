@@ -232,9 +232,13 @@ def validate_path_safe(path_str: str) -> tuple[bool, Optional[str]]:
 # Captures the value of the FIRST `git commit -m` argument. Quoted forms
 # (double/single) span newlines so multi-line messages are captured whole; a
 # bare -m value is a single whitespace-delimited token. The lazy `.*?` binds
-# the subject (-m) rather than a later body -m.
+# the subject (-m) rather than a later body -m. The `(?<![\w-])-m\s*` flag
+# anchor matches the -m in every shell form git accepts — `git commit -m"x"`,
+# `-m 'x'`, `-mx`, and `-m x` — so the no-space shorthand can't slip past the
+# V10 gate. The lookbehind stops `-m` matching inside a word/flag like
+# `file-m.txt` or `--message=`.
 _M_ARG_PATTERN = re.compile(
-    r'git\s+commit\s+.*?-m\s+(?:"([^"]*)"|\'([^\']*)\'|(\S+))',
+    r'git\s+commit\s+.*?(?<![\w-])-m\s*(?:"([^"]*)"|\'([^\']*)\'|(\S+))',
     re.IGNORECASE,
 )
 
