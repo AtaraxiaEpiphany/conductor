@@ -133,8 +133,11 @@ def extract_tags(name):
     """
     if not name:
         return []
-    # Strip HTML comments to prevent false-positive matches from AC/TC annotations
-    clean_name = re.sub(r'<!--.*?-->', '', name)
+    # Strip HTML comments to prevent false-positive matches from AC/TC
+    # annotations. re.DOTALL so multi-line <!-- ... --> comments are stripped
+    # whole — without it a newline inside the comment leaves tag-like text
+    # (e.g. [Config]) sitting in the name to false-positive below.
+    clean_name = re.sub(r'<!--.*?-->', '', name, flags=re.DOTALL)
     # Use lookahead/lookbehind to avoid consuming whitespace between consecutive tags
     pattern = r'(?<!\S)\[(Explore|Docs|Config|Chore|Manual)\](?!\S)'
     matches = re.findall(pattern, clean_name)

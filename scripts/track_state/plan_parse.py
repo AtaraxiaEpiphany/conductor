@@ -48,7 +48,9 @@ def _clean_name(rest):
     Dispatch tags ([Manual], [Explore], ...) are preserved — the dispatch
     router reads them from the stored task name.
     """
-    rest = re.sub(r"<!--.*?-->", "", rest).strip()
+    # re.DOTALL: strip multi-line <!-- ... --> comments whole so tag-like or
+    # marker text inside them can't leak into the cleaned name.
+    rest = re.sub(r"<!--.*?-->", "", rest, flags=re.DOTALL).strip()
     rest = _clean_trailing_markers(rest)
     return rest.strip()
 
