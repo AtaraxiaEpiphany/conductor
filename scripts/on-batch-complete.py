@@ -351,7 +351,8 @@ def verify_phase_checkpoint(cwd: Path) -> Optional[str]:
 
             # Check if there's a checkpoint commit for this phase
             phase_name = phase.get("name", f"Phase {pi}")
-            # Checkpoint commits contain: conductor(checkpoint) and the phase number or name
+            # Checkpoint commits contain "checkpoint" + the phase number or name
+            # (emitted by phase-checker as `chore(conductor): Checkpoint end of …`).
             checkpoint_patterns = [
                 f"phase {pi}",
                 f"P{pi}",

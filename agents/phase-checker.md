@@ -114,7 +114,7 @@ Skip user confirmation. Auto-record: `User confirmation skipped (continuous mode
 
 1. Stage all changes (including any test files created in Step 2).
 2. If no changes occurred, use an empty commit.
-3. Commit: `conductor(checkpoint): Checkpoint end of {PHASE_NAME}`
+3. Commit: `chore(conductor): Checkpoint end of {PHASE_NAME}`
 
 ### Step 7: Attach Git Notes
 
@@ -134,7 +134,7 @@ Skip user confirmation. Auto-record: `User confirmation skipped (continuous mode
 ### Step 9: Commit Plan Update
 
 1. Stage `plan.md`.
-2. Commit: `conductor(plan): Mark phase '{PHASE_NAME}' as complete`
+2. Commit: `chore(conductor): Mark phase '{PHASE_NAME}' as complete`
 
 ### Step 10: Announce Completion
 

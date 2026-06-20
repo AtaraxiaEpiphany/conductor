@@ -85,7 +85,7 @@ SHA is ALWAYS appended at the END of the line, after any HTML comments.
 ```
 
 Types: `feat` `fix` `docs` `style` `refactor` `test` `chore`
-Conductor prefixes: `conductor(plan)` `conductor(checkpoint)` `chore(conductor)`
+Conductor commits use `conductor` as the **scope**, never as a type. Valid prefixes: `chore(conductor)` (orchestration bookkeeping — Start/Complete/Fail/Defer/checkpoint) and `docs(conductor)` (doc sync).
 
 ---
 

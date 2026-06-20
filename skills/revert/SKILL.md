@@ -69,7 +69,7 @@ CRITICAL: You must validate the success of every tool call. If any tool call fai
    - For each implementation SHA, find the subsequent `chore(conductor)` commit that updated `track-state.json` + `plan.md`.
 
 3. **Identify Checkpoint Commits (Phase/Track revert):**
-   - Find `conductor(checkpoint)` commits for the relevant phases.
+   - Find phase checkpoint commits for the relevant phases (message contains "checkpoint"; current format `chore(conductor): Checkpoint end of …`, legacy `conductor(checkpoint)`).
 
 4. **Compile Final List** of all SHAs to revert.
 

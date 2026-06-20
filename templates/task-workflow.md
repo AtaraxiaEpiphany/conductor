@@ -37,6 +37,6 @@
 8. **Commit Code Changes** – stage all code changes and commit with a conventional message (e.g., `feat(ui): ...`).
 9. **Attach Git Notes** – get the commit hash, compose a summary (task name, changed files, reason), and run `git notes add -m "<note>" <sha>`.
 10. **Record Task SHA** – in `plan.md`, change the task status to `[x]` and append the short hash: `- [x] Task description [a1b2c3d]`.
-11. **Commit plan.md Update** – stage `plan.md` and commit (e.g., `conductor(plan): mark task '...' complete`).
+11. **Commit plan.md Update** – stage `plan.md` and commit (e.g., `chore(conductor): mark task '...' complete`).
 
 **When the task ends a development phase, immediately run the Phase Completion Verification & Checkpointing Protocol (see `./phase-checkpoint.md`).**
