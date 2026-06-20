@@ -305,20 +305,25 @@ def _fix_terminal_current_indices(state):
     cpi = state.get("current_phase_index", 0)
     cti = state.get("current_task_index", 0)
 
-    # Check if current target is actually still active (only when both >= 1)
+    # Check if the current target is still active (only when both >= 1). The
+    # most-specific index present IS the active target: when a subtask index
+    # is set it points at the subtask even if the parent is in_progress, so a
+    # terminal subtask under an active parent must still be advanced —
+    # otherwise cmd_recover feeds a stale/completed subtask target.
     if cpi >= 1 and cti >= 1 and cpi <= len(phases):
         tasks = phases[cpi - 1].get("tasks", [])
         if cti <= len(tasks):
             task = tasks[cti - 1]
-            if task["status"] not in TERMINAL_FOR_PARENT:
-                return fixes  # Current task is still active
-
-            # Check subtask index too
             csi = state.get("current_subtask_index")
-            if csi is not None and "subtasks" in task:
-                if csi <= len(task["subtasks"]):
-                    if task["subtasks"][csi - 1]["status"] not in TERMINAL_FOR_PARENT:
-                        return fixes  # Current subtask is still active
+            if csi is not None and "subtasks" in task and csi <= len(task["subtasks"]):
+                # Subtask is the active target — return only if IT is active.
+                if task["subtasks"][csi - 1]["status"] not in TERMINAL_FOR_PARENT:
+                    return fixes  # Current subtask is still active
+                # Subtask is terminal → fall through to the scan so the stale
+                # current_subtask_index advances to the next pending subtask.
+            elif task["status"] not in TERMINAL_FOR_PARENT:
+                return fixes  # Current task is still active (no subtask index)
+            # else: task is terminal → fall through to the scan
 
     # Build display label for old indices (0=sentinel → show "N/A")
     _old = (f"P{cpi}.T{cti}" if cpi >= 1 else "N/A")

@@ -141,6 +141,46 @@ class TestFixTerminalCurrentIndices(TestCase):
         fixes = _fix_terminal_current_indices(state)
         self.assertEqual(fixes, [])
 
+    def test_stale_subtask_under_active_parent_advances(self):
+        """in_progress parent + current_subtask_index at a COMPLETED subtask
+        must advance to the next pending subtask. Previously the active-parent
+        early-return skipped the subtask staleness check, so cmd_recover was
+        fed a completed subtask target after a mid-parent crash."""
+        state = _make_state(
+            current_phase_index=1, current_task_index=1, current_subtask_index=1,
+        )
+        parent = state["phases"][0]["tasks"][0]
+        parent["status"] = "in_progress"
+        parent["subtasks"] = [
+            {"name": "S1", "status": "completed", "commit_sha": "abc1234"},
+            {"name": "S2", "status": "pending"},
+            {"name": "S3", "status": "pending"},
+        ]
+        fixes = _fix_terminal_current_indices(state)
+        self.assertEqual(len(fixes), 1)
+        self.assertIn("P1.T1.S2", fixes[0])
+        self.assertIn("advanced to active subtask", fixes[0])
+        # Parent stays in_progress; only the subtask index advances.
+        self.assertEqual(state["current_phase_index"], 1)
+        self.assertEqual(state["current_task_index"], 1)
+        self.assertEqual(state["current_subtask_index"], 2)
+        self.assertEqual(parent["status"], "in_progress")
+
+    def test_active_subtask_under_active_parent_no_fix(self):
+        """An active subtask under an active parent is a valid target — no fix."""
+        state = _make_state(
+            current_phase_index=1, current_task_index=1, current_subtask_index=2,
+        )
+        parent = state["phases"][0]["tasks"][0]
+        parent["status"] = "in_progress"
+        parent["subtasks"] = [
+            {"name": "S1", "status": "completed", "commit_sha": "abc1234"},
+            {"name": "S2", "status": "in_progress"},
+        ]
+        fixes = _fix_terminal_current_indices(state)
+        self.assertEqual(fixes, [])
+        self.assertEqual(state["current_subtask_index"], 2)
+
     def test_terminal_advances_to_next_pending(self):
         state = _make_state(current_phase_index=1, current_task_index=1)
         state["phases"][0]["tasks"][0]["status"] = "completed"
