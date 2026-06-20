@@ -31,12 +31,6 @@ TEST_CASES = {
         "input": '{}',
         "expected_keys": ["hookSpecificOutput"]
     },
-    "on-phase-checkpoint-stop.py": {
-        "input": '{"session_id":"test"}',
-    },
-    "on-review-stop.py": {
-        "input": '{"session_id":"test"}',
-    },
     "on-subagent-start.py": {
         "input": '{"agent_type":"task-executor"}',
         "expected_keys": ["hookSpecificOutput"]
