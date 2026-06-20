@@ -323,6 +323,16 @@ def _build_commit_suggestion(subject: str) -> str:
         rest = type_match.group(2).lstrip(': ').strip()
         return f"{ctype}(scope): {rest}" if rest else f"{ctype}(scope): description"
 
+    # Subject has the ``word(scope): description`` shape but ``word`` is not a
+    # valid commit type — e.g. ``conductor(checkpoint): …``, where "conductor"
+    # is the plugin name misused as a type. The user already chose a real scope,
+    # so swap in a valid type and keep both their scope and description. Without
+    # this, the generic fallback below produced a double-prefixed
+    # ``fix(scope): conductor(checkpoint): …`` and discarded their scope.
+    scoped = re.match(r'^(\w+)\(([^)]+)\):\s*(.+)$', suggested, re.IGNORECASE)
+    if scoped:
+        return f"chore({scoped.group(2)}): {scoped.group(3)}"
+
     snippet = suggested[:80]
     return f"fix(scope): {snippet}"
 

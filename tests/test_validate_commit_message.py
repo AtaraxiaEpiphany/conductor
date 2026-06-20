@@ -110,6 +110,19 @@ class ValidateCommitMessageTests(TestCase):
         self.assertFalse(ok)
         self.assertEqual("fix(scope): random rambling message", suggested)
 
+    def test_invalid_type_with_scope_keeps_scope(self):
+        # `conductor(checkpoint): …` — "conductor" is the plugin name, not a
+        # commit type, but the user chose a real scope. Repair the TYPE only;
+        # never produce the double-prefixed `fix(scope): conductor(checkpoint): …`
+        # that the generic fallback used to emit.
+        ok, suggested = validate_commit_message(
+            'git commit -m "conductor(checkpoint): Checkpoint end of Phase 1"'
+        )
+        self.assertFalse(ok)
+        self.assertEqual("chore(checkpoint): Checkpoint end of Phase 1", suggested)
+        self.assertNotIn("conductor", suggested)
+        self.assertNotIn("fix(scope)", suggested)
+
     # --- Multiple -m: the subject (first -m) is what's validated ---
     def test_multiple_m_flags_validates_subject(self):
         cmd = 'git commit -m "feat(x): y" -m "extended body that is long"'
