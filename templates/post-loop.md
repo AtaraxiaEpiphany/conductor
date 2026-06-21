@@ -4,19 +4,9 @@ Loaded by implement orchestrator when dispatch loop exits (action=finalize).
 
 ---
 
-## 5.0 FINALIZATION
+## 5.0 DEFERRED VERIFICATION
 
-```bash
-track-state finalize "<track_dir>"
-track-state sync-plan "<track_dir>"
-track-state registry-update "<track_dir>" "conductor/tracks.md"
-```
-
-Commit: `chore(conductor): Complete track '<desc>'`.
-
----
-
-## 5.5 DEFERRED VERIFICATION
+Resolve deferred tasks BEFORE finalization, so the quality score reflects the verified state.
 
 ```bash
 track-state deferred-report "<track_dir>"
@@ -28,6 +18,18 @@ track-state deferred-report "<track_dir>"
 - "Defer" → no action
 
 After → `track-state sync-plan "<track_dir>"` + commit.
+
+---
+
+## 5.5 FINALIZATION
+
+```bash
+track-state finalize "<track_dir>"
+track-state sync-plan "<track_dir>"
+track-state registry-update "<track_dir>" "conductor/tracks.md"
+```
+
+Commit: `chore(conductor): Complete track '<desc>'`.
 
 ---
 
@@ -53,12 +55,12 @@ If STATUS: FAILURE (agent error) → announce and continue (non-blocking).
 ## 7.0 AUTO-REVIEW
 
 1. Get SHA range: `track-state shas "<track_dir>"`
-   If `count == 0` → skip review.
+   If `count == 0` → skip review. Otherwise use the `range` field (`{first}~1..{last}`) — it includes the first commit's own changes; do NOT rebuild `{first}..{last}` yourself.
 2. Dispatch `conductor:code-reviewer`. Description: `"Auto-review track '<desc>'"`.
    ```
    TRACK_DIR={track_dir}
    TRACK_ID={track_id}
-   REVISION_RANGE={first}..{last}
+   REVISION_RANGE={range}
    PRODUCT_GUIDELINES={resolved_path}
    TECH_STACK={resolved_path}
    STYLEGUIDES_DIR={resolved_path}
@@ -67,7 +69,18 @@ If STATUS: FAILURE (agent error) → announce and continue (non-blocking).
    - Critical/High → **CHANGES REQUESTED** → offer to apply fixes or halt.
    - Medium/Low → **APPROVE WITH COMMENTS** → continue.
    - No issues → **APPROVE**.
-4. If "Apply Fixes" → dispatch `conductor:task-executor` for each fix. Process results normally.
+   - STATUS: FAILURE (agent error) → announce and continue (non-blocking).
+4. If "Apply Fixes" → these are **post-review patches, not plan tasks**. Dispatch ONE free-form patch agent (`Agent`, `subagent_type: "general-purpose"`):
+   ```
+   Apply the review findings in {TRACK_DIR}/.conductor/review-result.json.
+   For each finding, apply its `suggestion`, then commit it separately as
+   `fix(<area>): <finding title>` (<area> = code area touched). Run the test
+   suite after applying and fix any regressions.
+   ```
+   This agent is NOT a plan task: do NOT pass `PHASE`/`TASK`, do NOT call
+   `dispatch-finalize`, and do NOT modify `track-state.json` — the track is
+   already finalized and these are remediation commits on top of it. After
+   return, verify the commits landed (`git log --oneline -<count>`).
 
 ---
 

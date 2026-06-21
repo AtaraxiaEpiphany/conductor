@@ -133,14 +133,21 @@ def _get_all_shas(state):
 
 
 def cmd_shas(track_dir):
-    """Extract all commit SHAs from completed tasks. Returns first/last for revision range."""
+    """Extract all commit SHAs from completed tasks. Returns first/last + a review range.
+
+    `range` is `{first}~1..{last}` — the parent of the first commit through the last,
+    so `git diff {range}` includes the first task's own changes. `first..last` alone
+    masks the first commit's exclusive diff (git compares the two endpoint trees)."""
     state = load(track_dir)
     shas = _get_all_shas(state)
+    first = shas[0] if shas else None
+    last = shas[-1] if shas else None
     out(dict(
         shas=shas,
-        first=shas[0] if shas else None,
-        last=shas[-1] if shas else None,
+        first=first,
+        last=last,
         count=len(shas),
+        range=f"{first}~1..{last}" if shas else None,
     ))
 
 

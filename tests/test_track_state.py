@@ -16,6 +16,7 @@ from scripts.track_state.validate import (
 from scripts.track_state.dispatch import cmd_recover, cmd_dispatch_next
 from scripts.track_state.quality import cmd_init, cmd_init_from_plan, cmd_set_mode, _validate_plan_structure
 from scripts.track_state.plan_parse import parse_plan, to_plan_structure
+from scripts.track_state.misc import cmd_shas
 
 
 def _out_captured(fn, *args, **kwargs):
@@ -909,6 +910,51 @@ class TestManualTaskRouting(TestCase):
             result, _ = _out_captured(cmd_dispatch_next, d)
             self.assertEqual(result.get("action"), "defer_manual")
             self.assertEqual(result.get("execution_mode"), "continuous")
+        finally:
+            shutil.rmtree(d)
+
+
+class TestShasRange(TestCase):
+    """misc.py: cmd_shas emits a review `range` that includes the first commit."""
+
+    @staticmethod
+    def _state_with_shas(shas):
+        tasks = [
+            {"name": f"Task {i}", "status": "completed", "commit_sha": sha}
+            for i, sha in enumerate(shas)
+        ]
+        return _make_state(phases=[{"name": "Phase 1", "status": "completed", "tasks": tasks}])
+
+    def test_range_includes_first_commit_via_parent(self):
+        # range must be first~1..last so git diff covers the first task's own changes;
+        # first..last alone compares endpoint trees and masks the first commit.
+        d = _make_track_dir(self._state_with_shas(["d1a9574", "aaaaaaa", "1b3f259"]))
+        try:
+            result, _ = _out_captured(cmd_shas, d)
+            self.assertEqual(result["count"], 3)
+            self.assertEqual(result["first"], "d1a9574")
+            self.assertEqual(result["last"], "1b3f259")
+            self.assertEqual(result["range"], "d1a9574~1..1b3f259")
+        finally:
+            shutil.rmtree(d)
+
+    def test_single_sha_range_uses_parent(self):
+        d = _make_track_dir(self._state_with_shas(["abcdef0"]))
+        try:
+            result, _ = _out_captured(cmd_shas, d)
+            self.assertEqual(result["count"], 1)
+            self.assertEqual(result["range"], "abcdef0~1..abcdef0")
+        finally:
+            shutil.rmtree(d)
+
+    def test_empty_range_is_none(self):
+        d = _make_track_dir(_make_state())  # no completed tasks with SHAs
+        try:
+            result, _ = _out_captured(cmd_shas, d)
+            self.assertEqual(result["count"], 0)
+            self.assertIsNone(result["first"])
+            self.assertIsNone(result["last"])
+            self.assertIsNone(result["range"])
         finally:
             shutil.rmtree(d)
 
