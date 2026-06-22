@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .core import load, save
+from .git_ops import docs_synced_for_track
 from .helpers import out, now_iso, conductor_dir, _reset_task
 from .constants import EXECUTION_MODES
 from .handoff import _ensure_handoff_index
@@ -394,8 +395,13 @@ def _compute_quality_score(track_dir, state, statuses, checklist):
              (1.0 - retry_penalty) * 10)
     return round(min(score, 100))
 
-def cmd_archive(track_dir):
-    """Transition a completed track to archived status."""
+def cmd_archive(track_dir, force=False):
+    """Transition a completed track to archived status.
+
+    Refuses unless a doc-sync commit exists for this track — evidence the
+    post-loop DOC SYNC phase ran and durable findings reached the wiki corpus.
+    ``force`` skips the check (the result then carries a ``warning``).
+    """
     state = load(track_dir)
     current = state.get("status", "")
     if current != "completed":
@@ -403,11 +409,25 @@ def cmd_archive(track_dir):
                  hint="Run track-state finalize first."))
         return
 
+    synced = docs_synced_for_track(track_dir)
+    if not synced and not force:
+        track_id = Path(track_dir).name
+        out(dict(ok=False,
+                 error=(f"Cannot archive track '{track_id}': no doc-sync commit found "
+                        f"(docs(conductor): ...[{track_id}]). The post-loop DOC SYNC phase "
+                        f"has not run, so durable findings have not been graduated into the wiki corpus."),
+                 hint="Run the post-loop DOC SYNC phase (templates/post-loop.md §6.0), or pass --force to archive without it."))
+        return
+
     state["status"] = "archived"
     state["archived_at"] = now_iso()
     state["updated_at"] = now_iso()
     save(track_dir, state)
-    out(dict(ok=True, status="archived"))
+    result = dict(ok=True, status="archived")
+    if not synced:
+        result["warning"] = ("Archived without a doc-sync commit (--force); "
+                             "durable findings may not be synced to the wiki corpus.")
+    out(result)
 
 def cmd_gc(track_dir):
     """Garbage collection: clean orphaned artifacts and detect stale state."""

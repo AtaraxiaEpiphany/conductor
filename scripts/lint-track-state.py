@@ -179,6 +179,40 @@ def check_misplaced_docs(track_dir: Path) -> list:
     return stray
 
 
+def check_docsync_before_archive(track_dir: Path) -> tuple[bool, Optional[str]]:
+    """Backstop: an archived track must carry a doc-sync commit.
+
+    Mirrors track_state.git_ops.docs_synced_for_track (subprocess + --all) inline
+    rather than importing it: the lint script depends only on lib/, while git_ops
+    stays self-contained subprocess — the campaign's lib/self-contained split
+    (same pattern as lib/path_utils). Catches tracks flipped to 'archived' outside
+    the cmd_archive gate (e.g. hand-edited track-state.json).
+
+    Returns (ok, warning_message). ok=False → WARN (not error). No-op for
+    non-archived tracks.
+    """
+    state = load_json_safe(track_dir / "track-state.json")
+    if not state or state.get("status") != "archived":
+        return True, None
+    track_id = track_dir.name
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["git", "log", "--all", "--format=%s", "--grep",
+             "docs(conductor):", "-50"],
+            capture_output=True, text=True, cwd=str(track_dir), timeout=10
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            needle = f"[{track_id}]"
+            if any(needle in line for line in result.stdout.splitlines()):
+                return True, None
+    except Exception:
+        pass
+    return False, (f"archived without a doc-sync commit "
+                   f"(no docs(conductor): ...[{track_id}] found) — durable findings "
+                   f"may not be synced to the wiki corpus")
+
+
 def check_stale_state(state_file: Path) -> tuple[bool, Optional[str]]:
     """Check for stale state with in_progress tasks (>24h)
 
@@ -285,6 +319,16 @@ def main():
             warnings += 1
         else:
             print(f"[DOC PASS] Track '{track_id}' has only meta docs in track dir")
+
+        # Doc-sync backstop: an archived track must have run doc-sync
+        # (cmd_archive enforces this on the programmatic path; this catches
+        # hand-edited state that bypassed the gate).
+        ds_ok, ds_msg = check_docsync_before_archive(full_dir)
+        if not ds_ok:
+            print(f"[DOCSYNC WARN] Track '{track_id}': {ds_msg}")
+            print("  Hint: re-run the post-loop DOC SYNC phase, or "
+                  "'track-state archive --force' if intentional.")
+            warnings += 1
 
     # Summary
     print(f"\nLint complete: {errors} errors, {warnings} warnings.")

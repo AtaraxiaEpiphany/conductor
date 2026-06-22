@@ -308,6 +308,33 @@ def _find_conductor_shas(track_dir):
     return shas
 
 
+def docs_synced_for_track(track_dir):
+    """Return True if a doc-sync commit exists for this track.
+
+    Evidence that the post-loop DOC SYNC phase (templates/post-loop.md §6.0)
+    ran: doc-syncer commits ``docs(conductor): ... [{TRACK_ID}]`` (Phase 1 doc
+    update and/or Phase 2 wiki sync). The gate in cmd_archive uses this to
+    refuse archiving a track whose durable findings never reached the corpus.
+
+    Self-contained subprocess call (mirrors _find_conductor_shas); returns
+    False on any git failure or non-repo dir so callers degrade to "not synced".
+    """
+    track_id = Path(track_dir).name
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["git", "log", "--all", "--format=%s", "--grep",
+             "docs(conductor):", "-50"],
+            capture_output=True, text=True, cwd=str(track_dir), timeout=10
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            return False
+        needle = f"[{track_id}]"
+        return any(needle in line for line in result.stdout.splitlines())
+    except Exception:
+        return False
+
+
 def _recover_git_notes(track_dir, state):
     """Best-effort: write git notes for completed tasks that are missing them.
     Scans track-state.json for completed tasks with commit SHAs,

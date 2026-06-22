@@ -21,7 +21,7 @@ from .handoff import cmd_get_handoff, cmd_sync_handoff, cmd_append_handoff
 from .sync import cmd_sync_plan
 
 
-_BOOL_FLAGS = {"--compact", "--fix", "--check"}
+_BOOL_FLAGS = {"--compact", "--fix", "--check", "--force"}
 
 
 def positional(args):
@@ -172,8 +172,8 @@ COMMAND_HELP = {
               "Reset task(s) to pending, clearing completion fields and syncing plan"),
     "finalize": ("finalize <track-dir>",
                  "Transition track to completed/blocked/failed, compute quality score"),
-    "archive": ("archive <track-dir>",
-                "Archive a completed track"),
+    "archive": ("archive <track-dir> [--force]",
+                "Archive a completed track (refuses unless doc-sync ran; --force to skip)"),
     "sync-plan": ("sync-plan <track-dir>",
                   "Sync plan.md checkbox markers from track-state.json"),
     "sync-handoff": ("sync-handoff <track-dir>",
@@ -352,7 +352,7 @@ def main():
         elif cmd == "finalize":
             cmd_finalize(track_dir)
         elif cmd == "archive":
-            cmd_archive(track_dir)
+            cmd_archive(track_dir, force="--force" in args)
         elif cmd == "gc":
             cmd_gc(track_dir)
         elif cmd == "checklist-verify":

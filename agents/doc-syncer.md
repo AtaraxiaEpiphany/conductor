@@ -230,7 +230,9 @@ For confirmed cross-references (5.9):
 After all confirmed updates and cross-references are applied:
 
 6. Stage all changed files: `git add <file1> <file2> ...`
-7. Commit: `docs(conductor): Synchronize docs for track '{TRACK_DESCRIPTION}'`
+7. Commit: `docs(conductor): Synchronize docs for track '{TRACK_DESCRIPTION}' [{TRACK_ID}]`
+
+> The `[{TRACK_ID}]` suffix is load-bearing: `track-state archive` refuses to archive the track until it sees a `docs(conductor): …[{TRACK_ID}]` commit (evidence this phase ran). Never omit it.
 
 If no updates were confirmed or needed:
 
@@ -275,7 +277,9 @@ Operations to log:
 1. Stage wiki files: `git add conductor/overview.md conductor/log.md conductor/index.md`
 2. Also stage any Phase 1 files not yet committed.
 3. Update one-line descriptions in `conductor/index.md` Global Docs table if content changed.
-4. Commit: `docs(conductor): Wiki sync for track '{TRACK_DESCRIPTION}'`
+4. Commit: `docs(conductor): Wiki sync for track '{TRACK_DESCRIPTION}' [{TRACK_ID}]`
+
+> The `[{TRACK_ID}]` suffix satisfies the `track-state archive` doc-sync gate (see Phase 1 §6.0 step 7 note). Never omit it.
 
 ---
 
