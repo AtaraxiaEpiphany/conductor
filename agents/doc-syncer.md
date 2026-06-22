@@ -46,6 +46,25 @@ CRITICAL: You must validate the success of every tool call. If any tool call fai
 1. **Track Specification** — `{TRACK_DIR}/spec.md`
    - Feature requirements, acceptance criteria, constraints.
 
+### 3.1b Harvest Graduation Candidates (durable findings → corpus)
+
+The explorer emits durable, cross-task findings as `graduation_candidates` in this
+track's handoffs (`{TRACK_DIR}/.conductor/handoff/*.md`); decisions captured via
+`append-handoff --type decision` are also durable. These are first-class inputs to
+this run — findings that must reach the wiki corpus, on equal footing with spec
+divergence. (This is the harvest step `agents/explorer.md` promises.)
+
+```bash
+track-state harvest-candidates "{TRACK_DIR}"
+```
+
+Parse the JSON result:
+- `graduation[]` — each `{text, source}` is one durable finding to merge into a scoped doc (§4.10 routes it; §5.10 proposes; §6.0 applies).
+- `decisions[]` — each `{title, chosen, reasoning, source}` is a recorded technical decision; merge its outcome into the relevant design doc.
+- `count` — total. If `0`, skip §4.10/§5.10 (no harvest this run).
+
+Carry the harvested queue into §4 alongside the spec analysis.
+
 ### 3.2 Project Documentation
 
 Resolve all paths via `conductor/index.md`. Doc-syncer reads **all** documents (Global + Scoped) because its responsibility is to detect and propagate any spec-vs-doc divergence.
@@ -148,6 +167,20 @@ After completing document-level analysis (4.1–4.8):
 2. **Identify new cross-reference candidates:** For each document flagged in 4.1–4.8 as needing updates, determine if it should link to other related documents (e.g., a tech-stack change might relate to architecture, a database change might relate to API specs).
 3. **Detect orphaned docs:** If `conductor/overview.md` exists, check whether any document listed in `conductor/index.md` has zero inbound `[[wikilinks]]` from overview.md.
 
+### 4.10 Graduation Harvest Analysis
+
+For each item in the harvested queue (§3.1b), determine its **target scoped doc** by matching its subject against the `conductor/index.md` Scoped Docs table Match Strategy (the same routing task-executors use):
+- component / architecture / structural finding → `conductor/design/architecture/system-architecture.md`
+- inventory, gotcha, external-tool fact, run constraint → the matching `conductor/resource/` doc (or `docs/` doc already in the table)
+- a `decisions[]` entry → the design doc its `chosen` outcome affects
+
+**Decide per item:** does the target doc already contain this finding?
+- **Already documented** → skip it (the harvest must be idempotent — never duplicate).
+- **New, target doc exists** → graduation **merge**; proceed to §5.10.
+- **New, target doc does not exist** (forward reference with no file) → graduation **seed**; proceed to §5.10 with `seed=true`.
+
+**Merge, never append.** A graduation merges the finding into the target doc's canonical section (a bullet under the matching `##` heading). It must NEVER append a `## Subtask:` block — appending is what bloats the corpus (the relocation-plan anti-pattern).
+
 ---
 
 ## 5.0 UPDATE PROPOSALS (Phase 1)
@@ -210,6 +243,22 @@ If Section 4.9 identified new cross-reference candidates:
 
 Options: "Yes, add all" / "Skip"
 
+### 5.10 Graduation Harvest Proposals
+
+For each item flagged in §4.10 (merge or seed), present a proposal via `AskUserQuestion`. Batch findings that target the SAME doc into one prompt.
+
+For a **merge** (target doc exists):
+
+> "Graduation finding from {source}: \"{text}\"\nProposed addition to {target_doc} (section {heading}):\n\n  - {finding}\n\nMerge into the corpus?"
+
+Options: "Yes, merge" / "Skip"
+
+For a **seed** (target doc does not exist):
+
+> "Graduation finding from {source}: \"{text}\" has no target doc yet ({target_doc} is a forward reference).\nProposed: create {target_doc} seeded with this finding and register it in index.md Scoped Docs.\n\nSeed this doc?"
+
+Options: "Yes, seed" / "Skip"
+
 ---
 
 ## 6.0 EXECUTE UPDATES (Phase 1)
@@ -227,17 +276,23 @@ For confirmed cross-references (5.9):
    - Follow the Wikilink Format convention defined in the core contract.
 5. Record cross-references added.
 
-After all confirmed updates and cross-references are applied:
+For confirmed graduation harvests (§5.10):
 
-6. Stage all changed files: `git add <file1> <file2> ...`
-7. Commit: `docs(conductor): Synchronize docs for track '{TRACK_DESCRIPTION}' [{TRACK_ID}]`
+6. **Merge** — for each confirmed merge, Edit the target doc to add the finding as a bullet under its canonical `##` section (merge, never append a new subsection). Skip if the finding is already present (idempotent).
+7. **Seed** — for each confirmed seed, Write the target doc with focused initial content (title + the finding under the appropriate `##` heading, plus a `## See Also` linking to related docs), then add a row to the `conductor/index.md` Scoped Docs table: `| {Category} | {path} | {Match Strategy} |`.
+8. Record each graduated doc (merge or seed) for the §7.2 GRADUATE log rows.
+
+After all confirmed updates, cross-references, and harvests are applied:
+
+9. Stage all changed files: `git add <file1> <file2> ...`
+10. Commit: `docs(conductor): Synchronize docs for track '{TRACK_DESCRIPTION}' [{TRACK_ID}]`
 
 > The `[{TRACK_ID}]` suffix is load-bearing: `track-state archive` refuses to archive the track until it sees a `docs(conductor): …[{TRACK_ID}]` commit (evidence this phase ran). Never omit it.
 
 If no updates were confirmed or needed:
 
-8. Announce "No documentation updates required."
-9. Skip commit (Phase 2 will still create a wiki commit if any wiki files are new).
+11. Announce "No documentation updates required."
+12. Skip commit (Phase 2 will still create a wiki commit if any wiki files are new).
 
 ---
 
@@ -269,13 +324,14 @@ Append new rows to the log table using Edit. Each row follows this format:
 Operations to log:
 
 - **DOC_UPDATE** — for each document updated in Phase 1. Files: the updated document path. Summary: one-line description of the change.
+- **GRADUATE** — for each doc that received a harvested finding (merge or seed) in §6. Files: the graduated doc path. Summary: "Graduated {N} durable findings from handoffs".
 - **WIKI_REGEN** — once, after overview regeneration. Files: `conductor/overview.md`. Summary: "Regenerated project overview".
 - **CROSSREF** — once, if cross-references were added. Files: comma-separated paths of docs that got new `## See Also` sections. Summary: "Added {N} bidirectional cross-references".
 
 ### 7.3 Commit Wiki Changes
 
 1. Stage wiki files: `git add conductor/overview.md conductor/log.md conductor/index.md`
-2. Also stage any Phase 1 files not yet committed.
+2. Also stage any Phase 1 files not yet committed — including any scoped docs **seeded** in §6.7 and the Scoped Docs rows added to `index.md`.
 3. Update one-line descriptions in `conductor/index.md` Global Docs table if content changed.
 4. Commit: `docs(conductor): Wiki sync for track '{TRACK_DESCRIPTION}' [{TRACK_ID}]`
 
@@ -297,6 +353,7 @@ WIKI_UPDATED: true|false
 OVERVIEW_REGENERATED: true|false
 LOG_ENTRIES_ADDED: <count>
 CROSS_REFERENCES_ADDED: <count>
+GRADUATED_FINDINGS: <count of harvested findings merged/seeded into the corpus, or 0>
 SUMMARY: <one-line summary of changes made, or "No updates required">
 ---END RESULT---
 ```
@@ -319,7 +376,7 @@ REASON: <one-line description of what failed>
 **Absolutely Prohibited:**
 - Modifying `track-state.json`, `plan.md` markers, or Tracks Registry.
 - Updating Product Guidelines without explicit user confirmation.
-- Making broad rewrites — only targeted additions/modifications (overview.md regeneration is the exception).
+- Making broad rewrites — only targeted additions/modifications (overview.md regeneration and seeding a missing scoped doc from a harvested finding in §6 are the exceptions; both still require user confirmation).
 - Skipping user confirmation for any Phase 1 update.
 - Regenerating `conductor/overview.md` before applying confirmed Phase 1 updates.
 - Appending log entries with incorrect or fabricated track IDs.

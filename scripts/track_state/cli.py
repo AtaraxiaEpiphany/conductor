@@ -17,7 +17,7 @@ from .misc import (
     cmd_deferred_report, cmd_phase_done, cmd_registry_update,
     cmd_record_summary,
 )
-from .handoff import cmd_get_handoff, cmd_sync_handoff, cmd_append_handoff
+from .handoff import cmd_get_handoff, cmd_sync_handoff, cmd_append_handoff, cmd_harvest_candidates
 from .sync import cmd_sync_plan
 
 
@@ -184,6 +184,8 @@ COMMAND_HELP = {
                        "                  --type <explore|decision|risk|deviation>\n"
                        "                  --content '<json>' [--subtask <n>]",
                        "Append notes to a task's handoff file"),
+    "harvest-candidates": ("harvest-candidates <track-dir>",
+                           "Extract durable findings (graduation candidates + decisions) from handoffs for doc-syncer"),
     "registry-update": ("registry-update <track-dir> <tracks-md-path>",
                         "Update track entry in Tracks Registry (tracks.md)"),
     "write-result": ("write-result <track-dir> [--data '<json>']",
@@ -219,7 +221,7 @@ _COMMAND_GROUPS = [
     ("Navigation", ["next", "dispatch-next", "recover", "indices"]),
     ("State Mutations", ["lock", "complete", "fail", "skip", "defer", "block", "reset"]),
     ("Sync & Registry", ["sync-plan", "sync-handoff", "registry-update"]),
-    ("Handoff", ["get-handoff", "append-handoff"]),
+    ("Handoff", ["get-handoff", "append-handoff", "harvest-candidates"]),
     ("Result Processing", ["write-result", "process-result"]),
     ("Dispatch Composites", ["dispatch-prepare", "dispatch-finalize", "record-summary"]),
     ("Diagnostics", ["validate", "gc", "shas", "checklist-verify", "deferred-report",
@@ -391,6 +393,8 @@ def main():
                               flag(args, "--type") or "explore",
                               flag(args, "--content") or "{}",
                               flag(args, "--subtask"))
+        elif cmd == "harvest-candidates":
+            cmd_harvest_candidates(track_dir)
         else:
             print(f"Unknown command: {cmd}", file=sys.stderr)
             sys.exit(1)

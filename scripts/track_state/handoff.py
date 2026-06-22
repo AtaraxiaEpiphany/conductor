@@ -1,5 +1,6 @@
 """Handoff file management for cross-session continuity."""
 import json
+import re
 from pathlib import Path
 
 from .core import load
@@ -558,6 +559,93 @@ def cmd_append_handoff(track_dir, phase, task, entry_type, content_json, subtask
     _write_task_handoff(track_dir, phase, task, section, state)
 
     out(dict(ok=True, type=entry_type, handoff_file=str(_get_handoff_file(track_dir, phase, task))))
+
+
+# ── Graduation Harvest (durable findings → wiki corpus) ──────────────
+
+# Heading rendered by cmd_append_handoff's explore block (handoff.py:502).
+_GRAD_HEADING = re.compile(r"^###\s+Graduation Candidates\b")
+# `## Technical Decision: {title} | {ts}` rendered by the decision block.
+_DECISION_HEADING = re.compile(r"^##\s+Technical Decision:\s*(.+?)\s*(?:\|[^|]*)?$")
+_DECISION_FIELD = re.compile(r"^\*\*(Options|Chosen|Reasoning|Tradeoffs)\*\*:\s*(.*)$")
+
+
+def _extract_candidates(handoff_dir):
+    """Parse durable findings from every ``P*T*.md`` handoff file in *handoff_dir*.
+
+    Returns ``{"graduation": [...], "decisions": [...]}``:
+    - graduation: ``{"text", "source"}`` per non-``_None_`` bullet under any
+      ``### Graduation Candidates`` section (de-duplicated by text; multiple
+      sections per file — e.g. one per subtask — are all collected).
+    - decisions: ``{"title", "chosen", "reasoning", "source"}`` per
+      ``## Technical Decision:`` block (``--type decision`` entries).
+
+    ``source`` is the handoff stem (``P1T2``). Read-only; never creates the dir.
+    """
+    graduation, decisions = [], []
+    if not handoff_dir.is_dir():
+        return {"graduation": graduation, "decisions": decisions}
+
+    seen = set()  # de-dup identical candidate text across handoffs
+    for hf in sorted(handoff_dir.glob("P*T*.md")):
+        source = hf.stem
+        try:
+            lines = hf.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+
+        # Graduation candidates (possibly multiple sections per file).
+        for idx, line in enumerate(lines):
+            if not _GRAD_HEADING.match(line):
+                continue
+            for l in lines[idx + 1:]:
+                if l.startswith("#"):
+                    break
+                s = l.strip()
+                if not s:
+                    continue
+                if s == "_None_":
+                    break
+                if s.startswith("- "):
+                    cand = s[2:].strip()
+                    if cand and cand not in seen:
+                        seen.add(cand)
+                        graduation.append({"text": cand, "source": source})
+                else:
+                    break  # non-bullet content ends the candidate list
+
+        # Technical decisions.
+        for idx, line in enumerate(lines):
+            m = _DECISION_HEADING.match(line)
+            if not m:
+                continue
+            entry = {"title": m.group(1).strip(), "chosen": "",
+                     "reasoning": "", "source": source}
+            for l in lines[idx + 1:]:
+                if l.startswith("## "):
+                    break
+                fm = _DECISION_FIELD.match(l)
+                if fm and fm.group(1) in ("Chosen", "Reasoning"):
+                    entry[{"Chosen": "chosen", "Reasoning": "reasoning"}[fm.group(1)]] = fm.group(2).strip()
+            decisions.append(entry)
+
+    return {"graduation": graduation, "decisions": decisions}
+
+
+def cmd_harvest_candidates(track_dir):
+    """Extract durable findings from this track's handoffs for doc-syncer to
+    graduate into the wiki corpus (``conductor/design/`` + ``conductor/resource/``).
+
+    Reads ONLY the sanctioned ``.conductor/handoff/`` channel — not
+    ``.conductor/notes/`` (off-contract; flagged separately by check_misplaced_docs).
+    doc-syncer calls this in Phase 1 (agents/doc-syncer.md §3.1b) to load the
+    harvest queue alongside spec.md. Output JSON:
+    ``{"graduation": [...], "decisions": [...], "count": N}``.
+    """
+    handoff_dir = Path(track_dir) / ".conductor" / "handoff"
+    result = _extract_candidates(handoff_dir)
+    result["count"] = len(result["graduation"]) + len(result["decisions"])
+    out(result)
 
 
 # ── Dispatch Composite Commands ──────────────────────────────────────
