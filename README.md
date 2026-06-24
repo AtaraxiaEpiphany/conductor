@@ -89,31 +89,35 @@ conductor-plugin/
 | Agent | Model | Purpose |
 |-------|-------|---------|
 | `task-executor` | sonnet | TDD implementation (steps 3–8) |
-| `explorer` | haiku | Read-only code investigation |
+| `explorer` | sonnet | Read-only code investigation |
 | `phase-checker` | sonnet | Phase checkpoint verification |
 | `code-reviewer` | sonnet | Deep code review against spec/plan |
-| `spec-planner` | haiku | Generate spec.md + plan.md |
+| `spec-planner` | sonnet | Generate spec.md + plan.md |
 | `spec-reviewer` | haiku | Interactive spec/plan review |
-| `doc-syncer` | haiku | Documentation synchronisation |
+| `doc-syncer` | sonnet | Documentation synchronisation |
 | `skip-analyst` | haiku | Failed-task skip analysis |
 | `project-analyzer` | sonnet | Brownfield project detection |
 
 ### Execution Firewall
 
-Before every code-modifying action, Conductor enforces six checks:
+Before every code-modifying action, Conductor enforces six checks (authoritative source: `runtime/core-contract.md`):
 
-1. **F1** — State consistency: `track-state.json` matches `plan.md`
-2. **F2** — Task lock: current task is locked and owned
-3. **F3** — Coverage gate: test coverage ≥ 80 %
-4. **F4** — No stale in_progress: no tasks stuck in progress
-5. **F5** — Phase boundary: all tasks complete before advancing
-6. **F6** — Anti-pattern scan: no V1–V11 violations
+1. **F1** — Global State Lock: at most one active `[~]` task at a time
+2. **F2** — TDD Gate: no implementation before a failing test
+3. **F3** — Coverage Gate: test coverage ≥ 80 % before commit
+4. **F4** — SHA Must Exist: every non-transient marker carries a `[sha]`
+5. **F5** — Checkpoint Integrity: phase checkpoint is mandatory
+6. **F6** — Context Guard: never skip workflow steps
 
 ## Testing
 
 ```bash
 python3 -m pytest tests/
 ```
+
+### Verification ladder
+
+Conductor verifies work across a ladder — **L0** static, **L1** unit/integration, **L2** browser-E2E (opportunistic, when a browser-automation MCP is connected), **L4** human manual plan. It does **not** cover **L3** (production logs/metrics/traces): that rung is project-specific infrastructure a generic plugin cannot provision and is left to the host project.
 
 ## License
 

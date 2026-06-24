@@ -85,7 +85,9 @@ Inform the user that phase `{PHASE_NAME}` is complete and the checkpoint protoco
 
 ### Step 3.5: L2 End-to-End Verification (browser automation)
 
-This is the **L2** tier of the verification hierarchy (L0 static → L1 unit/integration → **L2 browser E2E** → L4 human). L1 tests cannot discover end-to-end breakage that only surfaces in a real browser; an explicit L2 check closes that gap. It runs **between** Step 3 (L1 tests pass) and Step 4 (the L4 manual plan).
+This is the **L2** tier of the verification hierarchy: L0 static → L1 unit/integration → **L2 browser E2E** → L3 production observability → L4 human. L1 tests cannot discover end-to-end breakage that only surfaces in a real browser; an explicit L2 check closes that gap. It runs **between** Step 3 (L1 tests pass) and Step 4 (the L4 manual plan).
+
+> **L3 is intentionally out of scope for the plugin.** L3 — verifying the *running* system via its logs / metrics / traces — is project-specific infrastructure a generic plugin cannot provision, and is the one verification rung left to the host project. L2 (here) plus the L4 manual plan (Step 4) together cover what an agent can verify.
 
 **Decide applicability:**
 - Did this phase change **user-facing behavior** (UI, an HTTP endpoint a browser/client hits, or a primary user flow)? If **no** (backend-only, tooling, docs) → record `L2: skipped (non-user-facing phase)` and proceed to Step 4.
