@@ -218,53 +218,39 @@ For each item in the harvested queue (§3.1b), determine its **target scoped doc
 
 For each document flagged by the Step-1 ANALYSIS (§4.0a/4.0b) as needing change, present a proposal to the user via `AskUserQuestion`. Batch related small changes into a single prompt where possible. Proposals are grounded in the holistic analysis, not re-derived per doc in isolation.
 
-### 5.1 Product Definition Update
+**Proposal template** — §5.1–5.8 all use this prompt; only the doc name and change list vary:
 
-> "The completed track '{TRACK_DESCRIPTION}' affects the Product Definition. Proposed changes:\n\n{list of specific additions/modifications}\n\nApply these updates?"
+> "The completed track '{TRACK_DESCRIPTION}' affects {DocName}. Proposed changes:\n\n{specific additions/modifications}\n\nApply these updates?"
 
 Options: "Yes, apply" / "Skip"
+
+**Variants:**
+- **Product Guidelines (§5.3)** — prefix the prompt with `⚠️ ` and append " (Use extreme caution)".
+- **Glossary (§5.8)** — replace the "Proposed changes" line with "introduces new terms. Proposed additions:\n\n{term definitions}".
+
+### 5.1 Product Definition Update
+Base proposal template (§5.0). Doc name: **Product Definition**.
 
 ### 5.2 Tech Stack Update
-
-> "The completed track '{TRACK_DESCRIPTION}' affects the Tech Stack. Proposed changes:\n\n{list of specific additions/modifications}\n\nApply these updates?"
-
-Options: "Yes, apply" / "Skip"
+Base proposal template (§5.0). Doc name: **Tech Stack**.
 
 ### 5.3 Product Guidelines Update
-
-> "⚠️ The completed track '{TRACK_DESCRIPTION}' affects Product Guidelines. Proposed changes:\n\n{list of specific additions/modifications}\n\nApply these updates? (Use extreme caution)"
-
-Options: "Yes, apply" / "Skip"
+**Caution variant** (§5.0): prefix `⚠️`, append "(Use extreme caution)". Doc name: **Product Guidelines**.
 
 ### 5.4 System Architecture Update
-
-> "The completed track '{TRACK_DESCRIPTION}' affects System Architecture. Proposed changes:\n\n{list of specific additions/modifications}\n\nApply these updates?"
-
-Options: "Yes, apply" / "Skip"
+Base proposal template (§5.0). Doc name: **System Architecture**.
 
 ### 5.5 Database Schema Update
-
-> "The completed track '{TRACK_DESCRIPTION}' affects Database Schema. Proposed changes:\n\n{list of specific additions/modifications}\n\nApply these updates?"
-
-Options: "Yes, apply" / "Skip"
+Base proposal template (§5.0). Doc name: **Database Schema**.
 
 ### 5.6 API Specifications Update
-
-> "The completed track '{TRACK_DESCRIPTION}' affects API Specifications. Proposed changes:\n\n{list of specific additions/modifications}\n\nApply these updates?"
-
-Options: "Yes, apply" / "Skip"
+Base proposal template (§5.0). Doc name: **API Specifications**.
 
 ### 5.7 UX/UI Design Spec Update
-
-> "The completed track '{TRACK_DESCRIPTION}' affects UX/UI Design Spec. Proposed changes:\n\n{list of specific additions/modifications}\n\nApply these updates?"
-
-Options: "Yes, apply" / "Skip"
+Base proposal template (§5.0). Doc name: **UX/UI Design Spec**.
 
 ### 5.8 Glossary Update
-
-> "The completed track '{TRACK_DESCRIPTION}' introduces new terms. Proposed additions:\n\n{list of term definitions}\n\nApply these updates?"
-
-Options: "Yes, apply" / "Skip"
+**Terms variant** (§5.0): "introduces new terms. Proposed additions: {term definitions}". Doc name: **Glossary**.
 
 ### 5.9 Cross-Reference Proposals
 
