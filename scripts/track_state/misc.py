@@ -225,7 +225,20 @@ def cmd_phase_done(track_dir, p):
             total += 1
             if sub["status"] in terminal:
                 done += 1
-    out(dict(complete=done == total, terminal=done, total=total))
+    complete = done == total
+    result = dict(complete=complete, terminal=done, total=total)
+    # Uniform contract with cmd_defer / dispatch-finalize: when this phase just
+    # concluded, surface the checkpoint signal so a thin orchestrator keying off
+    # phase_checkpoint_pending dispatches the phase-checker instead of skipping it
+    # (phase-done was previously the lone phase-routing command that didn't surface it).
+    # A checkpointed phase already has [checkpoint: sha] in plan.md, so
+    # _any_phase_needs_checkpoint returns None and won't re-signal.
+    if complete:
+        checkpoint_pending = _any_phase_needs_checkpoint(track_dir, state)
+        if checkpoint_pending is not None:
+            result["phase_checkpoint_pending"] = checkpoint_pending
+            result["next_action"] = "dispatch_phase_checker"
+    out(result)
 
 def cmd_registry_update(track_dir, tracks_md_path):
     """Update a track's entry in the Tracks Registry (tracks.md) based on track-state.json status.

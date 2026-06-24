@@ -192,7 +192,16 @@ def cmd_fail(track_dir, p, t, s=None, summary=""):
 
 def cmd_skip(track_dir, p, t, s=None, reason=""):
     _do_skip(track_dir, p, t, s, reason)
-    out(dict(ok=True))
+    state = load(track_dir)
+    result = dict(ok=True)
+    # Uniform contract with cmd_defer / phase-done / dispatch-finalize: surface the
+    # phase-checkpoint signal when this skip concludes an uncheckpointed phase, so
+    # the orchestrator dispatches the phase-checker instead of skipping it.
+    checkpoint_pending = _any_phase_needs_checkpoint(track_dir, state)
+    if checkpoint_pending is not None:
+        result["phase_checkpoint_pending"] = checkpoint_pending
+        result["next_action"] = "dispatch_phase_checker"
+    out(result)
 
 def cmd_block(track_dir, p, t, s=None, reason=""):
     _do_block(track_dir, p, t, s, reason)

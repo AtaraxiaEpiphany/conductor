@@ -1,9 +1,12 @@
 """cmd_complete: mutation that bridges to git/sync/notes."""
 from .core import load, save
-from .helpers import target, out
+from .helpers import target, out, _any_phase_needs_checkpoint
 from .mutations import _do_complete
 from .sync import _do_sync_plan
-from .git_ops import _git_commit, _git_head_sha, _ensure_note, _has_sibling_sha
+from .git_ops import (
+    _git_commit, _git_commit_ensured, _git_head_sha, _ensure_note,
+    _has_sibling_sha, _update_task_sha,
+)
 
 
 def cmd_complete(track_dir, p, t, s=None, sha=None,
@@ -57,4 +60,35 @@ def cmd_complete(track_dir, p, t, s=None, sha=None,
     # Sync plan.md markers to reflect completion
     _do_sync_plan(track_dir, state)
 
-    out(dict(ok=True, parent_completed=parent_completed, sha=resolved_sha))
+    # Self-commit: cmd_complete is the recovery-route completion path (the in_progress
+    # → git-log → `complete --sha` row in SKILL §2.0) and was the only completion
+    # route that didn't commit, leaving plan.md + track-state.json dirty for the
+    # orchestrator to manually "Fix state consistency." Mirror dispatch-finalize so
+    # every completion is durable and the working tree is left clean.
+    task_name = tgt.get("name", "unknown")
+    commit_msg = f"chore(conductor): Complete '{task_name}' [{resolved_sha}]"
+    committed = _git_commit_ensured(track_dir, commit_msg)
+    if not committed:
+        print(f"WARNING: conductor commit failed for '{task_name}'", file=sys.stderr)
+    final_sha = resolved_sha
+    if committed:
+        final_sha = _git_head_sha(track_dir) or resolved_sha
+    # Empty code-sha ([Explore]/[Docs] recovered completions) → store the conductor
+    # commit SHA so the task carries a real SHA in state + plan. Input-sha sibling
+    # dedup is already handled by the pre-check above; conductor commits are unique.
+    if committed and not resolved_sha and final_sha:
+        state = _update_task_sha(track_dir, pi, ti, si, final_sha)
+        resolved_sha = final_sha
+
+    # Reload so the checkpoint scan reflects persisted changes, then surface the
+    # phase-checkpoint signal — uniform contract with cmd_defer / dispatch-finalize,
+    # so the recovery path (which bypasses dispatch-next) still triggers the
+    # phase-checker when this completion concludes an uncheckpointed phase.
+    state = load(track_dir)
+    result = dict(ok=True, parent_completed=parent_completed, sha=resolved_sha,
+                 committed=committed)
+    checkpoint_pending = _any_phase_needs_checkpoint(track_dir, state)
+    if checkpoint_pending is not None:
+        result["phase_checkpoint_pending"] = checkpoint_pending
+        result["next_action"] = "dispatch_phase_checker"
+    out(result)

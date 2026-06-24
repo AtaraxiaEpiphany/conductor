@@ -53,7 +53,7 @@ Route by recover `status`:
 
 | Status | Action |
 |---|---|
-| `in_progress` | `git log` for post-start commit. Found → `complete --sha <sha>`. Not found → re-dispatch. |
+| `in_progress` | `git log` for post-start commit. Found → `complete --sha <sha>` (self-commits — do NOT commit separately). Check its output for `phase_checkpoint_pending` → if set, dispatch `conductor:phase-checker`. Not found → re-dispatch. |
 | `pending` + retry_count > 0 | Re-dispatch (retry). Pass `IS_RETRY=true` `ATTEMPT={retry_count+1}` `MAX_RETRIES=3` to task-executor. |
 | `failed` + retry < max | Re-dispatch. |
 | `failed` + retry >= max | Dispatch `conductor:skip-analyst`. |
@@ -61,7 +61,7 @@ Route by recover `status`:
 | `completed`/`skipped`/`no_active_task` | Check `phase_checkpoint_pending`. If set → dispatch `conductor:phase-checker`. Otherwise → **Section 3.0**. |
 
 Store `execution_mode` from recover output. Default `"interactive"`.
-If state changed → commit: `chore(conductor): Fix state consistency after recovery`
+`complete`/`skip`/`defer` self-commit. Only commit manually if `validate --fix`/`sync-plan` auto-fixed state AND no self-committing command ran: `chore(conductor): Fix state consistency after recovery`
 
 ### 2.1 Resume Phase Checkpoint
 
@@ -156,8 +156,10 @@ Output includes `committed: true/false` and optionally `phase_checkpoint_pending
 track-state phase-done "<track_dir>" <phase>
 ```
 
-`complete=true` → dispatch `conductor:phase-checker` with `TRACK_DIR TRACK_ID PHASE_INDEX EXECUTION_MODE`. FAILED → HALT. Otherwise → Section 3.1.
-`complete=false` → Section 3.1.
+`phase_checkpoint_pending: <phase>` present → dispatch `conductor:phase-checker` with `TRACK_DIR TRACK_ID PHASE_INDEX=<phase> EXECUTION_MODE`. FAILED → HALT. Otherwise → Section 3.1.
+Absent → Section 3.1.
+
+`phase-done` surfaces `phase_checkpoint_pending`/`next_action` (uniform contract with `sync-plan`/`defer`/`dispatch-next`/`dispatch-finalize`) when the phase is complete but uncheckpointed. Key off that field, not bare `complete=true` — a checkpointed phase already carries `[checkpoint: sha]` and won't re-signal.
 
 ### 3.8 Action: `finalize`
 
