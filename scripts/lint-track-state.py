@@ -19,6 +19,7 @@ from lib.env import get_track_state_json, get_plan_md_path
 from lib.constants import TERMINAL_STATUSES
 from lib.validation import check_state_file_age, validate_json_structure
 from lib.path_utils import find_track_root, find_tracks_registry, extract_track_dirs
+from lib.git_utils import docs_synced_for_track
 
 
 def check_f1_rule(state_file: Path) -> tuple[bool, Optional[str]]:
@@ -183,11 +184,10 @@ def check_misplaced_docs(track_dir: Path) -> list:
 def check_docsync_before_archive(track_dir: Path) -> tuple[bool, Optional[str]]:
     """Backstop: an archived track must carry a doc-sync commit.
 
-    Mirrors track_state.git_ops.docs_synced_for_track (subprocess + --all) inline
-    rather than importing it: the lint script depends only on lib/, while git_ops
-    stays self-contained subprocess — the campaign's lib/self-contained split
-    (same pattern as lib/path_utils). Catches tracks flipped to 'archived' outside
-    the cmd_archive gate (e.g. hand-edited track-state.json).
+    Delegates the git-log probe to lib.git_utils.docs_synced_for_track — the same
+    single source cmd_archive's gate uses — so the lint backstop cannot drift from
+    the gate when the doc-sync commit format changes. Catches tracks flipped to
+    'archived' outside the cmd_archive gate (e.g. hand-edited track-state.json).
 
     Returns (ok, warning_message). ok=False → WARN (not error). No-op for
     non-archived tracks.
@@ -195,20 +195,9 @@ def check_docsync_before_archive(track_dir: Path) -> tuple[bool, Optional[str]]:
     state = load_json_safe(track_dir / "track-state.json")
     if not state or state.get("status") != "archived":
         return True, None
+    if docs_synced_for_track(track_dir):
+        return True, None
     track_id = track_dir.name
-    try:
-        import subprocess
-        result = subprocess.run(
-            ["git", "log", "--all", "--format=%s", "--grep",
-             "docs(conductor):", "-50"],
-            capture_output=True, text=True, cwd=str(track_dir), timeout=10
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            needle = f"[{track_id}]"
-            if any(needle in line for line in result.stdout.splitlines()):
-                return True, None
-    except Exception:
-        pass
     return False, (f"archived without a doc-sync commit "
                    f"(no docs(conductor): ...[{track_id}] found) — durable findings "
                    f"may not be synced to the wiki corpus")

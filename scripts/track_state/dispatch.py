@@ -234,6 +234,21 @@ def cmd_dispatch_next(track_dir):
     out(dict(error="dispatch-next exceeded max iterations — possible state corruption",
              status="error"))
 
+
+def _emit_no_active_task(track_dir, state, fixes, compact):
+    """Emit the no-active-task result shared by both cmd_recover guards."""
+    result = dict(status="no_active_task")
+    checkpoint_pending = _any_phase_needs_checkpoint(track_dir, state)
+    if checkpoint_pending is not None:
+        result["phase_checkpoint_pending"] = checkpoint_pending
+    if fixes:
+        result["fixes_applied"] = fixes
+    if compact:
+        print("NO_ACTIVE_TASK")
+    else:
+        out(result)
+
+
 def cmd_recover(track_dir, compact=False):
     """Recover current task after interruption, with auto-fix and smart advancement.
 
@@ -258,31 +273,13 @@ def cmd_recover(track_dir, compact=False):
     si = state.get("current_subtask_index")
 
     if pi < 1 or ti < 1:
-        result = dict(status="no_active_task")
-        checkpoint_pending = _any_phase_needs_checkpoint(track_dir, state)
-        if checkpoint_pending is not None:
-            result["phase_checkpoint_pending"] = checkpoint_pending
-        if fixes:
-            result["fixes_applied"] = fixes
-        if compact:
-            print("NO_ACTIVE_TASK")
-        else:
-            out(result)
+        _emit_no_active_task(track_dir, state, fixes, compact)
         return
 
     try:
         task = state["phases"][pi - 1]["tasks"][ti - 1]
     except IndexError:
-        result = dict(status="no_active_task")
-        checkpoint_pending = _any_phase_needs_checkpoint(track_dir, state)
-        if checkpoint_pending is not None:
-            result["phase_checkpoint_pending"] = checkpoint_pending
-        if fixes:
-            result["fixes_applied"] = fixes
-        if compact:
-            print("NO_ACTIVE_TASK")
-        else:
-            out(result)
+        _emit_no_active_task(track_dir, state, fixes, compact)
         return
 
     # Resolve subtask or flat task

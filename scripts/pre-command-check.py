@@ -21,7 +21,7 @@ from lib.hook_io import (
     get_cwd
 )
 from lib.json_utils import load_json_safe
-from lib.validation import validate_commit_message
+from lib.validation import validate_commit_message, _extract_commit_message
 from lib.path_utils import find_tracks_registry, extract_track_dirs
 
 
@@ -204,19 +204,17 @@ def is_direct_track_state_modification(command: str) -> bool:
 # of those. Command substitutions `$(...)` and backticks are scanned too, so an
 # op hidden in `$(git reset --hard)` is still caught (no false-negative regress).
 # (subcommand, required-arg pattern or None for "any form of this subcommand".)
+# (subcommand, required-arg pattern or None, human-readable label). The label
+# lives next to its tuple so adding an op is a one-line edit — no separate
+# label dict to keep key-for-key in sync.
 _DANGEROUS_GIT = [
-    ("reset", re.compile(r"--hard")),
-    ("rebase", None),
-    ("clean", None),
-    ("filter-branch", None),
-    ("checkout", re.compile(r"(?:--force|(?<![A-Za-z0-9])-f(?![A-Za-z0-9]))")),
-    ("branch", re.compile(r"(?<![A-Za-z0-9])-D(?![A-Za-z0-9])")),
+    ("reset", re.compile(r"--hard"), "reset --hard"),
+    ("rebase", None, "rebase"),
+    ("clean", None, "clean"),
+    ("filter-branch", None, "filter-branch"),
+    ("checkout", re.compile(r"(?:--force|(?<![A-Za-z0-9])-f(?![A-Za-z0-9]))"), "checkout --force"),
+    ("branch", re.compile(r"(?<![A-Za-z0-9])-D(?![A-Za-z0-9])"), "branch -D"),
 ]
-_DANGEROUS_GIT_LABEL = {
-    "reset": "reset --hard", "rebase": "rebase", "clean": "clean",
-    "filter-branch": "filter-branch", "checkout": "checkout --force",
-    "branch": "branch -D",
-}
 _LEADING_NOISE = re.compile(r"^(?:sudo\s+)+")
 _SUBSHELL_INNER = re.compile(r"\$\(([^)]*)\)")
 _BACKTICK_INNER = re.compile(r"`([^`]*)`")
@@ -230,9 +228,9 @@ def _git_op_at_command_position(body: str):
         return None
     subcmd = toks[1].lower()
     rest = toks[2] if len(toks) > 2 else ""
-    for op, argpat in _DANGEROUS_GIT:
+    for op, argpat, label in _DANGEROUS_GIT:
         if subcmd == op and (argpat is None or argpat.search(rest)):
-            return _DANGEROUS_GIT_LABEL[op]
+            return label
     return None
 
 
@@ -306,11 +304,19 @@ def _staged_files(cwd: Path) -> list:
 
 
 def _commit_type_from_command(command: str):
-    """Extract the conventional-commit type from a ``git commit -m "..."`` cmd."""
-    m = re.search(r'(?<![\w-])-m\s*["\']?([^"\']+)["\']?', command)
-    if not m:
+    """Extract the conventional-commit type from a ``git commit -m "..."`` cmd.
+
+    Delegates ``-m`` extraction to lib.validation._extract_commit_message — the
+    canonical extractor validate_commit_message also uses — so the two commit
+    gates share one definition of what a commit message is (no divergent regex).
+    Heredoc-built messages are read literally (so a heredoc feat/fix commit IS
+    gated); ``-F file`` / dynamic ``$(...)`` messages return None, correctly
+    exempting the commit from the F2 gate (can't be read statically).
+    """
+    message = _extract_commit_message(command)
+    if not message:
         return None
-    tm = re.match(r'([a-z]+)(?:\([^)]+\))?:', m.group(1).strip())
+    tm = re.match(r'([a-z]+)(?:\([^)]+\))?:', message.strip())
     return tm.group(1) if tm else None
 
 

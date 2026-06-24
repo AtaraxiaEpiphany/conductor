@@ -8,57 +8,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 
-# Dangerous git operations that should be blocked during active tracks
-DANGEROUS_GIT_OPS = {
-    "git reset --hard",
-    "git rebase",
-    "git clean",
-    "git filter-branch",
-    "git checkout --force",
-    "git branch -D",
-}
-
-
-# Dangerous command patterns to scan for
-DANGEROUS_PATTERNS = [
-    r"rm\s+-rf",
-    r"curl.*\|\s*sh",
-    r"eval\s+\$",
-    r"rm\s+-rf\s+/",
-]
-
-
-def is_dangerous_git_operation(command: str) -> bool:
-    """Check if command is a dangerous git operation
-
-    Args:
-        command: Command string to check
-
-    Returns:
-        True if command is dangerous
-    """
-    command_lower = command.lower()
-    for dangerous_op in DANGEROUS_GIT_OPS:
-        if dangerous_op in command_lower:
-            return True
-    return False
-
-
-def contains_dangerous_pattern(content: str) -> bool:
-    """Check if content contains dangerous command patterns
-
-    Args:
-        content: Content to check
-
-    Returns:
-        True if dangerous pattern found
-    """
-    for pattern in DANGEROUS_PATTERNS:
-        if re.search(pattern, content, re.IGNORECASE):
-            return True
-    return False
-
-
 def validate_json_structure(
     data: Dict,
     required_fields: List[str],

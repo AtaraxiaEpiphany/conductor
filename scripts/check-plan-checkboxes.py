@@ -51,9 +51,9 @@ def _suggest(raw_line: str) -> str:
 def _scan(text: str, max_hits: int = 8):
     """Return up to ``max_hits`` (lineno, raw_line, suggested) tuples."""
     hits = []
+    lines = text.splitlines()
     for m in _MISSING_CHECKBOX.finditer(text):
         lineno = text.count("\n", 0, m.start()) + 1
-        lines = text.splitlines()
         raw = lines[lineno - 1] if 0 < lineno <= len(lines) else m.group(0)
         hits.append((lineno, raw, _suggest(raw)))
         if len(hits) >= max_hits:
@@ -102,7 +102,6 @@ def main():
     for lineno, raw, suggested in all_hits:
         lines.append(f"  line {lineno}:  {raw.strip()}")
         lines.append(f"    → fix: {suggested.strip()}")
-    extra = len(all_hits) % 8  # _scan caps at 8; note if truncated
     detail = "\n".join(lines)
 
     write_hook_output(

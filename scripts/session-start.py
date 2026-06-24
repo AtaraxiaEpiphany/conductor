@@ -76,8 +76,6 @@ def get_conductor_content(plugin_root: Path, source: str) -> str:
 
 
 _WIKILINK = re.compile(r"\[\[([^\]]+)\]\]")
-# Bound the scan so a very large corpus can't slow session start unboundedly.
-_MAX_DOCS_FOR_ORPHAN_SCAN = 500
 
 
 def _count_broken_wikilinks(file_path: Path, project_root: Path) -> int:
@@ -129,11 +127,10 @@ def get_wiki_drift_warnings(project_root: Path) -> str:
         )
 
     # 3. broken [[wikilinks]] in overview.md (auto-owned; must never dangle).
-    try:
-        doc_count = sum(1 for _ in conductor.rglob("*.md"))
-    except Exception:
-        doc_count = 0
-    if doc_count <= _MAX_DOCS_FOR_ORPHAN_SCAN and overview.exists():
+    # The scan reads only overview.md (cost ∝ its wikilink count, not corpus
+    # size), so it needs no corpus-size guard — counting the whole tree just to
+    # decide whether to read one file is wasted work on a session-start hot path.
+    if overview.exists():
         broken = _count_broken_wikilinks(overview, project_root)
         if broken:
             warnings.append(
