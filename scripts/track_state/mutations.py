@@ -116,6 +116,43 @@ def _do_fail(track_dir, p, t, s=None, summary="", retryable=True):
     save(track_dir, state)
     return tgt["retry_count"]
 
+def _do_fail_parent(track_dir, p, t, summary="", sha=None):
+    """Mark a PARENT task failed because its subtasks exhausted retries.
+
+    The parent-stuck dispatch path previously called _do_complete, which rendered
+    the parent ``[x]`` even though it had ``[!]`` failed subtasks — dishonest, and
+    it caused the parent (and its failed subtasks) to be skipped on the next
+    /implement run since ``completed`` is terminal for dispatch.
+
+    Failing the parent instead renders it ``[!]`` and pins ``retry_count`` to
+    MAX_RETRIES so recover() surfaces it as ``failed + retry >= max`` (the §2.0
+    route that lets the user decide retry/skip/block) rather than re-dispatching.
+    Subtasks keep their individual statuses; ``commit_sha`` is preserved for
+    traceability to the last completed subtask.
+    """
+    state = load(track_dir)
+    pi, ti = int(p), int(t)
+    tgt = target(state, pi, ti, None)
+
+    failed_names = [sub["name"] for sub in tgt.get("subtasks", [])
+                    if sub.get("status") == "failed"]
+    tgt["status"] = "failed"
+    tgt["retry_count"] = MAX_RETRIES
+    tgt["last_failure_summary"] = summary or (
+        "Subtasks failed: " + ", ".join(failed_names) if failed_names
+        else "Subtasks failed"
+    )
+    resolved_sha = _normalize_sha(sha) or _last_subtask_sha(tgt)
+    tgt["commit_sha"] = resolved_sha
+    # Keep status (not a reset field) + the three reset fields we just set.
+    clean(tgt, {"retry_count", "last_failure_summary", "commit_sha"})
+
+    _set_current_indices(state, pi, ti, None)
+
+    state["updated_at"] = now_iso()
+    save(track_dir, state)
+    return tgt["last_failure_summary"]
+
 def _do_skip(track_dir, p, t, s=None, reason=""):
     state = load(track_dir)
     pi, ti = int(p), int(t)

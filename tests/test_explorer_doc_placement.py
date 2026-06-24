@@ -63,7 +63,8 @@ class TestExploreHandoffFullSchema(TestCase):
     def test_renders_files_inventory_outofscope_graduation(self):
         d = _make_track()
         content = json.dumps({
-            "summary": "S", "findings": ["f1"], "architecture": "A",
+            "summary": "Auth module wires JWT middleware into the request pipeline.",
+            "findings": ["f1"], "architecture": "A",
             "gotchas": ["g1"],
             "files_inventory": [{"path": "src/a.ts", "purpose": "P",
                                  "key_exports": "x",
@@ -83,10 +84,17 @@ class TestExploreHandoffFullSchema(TestCase):
 
     def test_minimal_payload_renders_placeholders(self):
         d = _make_track()
-        res, _ = _out_captured(cmd_append_handoff, d, 1, 1, "explore", "{}", None)
+        # Gate-passing core (summary + findings + files_inventory) with every
+        # OPTIONAL field empty — those must still render placeholder sections.
+        content = json.dumps({
+            "summary": "Substantive exploration summary for the test track.",
+            "findings": ["f1"],
+            "files_inventory": [{"path": "src/a.ts", "purpose": "P"}],
+        })
+        res, _ = _out_captured(cmd_append_handoff, d, 1, 1, "explore", content, None)
         self.assertTrue(res["ok"])
         text = (Path(d) / ".conductor" / "handoff" / "P1T1.md").read_text()
-        # All sections present even when empty (uniform structure).
+        # All sections present even when optional fields are empty (uniform structure).
         self.assertIn("### Files Inventory", text)
         self.assertIn("### Graduation Candidates", text)
 

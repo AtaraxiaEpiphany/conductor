@@ -147,7 +147,7 @@ Parse `---REVIEW RESULT---` block. If `STATUS: CANCELLED` → halt. If `STRUCTUR
 ### 3.6 Final Commit
 
 ```bash
-git add -A && git commit -m "conductor(setup): Add conductor setup files"
+git add -A && git commit -m "chore(conductor): Scaffold conductor setup"
 ```
 
 Announce: `"Setup complete. Run /conductor:implement to begin."`

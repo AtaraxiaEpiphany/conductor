@@ -36,6 +36,16 @@ _TASK_LINE = re.compile(r"^(\s*)-\s+\[([ x~!>#\-d])\]\s*(.*)$")
 # they lack a ']' immediately after the first char — so they are left untouched.
 _BAD_MARKER_LINE = re.compile(r"^(\s*)-\s+\[(.)\]\s*.*$")
 
+# A task/subtask bullet MISSING its checkbox entirely, e.g. "- Subtask: x" or
+# "- [Explore] Task: x" (tag present but no [ ] status marker). Without this, the
+# fall-through branch silently drops the line and the subtask vanishes from state.
+# Mirrors scripts/check-plan-checkboxes.py (the Write/Edit hook) — defense in
+# depth for direct edits the hook cannot see.
+_MISSING_CHECKBOX_LINE = re.compile(
+    r"^(\s*)-\s+(?!\[[ x~!>#\-d]\])(?:\[[A-Za-z]+\]\s*)?(task|subtask)\b",
+    re.IGNORECASE,
+)
+
 # Trailing checkpoint marker on a phase heading: [checkpoint:abcdef1]
 _CHECKPOINT = re.compile(r"\[checkpoint:\s*[0-9a-f]+\]", re.IGNORECASE)
 
@@ -130,6 +140,17 @@ def parse_plan(plan_path):
             errors.append(
                 f"line {lineno}: invalid {kind} marker '[{marker}]' ({where}) "
                 f"— valid: [ ] [x] [~] [!] [>] [#] [-] [d]")
+            continue
+        missing = _MISSING_CHECKBOX_LINE.match(line)
+        if missing:
+            indent, kw = missing.group(1), missing.group(2).lower()
+            where = (f"Phase {current_phase['number']}" if current_phase
+                     else "before any phase")
+            kind = "subtask" if indent else "task"
+            errors.append(
+                f"line {lineno}: {kind} '{kw}' line is missing its '[ ]' checkbox "
+                f"({where}) — write '- [ ] {kw.capitalize()}: ...' so it is not "
+                f"silently dropped from track-state.json")
             continue
         # Everything else (title, prose, blank lines, non-checkbox bullets) ignored.
 

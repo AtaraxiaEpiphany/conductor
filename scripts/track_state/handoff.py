@@ -1,6 +1,7 @@
 """Handoff file management for cross-session continuity."""
 import json
 import re
+import sys
 from pathlib import Path
 
 from .core import load
@@ -460,6 +461,26 @@ def cmd_append_handoff(track_dir, phase, task, entry_type, content_json, subtask
         files_inventory = content_data.get("files_inventory", [])
         out_of_scope = content_data.get("out_of_scope", [])
         graduation = content_data.get("graduation_candidates", [])
+
+        # Completeness gate (agents/explorer.md §4.2): the Exploration Notes are
+        # the downstream task-executor's Layer-0 map. Reject a sparse map so the
+        # explorer is retried with the rejection as context rather than shipping a
+        # useless "looks fine" handoff. Exit non-zero so the explorer's Bash call
+        # fails and its on-failure→FAILURE contract triggers a retry.
+        missing = []
+        if len(str(content_data.get("summary", "")).strip()) < 20:
+            missing.append("summary (>= 20 chars)")
+        if not findings:
+            missing.append("findings (>= 1)")
+        if not files_inventory:
+            missing.append("files_inventory (>= 1)")
+        if missing:
+            sys.stderr.write(
+                "explore handoff rejected — sparse map, missing: "
+                + "; ".join(missing) + "\n"
+            )
+            out(dict(error="sparse_explore_handoff", missing=missing))
+            sys.exit(1)
 
         # Files Inventory table (preserves the explorer's schema; Related Docs
         # links into the conductor/design + conductor/resource corpus).

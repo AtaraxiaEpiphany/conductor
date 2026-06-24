@@ -73,9 +73,12 @@ def _validate_plan_structure(plan):
 # Transient subagent artifacts that must never be swept into conductor commits.
 # result.json is written by task-executor/explorer and deleted by dispatch-finalize
 # each cycle; tracking it only churns git history (committed then re-deleted).
+# new-track-progress.json is the new-track resume marker (skills/new-track/SKILL.md
+# §0.5) — written before track-state.json exists and deleted once the track commits.
 _CONDUCTOR_GITIGNORE = """# Conductor runtime artifacts — transient, never commit.
 result.json
 .result.tmp.*
+new-track-progress.json
 """
 
 

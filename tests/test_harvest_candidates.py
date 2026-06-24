@@ -43,8 +43,13 @@ def _make_track():
 
 
 def _explore_payload(graduation=None, **extra):
-    payload = {"summary": "S", "findings": [], "architecture": "A", "gotchas": [],
-               "files_inventory": [], "recommended": "", "out_of_scope": []}
+    # Payload meets the explore completeness gate (summary >= 20 chars, >= 1
+    # finding, >= 1 files_inventory entry); graduation_candidates is the field
+    # under test and varies per case.
+    payload = {"summary": "Substantive exploration summary for the test track.",
+               "findings": ["f1"], "architecture": "A", "gotchas": [],
+               "files_inventory": [{"path": "src/a.ts", "purpose": "P"}],
+               "recommended": "", "out_of_scope": []}
     payload["graduation_candidates"] = graduation or []
     payload.update(extra)
     return json.dumps(payload)

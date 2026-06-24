@@ -10,7 +10,7 @@ from .helpers import (
     flag, _normalize_sha, target,
 )
 from .constants import AUTO_COMPLETE_OK, MAX_RETRIES
-from .mutations import _do_lock, _do_complete, _do_fail
+from .mutations import _do_lock, _do_complete, _do_fail, _do_fail_parent
 from .sync import _do_sync_plan
 from .git_ops import (
     _git_commit, _git_commit_ensured, _git_head_sha, _write_git_note, _ensure_note,
@@ -183,12 +183,14 @@ def cmd_dispatch_next(track_dir):
             continue
 
         if rtype == "parent-stuck":
-            # Parent has failed subtasks and no other work exists.
-            # Auto-complete using TERMINAL_FOR_PARENT (includes 'failed') as fallback.
+            # Parent has failed subtasks and no other work exists. Fail the
+            # parent (renders [!], not [x]) so recover() surfaces it on the next
+            # /implement run as 'failed + retry >= max' → user decides
+            # retry/skip/block. See _do_fail_parent for why retry_count is pinned.
             parent_task = state["phases"][result["phase"] - 1]["tasks"][result["task"] - 1]
             sha = _last_subtask_sha(parent_task)
             try:
-                _do_complete(track_dir, result["phase"], result["task"], None, sha)
+                _do_fail_parent(track_dir, result["phase"], result["task"], "", sha)
             except (ValueError, IndexError) as e:
                 # All subtasks should be terminal (failed counts), but guard
                 # against edge cases where non-terminal subtasks still exist.
@@ -197,7 +199,7 @@ def cmd_dispatch_next(track_dir):
             state = load(track_dir)
             _do_sync_plan(track_dir, state)
             parent_name = parent_task.get("name", "unknown")
-            commit_msg = f"chore(conductor): Complete stuck parent '{parent_name}' [{sha}]"
+            commit_msg = f"chore(conductor): Fail parent '{parent_name}' (subtasks exhausted retries)"
             committed = _git_commit_ensured(track_dir, commit_msg)
             final_sha = _git_head_sha(track_dir) or sha
             if final_sha != sha:
@@ -206,12 +208,12 @@ def cmd_dispatch_next(track_dir):
                 save(track_dir, state)
                 _do_sync_plan(track_dir, state)
 
-            # Write git note for stuck parent (same as parent-complete path)
+            # Write git note for failed parent (same channel as parent-complete)
             parent_tgt = state["phases"][result["phase"] - 1]["tasks"][result["task"] - 1]
             _ensure_note(track_dir, state, result["phase"], result["task"], None, parent_tgt)
 
             out(dict(action="parent_stuck", phase=result["phase"], task=result["task"],
-                     name=parent_name, sha=final_sha,
+                     name=parent_name, sha=final_sha, failed=True,
                      execution_mode=execution_mode))
             return
 

@@ -11,9 +11,9 @@ Use this map when explicit links are missing. All new documents MUST be created 
 |                 | Wiki Overview           | `./conductor/overview.md`                                  | Create if missing.                    |
 |                 | Wiki Log                | `./conductor/log.md`                                       | Create if missing.                    |
 | **Requirement** | PRD                     | `./conductor/requirement/prd/<name>.md`                    | **Create here** if missing.           |
-| **Design**      | Tech Stack              | `./conductor/design/tech-stack.md`                         | Create if missing.                    |
+| **Design**      | Tech Stack              | `./conductor/design/tech-stack.md`                         | **Global**: create if missing. Frameworks, languages, versions. Read in full. |
 |                 | UX/UI Spec              | `./conductor/requirement/ux-ui/design-spec.md`             | Create if missing.                    |
-|                 | Architecture            | `./conductor/design/architecture/system-architecture.md`   | Create if missing.                    |
+|                 | Architecture            | `./conductor/design/architecture/system-architecture.md`   | **Scoped**: seeded by doc-syncer (post-track). Do not hand-create. Match by component. |
 |                 | DB Design               | `./conductor/design/database/schema.md`                    | Create if missing.                    |
 |                 | API Specs               | `./conductor/design/api-specs/<endpoint>.md`               | **Strict Schema Adherence Required**. |
 | **Workflow**    | Workflow Index          | `./conductor/workflow/index.md`                            | Create if missing.                    |

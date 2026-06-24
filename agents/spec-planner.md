@@ -186,7 +186,7 @@ Structure:
 
 These rules are **non-negotiable**. Violating any rule will break the orchestrator.
 
-1. **Status Markers**: Every task and subtask gets a `[ ]` status marker. Indented subtasks use two-space indentation under their parent.
+1. **Status Markers**: Every task and subtask gets a `[ ]` status marker. Indented subtasks use two-space indentation under their parent. A line without `[ ]` is silently dropped by the parser — the subtask would vanish. ❌ `- Subtask: xxx` → ✅ `- [ ] Subtask: xxx`. A `[Tag]` is **not** a substitute for the checkbox: ❌ `- [Explore] Task: xxx` → ✅ `- [ ] [Explore] Task: xxx`.
 2. **Manual Verification**: Append a manual verification task at the end of each phase. Tag it with `[Manual]` so the orchestrator can auto-defer it in continuous mode.
 3. **Phase Order**: Phases should follow logical dependency order.
 4. **Atomic Tasks**: Tasks should be atomic and independently testable.

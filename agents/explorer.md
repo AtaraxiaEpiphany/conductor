@@ -2,9 +2,9 @@
 name: explorer
 description: Read-only code exploration agent. Records findings to the task handoff (Exploration Notes) as the Layer-0 map for the downstream task-executor. Dispatched by conductor:implement for [Explore] tagged tasks.
 tools: Bash, Read, Grep, Glob
-model: haiku
-effort: medium
-maxTurns: 25
+model: sonnet
+effort: high
+maxTurns: 40
 permissionMode: plan
 ---
 
@@ -86,6 +86,14 @@ rm -f "$TMP"
 ```
 
 `track-state append-handoff` merges this into `{TRACK_DIR}/.conductor/handoff/P{PHASE}T{TASK}.md` under an `## Exploration Notes` section, preserving the full schema above.
+
+**Completeness gate (enforced):** `append-handoff` rejects a sparse map and exits non-zero, failing this task so it is retried with the failure as context. To pass on the first attempt you MUST populate, at minimum:
+- `summary` — a substantive answer (≥ ~20 chars), not "looks fine".
+- `findings` — ≥ 1 concrete key finding.
+- `files_inventory` — ≥ 1 entry naming a real file you read, each with `path` + `purpose`.
+- `architecture` / `gotchas` — populate whenever the task touches >1 file or any non-obvious invariant; empty only when genuinely N/A.
+
+A terse handoff is a contract violation — the downstream task-executor depends on this map.
 
 **Critical**: Use `graduation_candidates` only for findings durable enough to survive this task (the "teleport test" — would a future track in a fresh session benefit?). Do not dump per-task scratch there.
 
