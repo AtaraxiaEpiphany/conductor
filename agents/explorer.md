@@ -126,16 +126,20 @@ Dual output: result file + terse stdout.
 
 ### 5.1 Result File
 
-Write to `{TRACK_DIR}/.conductor/result.json` via Bash (you have no Write tool, use `cat >`):
+Write `{TRACK_DIR}/.conductor/result.json` via `track-state write-result` — the atomic, validated channel task-executor uses (you have no Write tool). Build the JSON in a temp file to avoid shell-quoting issues, then pass it via `--data` (same idiom as your §4.2 handoff write):
 
 ```bash
-mkdir -p "{TRACK_DIR}/.conductor"
-cat > "{TRACK_DIR}/.conductor/result.json" << 'EOF'
+TMP="$(mktemp)"
+cat > "$TMP" << 'EOF'
 {"status":"SUCCESS","commit_sha":"","files_changed":".conductor/handoff/","summary":"<one-line>","phase":PHASE,"task":TASK,"subtask":SUBTASK,"task_name":"NAME"}
 EOF
+track-state write-result "{TRACK_DIR}" --data "$(cat "$TMP")"
+rm -f "$TMP"
 ```
 
-`commit_sha` is left empty — the orchestrator fills it from the conductor completion commit. `files_changed` is `.conductor/handoff/` (the sanctioned channel), never a track-dir doc.
+On **FAILURE**, write the same way with `"status":"FAILURE"` and a `summary` of what blocked you — the orchestrator's retry/skip path reads it.
+
+`commit_sha` is left empty — the orchestrator fills it from the conductor completion commit. `files_changed` is `.conductor/handoff/` (the sanctioned channel), never a track-dir doc. `write-result` validates that `status` is `SUCCESS` or `FAILURE`; any other value is rejected (non-zero exit) and fails this task, so the result is never silently malformed.
 
 ### 5.2 Stdout (terse)
 
