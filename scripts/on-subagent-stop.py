@@ -6,9 +6,9 @@ A subagent signals completion through ONE deterministic channel:
 - **result-file agents** (task-executor, explorer) write a fresh
   ``.conductor/result.json`` via ``track-state write-result``. A missing fresh
   file means the agent exhausted turns or crashed before its result step.
-- **stdout-block agents** (phase-checker, code-reviewer) emit a
-  ``---END RESULT---`` close tag (no result file). A missing close tag means it
-  stopped mid-protocol.
+- **stdout-block agents** (phase-checker, code-reviewer, doc-syncer,
+  spec-planner) emit a ``---END RESULT---`` close tag (no result file). A
+  missing close tag means it stopped mid-protocol.
 
 In either case the hook returns ``decision: "block"`` with a `reason` that is
 delivered to the subagent as its next instruction, giving it one recovery turn.
@@ -77,6 +77,14 @@ STDOUT_BLOCK_AGENTS = {
         "IMMEDIATELY print the ---REVIEW RESULT--- block (Section 4.2) and write "
         "{TRACK_DIR}/.conductor/review-result.json. Report STATUS: FAILURE with "
         "a one-line REASON if the review could not complete."
+    ),
+    "doc-syncer": (
+        "IMMEDIATELY print the ---DOC SYNC RESULT--- block (Section 8.0). Report "
+        "STATUS: FAILURE with a one-line REASON if the doc sync could not complete."
+    ),
+    "spec-planner": (
+        "IMMEDIATELY print the ---SPEC PLAN RESULT--- block (Section 5.0). Report "
+        "STATUS: FAILURE with a one-line SUMMARY if generation could not complete."
     ),
 }
 

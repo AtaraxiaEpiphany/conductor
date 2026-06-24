@@ -130,6 +130,42 @@ class RecoveryGuardTests(TestCase):
             self.assertEqual(out["decision"], "block")
             self.assertIn("REVIEW RESULT", out["reason"])
 
+    # --- stdout-block agents: doc-syncer + spec-planner gated on close tag ---
+
+    def test_doc_syncer_without_close_tag_blocks(self):
+        """doc-syncer now runs sync + STDOUT_BLOCK_AGENTS — a stop without its
+        ---END RESULT--- close tag earns a recovery turn (was async / advisory)."""
+        with tempfile.TemporaryDirectory() as d:
+            rc, out = self._run("doc-syncer", d, last_message="stopped mid-sync")
+            self.assertEqual(rc, 2)
+            self.assertEqual(out["decision"], "block")
+            self.assertIn("DOC SYNC RESULT", out["reason"])
+
+    def test_doc_syncer_with_close_tag_allows(self):
+        with tempfile.TemporaryDirectory() as d:
+            msg = "Sync done.\n---DOC SYNC RESULT---\nSTATUS: COMPLETED\n---END RESULT---"
+            rc, out = self._run("doc-syncer", d, last_message=msg)
+            self.assertEqual(rc, 0)
+            self.assertNotIn("decision", out)
+
+    def test_spec_planner_without_close_tag_blocks(self):
+        """spec-planner now runs sync + STDOUT_BLOCK_AGENTS — its PLAN_STRUCTURE
+        block is foundational (the parent builds track-state.json from it), so a
+        crash before emitting ---END SPEC PLAN RESULT--- must earn a recovery
+        turn rather than silently losing the plan."""
+        with tempfile.TemporaryDirectory() as d:
+            rc, out = self._run("spec-planner", d, last_message="stopped mid-plan")
+            self.assertEqual(rc, 2)
+            self.assertEqual(out["decision"], "block")
+            self.assertIn("SPEC PLAN RESULT", out["reason"])
+
+    def test_spec_planner_with_close_tag_allows(self):
+        with tempfile.TemporaryDirectory() as d:
+            msg = "Plan written.\n---SPEC PLAN RESULT---\nSTATUS: SUCCESS\n---END SPEC PLAN RESULT---"
+            rc, out = self._run("spec-planner", d, last_message=msg)
+            self.assertEqual(rc, 0)
+            self.assertNotIn("decision", out)
+
     # --- async agents: still no recovery contract ---
 
     def test_async_agent_without_result_allows(self):
