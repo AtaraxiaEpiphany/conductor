@@ -328,7 +328,30 @@ Operations to log:
 - **WIKI_REGEN** — once, after overview regeneration. Files: `conductor/overview.md`. Summary: "Regenerated project overview".
 - **CROSSREF** — once, if cross-references were added. Files: comma-separated paths of docs that got new `## See Also` sections. Summary: "Added {N} bidirectional cross-references".
 
-### 7.3 Commit Wiki Changes
+### 7.3 Verify Before Commit (Drift Gate)
+
+doc-syncer writes `overview.md` from **intent** (spec.md + track knowledge) — never against **reality** (the code). This step closes that gap for the same run: before the wiki commit ships, confirm the files this run touched contain no broken `[[wikilinks]]` or stale path references. Inline only — Grep + Glob (doc-syncer has no subagent dispatch; the heavier `wiki-doctor diff` stays a separate manual command).
+
+**Scope (files this run authored or modified):**
+- `conductor/overview.md` — always (regenerated in §7.1).
+- Any scoped doc **seeded** in §6, and any doc that received an injected `## See Also` cross-reference in §6.
+- Phase 1 user-confirmed updates — scanned, but **report-only** (that content was user-confirmed; do not auto-edit).
+
+**Method:**
+1. For each scoped file, Grep `\[\[([^\]]+)\]\]`. Resolve each link by appending `.md` and checking existence via Glob (the resolution rule in the core contract). Collect unresolved targets as `BROKEN`.
+2. Separately, Glob-verify any explicit repo path this run introduced into prose/code (e.g. `hooks/pre-commit.sh`, `scripts/…`).
+
+**Repair (auto-owned files only — `overview.md` and injected crossrefs):**
+3. For each `BROKEN` link, Glob for the same basename elsewhere under `conductor/`. If exactly one candidate exists → rewrite the `[[wikilink]]` to that path (a *moved* reference).
+4. If no candidate exists → remove the reference from `overview.md`. `overview.md` is auto-owned and must never link to a non-existent doc; this is a targeted repair, not a content change requiring confirmation.
+5. Re-run steps 1–4 until no further auto-fix applies (a path repair can cascade).
+
+**Report (user-confirmed content — do NOT edit):**
+6. Broken links/paths in Phase 1 user-confirmed docs are surfaced in the SUMMARY and counted in `DRIFT_REPORTED` (§8.0). They are not auto-edited.
+
+**Gate decision:** verification **never blocks the commit** — the `[{TRACK_ID}]` commit is load-bearing for the `track-state archive` gate. It fixes what it can in auto-owned files and reports the rest.
+
+### 7.4 Commit Wiki Changes
 
 1. Stage wiki files: `git add conductor/overview.md conductor/log.md conductor/index.md`
 2. Also stage any Phase 1 files not yet committed — including any scoped docs **seeded** in §6.7 and the Scoped Docs rows added to `index.md`.
@@ -354,7 +377,8 @@ OVERVIEW_REGENERATED: true|false
 LOG_ENTRIES_ADDED: <count>
 CROSS_REFERENCES_ADDED: <count>
 GRADUATED_FINDINGS: <count of harvested findings merged/seeded into the corpus, or 0>
-SUMMARY: <one-line summary of changes made, or "No updates required">
+DRIFT_REPORTED: <count of broken refs in user-confirmed docs that §7.3 could not auto-fix, or 0>
+SUMMARY: <one-line summary of changes made, or "No updates required"; append "; N unfixable drift refs reported" when DRIFT_REPORTED > 0>
 ---END RESULT---
 ```
 
@@ -376,7 +400,7 @@ REASON: <one-line description of what failed>
 **Absolutely Prohibited:**
 - Modifying `track-state.json`, `plan.md` markers, or Tracks Registry.
 - Updating Product Guidelines without explicit user confirmation.
-- Making broad rewrites — only targeted additions/modifications (overview.md regeneration and seeding a missing scoped doc from a harvested finding in §6 are the exceptions; both still require user confirmation).
+- Making broad rewrites — only targeted additions/modifications (overview.md regeneration and seeding a missing scoped doc from a harvested finding in §6 are the exceptions; both still require user confirmation). Targeted `[[wikilink]]` path repair / removal in auto-owned files during §7.3 verify is also permitted and requires no confirmation.
 - Skipping user confirmation for any Phase 1 update.
 - Regenerating `conductor/overview.md` before applying confirmed Phase 1 updates.
 - Appending log entries with incorrect or fabricated track IDs.
