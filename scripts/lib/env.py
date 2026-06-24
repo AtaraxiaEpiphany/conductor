@@ -55,34 +55,6 @@ def get_logs_dir() -> Path:
     return data_dir / "logs"
 
 
-def get_conductor_dir(track_dir: Path) -> Path:
-    """Get conductor directory for specified track
-
-    Args:
-        track_dir: Track directory path
-
-    Returns:
-        Conductor directory path
-    """
-    conductor_dir = track_dir / ".conductor"
-    conductor_dir.mkdir(parents=True, exist_ok=True)
-    return conductor_dir
-
-
-def get_handoff_dir(track_dir: Path) -> Path:
-    """Get handoff directory for specified track
-
-    Args:
-        track_dir: Track directory path
-
-    Returns:
-        Handoff directory path
-    """
-    handoff_dir = get_conductor_dir(track_dir) / "handoff"
-    handoff_dir.mkdir(parents=True, exist_ok=True)
-    return handoff_dir
-
-
 def get_session_id() -> Optional[str]:
     """Get current session ID
 
@@ -147,11 +119,6 @@ def is_compact_mode() -> bool:
 
 
 # Common path quick accessors
-def get_plugin_data() -> Path:
-    """Get plugin data directory"""
-    return get_data_dir()
-
-
 def get_track_state_json(track_dir: Path) -> Path:
     """Get track-state.json file path
 

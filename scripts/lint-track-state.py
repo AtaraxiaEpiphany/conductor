@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent / "lib"))
 
 from lib.json_utils import load_json_safe, load_json
 from lib.env import get_track_state_json, get_plan_md_path
+from lib.constants import TERMINAL_STATUSES
 from lib.validation import check_state_file_age, validate_json_structure
 from lib.path_utils import find_track_root, find_tracks_registry, extract_track_dirs
 
@@ -102,10 +103,10 @@ def check_f4_rule(state_file: Path) -> tuple[bool, Optional[str]]:
     if not valid:
         return False, f"Invalid state structure: {error}"
 
-    # Canonical source: scripts/track-state TERMINAL_FOR_PARENT.
-    # "failed" excluded: _do_fail never sets commit_sha, so SHA check for
-    # failed tasks would always be a false positive.
-    terminal_statuses = {"completed", "skipped", "deferred", "blocked", "cancelled"}
+    # Terminal statuses sourced from the shared lib.constants layer (same set
+    # track_state uses). "failed" excluded: _do_fail never sets commit_sha, so a
+    # SHA check for failed tasks would always be a false positive.
+    terminal_statuses = TERMINAL_STATUSES
     missing_shas = []
 
     for pi, phase in enumerate(state.get("phases", []), 1):

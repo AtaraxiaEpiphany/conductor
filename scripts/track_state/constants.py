@@ -1,5 +1,18 @@
-"""Shared constants for track-state modules."""
+"""Shared constants for track-state modules.
+
+The status *terminal* / *auto-complete* sets are defined once in the shared
+``lib.constants`` layer (they're read by hooks and linters too) and re-exported
+here so track_state's internal ``from .constants import …`` keeps working.
+Rendering-specific constants (MARKER_MAP, SHA_MARKERS) stay local — they're
+only used by the markdown plan-sync path.
+"""
 import re
+
+from lib.constants import (
+    TERMINAL_STATUSES,
+    TERMINAL_FOR_PARENT,
+    AUTO_COMPLETE_OK,
+)
 
 MARKER_MAP = {
     "pending": " ",
@@ -13,10 +26,6 @@ MARKER_MAP = {
 }
 
 SHA_MARKERS = {"x", "!", ">", "#", "-", "d"}
-
-TERMINAL_STATUSES = {"completed", "skipped", "deferred", "blocked", "cancelled"}
-TERMINAL_FOR_PARENT = TERMINAL_STATUSES | {"failed"}
-AUTO_COMPLETE_OK = TERMINAL_STATUSES
 
 # Maximum retry attempts for a failed task before marking it permanently failed.
 MAX_RETRIES = 3

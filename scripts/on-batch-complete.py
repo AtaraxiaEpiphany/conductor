@@ -14,11 +14,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-# Add lib and track_state directories to path for imports
+# Add lib directory to path for imports. TERMINAL_FOR_PARENT is sourced from
+# the shared lib.constants layer rather than the track_state package — this
+# keeps the hook single-path and avoids importing the whole state machine (via
+# track_state/__init__) at every PostToolBatch fire just to read one status set.
 sys.path.insert(0, str(Path(__file__).parent / "lib"))
-sys.path.insert(0, str(Path(__file__).parent / "track_state"))
 
-from track_state.constants import TERMINAL_FOR_PARENT
+from lib.constants import TERMINAL_FOR_PARENT
 from lib.hook_io import read_hook_input, write_simple_output
 from lib.logging import init_logging, log_entry
 from lib.json_utils import load_json_safe
