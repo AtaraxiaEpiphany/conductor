@@ -4,14 +4,14 @@ import os
 import sys
 from pathlib import Path
 
-from .core import load
+from .core import load, save
 from .helpers import (
     out, conductor_dir, _store_evidence, _extract_tags_for_task,
-    _tag_exempt_from_coverage, _tag_exempt_from_tdd, flag,
+    _tag_exempt_from_coverage, _tag_exempt_from_tdd, flag, _last_subtask_sha,
 )
 from .mutations import _do_complete, _do_fail
 from .sync import _do_sync_plan
-from .git_ops import _write_git_note
+from .git_ops import _write_git_note, _git_commit_ensured, _git_head_sha, _ensure_note
 from .handoff import (
     _append_execution_record, _append_deviation_legacy,
     _append_failure_legacy,
@@ -144,6 +144,39 @@ def cmd_process_result(track_dir):
 
         # Write git notes audit trail
         _write_git_note(track_dir, r, state)
+
+        # If completing this subtask auto-completed its parent, give the parent
+        # the same audit trail dispatch-next's parent-complete path gets
+        # (conductor commit + git note + evidence). Without this, the parent's
+        # completion left no commit/note on this legacy CLI path. Mirrors
+        # dispatch.py cmd_dispatch_next's parent-complete handling.
+        if parent_completed:
+            try:
+                state = load(track_dir)
+                parent = state["phases"][int(p) - 1]["tasks"][int(t) - 1]
+                parent_name = parent.get("name", "unknown")
+                parent_sha = _last_subtask_sha(parent) or sha
+                _git_commit_ensured(
+                    track_dir,
+                    f"chore(conductor): Complete parent '{parent_name}' [{parent_sha}]",
+                )
+                final_sha = _git_head_sha(track_dir) or parent_sha
+                if final_sha != parent_sha:
+                    state = load(track_dir)
+                    state["phases"][int(p) - 1]["tasks"][int(t) - 1]["commit_sha"] = final_sha
+                    save(track_dir, state)
+                    _do_sync_plan(track_dir, state)
+                state = load(track_dir)
+                parent_tgt = state["phases"][int(p) - 1]["tasks"][int(t) - 1]
+                _ensure_note(track_dir, state, int(p), int(t), None, parent_tgt)
+                if "evidence" not in parent_tgt:
+                    parent_tgt["evidence"] = {
+                        "coverage_pct": None, "tc_coverage": "", "deviations": 0,
+                    }
+                    save(track_dir, state)
+            except (ValueError, IndexError, KeyError):
+                # Best-effort: the subtask itself already completed + committed.
+                pass
 
         # Clean up
         result_path.unlink(missing_ok=True)
