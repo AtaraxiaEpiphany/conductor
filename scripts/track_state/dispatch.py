@@ -513,13 +513,20 @@ def _synthesize_result_from_state(track_dir):
         )
 
 
-def cmd_dispatch_finalize(track_dir):
-    """Process result + create conductor commit + sync-plan.
-    Creates the conductor commit internally so each task/subtask gets a unique SHA.
-    Accepts --override key=value to patch result fields before processing.
-    When result.json is missing, synthesizes result from the locked task in state."""
-    result_path = conductor_dir(track_dir) / "result.json"
+def _resolve_finalize_target(track_dir, result_path):
+    """Load result.json (or synthesize from the locked task), apply --override
+    patches, and resolve the (p, t, s) target.
 
+    The result-prep half of dispatch-finalize, extracted so the commit/note
+    sequence below reads as straight-line success/failure handling. Returns
+    ``(result_dict, p, t, s, task_name, status)`` or ``None`` when there is no
+    result file AND no locked task to synthesize from.
+
+    Index resolution prefers the locked in_progress indices from
+    track-state.json (set by dispatch-prepare) over result.json's, so a stale
+    result can't misroute finalization — but only when the locked target is
+    actually in_progress (else keep result.json's defaults).
+    """
     if result_path.exists():
         with open(result_path) as f:
             r = json.load(f)
@@ -527,12 +534,9 @@ def cmd_dispatch_finalize(track_dir):
         # Fallback: synthesize result from locked task in track-state.json
         r = _synthesize_result_from_state(track_dir)
         if r is None:
-            out(dict(error="No result file at .conductor/result.json and no locked task in state"))
-            return
-        print("NOTE: result.json missing — synthesized from locked task state",
-              file=sys.stderr)
+            return None
 
-    # Apply overrides: merge CLI-supplied values into result (only if currently empty/falsy)
+    # Apply overrides: merge CLI-supplied values into result (only if empty/falsy)
     overrides = flag(sys.argv[3:], "--override")
     if overrides:
         for pair in overrides.split(","):
@@ -543,10 +547,6 @@ def cmd_dispatch_finalize(track_dir):
                 r[k] = v
 
     status = r.get("status", "").upper()
-    # Resolve phase/task/subtask indices.
-    # Default to result.json (1-based from task-executor), then override
-    # with locked indices from track-state.json (1-based, set by dispatch-prepare)
-    # if they point to an in_progress task.
     p = str(r.get("phase") if r.get("phase") is not None else "")
     t = str(r.get("task") if r.get("task") is not None else "")
     s = str(r.get("subtask")) if r.get("subtask") is not None else None
@@ -568,6 +568,24 @@ def cmd_dispatch_finalize(track_dir):
             pass  # keep result.json defaults
 
     task_name = r.get("task_name", "unknown")
+    return r, p, t, s, task_name, status
+
+
+def cmd_dispatch_finalize(track_dir):
+    """Process result + create conductor commit + sync-plan.
+    Creates the conductor commit internally so each task/subtask gets a unique SHA.
+    Accepts --override key=value to patch result fields before processing.
+    When result.json is missing, synthesizes result from the locked task in state."""
+    result_path = conductor_dir(track_dir) / "result.json"
+
+    resolved = _resolve_finalize_target(track_dir, result_path)
+    if resolved is None:
+        out(dict(error="No result file at .conductor/result.json and no locked task in state"))
+        return
+    if not result_path.exists():
+        print("NOTE: result.json missing — synthesized from locked task state",
+              file=sys.stderr)
+    r, p, t, s, task_name, status = resolved
 
     if status == "SUCCESS":
         code_sha = _normalize_sha(r.get("commit_sha", ""))
