@@ -291,7 +291,7 @@ def _append_execution_record(track_dir, phase, task, subtask, result_data, state
 
     task_name = result_data.get("task_name", "unknown")
     attempt = result_data.get("attempt", 1)
-    max_retries = result_data.get("max_retries", 3)
+    max_retries = result_data.get("max_retries", MAX_RETRIES)
     ts = now_iso()
 
     status = result_data.get("status", "").upper()
@@ -340,7 +340,7 @@ def _append_failure_legacy(track_dir, result_data):
     ts = now_iso()
     task_name = result_data.get("task_name", "unknown")
     attempt = result_data.get("attempt", 1)
-    max_retries = result_data.get("max_retries", 3)
+    max_retries = result_data.get("max_retries", MAX_RETRIES)
     detail = result_data.get("failure_detail", {})
 
     header = ""

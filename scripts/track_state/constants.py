@@ -28,6 +28,15 @@ MARKER_MAP = {
 SHA_MARKERS = {"x", "!", ">", "#", "-", "d"}
 
 # Maximum retry attempts for a failed task before marking it permanently failed.
+#
+# Single source of truth for the retry threshold — never re-literal "3":
+#  - Enforced by mutations._do_fail (re-queues as "pending" while retry_count <
+#    MAX_RETRIES; flips to "failed" at the threshold) and _do_fail_parent (pins
+#    retry_count = MAX_RETRIES so recover surfaces the parent as failed+max).
+#  - Emitted in track-state output (recover, dispatch-prepare) as `max_retries`
+#    so the implement skill routes on it without hardcoding the number, and
+#    rendered by handoff as "{retry_count}/{max_retries}". Bump it here and
+#    every consumer follows.
 MAX_RETRIES = 3
 
 # Execution modes for the implement skill (schema: track-state.schema.json).

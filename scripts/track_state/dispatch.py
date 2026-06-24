@@ -309,6 +309,7 @@ def cmd_recover(track_dir, compact=False):
         phase=pi, task=ti, subtask=si,
         name=name, type=ttype,
         retry_count=tgt.get("retry_count", 0),
+        max_retries=MAX_RETRIES,
         last_failure_summary=tgt.get("last_failure_summary"),
         tags=sub_tags,
         execution_mode=state.get("execution_mode", "interactive"),
@@ -405,6 +406,7 @@ def cmd_dispatch_prepare(track_dir):
              tags=tags, sync_count=synced, commit_msg=commit_msg,
              is_resume=is_resume,
              retry_count=tgt.get("retry_count", 0),
+             max_retries=MAX_RETRIES,
              last_failure_summary=tgt.get("last_failure_summary"),
              execution_mode=nxt.get("execution_mode", "interactive"),
              next=nxt))
