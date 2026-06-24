@@ -77,7 +77,12 @@ def _do_lock(track_dir, p, t, s=None):
         state["updated_at"] = now_iso()
 
 def _do_complete(track_dir, p, t, s=None, sha=None):
-    """Returns parent_completed bool."""
+    """Returns ``(parent_completed, state)``.
+
+    ``state`` is the post-transaction dict (already saved), handed back so the
+    dispatch/process-result hot paths don't re-load immediately after — that
+    reload was always fetching exactly this dict.
+    """
     pi, ti = int(p), int(t)
     si = int(s) if s is not None else None
     with transaction(track_dir) as state:
@@ -122,10 +127,13 @@ def _do_complete(track_dir, p, t, s=None, sha=None):
         _set_current_indices(state, pi, ti, None if parent_completed else si)
 
         state["updated_at"] = now_iso()
-        return parent_completed
+        return parent_completed, state
 
 def _do_fail(track_dir, p, t, s=None, summary="", retryable=True):
-    """Returns retry_count.
+    """Returns ``(retry_count, state)``.
+
+    ``state`` is the post-transaction dict (already saved), handed back so the
+    dispatch/process-result hot paths don't re-load immediately after.
 
     When retryable=True (default, used by dispatch-finalize) and retry_count
     has not reached MAX_RETRIES, the task is re-queued as "pending" so
@@ -153,7 +161,7 @@ def _do_fail(track_dir, p, t, s=None, summary="", retryable=True):
         _set_current_indices(state, pi, ti, si)
 
         state["updated_at"] = now_iso()
-        return tgt["retry_count"]
+        return tgt["retry_count"], state
 
 def _do_fail_parent(track_dir, p, t, summary="", sha=None):
     """Mark a PARENT task failed because its subtasks exhausted retries.
@@ -256,7 +264,7 @@ def cmd_lock(track_dir, p, t, s=None):
     out(dict(ok=True))
 
 def cmd_fail(track_dir, p, t, s=None, summary=""):
-    retry_count = _do_fail(track_dir, p, t, s, summary, retryable=False)
+    retry_count, _state = _do_fail(track_dir, p, t, s, summary, retryable=False)
     out(dict(retry_count=retry_count))
 
 def cmd_skip(track_dir, p, t, s=None, reason=""):

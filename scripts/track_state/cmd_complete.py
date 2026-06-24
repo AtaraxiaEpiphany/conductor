@@ -23,11 +23,10 @@ def cmd_complete(track_dir, p, t, s=None, sha=None,
             sha = new_sha
 
     try:
-        parent_completed = _do_complete(track_dir, p, t, s, sha)
+        parent_completed, state = _do_complete(track_dir, p, t, s, sha)
     except IndexError as e:
         out(dict(error=str(e), hint="Run 'track-state validate --fix' to correct state"))
         return
-    state = load(track_dir)
 
     # Resolve actual SHA from state (may differ from input sha when
     # parent-complete inherits from _last_subtask_sha)

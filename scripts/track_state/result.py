@@ -111,12 +111,10 @@ def cmd_process_result(track_dir):
             tdd_gate = _verify_tdd_gate(track_dir, sha, r)
 
         try:
-            parent_completed = _do_complete(track_dir, p, t, s, sha)
+            parent_completed, state = _do_complete(track_dir, p, t, s, sha)
         except (ValueError, IndexError) as e:
             out(dict(error=str(e), status="error"))
             return
-        # Reload state after _do_complete modified the file
-        state = load(track_dir)
 
         _store_evidence(state, track_dir, p, t, s, r)
 
@@ -169,9 +167,7 @@ def cmd_process_result(track_dir):
 
     elif status == "FAILURE":
         summary = r.get("summary", "")
-        retry_count = _do_fail(track_dir, p, t, s, summary)
-        # Reload state after _do_fail modified the file
-        state = load(track_dir)
+        retry_count, state = _do_fail(track_dir, p, t, s, summary)
         _do_sync_plan(track_dir, state)
 
         # Write to handoff

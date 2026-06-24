@@ -166,11 +166,10 @@ def cmd_dispatch_next(track_dir):
             parent_task = state["phases"][result["phase"] - 1]["tasks"][result["task"] - 1]
             sha = _last_subtask_sha(parent_task)
             try:
-                _do_complete(track_dir, result["phase"], result["task"], None, sha)
+                _, state = _do_complete(track_dir, result["phase"], result["task"], None, sha)
             except (ValueError, IndexError) as e:
                 out(dict(error=str(e), status="error"))
                 return
-            state = load(track_dir)
             _do_sync_plan(track_dir, state)
 
             # Conductor commit first (before finalize so the note targets the
@@ -591,7 +590,7 @@ def cmd_dispatch_finalize(track_dir):
     if status == "SUCCESS":
         code_sha = _normalize_sha(r.get("commit_sha", ""))
         try:
-            parent_completed = _do_complete(track_dir, p, t, s, code_sha)
+            parent_completed, state = _do_complete(track_dir, p, t, s, code_sha)
         except ValueError as e:
             # Parent has non-terminal subtasks — retryable, keep result.json
             out(dict(error=str(e), status="error"))
@@ -601,8 +600,6 @@ def cmd_dispatch_finalize(track_dir):
             result_path.unlink(missing_ok=True)
             out(dict(error=str(e), status="error"))
             return
-        # Reload state after _do_complete modified the file
-        state = load(track_dir)
 
         _store_evidence(state, track_dir, p, t, s, r)
 
@@ -663,9 +660,7 @@ def cmd_dispatch_finalize(track_dir):
 
     elif status == "FAILURE":
         summary = r.get("summary", "")
-        retry_count = _do_fail(track_dir, p, t, s, summary)
-        # Reload state after _do_fail modified the file
-        state = load(track_dir)
+        retry_count, state = _do_fail(track_dir, p, t, s, summary)
         synced = _do_sync_plan(track_dir, state)
         _append_execution_record(track_dir, p, t, s, r, state)
         _append_failure_legacy(track_dir, r)
