@@ -2,7 +2,7 @@ r"""Behavioral tests for on-subagent-stop.py — the recovery guard.
 
 Pins the post-collapse recovery model: a fresh result.json is the single
 completion signal for result-file agents (task-executor, explorer); stdout-block
-agents (phase-checker) are gated on their close tag. Critically, a written
+agents (phase-checker, code-reviewer) are gated on their close tag. Critically, a written
 FAILURE result.json is a VALID signal and must NOT trigger a recovery block
 (failures flow through the orchestrator's retry/skip path) — this is the
 behavioral change from the old prose-based detect_failure, which force-blocked
@@ -110,14 +110,33 @@ class RecoveryGuardTests(TestCase):
             rc, _ = self._run("phase-checker", d, last_message=msg)
             self.assertEqual(rc, 0)
 
-    # --- async agents: no recovery contract ---
+    # --- stdout-block agent: code-reviewer gated on close tag (like phase-checker) ---
+
+    def test_code_reviewer_with_close_tag_allows(self):
+        with tempfile.TemporaryDirectory() as d:
+            msg = "Review complete.\n---REVIEW RESULT---\nSTATUS: APPROVE\n---END REVIEW RESULT---"
+            rc, out = self._run("code-reviewer", d, last_message=msg)
+            self.assertEqual(rc, 0)
+            self.assertNotIn("decision", out)
+
+    def test_code_reviewer_without_close_tag_blocks(self):
+        """code-reviewer now runs in the SYNC SubagentStop entry and is gated on
+        its ---END REVIEW RESULT--- close tag (it was previously async /
+        advisory-only, so a review that exhausted turns before emitting its block
+        was silently lost). A missing close tag earns one recovery turn."""
+        with tempfile.TemporaryDirectory() as d:
+            rc, out = self._run("code-reviewer", d, last_message="stopped mid-review")
+            self.assertEqual(rc, 2)
+            self.assertEqual(out["decision"], "block")
+            self.assertIn("REVIEW RESULT", out["reason"])
+
+    # --- async agents: still no recovery contract ---
 
     def test_async_agent_without_result_allows(self):
-        """code-reviewer is registered async in hooks.json — no recovery
-        contract. A missing result.json must NOT block (and async blocks are
-        a no-op anyway)."""
+        """skip-analyst remains async in hooks.json with no recovery contract —
+        a missing result must NOT block (and async blocks are a no-op anyway)."""
         with tempfile.TemporaryDirectory() as d:
-            rc, out = self._run("code-reviewer", d)
+            rc, out = self._run("skip-analyst", d)
             self.assertEqual(rc, 0)
             self.assertNotIn("decision", out)
 

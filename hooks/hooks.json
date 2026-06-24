@@ -81,7 +81,7 @@
     ],
     "SubagentStop": [
       {
-        "matcher": "task-executor|explorer|phase-checker",
+        "matcher": "task-executor|explorer|phase-checker|code-reviewer",
         "hooks": [
           {
             "type": "command",
@@ -91,7 +91,7 @@
         ]
       },
       {
-        "matcher": "code-reviewer|doc-syncer|doc-linter|skip-analyst|spec-planner|spec-reviewer|project-analyzer",
+        "matcher": "doc-syncer|doc-linter|skip-analyst|spec-planner|spec-reviewer|project-analyzer",
         "hooks": [
           {
             "type": "command",
