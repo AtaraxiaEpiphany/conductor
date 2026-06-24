@@ -97,7 +97,34 @@ def main():
     tool_input = input_data.get("tool_input", {})
     command = tool_input.get("command", "")
 
-    # Check for dangerous git operations
+    # 1. Direct track-state.json modification — DENY. Manually editing/removing the
+    #    authoritative state file bypasses the state machine (which keeps
+    #    track-state.json, plan.md, and git SHAs consistent) and has no legitimate
+    #    remedy that isn't already a CLI command. Must run BEFORE the broader
+    #    lock-violation check so rm/mv of track-state.json always hits deny even when
+    #    a task is in_progress (otherwise the lock-violation "ask" short-circuits it).
+    if is_direct_track_state_modification(command):
+        additional_context = (
+            '[Conductor] BLOCKED: Direct track-state.json modification is denied — '
+            'it bypasses the state machine that keeps track-state.json, plan.md, and '
+            'git SHAs consistent. Use the track-state CLI (e.g. `track-state validate '
+            '--fix`, `track-state complete|fail|skip|defer`) or /conductor:revert.'
+        )
+        permission_reason = (
+            'Direct modification of track-state.json is not permitted: it corrupts the '
+            'authoritative state. Use the track-state CLI or /conductor:revert.'
+        )
+
+        write_hook_output(
+            hook_event_name="PreToolUse",
+            additional_context=additional_context,
+            permission_decision="deny",
+            permission_decision_reason=permission_reason,
+        )
+        return
+
+    # 2. Dangerous git operations — ask (rebase/reset --hard/clean have legitimate
+    #    uses; warn loudly and point to the sanctioned workflow).
     if is_dangerous_git_operation(command):
         match = re.search(r'git\s+(reset|rebase|clean|filter-branch)', command, re.IGNORECASE)
         operation = match.group(1) if match else "history-modifying"
@@ -119,7 +146,9 @@ def main():
         )
         return
 
-    # Check for track-state lock violations
+    # 3. Track-state lock violations (rm/mv/delete of tracked files while a task is
+    #    in_progress) — ask. Broad matcher; a task legitimately deleting files as its
+    #    own work can trip it, so deny would cause false positives.
     if 'track-state' in command.lower():
         violations = find_track_state_violations(cwd, command)
         if violations:
@@ -141,26 +170,8 @@ def main():
             )
             return
 
-    # Check for direct modifications to track-state.json
-    if is_direct_track_state_modification(command):
-        additional_context = (
-            '[Conductor] Direct track-state.json modification detected. '
-            'Use track-state CLI commands instead to maintain consistency.'
-        )
-        permission_reason = (
-            'Direct modification of track-state.json bypasses state machine. '
-            'Use /conductor:revert or track-state CLI.'
-        )
-
-        write_hook_output(
-            hook_event_name="PreToolUse",
-            additional_context=additional_context,
-            permission_decision="ask",
-            permission_decision_reason=permission_reason,
-        )
-        return
-
-    # Check for non-conventional commit messages (V10)
+    # 4. Non-conventional commit messages (V10) — ask. Don't impose the plugin's
+    #    convention on the whole repo; warn so conductor commits stay well-formed.
     if re.search(r'git\s+commit\s+.*-m\s', command, re.IGNORECASE):
         is_valid, suggested_fix = validate_commit_message(command)
         if not is_valid:
