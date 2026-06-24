@@ -20,18 +20,20 @@ sys.path.insert(0, str(Path(__file__).parent / "lib"))
 from lib.hook_io import read_hook_input, write_hook_output
 from lib.constants import RECOVERY_SUCCESS_PATTERNS
 from lib.result_probe import fresh_result_exists
+from lib.recovery import (
+    RECOVERY_MARKER, RESULT_FILE_AGENT_TYPES, RESULT_BLOCK_PATTERN,
+)
 
-# Pattern matches all conductor result block types.
-# Open tags: uppercase words (e.g. TASK RESULT, DOC SYNC RESULT, SKIP ANALYSIS).
-# Close tags: END + uppercase words (e.g. END RESULT, END SPEC PLAN RESULT).
-RESULT_PATTERN = r'---[A-Z][A-Z ]+---.*?---END [A-Z ]+---'
-
-# Agents whose followup is `dispatch-finalize`, which synthesizes a missing
-# result from result.json / locked task state. For these, a missing result
-# block is recoverable. Other agents (phase-checker, code-reviewer,
-# skip-analyst, doc-syncer, ...) have no dispatch-finalize step — a missing
-# block means lost status the orchestrator must inspect manually.
-DISPATCH_FINALIZE_AGENTS = {"task-executor", "explorer"}
+# The result-block grammar (open + close) and the result-file agent set are
+# shared with on-subagent-stop via lib.recovery so the two hooks cannot disagree
+# on what a result block looks like or on which agents are dispatch-finalize
+# agents. See lib.recovery for the single definitions.
+#
+# Agents whose followup is `dispatch-finalize` (== RESULT_FILE_AGENT_TYPES)
+# synthesize a missing result from result.json / locked task state — for these a
+# missing result block is recoverable. Other agents (phase-checker, code-reviewer,
+# skip-analyst, doc-syncer, ...) have no dispatch-finalize step — a missing block
+# means lost status the orchestrator must inspect manually.
 
 NO_RESULT_MESSAGE = (
     "[Conductor] Subagent completed without structured result block. "
@@ -62,7 +64,7 @@ NO_RESULT_OK = (
 
 def extract_result_blocks(response: str) -> Optional[str]:
     """Extract result blocks from subagent response."""
-    matches = re.findall(RESULT_PATTERN, response, re.DOTALL)
+    matches = re.findall(RESULT_BLOCK_PATTERN, response, re.DOTALL)
     if matches:
         return '\n\n'.join(m.strip() for m in matches)
     return None
@@ -101,7 +103,7 @@ def _extract_agent_text(tool_response) -> str:
 
 def detect_recovery_context(response: str) -> Optional[str]:
     """Check for recovery success after a prior failure."""
-    if "[Conductor Recovery]" not in response:
+    if RECOVERY_MARKER not in response:
         return None
 
     for pattern in RECOVERY_SUCCESS_PATTERNS:
@@ -137,7 +139,7 @@ def main():
     tool_input = input_data.get("tool_input") or {}
     raw_type = tool_input.get("subagent_type", "") if isinstance(tool_input, dict) else ""
     agent_type = raw_type.split(":")[-1]
-    uses_finalize = agent_type in DISPATCH_FINALIZE_AGENTS
+    uses_finalize = agent_type in RESULT_FILE_AGENT_TYPES
 
     # --- Responsibility 1: Extract structured result blocks ---
     result = extract_result_blocks(response)

@@ -36,12 +36,18 @@ sys.path.insert(0, str(Path(__file__).parent / "lib"))
 from lib.hook_io import read_hook_input, write_hook_output
 from lib.logging import init_logging, log_entry
 from lib.result_probe import fresh_result_exists
+from lib.recovery import (
+    RECOVERY_MARKER, RESULT_FILE_AGENT_TYPES, RESULT_END_TAG,
+)
 
 
-# result-file agents → the instruction appended after the shared
-# "[Conductor Recovery] You stopped without writing a result." lead. The keys
-# are the set of agents gated on a fresh result.json (single source of truth).
-RESULT_FILE_AGENTS = {
+# Per-agent recovery instructions for result-file agents. The GATE (which
+# agents count as result-file agents) is the shared RESULT_FILE_AGENT_TYPES from
+# lib.recovery — these strings are just the hook UI appended after the shared
+# RECOVERY_MARKER lead. The guard keeps the two in sync, so adding an agent type
+# in the shared set without an instruction here (or vice versa) fails loudly at
+# import instead of raising a cryptic KeyError when that agent crashes.
+_RESULT_FILE_INSTRUCTIONS = {
     "task-executor": (
         "IMMEDIATELY call track-state write-result (Section 6.0) and print "
         "the ---TASK RESULT--- block. Report FAILURE if you cannot complete."
@@ -51,6 +57,10 @@ RESULT_FILE_AGENTS = {
         "the ---TASK RESULT--- block. Report FAILURE if you cannot complete."
     ),
 }
+assert set(_RESULT_FILE_INSTRUCTIONS) == RESULT_FILE_AGENT_TYPES, (
+    "RESULT_FILE_AGENT_TYPES (lib.recovery) and _RESULT_FILE_INSTRUCTIONS keys "
+    "drifted — a result-file agent lacks a recovery instruction or vice versa."
+)
 
 # stdout-block agents (no result file) → gated on the presence of a close tag.
 # Instruction appended after "[Conductor Recovery] You stopped without producing
@@ -65,10 +75,12 @@ STDOUT_BLOCK_AGENTS = {
 }
 
 # Matches any conductor result-block close tag, e.g. ---END RESULT---,
-# ---END CHECKPOINT RESULT---, ---END TASK RESULT---. Emitted at the END of a
+# ---END CHECKPOINT RESULT---, ---END TASK RESULT---. The grammar is shared with
+# filter-subagent-output's block extractor via RESULT_END_TAG (lib.recovery) so
+# the two hooks agree on what a result block looks like. Emitted at the END of a
 # turn, so the scan must cover the full message — never a head-truncated prefix
 # (see _has_result_block).
-_RESULT_END_PATTERN = re.compile(r'---END [A-Z ]+---')
+_RESULT_END_PATTERN = re.compile(RESULT_END_TAG)
 
 
 def _has_result_block(message: str) -> bool:
@@ -110,12 +122,12 @@ def main():
     # A written FAILURE result.json is a valid signal — do NOT block (the
     # orchestrator's retry/skip path reads it). Only a missing file means the
     # agent never reached its result step.
-    if agent_type in RESULT_FILE_AGENTS:
+    if agent_type in RESULT_FILE_AGENT_TYPES:
         if not fresh_result_exists(cwd):
             _block_recovery(
                 agent_type,
-                "[Conductor Recovery] You stopped without writing a result.",
-                RESULT_FILE_AGENTS[agent_type],
+                f"{RECOVERY_MARKER} You stopped without writing a result.",
+                _RESULT_FILE_INSTRUCTIONS[agent_type],
                 log_file, session_id, "no_result_file_detected",
             )
             return
@@ -127,7 +139,7 @@ def main():
         if not _has_result_block(last_message):
             _block_recovery(
                 agent_type,
-                "[Conductor Recovery] You stopped without producing a result block.",
+                f"{RECOVERY_MARKER} You stopped without producing a result block.",
                 STDOUT_BLOCK_AGENTS[agent_type],
                 log_file, session_id, "no_result_block_detected",
             )
