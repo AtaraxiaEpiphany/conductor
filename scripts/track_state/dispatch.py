@@ -3,7 +3,7 @@ import json
 import sys
 from pathlib import Path
 
-from .core import load, save
+from .core import load
 from .helpers import (
     out, out_compact, now_iso, extract_tags, _inherit_tags,
     conductor_dir, _store_evidence, _last_subtask_sha, _any_phase_needs_checkpoint,
@@ -13,9 +13,9 @@ from .constants import AUTO_COMPLETE_OK, MAX_RETRIES
 from .mutations import _do_lock, _do_complete, _do_fail, _do_fail_parent
 from .sync import _do_sync_plan
 from .git_ops import (
-    _git_commit, _git_commit_ensured, _git_head_sha, _write_git_note, _ensure_note,
+    _git_commit, _git_commit_ensured, _git_head_sha, _write_git_note,
     _has_sibling_sha, _update_task_sha, _recover_git_notes,
-    _is_start_commit, _git_uncommitted_files,
+    _is_start_commit, _git_uncommitted_files, _finalize_parent,
 )
 from .handoff import (
     _append_execution_record, _append_deviation_legacy, _append_failure_legacy,
@@ -173,29 +173,15 @@ def cmd_dispatch_next(track_dir):
             state = load(track_dir)
             _do_sync_plan(track_dir, state)
 
-            # Create conductor commit for parent completion (before note so note targets final SHA)
+            # Conductor commit first (before finalize so the note targets the
+            # final SHA), then the shared post-commit audit-trail sequence.
             parent_name = parent_task.get("name", "unknown")
-            commit_msg = f"chore(conductor): Complete parent '{parent_name}' [{sha}]"
-            committed = _git_commit_ensured(track_dir, commit_msg)
+            committed = _git_commit_ensured(
+                track_dir, f"chore(conductor): Complete parent '{parent_name}' [{sha}]")
             if not committed:
                 print(f"WARNING: conductor commit failed for parent-complete of '{parent_name}'",
                       file=sys.stderr)
-            final_sha = _git_head_sha(track_dir) or sha
-            if final_sha != sha:
-                state = load(track_dir)
-                state["phases"][result["phase"] - 1]["tasks"][result["task"] - 1]["commit_sha"] = final_sha
-                save(track_dir, state)
-                _do_sync_plan(track_dir, state)
-
-            # Write git note AFTER conductor commit so it targets the same SHA track-state.json references
-            state = load(track_dir)
-            parent_tgt = state["phases"][result["phase"] - 1]["tasks"][result["task"] - 1]
-            _ensure_note(track_dir, state, result["phase"], result["task"], None, parent_tgt)
-
-            # Store minimal evidence for parent if none exists
-            if "evidence" not in parent_tgt:
-                parent_tgt["evidence"] = {"coverage_pct": None, "tc_coverage": "", "deviations": 0}
-                save(track_dir, state)
+            _finalize_parent(track_dir, result["phase"], result["task"], sha)
 
             continue
 
@@ -216,18 +202,13 @@ def cmd_dispatch_next(track_dir):
             state = load(track_dir)
             _do_sync_plan(track_dir, state)
             parent_name = parent_task.get("name", "unknown")
-            commit_msg = f"chore(conductor): Fail parent '{parent_name}' (subtasks exhausted retries)"
-            committed = _git_commit_ensured(track_dir, commit_msg)
-            final_sha = _git_head_sha(track_dir) or sha
-            if final_sha != sha:
-                state = load(track_dir)
-                state["phases"][result["phase"] - 1]["tasks"][result["task"] - 1]["commit_sha"] = final_sha
-                save(track_dir, state)
-                _do_sync_plan(track_dir, state)
-
-            # Write git note for failed parent (same channel as parent-complete)
-            parent_tgt = state["phases"][result["phase"] - 1]["tasks"][result["task"] - 1]
-            _ensure_note(track_dir, state, result["phase"], result["task"], None, parent_tgt)
+            _git_commit_ensured(
+                track_dir,
+                f"chore(conductor): Fail parent '{parent_name}' (subtasks exhausted retries)")
+            # Same post-commit audit trail as parent-complete, minus the evidence
+            # seed (a failed parent carries no coverage evidence).
+            final_sha = _finalize_parent(
+                track_dir, result["phase"], result["task"], sha, ensure_evidence=False)
 
             out(dict(action="parent_stuck", phase=result["phase"], task=result["task"],
                      name=parent_name, sha=final_sha, failed=True,

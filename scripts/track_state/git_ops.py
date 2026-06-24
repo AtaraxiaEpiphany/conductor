@@ -404,3 +404,33 @@ def _ensure_note(track_dir, state, pi, ti, si, tgt):
     except (ImportError, subprocess.SubprocessError, FileNotFoundError, PermissionError, subprocess.TimeoutExpired) as e:
         print(f"WARNING: _ensure_note failed for {sha}: {e}", file=sys.stderr)
 
+
+def _finalize_parent(track_dir, p, t, sha, *, ensure_evidence=True):
+    """Finalize a parent task's audit trail after its conductor commit.
+
+    Shared post-commit sequence for parent-complete / parent-stuck in
+    cmd_dispatch_next and the legacy parent-complete in cmd_process_result,
+    which previously hand-rolled three drifting copies:
+      * resolve final_sha from HEAD — the conductor commit may have advanced it;
+      * if final_sha differs from the subtask-derived ``sha``, persist the
+        parent's commit_sha and re-sync plan.md so the marker carries the SHA;
+      * write the conductor git note targeting that SHA;
+      * (unless ``ensure_evidence=False``) seed minimal evidence if none exists.
+
+    ``p``/``t`` are 1-based phase/task indices. ``sha`` is the subtask-derived
+    SHA the caller committed under. Returns final_sha.
+    """
+    final_sha = _git_head_sha(track_dir) or sha
+    if final_sha != sha:
+        state = load(track_dir)
+        state["phases"][p - 1]["tasks"][t - 1]["commit_sha"] = final_sha
+        save(track_dir, state)
+        _do_sync_plan(track_dir, state)
+    state = load(track_dir)
+    parent_tgt = state["phases"][p - 1]["tasks"][t - 1]
+    _ensure_note(track_dir, state, p, t, None, parent_tgt)
+    if ensure_evidence and "evidence" not in parent_tgt:
+        parent_tgt["evidence"] = {"coverage_pct": None, "tc_coverage": "", "deviations": 0}
+        save(track_dir, state)
+    return final_sha
+
