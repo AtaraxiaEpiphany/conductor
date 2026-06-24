@@ -297,7 +297,7 @@ Options: "Yes, seed" / "Skip"
 For each document the user confirms:
 
 1. Apply the proposed changes using Edit tool.
-2. **Bump provenance** — if the edited file is a scoped corpus doc (`conductor/design/`, `conductor/resource/`, `conductor/requirement/`), ensure its frontmatter block exists (see core-contract "Page Provenance Frontmatter") and update `last_verified` to this run's date/SHA. `sources:` gains the `{TRACK_ID}` if not already listed. If the doc lacks frontmatter entirely, add the block (this is how legacy docs are brought into compliance).
+2. **Bump provenance** — if the edited file is a scoped corpus doc (`conductor/design/`, `conductor/resource/`, `conductor/requirement/`), ensure its frontmatter block exists (see `conductor/design/doc-conventions.md` → Page Provenance Frontmatter) and update `last_verified` to this run's date/SHA. `sources:` gains the `{TRACK_ID}` if not already listed. If the doc lacks frontmatter entirely, add the block (this is how legacy docs are brought into compliance).
 3. Verify the edit was applied correctly.
 4. Record the file as updated.
 
@@ -305,7 +305,7 @@ For confirmed cross-references (5.9):
 
 5. For each bidirectional pair (A ↔ B), append or update a `## See Also` section at the bottom of each document using Edit.
    - Format: `- [[path/to/other/doc]] -- {one-line description of relationship}`
-   - Follow the Wikilink Format convention defined in the core contract.
+   - Follow the Wikilink Format convention defined in `conductor/design/doc-conventions.md`.
 6. Record cross-references added.
 
 For confirmed graduation harvests (§5.10):
