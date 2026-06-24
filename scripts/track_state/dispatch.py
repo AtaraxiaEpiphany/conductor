@@ -652,7 +652,13 @@ def cmd_dispatch_finalize(track_dir):
         _append_failure_legacy(track_dir, r)
 
         commit_msg = f"chore(conductor): '{task_name}' failed (attempt {retry_count})"
-        committed = _git_commit(track_dir, commit_msg)
+        # Use _git_commit_ensured (allow-empty fallback) to mirror the SUCCESS
+        # path. The failure has already been fully ingested into track-state.json
+        # + handoff + issues.md above, and the task is no longer in_progress, so a
+        # preserved result.json here would only surface as an "orphaned result.json"
+        # complaint on the next Stop hook. Ensured commit unlinks it reliably; the
+        # genuine-git-breakage case still preserves it (both attempts return False).
+        committed = _git_commit_ensured(track_dir, commit_msg)
         if committed:
             result_path.unlink(missing_ok=True)
         else:

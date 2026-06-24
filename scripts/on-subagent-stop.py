@@ -105,12 +105,38 @@ def detect_failure(message: str) -> tuple[bool, Optional[str]]:
     return True, failure_hit
 
 
+# Matches any conductor result-block close tag, e.g. ---END RESULT---,
+# ---END CHECKPOINT RESULT---, ---END TASK RESULT---. These are emitted at the
+# END of a turn (Section 6.2), so the check must scan the full message, not a
+# head-truncated prefix — see _has_result_block.
+_RESULT_END_PATTERN = re.compile(r'---END [A-Z ]+---')
+
+
+def _has_result_block(message: str) -> bool:
+    """True if `message` contains a conductor result-block close tag.
+
+    Result blocks are emitted at the END of a subagent's turn. Scanning only the
+    first N chars (the prior ``[:2000]`` head truncation) missed the close tag on
+    any normal-length turn (>2KB of explanation/diffs before the block), so a
+    successful task-executor that DID print its block was falsely flagged as
+    "stopped without producing a result block" and force-blocked for a recovery
+    turn. Search the full message instead — a single turn is bounded and the
+    regex is cheap; correctness beats the micro-optimization that broke it.
+    """
+    if not message:
+        return False
+    return bool(_RESULT_END_PATTERN.search(message))
+
+
 def main():
     """Main hook function"""
     input_data = read_hook_input()
     agent_type = input_data.get("agent_type", "")
     session_id = input_data.get("session_id", "")
-    last_message = input_data.get("last_assistant_message", "")[:2000]
+    # Full message: failure patterns may appear mid-turn (e.g. a traceback the
+    # agent recovered from) and the result-block close tag sits at the end.
+    # A head-truncation here would both miss late failures AND the END tag.
+    last_message = input_data.get("last_assistant_message", "")
 
     # Initialize logging
     log_file = init_logging("on-subagent-stop")
@@ -127,7 +153,7 @@ def main():
     # these agents have maxTurns caps and multi-step protocols that can exhaust
     # turns before emitting status, leaving the orchestrator with no result.
     if not has_failure and agent_type in NO_RESULT_RECOVERY:
-        if not re.search(r'---END [A-Z ]+---', last_message):
+        if not _has_result_block(last_message):
             log_entry(
                 Path(log_file).parent / "subagent-failures.log",
                 f"session={session_id} agent={agent_type} no_result_block_detected"
