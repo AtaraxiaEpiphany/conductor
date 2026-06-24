@@ -3,7 +3,7 @@ name: wiki
 description: Queries the Conductor documentation wiki — status snapshots and topic search with citations
 when_to_use: User wants to check wiki health overview or search the wiki for a topic
 argument-hint: "<status|query> [args]"
-allowed-tools: Read, Grep, Glob, Agent, AskUserQuestion, Write, Edit
+allowed-tools: Read, Grep, Glob, Agent, AskUserQuestion, Write, Edit, WebFetch
 model: sonnet
 ---
 
@@ -17,6 +17,7 @@ You are a **Conductor Wiki Agent** — a specialized skill that reads and querie
 - `status` — Health snapshot of wiki infrastructure and coverage
 - `purpose` — Read / co-edit the project's directional intent (`purpose.md`)
 - `query <topic>` — Search wiki and synthesize an answer with citations
+- `ingest <source>` — Build the wiki from an arbitrary source (file path / URL / pasted block) — no track required
 
 **For health audits and drift detection**, use `/conductor:wiki-doctor` instead.
 
@@ -57,6 +58,7 @@ Parse `$ARGUMENTS` and dispatch to the appropriate sub-command.
 | `status` | **Section 3.0** |
 | `purpose` | **Section 3.5** |
 | `query` | **Section 4.0** (requires `SUB_ARGS` as topic) |
+| `ingest` | **Section 6.0** (requires `SUB_ARGS` as source) |
 | empty / unrecognized | **Usage help** (below) → HALT |
 
 ### 2.3 Usage Help
@@ -72,6 +74,7 @@ Sub-commands:
   status           Health snapshot of wiki infrastructure and coverage
   purpose          Read / co-edit the project's directional intent (purpose.md)
   query <topic>    Search wiki and synthesize an answer with [[wikilink]] citations
+  ingest <source>  Build the wiki from an arbitrary source (no track needed)
 
 Health diagnostics:
   /conductor:wiki-doctor lint     Full 5-check health audit
@@ -340,3 +343,55 @@ If doc-linter agent returns `STATUS: FAILURE`:
 If doc-linter completes but no `---DOC LINT RESULT---` block is detected:
 
 → Announce: "Doc-linter completed without structured result. Check the conversation for details."
+
+---
+
+## 6.0 INGEST
+
+**Build the wiki from an arbitrary source — uncoupled from the track lifecycle.** This is the missing "drop a source → build the wiki" path: it routes the source through the *same* canonical writer (doc-syncer) that post-track ingest uses, preserving the merge-not-append / idempotent / drift-gated discipline. The wiki skill stays a thin router; doc-syncer remains the single corpus writer.
+
+### 6.1 Resolve & Normalize the Source
+
+`SUB_ARGS` is the source. Determine its kind:
+
+| Source form | How to normalize |
+|---|---|
+| Existing file path | `Read` it. If not markdown, read anyway (doc-syncer treats prose as the source). |
+| URL (`http://`/`https://`) | `WebFetch` it as markdown. |
+| Pasted block / bare text | Use `SUB_ARGS` verbatim. |
+
+1. **Slug** the source: lowercase, hyphenate, strip special chars from a title derived from the source (heading / filename / URL path). Example: `https://x/auth-guide` → `auth-guide`.
+2. **Normalize to markdown** and write to a transient file (the raw source is *working memory*, never a tracked corpus file — it respects the 3-channel model):
+   ```bash
+   SRC="$(mktemp /tmp/wiki-ingest-XXXXXX.md)"
+   # write the normalized markdown to "$SRC" via a heredoc or Write tool
+   ```
+3. **Verify** the file is non-empty. If empty/failed → HALT: "Could not normalize source `<source>`."
+
+### 6.2 Dispatch Doc-Syncer (ad-hoc mode)
+
+Dispatch the `conductor:doc-syncer` agent with a **synthetic ad-hoc assignment** — no `TRACK_DIR` / `TRACK_ID`:
+
+`Agent` tool, `subagent_type: "conductor:doc-syncer"`. Description: `"Ad-hoc wiki ingest: <slug>"`.
+
+```
+SOURCE_TYPE=ad-hoc
+SOURCE_PATH={absolute path to "$SRC"}
+SOURCE_NAME={slug}
+```
+
+doc-syncer runs its canonical pipeline in ad-hoc mode: the source IS the "spec" (§3.1 reads `SOURCE_PATH`), there are no handoffs to harvest, and commits are tagged `[wiki-ingest]` instead of `[{TRACK_ID}]` (no `track-state archive` gate applies — ad-hoc ingest never touches `track-state.json`).
+
+### 6.3 Parse Result & Clean Up
+
+1. Wait for completion. Parse the `---DOC SYNC RESULT---` block.
+2. `STATUS: FAILURE` → announce the reason; clean up `$SRC`; HALT.
+3. `STATUS: COMPLETED|SKIPPED` → clean up the transient source:
+   ```bash
+   rm -f "$SRC"
+   ```
+4. Summarize: which wiki pages were merged/seeded (`UPDATED_FILES`), whether overview/purpose were regenerated (`WIKI_UPDATED` / `PURPOSE_UPDATED`), and the graduated-finding count. The tracked artifacts are the corpus pages doc-syncer committed — the raw source is gone by design.
+
+### 6.4 No-Op Path
+
+If doc-syncer reports `SKIPPED` (the source added nothing the corpus didn't already contain — idempotent ingest), announce "Source `<slug>` already reflected in the wiki; no changes." Clean up `$SRC`. This is correct behavior, not an error.
