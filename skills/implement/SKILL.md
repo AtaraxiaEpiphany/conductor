@@ -174,9 +174,28 @@ track-state dispatch-finalize "<track_dir>"
 `dispatch-finalize` creates the conductor commit internally. Do NOT commit separately.
 Output includes `committed: true/false` and optionally `phase_checkpoint_pending: <phase_index>`.
 
-**SUCCESS**: `committed: false` → announce `"conductor commit failed, result.json preserved"` → re-run `dispatch-finalize` (max 3 attempts, then HALT with `"dispatch-finalize stuck"`). Deviations > 0 → announce. If `phase_checkpoint_pending` present → dispatch `conductor:phase-checker` immediately. Otherwise → **Section 3.7**.
+**SUCCESS**: `committed: false` → announce `"conductor commit failed, result.json preserved"` → re-run `dispatch-finalize` (max 3 attempts, then HALT with `"dispatch-finalize stuck"`). Deviations > 0 → announce. If `phase_checkpoint_pending` present → dispatch `conductor:phase-checker` immediately. Otherwise → **Section 3.6b** (self-review, if the task opted in) → **Section 3.7**.
 
 **FAILURE**: retry < max → re-dispatch (Section 3.1). retry >= max → dispatch `conductor:skip-analyst`. Skip-analyst result: `can_skip` → `track-state skip` or `block` → `sync-plan` → commit → Section 3.1 or HALT.
+
+### 3.6b Self-Review Loop (opt-in — "Ralph Wiggum")
+
+**DEFAULT OFF.** Runs ONLY when the just-completed task opts in — zero latency otherwise:
+- the task NAME contains the marker `[Review]` (per-task opt-in), OR
+- env `CONDUCTOR_SELF_REVIEW=1` (global opt-in for every task this session).
+
+`[Review]` is a **name marker, not a tag** — it does NOT enter the `[Docs]`/`[Config]`/… exemption logic, so a reviewable task still owes TDD (F2) and coverage (F3).
+
+When opted in (after a SUCCESSFUL `dispatch-finalize`, before §3.7), run ONE bounded review iteration — the loop from §8.2 (review own changes → request a reviewer pass → fix → escalate only on judgment):
+
+1. **Reviewer pass** — dispatch `conductor:code-reviewer` (read-only) with the task's commit range `<task_sha>~1..<task_sha>`, `TRACK_DIR`, `TRACK_ID`. Prompt: `TRACK_DIR={td} TRACK_ID={id} REVISION_RANGE={sha}~1..{sha}`.
+2. **Decide from the `---REVIEW RESULT---` block** (substring-check the severities):
+   - **No `Critical`/`High` findings** → loop satisfied → announce `"🔍 Self-review [Review]: clean"` → §3.7.
+   - **`Critical`/`High` present** → re-dispatch `conductor:task-executor` with `IS_RETRY=true ATTEMPT={n+1}` and the findings as remediation context (the agent fixes its own changes), then `dispatch-finalize` again.
+3. **Bounded to ONE fix iteration** — no runaway loop. After the iteration, announce residual findings: `"🔍 Self-review [Review]: {N} findings → 1 fix iteration → {M} residual"`.
+4. **Escalate on residual judgment only** — if `Critical` findings persist after the iteration, surface them via `AskUserQuestion` (fix-guidance / accept-with-debt / block). Medium/Low residual → note and proceed (do not block the loop on nits).
+
+This loop is orchestration over the existing `code-reviewer` + `task-executor` agents — no new agent, no new hook.
 
 ### 3.7 Phase Boundary
 
