@@ -100,6 +100,7 @@ STALE_CLAIMS: <count> -- <list>
 CONTRADICTIONS: <count> -- <list>
 GAPS: <count> -- <list>
 LOG_ISSUES: <count> -- <list>
+MISSING_FRONTMATTER: <count> -- <list>
 SUMMARY: <one-line>
 ---END RESULT---
 ```
@@ -124,6 +125,7 @@ Status: <PASS / WARN / FAIL>
 | Contradictions | <N> | <semicolon-separated list or "None"> |
 | Coverage Gaps | <N> | <semicolon-separated list or "None"> |
 | Log Issues | <N> | <semicolon-separated list or "None"> |
+| Missing Frontmatter | <N> | <semicolon-separated list of scoped docs missing provenance, or "None"> |
 
 ## Summary
 <one-line summary from doc-linter>

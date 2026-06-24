@@ -135,3 +135,21 @@ Cross-references between Conductor documents use `[[wikilinks]]`:
 - **Placement:** `## See Also` section at the bottom of each document.
 - **Bidirectionality:** when adding A→B, also add B→A.
 - **Used in:** overview.md knowledge base, doc-syncer cross-references, doc-linter orphan checks.
+
+### Page Provenance Frontmatter
+
+Scoped corpus docs (`conductor/design/`, `conductor/resource/`, `conductor/requirement/`, `conductor/queries/`) carry YAML frontmatter so freshness/staleness checks are **evidence-based**, not heuristic:
+
+```yaml
+---
+type: architecture|api|database|ux|resource|entity|concept|source|query
+sources:
+  - <track_id | handoff_stem | url | path>
+last_verified: <ISO-8601 date or short git SHA of the commit that last confirmed it>
+---
+```
+
+- **Required fields:** `type`, `sources`, `last_verified`.
+- **Exempt** (auto-owned synthesis/navigation, regenerated wholesale — frontmatter would only churn): `overview.md`, `purpose.md`, `log.md`, every `index.md`.
+- **Writers:** `doc-syncer` emits/updates frontmatter on every merge or seed; the `wiki` query-save writes `type: query` pages. Merge updates `last_verified`; seed writes the full block.
+- **Checkers:** `doc-linter` (§4.6) and the SessionStart GC hook report missing/empty frontmatter. `lib/frontmatter.py` is the single deterministic parser used by hooks.

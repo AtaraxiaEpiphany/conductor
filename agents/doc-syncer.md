@@ -268,33 +268,34 @@ Options: "Yes, seed" / "Skip"
 For each document the user confirms:
 
 1. Apply the proposed changes using Edit tool.
-2. Verify the edit was applied correctly.
-3. Record the file as updated.
+2. **Bump provenance** — if the edited file is a scoped corpus doc (`conductor/design/`, `conductor/resource/`, `conductor/requirement/`), ensure its frontmatter block exists (see core-contract "Page Provenance Frontmatter") and update `last_verified` to this run's date/SHA. `sources:` gains the `{TRACK_ID}` if not already listed. If the doc lacks frontmatter entirely, add the block (this is how legacy docs are brought into compliance).
+3. Verify the edit was applied correctly.
+4. Record the file as updated.
 
 For confirmed cross-references (5.9):
 
-4. For each bidirectional pair (A ↔ B), append or update a `## See Also` section at the bottom of each document using Edit.
+5. For each bidirectional pair (A ↔ B), append or update a `## See Also` section at the bottom of each document using Edit.
    - Format: `- [[path/to/other/doc]] -- {one-line description of relationship}`
    - Follow the Wikilink Format convention defined in the core contract.
-5. Record cross-references added.
+6. Record cross-references added.
 
 For confirmed graduation harvests (§5.10):
 
-6. **Merge** — for each confirmed merge, Edit the target doc to add the finding as a bullet under its canonical `##` section (merge, never append a new subsection). Skip if the finding is already present (idempotent).
-7. **Seed** — for each confirmed seed, Write the target doc with focused initial content (title + the finding under the appropriate `##` heading, plus a `## See Also` linking to related docs), then add a row to the `conductor/index.md` Scoped Docs table: `| {Category} | {path} | {Match Strategy} |`.
-8. Record each graduated doc (merge or seed) for the §7.2 GRADUATE log rows.
+7. **Merge** — for each confirmed merge, Edit the target doc to add the finding as a bullet under its canonical `##` section (merge, never append a new subsection). Skip if the finding is already present (idempotent). Bump the doc's frontmatter `last_verified` (step 2 rule).
+8. **Seed** — for each confirmed seed, Write the target doc **with a provenance frontmatter block** (`type`, `sources: [<{TRACK_ID} | handoff_stem>...]`, `last_verified`), followed by focused content (title + the finding under the appropriate `##` heading, plus a `## See Also` linking to related docs), then add a row to the `conductor/index.md` Scoped Docs table: `| {Category} | {path} | {Match Strategy} |`.
+9. Record each graduated doc (merge or seed) for the §7.2 GRADUATE log rows.
 
 After all confirmed updates, cross-references, and harvests are applied:
 
-9. Stage all changed files: `git add <file1> <file2> ...`
-10. Commit: `docs(conductor): Synchronize docs for track '{TRACK_DESCRIPTION}' [{TRACK_ID}]`
+10. Stage all changed files: `git add <file1> <file2> ...`
+11. Commit: `docs(conductor): Synchronize docs for track '{TRACK_DESCRIPTION}' [{TRACK_ID}]`
 
 > The `[{TRACK_ID}]` suffix is load-bearing: `track-state archive` refuses to archive the track until it sees a `docs(conductor): …[{TRACK_ID}]` commit (evidence this phase ran). Never omit it.
 
 If no updates were confirmed or needed:
 
-11. Announce "No documentation updates required."
-12. Skip commit (Phase 2 will still create a wiki commit if any wiki files are new).
+12. Announce "No documentation updates required."
+13. Skip commit (Phase 2 will still create a wiki commit if any wiki files are new).
 
 ---
 

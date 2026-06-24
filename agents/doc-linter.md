@@ -105,6 +105,17 @@ Verify `conductor/log.md` entries match actual git history.
 3. For entries with `DOC_UPDATE` operation, verify the referenced files have git commits from the same track (via `git log --oneline -- <file>`).
 4. Report mismatches as WARN.
 
+### 4.6 Missing Provenance Frontmatter
+
+Find scoped corpus docs missing the required provenance frontmatter (`type`, `sources`, `last_verified`).
+
+**Method:**
+1. For each `.md` under `conductor/design/`, `conductor/resource/`, `conductor/requirement/`, and `conductor/queries/` (recursively):
+   - Skip exempt basenames: `overview.md`, `purpose.md`, `log.md`, any `index.md` (auto-owned synthesis/navigation).
+   - Read the file's leading lines. A frontmatter block starts with a `---` fence and closes with the next `---`.
+2. If the block is absent OR any of `type` / `sources` / `last_verified` is missing (or `sources:` is empty) → report as WARN with the file and the missing fields.
+3. This makes stale-claim detection (§4.3) evidence-based: a doc whose `last_verified` predates the last commit to its source files is drift, not a vibe.
+
 ---
 
 ## 5.0 FINDING CLASSIFICATION
@@ -133,6 +144,7 @@ STALE_CLAIMS: <count> -- <semicolon-separated list of identifiers>
 CONTRADICTIONS: <count> -- <semicolon-separated list>
 GAPS: <count> -- <semicolon-separated list of docs with no inbound refs>
 LOG_ISSUES: <count> -- <semicolon-separated list of mismatches>
+MISSING_FRONTMATTER: <count> -- <semicolon-separated list of scoped docs missing required provenance frontmatter>
 SUMMARY: <one-line summary of overall doc health>
 ---END RESULT---
 ```
