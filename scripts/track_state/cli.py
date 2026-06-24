@@ -15,7 +15,7 @@ from .quality import cmd_init, cmd_init_from_plan, cmd_start, cmd_set_mode, cmd_
 from .misc import (
     cmd_reset, cmd_indices, cmd_shas, cmd_add_checkpoint,
     cmd_deferred_report, cmd_phase_done, cmd_registry_update,
-    cmd_record_summary,
+    cmd_record_summary, cmd_gc_all,
 )
 from .handoff import cmd_get_handoff, cmd_sync_handoff, cmd_append_handoff
 from .sync import cmd_sync_plan
@@ -200,6 +200,8 @@ COMMAND_HELP = {
                  "Validate state; always reports auto-fix analysis, --fix persists repairs"),
     "gc": ("gc <track-dir>",
            "Garbage collection: clean orphaned artifacts, detect stale state"),
+    "gc-all": ("gc-all <project-dir>",
+               "Safe GC sweep across every track in conductor/tracks.md (orphaned temp files + result.json)"),
     "shas": ("shas <track-dir>",
              "List all commit SHAs from completed tasks"),
     "checklist-verify": ("checklist-verify <track-dir>",
@@ -222,7 +224,7 @@ _COMMAND_GROUPS = [
     ("Handoff", ["get-handoff", "append-handoff"]),
     ("Result Processing", ["write-result", "process-result"]),
     ("Dispatch Composites", ["dispatch-prepare", "dispatch-finalize", "record-summary"]),
-    ("Diagnostics", ["validate", "gc", "shas", "checklist-verify", "deferred-report",
+    ("Diagnostics", ["validate", "gc", "gc-all", "shas", "checklist-verify", "deferred-report",
                      "phase-done", "add-checkpoint"]),
 ]
 
@@ -355,6 +357,8 @@ def main():
             cmd_archive(track_dir)
         elif cmd == "gc":
             cmd_gc(track_dir)
+        elif cmd == "gc-all":
+            cmd_gc_all(track_dir)
         elif cmd == "checklist-verify":
             cmd_checklist_verify(track_dir)
         elif cmd == "process-result":

@@ -13,7 +13,7 @@ from .mutations import _do_complete
 from .sync import _do_sync_plan
 from .git_ops import _git_commit, _git_head_sha, _ensure_note
 from .constants import TERMINAL_FOR_PARENT
-from .quality import _checklist_status
+from .quality import _checklist_status, _gc_safe_artifacts
 
 
 def cmd_reset(track_dir, scope, p=None, t=None):
@@ -335,3 +335,46 @@ def cmd_record_summary(track_dir):
     summaries[key] = {"sha": sha, "status": status, "summary": summary}
     summaries_path.write_text(json.dumps(summaries, indent=2))
     out(dict(ok=True, recorded=key))
+
+
+def _registry_track_dirs(cwd):
+    """Relative track-dir paths from conductor/tracks.md.
+
+    Mirrors lib.path_utils.find_tracks_registry + extract_track_dirs. Kept local
+    so the track_state package stays self-contained (top-level `lib` is not
+    importable in every context that imports this package). Keep in sync with
+    lib/path_utils.py if the tracks.md link format changes.
+    """
+    registry = Path(cwd) / "conductor" / "tracks.md"
+    if not registry.exists():
+        return []
+    dirs = re.findall(r"\[.*?\]\(([^)]+)\)", registry.read_text(encoding="utf-8"))
+    return [d for d in dirs if not d.startswith(("http://", "https://", "/", "\\"))]
+
+
+def cmd_gc_all(cwd):
+    """Run safe GC across every track in the conductor registry.
+
+    Applies the same safe cleanup as `gc` (orphaned temp files + orphaned
+    result.json) to all tracks, without the per-track manual loop. Stale in_progress
+    locks are NOT reset here — use `recover` / `validate --fix`.
+    """
+    track_dirs = _registry_track_dirs(cwd)
+    results = []
+    total_fixes = 0
+    scanned = 0
+    for rel in track_dirs:
+        track_dir = Path(cwd) / rel
+        if not (track_dir / "track-state.json").exists():
+            continue
+        scanned += 1
+        fixes = _gc_safe_artifacts(track_dir)
+        if fixes:
+            results.append({"track": rel, "fixes": fixes})
+            total_fixes += len(fixes)
+    out(dict(
+        tracks_scanned=scanned,
+        tracks_cleaned=len(results),
+        total_fixes=total_fixes,
+        results=results,
+    ))
