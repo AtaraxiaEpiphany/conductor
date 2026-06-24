@@ -5,13 +5,6 @@ tools: Bash, Read, Edit, Write, Grep, Glob, AskUserQuestion
 model: sonnet
 effort: high
 maxTurns: 30
-hooks:
-  Stop:
-    - matcher: ""
-      hooks:
-        - type: command
-          command: "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/on-phase-checkpoint-stop.py\""
-          timeout: 5
 ---
 
 # Conductor Phase Checker
