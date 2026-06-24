@@ -88,10 +88,12 @@ If any document does not exist, note it and skip the corresponding analysis.
 
 10. **Wiki Overview** — `conductor/overview.md`
     - Global synthesis document. Used for cross-reference validation and regeneration.
-11. **Wiki Log** — `conductor/log.md`
+11. **Wiki Purpose** — `conductor/purpose.md`
+    - Directional intent: goals, key questions, evolving thesis, in/out-of-scope, active decisions. Read during ingest for direction; **partially regenerated** in Phase 2 (§7.1b). The Goals and Scope sections are **user-authored and co-evolved** — never overwrite them wholesale; only the Thesis, Active Decisions, and Key Questions are LLM-maintained.
+12. **Wiki Log** — `conductor/log.md`
     - Chronological record of documentation changes.
 
-**Precondition:** Both files MUST exist (created during `/conductor:setup`). If either is missing → report FAILURE: "Wiki infrastructure missing. Run /conductor:setup to initialize."
+**Precondition:** Overview + Log MUST exist (created during `/conductor:setup`). If either is missing → report FAILURE: "Wiki infrastructure missing. Run /conductor:setup to initialize." If `purpose.md` is missing → create it from the template as part of Phase 2 (§7.1b) rather than failing.
 
 ---
 
@@ -313,6 +315,18 @@ Rewrite `conductor/overview.md` **in its entirety** (not append). Synthesize fro
 
 Use the Write tool to replace the entire file.
 
+### 7.1b Update `conductor/purpose.md` (partial — preserve user-authored sections)
+
+`purpose.md` is the wiki's directional intent — **co-evolved**, not auto-owned like `overview.md`. Update it with Edit (targeted), **never** a wholesale Write. The Goals and In/Out-of-Scope sections are **user-authored**; touch them only to append a settled exclusion the user confirmed. LLM-maintained sections:
+
+1. **Evolving Thesis** — refresh the synthesized direction from this track's spec + the harvested `decisions[]` (§3.1b). Surface — do not hide — any contradiction this track introduced with the prior thesis.
+2. **Active Decisions** — append each harvested `## Technical Decision:` outcome as one bullet: `**{title}**: {chosen} — {reasoning} → [[source doc]]`. Merge (dedupe by title); never re-add a decision already present.
+3. **Key Questions** — if this track resolved an open question, strike it (`~~question~~`) and move the resolution into Thesis; if it surfaced a new open question, add it.
+
+If `purpose.md` does not exist, create it from the `${CLAUDE_PLUGIN_ROOT}/templates/wiki-purpose.md` template, seed Goals from `conductor/product/product.md`, then apply the updates above.
+
+If this run had **no** decisions, no spec-level direction change, and resolved/raised no key questions → leave `purpose.md` unchanged (a no-op Phase 2 is correct; do not force a touch).
+
 ### 7.2 Append to `conductor/log.md`
 
 Append new rows to the log table using Edit. Each row follows this format:
@@ -326,6 +340,7 @@ Operations to log:
 - **DOC_UPDATE** — for each document updated in Phase 1. Files: the updated document path. Summary: one-line description of the change.
 - **GRADUATE** — for each doc that received a harvested finding (merge or seed) in §6. Files: the graduated doc path. Summary: "Graduated {N} durable findings from handoffs".
 - **WIKI_REGEN** — once, after overview regeneration. Files: `conductor/overview.md`. Summary: "Regenerated project overview".
+- **PURPOSE_UPDATE** — once, if `purpose.md` was created or its LLM-maintained sections were updated in §7.1b. Files: `conductor/purpose.md`. Summary: "Updated project thesis/decisions".
 - **CROSSREF** — once, if cross-references were added. Files: comma-separated paths of docs that got new `## See Also` sections. Summary: "Added {N} bidirectional cross-references".
 
 ### 7.3 Verify Before Commit (Drift Gate)
@@ -374,6 +389,7 @@ STATUS: COMPLETED|SKIPPED
 UPDATED_FILES: <comma-separated list of updated files, or NONE>
 WIKI_UPDATED: true|false
 OVERVIEW_REGENERATED: true|false
+PURPOSE_UPDATED: true|false
 LOG_ENTRIES_ADDED: <count>
 CROSS_REFERENCES_ADDED: <count>
 GRADUATED_FINDINGS: <count of harvested findings merged/seeded into the corpus, or 0>

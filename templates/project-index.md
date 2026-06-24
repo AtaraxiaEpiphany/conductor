@@ -16,6 +16,7 @@ Always read in full. Provide baseline context for all tasks.
 | Tech Stack | conductor/design/tech-stack.md | Technology stack, frameworks, and versions |
 | Glossary | conductor/resource/glossary.md | Domain terms and acronyms |
 | Wiki Overview | conductor/overview.md | Global synthesis regenerated after each track |
+| Wiki Purpose | conductor/purpose.md | Directional intent — goals, thesis, decisions (co-evolved) |
 | Wiki Log | conductor/log.md | Append-only chronological record of doc changes |
 
 ## Scoped Docs

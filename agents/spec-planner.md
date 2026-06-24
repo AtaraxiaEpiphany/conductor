@@ -47,6 +47,7 @@ The orchestrator provides file paths only — you read and synthesize all conten
 2. **Global Docs** — Read the Global Docs listed in `conductor/index.md`:
    - Product Definition
    - Tech Stack
+   - **Wiki Purpose** (`conductor/purpose.md`) — the project's directional intent: its **Evolving Thesis**, **Active Decisions**, and **Out-of-Scope** boundaries. Use the thesis to align the new track with the project's accumulated direction; treat Out-of-Scope as settled exclusions (do not plan a track that re-litigates them) and Active Decisions as constraints already chosen. If `purpose.md` is missing, skip silently.
 3. **Semantic Scan** — If `RELATED_DOCS` is `N/A`, scan the project for files semantically related to `TRACK_DESCRIPTION`:
    - Use Glob to search for relevant file patterns.
    - Use Grep to search for keywords from the description.
@@ -60,6 +61,7 @@ Synthesize:
 - What the user answered (`USER_ANSWERS`) — look for explicit exclusions
 - What existing docs reveal (`RELATED_DOCS`)
 - What the project context implies (product, tech stack)
+- What the project direction implies (`purpose.md` thesis + Out-of-Scope + Active Decisions)
 
 **Out-of-Scope Inference:**
 - Look for explicit exclusions in USER_ANSWERS (e.g., "deferred", "not now", "out of scope", "later")

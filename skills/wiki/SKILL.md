@@ -15,6 +15,7 @@ You are a **Conductor Wiki Agent** — a specialized skill that reads and querie
 
 **Available sub-commands:**
 - `status` — Health snapshot of wiki infrastructure and coverage
+- `purpose` — Read / co-edit the project's directional intent (`purpose.md`)
 - `query <topic>` — Search wiki and synthesize an answer with citations
 
 **For health audits and drift detection**, use `/conductor:wiki-doctor` instead.
@@ -31,6 +32,7 @@ CRITICAL: You must validate the success of every tool call. If any tool call fai
 
 1. **Locate Wiki Files:** Resolve via project CLAUDE.md TOC or default paths:
    - `conductor/overview.md` — Wiki overview (regenerated after each track)
+   - `conductor/purpose.md` — Directional intent: goals, thesis, decisions (co-evolved)
    - `conductor/log.md` — Append-only chronological record
    - `conductor/index.md` — Central navigation hub
 2. **Verify Existence:** Check each file exists using Glob.
@@ -53,6 +55,7 @@ Parse `$ARGUMENTS` and dispatch to the appropriate sub-command.
 | SUBCOMMAND | Target Section |
 |------------|---------------|
 | `status` | **Section 3.0** |
+| `purpose` | **Section 3.5** |
 | `query` | **Section 4.0** (requires `SUB_ARGS` as topic) |
 | empty / unrecognized | **Usage help** (below) → HALT |
 
@@ -67,6 +70,7 @@ Usage: /conductor:wiki <subcommand> [args]
 
 Sub-commands:
   status           Health snapshot of wiki infrastructure and coverage
+  purpose          Read / co-edit the project's directional intent (purpose.md)
   query <topic>    Search wiki and synthesize an answer with [[wikilink]] citations
 
 Health diagnostics:
@@ -146,6 +150,31 @@ Based on findings, append actionable recommendations:
 - If broken wikilinks found: "Broken cross-references detected. Run `/conductor:wiki-doctor lint` for a full audit."
 - If no log entries: "Log is empty. Wiki may not have been initialized properly."
 - If all healthy: "Wiki is healthy. No action needed."
+
+---
+
+## 3.5 PURPOSE
+
+**Inline read + co-edit operation.** Reads the project's directional intent; offers to co-edit it.
+
+### 3.5.1 Read
+
+1. **Locate** `conductor/purpose.md` via Glob.
+2. **Missing** → halt: "`purpose.md` not found. It is created by `/conductor:setup` (and maintained by doc-syncer Phase 2). Run `/conductor:setup`, or I can seed it from the template now." Offer via `AskUserQuestion`: "Seed `purpose.md` from template?" → **Yes** → Read `${CLAUDE_PLUGIN_ROOT}/templates/wiki-purpose.md`, replace `{TIMESTAMP}`, Write to `conductor/purpose.md`, then continue. **No** → HALT.
+3. **Present** the full `purpose.md` content to the user verbatim (it is short by design).
+
+### 3.5.2 Offer Co-Edit
+
+`purpose.md` is **co-evolved** — the human owns the Goals and In/Out-of-Scope sections; doc-syncer maintains Thesis/Decisions/Key-Questions. Ask via `AskUserQuestion`:
+
+> "Edit `purpose.md`? You own the Goals and Scope sections; the Thesis/Decisions/Questions are auto-maintained."
+
+Options:
+- **Add a goal / scope note** → prompt for the text, Edit the matching section (append).
+- **Refine a key question** → prompt, Edit the Key Questions section.
+- **Done (read-only)** → HALT.
+
+On any edit: announce the section changed and note "doc-syncer will reconcile Thesis/Decisions on the next track — your Goals/Scope edits are preserved."
 
 ---
 

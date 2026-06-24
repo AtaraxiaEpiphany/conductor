@@ -82,7 +82,8 @@ Save state: `2.3_tech_stack_styleguides`.
 5. Generate `conductor/workflow/index.md` listing all created files.
 6. Verify all referenced files exist.
 7. **Wiki Overview:** Read `${CLAUDE_PLUGIN_ROOT}/templates/wiki-overview.md`, write to `conductor/overview.md`. Replace `{TIMESTAMP}` with current ISO-8601 timestamp.
-8. **Wiki Log:** Read `${CLAUDE_PLUGIN_ROOT}/templates/wiki-log.md`, write to `conductor/log.md`.
+8. **Wiki Purpose:** Read `${CLAUDE_PLUGIN_ROOT}/templates/wiki-purpose.md`, write to `conductor/purpose.md`. Replace `{TIMESTAMP}`. Seed the **Goals** section from the product guide (§2.1) — the other sections (Key Questions, Thesis, Decisions) start as placeholders and are co-evolved by the user (`/conductor:wiki purpose`) and doc-syncer (Phase 2) over time. This is the wiki's directional intent — *why* the project exists, distinct from the structural overview.
+9. **Wiki Log:** Read `${CLAUDE_PLUGIN_ROOT}/templates/wiki-log.md`, write to `conductor/log.md`.
 Save state: `2.4_workflow`.
 
 ### 2.5 Finalization
