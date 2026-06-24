@@ -18,7 +18,7 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).parent / "lib"))
 
 from lib.hook_io import read_hook_input, write_hook_output
-from lib.constants import FAILURE_PATTERNS, RECOVERY_SUCCESS_PATTERNS
+from lib.constants import RECOVERY_SUCCESS_PATTERNS
 from lib.result_probe import fresh_result_exists
 
 # Pattern matches all conductor result block types.
@@ -99,21 +99,6 @@ def _extract_agent_text(tool_response) -> str:
     return json.dumps(tool_response, ensure_ascii=False)
 
 
-def detect_failure_context(response: str) -> Optional[str]:
-    """Check for failure indicators and return advisory context.
-
-    Returns None if no failure detected (normal path).
-    """
-    for pattern in FAILURE_PATTERNS:
-        if re.search(pattern, response, re.IGNORECASE):
-            return (
-                "[Conductor] Subagent reported failure. "
-                "If retries remain, the orchestrator will re-dispatch. "
-                "If max retries reached, the skip-analyst will evaluate."
-            )
-    return None
-
-
 def detect_recovery_context(response: str) -> Optional[str]:
     """Check for recovery success after a prior failure."""
     if "[Conductor Recovery]" not in response:
@@ -164,13 +149,17 @@ def main():
     else:
         updated_output = NO_RESULT_MESSAGE_GENERIC
 
-    # --- Responsibility 2: Failure/recovery advisory context ---
-    # Check recovery first (higher priority — confirms a resolved failure)
+    # --- Responsibility 2: recovery advisory context ---
+    # Recovery detection is gated on the deterministic "[Conductor Recovery]"
+    # marker that on-subagent-stop injects as its block reason — NOT free-form
+    # prose. Prose failure-mining (FAILURE_PATTERNS over agent text) was removed
+    # to match on-subagent-stop's policy: it was a false-positive source (see the
+    # on-subagent-stop.py docstring on why prose detection was dropped), and
+    # failure status already travels deterministically via the result block above
+    # and result.json. Mining agent prose for "failure"/"error" is unreliable.
     extra_context = detect_recovery_context(response)
-    if extra_context is None:
-        extra_context = detect_failure_context(response)
 
-    # If no structured result block AND no failure/recovery, check for result file.
+    # If no structured result block AND no recovery advisory, check for result file.
     # The result.json freshness probe only applies to dispatch-finalize agents
     # (task-executor/explorer write result.json); other agents never do, so a
     # missing block for them is simply a lost-status warning.

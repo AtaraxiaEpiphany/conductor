@@ -118,11 +118,26 @@ class MainEndToEndTests(TestCase):
         self.assertNotIn("agentId", updated)
         self.assertNotIn("agentType", updated)
 
-    def test_failure_text_triggers_recovery_advisory(self):
+    def test_failure_status_read_from_result_block_not_prose(self):
+        """Failure status travels in the deterministic result block (preserved in
+        updatedToolOutput), not mined from agent prose — matching on-subagent-stop's
+        policy of dropping prose failure-detection as a false-positive source."""
+        text = ("Something broke.\nTraceback (most recent call last):\n  File x\n"
+                "---TASK RESULT---\nSTATUS: FAILURE\nSUMMARY: tests failed\n"
+                "---END RESULT---")
+        result = self._run(_agent_payload(text))
+        updated = result["hookSpecificOutput"]["updatedToolOutput"]
+        self.assertIn("STATUS: FAILURE", updated)
+
+    def test_prose_failure_alone_does_not_trigger_failure_advisory(self):
+        """A Traceback in prose with NO result block must NOT yield a 'subagent
+        reported failure' advisory — that prose-mining path was removed for
+        consistency with on-subagent-stop. The no-result warning is returned
+        instead (which mentions dispatch-finalize, not 'reported failure')."""
         text = "Something broke.\nTraceback (most recent call last):\n  File x"
         result = self._run(_agent_payload(text))
-        ctx = result["hookSpecificOutput"]["additionalContext"]
-        self.assertIn("failure", ctx.lower())
+        ctx = result["hookSpecificOutput"].get("additionalContext") or ""
+        self.assertNotIn("subagent reported failure", ctx.lower())
 
 
 if __name__ == "__main__":
