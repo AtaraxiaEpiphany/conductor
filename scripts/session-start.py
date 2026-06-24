@@ -63,8 +63,14 @@ def get_conductor_content(plugin_root: Path, source: str) -> str:
     if instructions_file.exists():
         try:
             return instructions_file.read_text(encoding="utf-8")
-        except Exception:
-            pass
+        except Exception as e:
+            # A broken/missing contract would silently degrade the whole session
+            # to the 7-line compact stub — surface it so it isn't invisible.
+            print(f"[conductor session-start] WARNING: runtime/core-contract.md "
+                  f"unreadable ({e}); falling back to compact stub.", file=sys.stderr)
+    else:
+        print(f"[conductor session-start] WARNING: runtime/core-contract.md missing; "
+              f"falling back to compact stub.", file=sys.stderr)
 
     return COMPACT_CONTENT
 
