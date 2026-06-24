@@ -68,6 +68,37 @@ def extract_result_blocks(response: str) -> Optional[str]:
     return None
 
 
+def _extract_agent_text(tool_response) -> str:
+    """Pull the subagent's textual output out of an Agent ``tool_response``.
+
+    The Agent PostToolUse payload is a dict shaped like::
+
+        {"agentId": "...", "agentType": "...",
+         "content": [{"text": "...the agent's final message..."}, ...]}
+
+    There is **no** top-level ``result`` key (that was the prior bug —
+    ``response.get("result")`` always returned None and the hook fell through
+    to ``json.dumps(tool_response)``, garbling every downstream
+    result-block / failure / recovery scan). Text lives in the ``content``
+    blocks' ``text`` field. Falls back to ``result`` (alternate shape) or a
+    JSON dump so the hook never silently emits an empty string.
+    """
+    if not isinstance(tool_response, dict):
+        return str(tool_response) if tool_response else ""
+
+    content = tool_response.get("content")
+    if isinstance(content, list):
+        parts = [b.get("text", "") for b in content if isinstance(b, dict)]
+        if any(p.strip() for p in parts):
+            return "\n".join(parts)
+
+    if "result" in tool_response:
+        r = tool_response["result"]
+        return r if isinstance(r, str) else json.dumps(r, ensure_ascii=False)
+
+    return json.dumps(tool_response, ensure_ascii=False)
+
+
 def detect_failure_context(response: str) -> Optional[str]:
     """Check for failure indicators and return advisory context.
 
@@ -108,7 +139,7 @@ def main():
 
     response = input_data.get("tool_response", "")
     if isinstance(response, dict):
-        response = response.get("result") or json.dumps(response, ensure_ascii=False)
+        response = _extract_agent_text(response)
     elif not isinstance(response, str):
         response = str(response) if response else ""
     if not response:
