@@ -25,14 +25,17 @@ from lib.hook_io import read_hook_input, write_hook_output
 _VALID_MARKER_CLASS = r"[ x~!>#\-d]"
 
 # A task/subtask bullet that does NOT start with a valid checkbox.
-#   ^(\s*)-            — optional indent + bullet dash
-#   (?!<marker>])      — NOT immediately followed by a valid ``[x]`` checkbox
-#   (?:[Tag]\s*)?      — optional dispatch tag like [Explore] / [Manual]
-#   (task|subtask)\b   — the task/subtask keyword (the spec-planner convention)
+#   ^(\s*)-             — optional indent + bullet dash
+#   (?!\[<marker>\])    — NOT immediately followed by a valid ``[x]`` checkbox
+#   (?:[Tag]\s*)?       — optional dispatch tag like [Explore] / [Manual]
+#   (task|subtask)\b    — the task/subtask keyword (the spec-planner convention)
 # Matches ``- Subtask: x``, ``  - subtask: x``, ``- [Explore] Task: x`` (tag but
-# no checkbox), but NOT ``- [ ] Subtask: x`` / ``- [x] Task: x``.
+# no checkbox), but NOT ``- [ ] Subtask: x`` / ``- [x] Task: x``. The lookahead
+# must include the opening ``[`` — without it ``[x]`` / ``[d]`` slip through and
+# the tag branch ``\[[A-Za-z]+\]`` then matches them as a dispatch tag, flagging
+# valid completed/deferred task lines (a false positive on any Edit to plan.md).
 _MISSING_CHECKBOX = re.compile(
-    rf'^(\s*)-\s+(?!{_VALID_MARKER_CLASS}\])(?:\[[A-Za-z]+\]\s*)?(task|subtask)\b',
+    rf'^(\s*)-\s+(?!\[{_VALID_MARKER_CLASS}\])(?:\[[A-Za-z]+\]\s*)?(task|subtask)\b',
     re.IGNORECASE | re.MULTILINE,
 )
 
