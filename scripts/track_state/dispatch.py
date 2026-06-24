@@ -23,6 +23,23 @@ from .handoff import (
 from .validate import _fix_plan_mismatches, ensure_healthy
 
 
+def _classify_task(tags):
+    """Canonical task category from tags: ``"manual"`` | ``"explore"`` | ``"executor"``.
+
+    Single source of truth for the Manual/Explore/default routing decision
+    shared by ``cmd_dispatch_next`` and ``cmd_dispatch_prepare`` — which had
+    near-identical tag-routing with two different action vocabularies. Add a
+    new routed tag type here once; each caller maps the category to its own
+    action enum. Returns ``"executor"`` (the default task-executor path) when
+    no routing tag is present.
+    """
+    if "Manual" in tags:
+        return "manual"
+    if "Explore" in tags:
+        return "explore"
+    return "executor"
+
+
 def _find_next_task(state):
     """Find the next task to execute. Returns result dict or None."""
     result = None
@@ -218,12 +235,13 @@ def cmd_dispatch_next(track_dir):
             return
 
         # Route by tags
-        if "Manual" in tags:
+        category = _classify_task(tags)
+        if category == "manual":
             # continuous: auto-defer (no human in the loop). interactive: surface
             # to the user — a [Manual] task can't be auto-executed (task-executor
             # has no Manual handling) and must not be silently deferred.
             action = "defer_manual" if execution_mode == "continuous" else "manual_task"
-        elif "Explore" in tags:
+        elif category == "explore":
             action = "dispatch_explorer"
         else:
             action = "dispatch_executor"
@@ -360,12 +378,14 @@ def cmd_dispatch_prepare(track_dir):
     elif nxt.get("type") == "parent-stuck":
         sha = _last_subtask_sha_from_state(track_dir, pi, ti)
         action = "parent_stuck"
-    elif "Manual" in tags:
-        action = "defer" if execution_mode == "continuous" else "manual_task"
-    elif "Explore" in tags:
-        action = "explore"
     else:
-        action = "execute"
+        category = _classify_task(tags)
+        if category == "manual":
+            action = "defer" if execution_mode == "continuous" else "manual_task"
+        elif category == "explore":
+            action = "explore"
+        else:
+            action = "execute"
 
     if action == "parent-complete":
         out(dict(action=action, phase=pi, task=ti, name=name,
