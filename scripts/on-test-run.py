@@ -102,6 +102,17 @@ def main():
         write_simple_output()
         return
 
+    # Defensive shape check: if tool_response is a non-empty dict lacking all of
+    # stdout/stderr/interrupted, the PostToolUse payload schema may have shifted
+    # and every .get() below defaults to "" — has_test_failure would then never
+    # fire and the hook would silently log result=passed forever. Warn so a
+    # silent no-op is visible instead of invisible.
+    if (isinstance(tool_response, dict) and tool_response
+            and not any(k in tool_response for k in ("stdout", "stderr", "interrupted"))):
+        print(f"[conductor on-test-run] WARNING: Bash tool_response shape unexpected "
+              f"(keys={sorted(tool_response.keys())}); test-failure detection may be "
+              f"a no-op. Verify the PostToolUse payload schema.", file=sys.stderr)
+
     # Initialize logging
     log_file = init_logging("on-test-run")
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
