@@ -1,12 +1,23 @@
 #!/usr/bin/env python3
-"""SubagentStop hook: detect failures and keep subagent running for recovery.
+"""SubagentStop hook: keep a subagent running when it stopped without a result.
 
-For critical subagents (task-executor, explorer, phase-checker):
-  Synchronous hook — returns decision: "block" with a reason that is delivered
-  to the subagent as its next instruction, giving it a chance to self-recover.
+A subagent signals completion through ONE deterministic channel:
 
-For non-critical subagents:
-  Async hook — fire-and-forget logging only.
+- **result-file agents** (task-executor, explorer) write a fresh
+  ``.conductor/result.json`` via ``track-state write-result``. A missing fresh
+  file means the agent exhausted turns or crashed before its result step.
+- **stdout-block agents** (phase-checker) emit a ``---END RESULT---`` close tag
+  (no result file). A missing close tag means it stopped mid-protocol.
+
+In either case the hook returns ``decision: "block"`` with a `reason` that is
+delivered to the subagent as its next instruction, giving it one recovery turn.
+
+Failures are NOT detected from prose. A result-file agent that wrote a FAILURE
+result.json has signalled correctly — the orchestrator's retry/skip path reads
+the file. Prose failure-detection was removed: it was the source of the
+``[:2000]`` head-truncation bug (the close tag sits at the END of a turn) and
+the ``SAFE_CONTEXT`` false-positive suppression (regex-mining the word "error"
+in prose). result.json is deterministic; prose is not.
 
 Per the hook protocol:
   "SubagentStop hooks use the same decision control format as Stop hooks.
@@ -15,43 +26,36 @@ Per the hook protocol:
    next instruction."
 """
 
-import json
 import re
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
 
 # Add lib directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent / "lib"))
 
 from lib.hook_io import read_hook_input, write_hook_output
 from lib.logging import init_logging, log_entry
-from lib.constants import FAILURE_PATTERNS
+from lib.result_probe import fresh_result_exists
 
 
-# Safe contexts where error keywords don't indicate actual failure.
-# Must be narrow to avoid masking real errors — only match phrases that
-# clearly describe error handling/absence, not the errors themselves.
-SAFE_CONTEXT_PATTERNS = [
-    r"no\s+errors?\s*(?:were\s+)?(?:found|detected|encountered|occurred|reported)",
-    r"errors?:?\s*none",
-    r"error\s+was\s+handled",
-    r"successfully\s+handled\s+the\s+error",
-    r"catch\s+error",
-]
-
-
-# Turn-exhaustion recovery instructions, appended after the shared
-# "[Conductor Recovery] You stopped without producing a result block." lead.
-# Each names the result-block tag + protocol section the agent must emit on the
-# recovery turn. The keys are also the set of agents the guard below covers
-# (single source of truth — add an agent here and the guard picks it up).
-NO_RESULT_RECOVERY = {
+# result-file agents → the instruction appended after the shared
+# "[Conductor Recovery] You stopped without writing a result." lead. The keys
+# are the set of agents gated on a fresh result.json (single source of truth).
+RESULT_FILE_AGENTS = {
     "task-executor": (
         "IMMEDIATELY call track-state write-result (Section 6.0) and print "
         "the ---TASK RESULT--- block. Report FAILURE if you cannot complete."
     ),
+    "explorer": (
+        "IMMEDIATELY call track-state write-result (Section 5.1) and print "
+        "the ---TASK RESULT--- block. Report FAILURE if you cannot complete."
+    ),
+}
+
+# stdout-block agents (no result file) → gated on the presence of a close tag.
+# Instruction appended after "[Conductor Recovery] You stopped without producing
+# a result block."
+STDOUT_BLOCK_AGENTS = {
     "phase-checker": (
         "IMMEDIATELY print the ---CHECKPOINT RESULT--- block (Section 8.0). "
         "Report STATUS: FAILED with a one-line FAILURE_REASON if the checkpoint "
@@ -60,55 +64,10 @@ NO_RESULT_RECOVERY = {
     ),
 }
 
-
-def detect_failure(message: str) -> tuple[bool, Optional[str]]:
-    """Detect failure patterns in message with reduced false positives.
-
-    Returns:
-        Tuple of (has_failure, detected_pattern)
-    """
-    if not message:
-        return False, None
-
-    # Check for failure patterns first — real failures must never be masked.
-    failure_hit = None
-    for pattern in FAILURE_PATTERNS:
-        if re.search(pattern, message, re.IGNORECASE):
-            failure_hit = pattern
-            break
-
-    if failure_hit is None:
-        return False, None
-
-    # A failure pattern matched — but check if the ENTIRE message is a safe
-    # context (e.g. "no errors found"). Only suppress if every line containing
-    # the failure keyword is also matched by a safe context pattern.
-    message_lower = message.lower()
-    for safe in SAFE_CONTEXT_PATTERNS:
-        if re.search(safe, message_lower, re.IGNORECASE):
-            # Safe context present alongside failure — check overlap.
-            # If the failure keyword appears ONLY within safe phrases, suppress.
-            for line in message.split("\n"):
-                line_lower = line.strip().lower()
-                if re.search(failure_hit, line_lower, re.IGNORECASE):
-                    # This line has the failure keyword — is it in a safe context?
-                    is_safe = False
-                    for sp in SAFE_CONTEXT_PATTERNS:
-                        if re.search(sp, line_lower, re.IGNORECASE):
-                            is_safe = True
-                            break
-                    if not is_safe:
-                        return True, failure_hit
-            # All lines containing the failure keyword are in safe contexts
-            return False, None
-
-    return True, failure_hit
-
-
 # Matches any conductor result-block close tag, e.g. ---END RESULT---,
-# ---END CHECKPOINT RESULT---, ---END TASK RESULT---. These are emitted at the
-# END of a turn (Section 6.2), so the check must scan the full message, not a
-# head-truncated prefix — see _has_result_block.
+# ---END CHECKPOINT RESULT---, ---END TASK RESULT---. Emitted at the END of a
+# turn, so the scan must cover the full message — never a head-truncated prefix
+# (see _has_result_block).
 _RESULT_END_PATTERN = re.compile(r'---END [A-Z ]+---')
 
 
@@ -116,16 +75,24 @@ def _has_result_block(message: str) -> bool:
     """True if `message` contains a conductor result-block close tag.
 
     Result blocks are emitted at the END of a subagent's turn. Scanning only the
-    first N chars (the prior ``[:2000]`` head truncation) missed the close tag on
-    any normal-length turn (>2KB of explanation/diffs before the block), so a
-    successful task-executor that DID print its block was falsely flagged as
-    "stopped without producing a result block" and force-blocked for a recovery
-    turn. Search the full message instead — a single turn is bounded and the
-    regex is cheap; correctness beats the micro-optimization that broke it.
+    first N chars (the prior ``[:2000]`` head truncation) missed the close tag
+    on any normal-length turn (>2KB of explanation/diffs before the block), so a
+    successful agent that DID print its block was falsely flagged as "stopped
+    without producing a result block" and force-blocked for a recovery turn.
+    Search the full message instead — a single turn is bounded and the regex is
+    cheap; correctness beats the micro-optimization that broke it.
     """
     if not message:
         return False
     return bool(_RESULT_END_PATTERN.search(message))
+
+
+def _block_recovery(agent_type: str, lead: str, instruction: str,
+                    log_file, session_id: str, tag: str) -> None:
+    """Log the recovery event and return decision:block + reason."""
+    log_entry(Path(log_file).parent / "subagent-failures.log",
+              f"session={session_id} agent={agent_type} {tag}")
+    write_hook_output(decision="block", reason=f"{lead} {instruction}")
 
 
 def main():
@@ -133,61 +100,43 @@ def main():
     input_data = read_hook_input()
     agent_type = input_data.get("agent_type", "")
     session_id = input_data.get("session_id", "")
-    # Full message: failure patterns may appear mid-turn (e.g. a traceback the
-    # agent recovered from) and the result-block close tag sits at the end.
-    # A head-truncation here would both miss late failures AND the END tag.
+    cwd = input_data.get("cwd") or str(Path.cwd())
     last_message = input_data.get("last_assistant_message", "")
 
-    # Initialize logging
     log_file = init_logging("on-subagent-stop")
     log_entry(log_file, f"session={session_id} agent={agent_type} event=subagent_stop")
 
-    # Detect failure patterns
-    has_failure, pattern = detect_failure(last_message)
-
-    # Turn-exhaustion guard: critical agents must emit a result block.
-    # When the agent exhausts turns mid-protocol, no failure pattern matches
-    # above — but it also never wrote its result block. Block it and force
-    # immediate result reporting. Covered agents + their agent-specific recovery
-    # message (block tag + protocol section) live in NO_RESULT_RECOVERY above;
-    # these agents have maxTurns caps and multi-step protocols that can exhaust
-    # turns before emitting status, leaving the orchestrator with no result.
-    if not has_failure and agent_type in NO_RESULT_RECOVERY:
-        if not _has_result_block(last_message):
-            log_entry(
-                Path(log_file).parent / "subagent-failures.log",
-                f"session={session_id} agent={agent_type} no_result_block_detected"
-            )
-            reason = (
-                "[Conductor Recovery] You stopped without producing a result "
-                "block. " + NO_RESULT_RECOVERY[agent_type]
-            )
-            write_hook_output(
-                decision="block",
-                reason=reason,
+    # result-file agents: a fresh result.json is the single completion signal.
+    # A written FAILURE result.json is a valid signal — do NOT block (the
+    # orchestrator's retry/skip path reads it). Only a missing file means the
+    # agent never reached its result step.
+    if agent_type in RESULT_FILE_AGENTS:
+        if not fresh_result_exists(cwd):
+            _block_recovery(
+                agent_type,
+                "[Conductor Recovery] You stopped without writing a result.",
+                RESULT_FILE_AGENTS[agent_type],
+                log_file, session_id, "no_result_file_detected",
             )
             return
+        write_hook_output()  # result.json present → allow normal stop
+        return
 
-    if has_failure:
-        log_entry(
-            Path(log_file).parent / "subagent-failures.log",
-            f"session={session_id} agent={agent_type} failure_detected pattern={pattern}"
-        )
+    # stdout-block agents: must emit their close tag.
+    if agent_type in STDOUT_BLOCK_AGENTS:
+        if not _has_result_block(last_message):
+            _block_recovery(
+                agent_type,
+                "[Conductor Recovery] You stopped without producing a result block.",
+                STDOUT_BLOCK_AGENTS[agent_type],
+                log_file, session_id, "no_result_block_detected",
+            )
+            return
+        write_hook_output()
+        return
 
-        # decision: "block" + reason keeps the subagent running.
-        # The reason is delivered to the subagent as its next instruction.
-        reason = (
-            f"[Conductor Recovery] Failure detected (pattern: {pattern}). "
-            "Review the error above, correct the issue, and retry. "
-            "If the issue is unresolvable, report FAILURE in your result block."
-        )
-        write_hook_output(
-            decision="block",
-            reason=reason,
-        )
-        return  # write_hook_output calls sys.exit — but be explicit for clarity
-
-    # No failure detected — allow the subagent to stop normally
+    # All other agents (registered async in hooks.json): no recovery contract.
+    # Allow the stop; failure/recovery for these is advisory-only.
     write_hook_output()
 
 
