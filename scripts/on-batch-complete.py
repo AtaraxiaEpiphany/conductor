@@ -222,6 +222,13 @@ def get_context_message(issues: list[str]) -> Optional[str]:
     return None
 
 
+# Conductor orchestration commits carry the `(conductor)` scope. Matched on
+# scope+colon so an unrelated commit that merely mentions "conductor" (e.g.
+# `fix(conductor-plugin): typo`, `-m "update conductor docs"`) doesn't false-fire
+# the F3 coverage gate.
+_CONDUCTOR_COMMIT_SCOPE = re.compile(r"\(conductor\)\s*:")
+
+
 def should_verify_coverage(tool_calls: list[dict]) -> bool:
     """Determine if coverage verification should run based on tool calls.
 
@@ -234,15 +241,16 @@ def should_verify_coverage(tool_calls: list[dict]) -> bool:
     Returns:
         True if coverage verification should run
     """
-    conductor_markers = ["conductor", "chore(conductor)", "track-state"]
     for tc in tool_calls:
         if tc.get("tool_name") == "Bash":
             cmd = tc.get("tool_input", {}).get("command", "")
             if cmd and "git commit" in cmd.lower():
-                # Only trigger for conductor-managed commits
-                if any(marker in cmd.lower() for marker in conductor_markers):
+                # Only trigger for conductor-managed commits (the `(conductor):`
+                # scope), not any commit that happens to mention "conductor".
+                if _CONDUCTOR_COMMIT_SCOPE.search(cmd):
                     return True
-                # Also check if conductor state files are staged
+                # Also trigger when a conductor state file is named in the
+                # command (explicit pathspec), e.g. `git commit track-state.json -m …`.
                 if "track-state.json" in cmd or "plan.md" in cmd:
                     return True
     return False

@@ -21,7 +21,7 @@ from lib.hook_io import (
     get_cwd
 )
 from lib.json_utils import load_json_safe
-from lib.validation import is_dangerous_git_operation, contains_dangerous_pattern, validate_commit_message
+from lib.validation import validate_commit_message
 from lib.path_utils import find_tracks_registry, extract_track_dirs
 
 
@@ -196,6 +196,70 @@ def is_direct_track_state_modification(command: str) -> bool:
     return False
 
 
+# --- dangerous-git detection (segment-aware) --------------------------------
+# `git` as the command word of a top-level segment with a history-rewriting or
+# destructive subcommand. Segment-aware via _iter_command_segments so a
+# dangerous phrase inside a --grep value, an echo'd string, or a heredoc body
+# cannot trip the gate — the old unanchored substring scan matched inside all
+# of those. Command substitutions `$(...)` and backticks are scanned too, so an
+# op hidden in `$(git reset --hard)` is still caught (no false-negative regress).
+# (subcommand, required-arg pattern or None for "any form of this subcommand".)
+_DANGEROUS_GIT = [
+    ("reset", re.compile(r"--hard")),
+    ("rebase", None),
+    ("clean", None),
+    ("filter-branch", None),
+    ("checkout", re.compile(r"(?:--force|(?<![A-Za-z0-9])-f(?![A-Za-z0-9]))")),
+    ("branch", re.compile(r"(?<![A-Za-z0-9])-D(?![A-Za-z0-9])")),
+]
+_DANGEROUS_GIT_LABEL = {
+    "reset": "reset --hard", "rebase": "rebase", "clean": "clean",
+    "filter-branch": "filter-branch", "checkout": "checkout --force",
+    "branch": "branch -D",
+}
+_LEADING_NOISE = re.compile(r"^(?:sudo\s+)+")
+_SUBSHELL_INNER = re.compile(r"\$\(([^)]*)\)")
+_BACKTICK_INNER = re.compile(r"`([^`]*)`")
+
+
+def _git_op_at_command_position(body: str):
+    """If `body` (one command position, leading sudo stripped) starts with a
+    dangerous git op, return its label; else None."""
+    toks = body.split(None, 2)
+    if len(toks) < 2 or toks[0].lower() != "git":
+        return None
+    subcmd = toks[1].lower()
+    rest = toks[2] if len(toks) > 2 else ""
+    for op, argpat in _DANGEROUS_GIT:
+        if subcmd == op and (argpat is None or argpat.search(rest)):
+            return _DANGEROUS_GIT_LABEL[op]
+    return None
+
+
+def _detect_dangerous_git(command: str):
+    """Return a label for the first dangerous git op in `command`, else None.
+
+    Splits on top-level ;/&&/||/|/newline (outside quotes) and flags `git` only
+    when it is the command word of a segment (after stripping leading sudo), so
+    `git log --grep="git reset --hard"` and `echo "git reset --hard"` do NOT
+    match — the phrase is inside an argument, not a command. `$(...)` and
+    backtick substitutions are scanned too, so `RESULT=$(git reset --hard)` IS
+    caught. Replaces the old unanchored substring scan + its inconsistent
+    double-regex label recovery (which missed checkout --force / branch -D).
+    """
+    for segment in _iter_command_segments(command):
+        body = _LEADING_NOISE.sub("", segment).strip()
+        label = _git_op_at_command_position(body)
+        if label:
+            return label
+        for inner in (_SUBSHELL_INNER.findall(segment)
+                      + _BACKTICK_INNER.findall(segment)):
+            label = _git_op_at_command_position(_LEADING_NOISE.sub("", inner).strip())
+            if label:
+                return label
+    return None
+
+
 # --- F2 TDD commit gate ------------------------------------------------------
 # Conductor's task-executor commits test+impl together at Step 8, so a feat/fix
 # commit staging source WITHOUT a test is the real "implementation before test"
@@ -308,10 +372,9 @@ def main():
     tool_input = input_data.get("tool_input", {})
     command = tool_input.get("command", "")
 
-    # Check for dangerous git operations
-    if is_dangerous_git_operation(command):
-        match = re.search(r'git\s+(reset|rebase|clean|filter-branch)', command, re.IGNORECASE)
-        operation = match.group(1) if match else "history-modifying"
+    # Check for dangerous git operations (segment-aware — see _detect_dangerous_git)
+    operation = _detect_dangerous_git(command)
+    if operation:
 
         additional_context = (
             f'[Conductor] DANGER: Git {operation} command detected. '
