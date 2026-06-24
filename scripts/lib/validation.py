@@ -8,7 +8,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 
-# Dangerous git operations that should be blocked during active tracks
+# Dangerous git operations that should be blocked during active tracks.
+# NOTE: "git branch -D" is matched case-sensitively — see is_dangerous_git_operation.
 DANGEROUS_GIT_OPS = {
     "git reset --hard",
     "git rebase",
@@ -29,7 +30,13 @@ DANGEROUS_PATTERNS = [
 
 
 def is_dangerous_git_operation(command: str) -> bool:
-    """Check if command is a dangerous git operation
+    """Check if command is a dangerous git operation.
+
+    Matching is case-insensitive for subcommands, with one exception:
+    ``git branch -D`` (force-delete) is matched against the original command
+    casing. Lowercasing the whole command collapses ``-D`` into ``-d``, which
+    both hid force-delete from detection entirely and would falsely flag the
+    safe ``git branch -d`` (deletes merged branches only).
 
     Args:
         command: Command string to check
@@ -39,7 +46,8 @@ def is_dangerous_git_operation(command: str) -> bool:
     """
     command_lower = command.lower()
     for dangerous_op in DANGEROUS_GIT_OPS:
-        if dangerous_op in command_lower:
+        haystack = command if dangerous_op.endswith(" -D") else command_lower
+        if dangerous_op in haystack:
             return True
     return False
 
