@@ -16,6 +16,8 @@ import shutil
 from contextlib import contextmanager
 from pathlib import Path
 
+from lib.atomic_io import atomic_write_json
+
 
 def _lock_file_path(track_dir):
     """Path to the separate lock file used for coordinated file access."""
@@ -85,40 +87,12 @@ def _write_state(track_dir, state):
     """Atomic write of ``state`` to track-state.json + .bak backup.
 
     Lock-free — the caller (``save``/``transaction``) already holds the lock.
-    Writes to a temp file, fsyncs, then ``os.replace`` (atomic inode swap), and
-    refreshes the .bak afterward so the next corruption has a fallback.
+    Delegates the temp/fsync/``os.replace`` dance to :func:`atomic_write_json`
+    (shared with result.json), then refreshes the .bak so the next corruption
+    has a fallback.
     """
-    import tempfile
-    import os
-
     state_file = Path(track_dir) / "track-state.json"
-    temp_file = tempfile.NamedTemporaryFile(
-        mode='w',
-        dir=state_file.parent,
-        prefix=f'.{state_file.name}.tmp',
-        delete=False
-    )
-    temp_file_name = None
-    try:
-        json.dump(state, temp_file, indent=2, ensure_ascii=False)
-        temp_file.write("\n")
-        temp_file.flush()
-        os.fsync(temp_file.fileno())
-        temp_file_name = temp_file.name
-    except (OSError, IOError) as e:
-        temp_file.close()
-        if temp_file_name is None:
-            temp_file_name = temp_file.name
-        try:
-            os.unlink(temp_file_name)
-        except OSError:
-            pass
-        raise
-    finally:
-        temp_file.close()
-
-    os.replace(temp_file_name, str(state_file))
-
+    atomic_write_json(state_file, state)
     try:
         shutil.copy2(str(state_file), str(_backup_path(track_dir)))
     except OSError:

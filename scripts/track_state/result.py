@@ -1,9 +1,9 @@
 """Process task results, enforce quality gates."""
 import json
-import os
 import sys
 from pathlib import Path
 
+from lib.atomic_io import atomic_write_json
 from .core import load, save
 from .helpers import (
     out, conductor_dir, _store_evidence, _extract_tags_for_task,
@@ -63,20 +63,8 @@ def cmd_write_result(track_dir):
         out(dict(error=f"Missing or invalid 'status': must be SUCCESS or FAILURE"))
         sys.exit(1)
 
-    # Atomic write
-    import tempfile
-    tmp = tempfile.NamedTemporaryFile(
-        mode="w", dir=str(cdir), prefix=".result.tmp.", delete=False
-    )
-    try:
-        json.dump(result, tmp, indent=2, ensure_ascii=False)
-        tmp.flush()
-        os.fsync(tmp.fileno())
-        tmp_name = tmp.name
-    finally:
-        tmp.close()
-
-    os.replace(tmp_name, str(result_path))
+    # Atomic write (temp + fsync + os.replace — shared with track-state core)
+    atomic_write_json(result_path, result)
     out(dict(ok=True, path=str(result_path)))
 
 
