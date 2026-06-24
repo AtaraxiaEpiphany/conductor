@@ -159,7 +159,32 @@ Based on findings, append actionable recommendations:
 2. If empty → `AskUserQuestion`: "What topic would you like to search the wiki for?"
 3. Use the response as the search topic.
 
-### 4.2 Search Wiki
+### 4.2 Orient (Index-First Routing)
+
+**Do not grep blindly.** The wiki is navigable through its index and overview — read them first to route the topic to the right corner of the corpus, then drill in. Grep (§4.3) supplements orientation; it does not replace it.
+
+1. **Read for orientation:**
+   - `conductor/overview.md` — high-level context. Its **Knowledge Base** table maps concepts to source `[[wikilinks]]`; any topic hit there is a highest-confidence seed. This read also satisfies the high-level-context requirement — do not re-read it in §4.4.
+   - `conductor/index.md` — the **Scoped Docs** table is a routing index with an explicit Match Strategy per category.
+
+2. **Route the topic** through the Scoped Docs Match Strategy to identify the most relevant scoped doc(s):
+
+   | Topic signal | Route to |
+   |--------------|----------|
+   | Endpoint path, request/response, API verb | `conductor/design/api-specs/index.md` → matching endpoint file |
+   | Table, column, or entity name | `conductor/design/database/schema.md` |
+   | Component, service, or data flow | `conductor/design/architecture/system-architecture.md` |
+   | User-facing feature, screen, UX flow | `conductor/requirement/` (PRD or UX-UI spec) |
+   | Domain term or acronym | `conductor/resource/glossary.md` |
+   | Technology, framework, or version | `conductor/design/tech-stack.md` |
+
+   Collect the routed path(s) into a `ROUTED` list. These are read first in §4.4.
+
+3. **Nothing routes?** Leave `ROUTED` empty — §4.3 grep + §4.3 graph expansion carry the query.
+
+### 4.3 Search & Expand
+
+Grep catches keyword matches; graph expansion follows the `[[wikilinks]]` that keyword search cannot see.
 
 1. **Primary search** — Grep `conductor/**/*.md` for the topic keywords (case-insensitive):
    ```
@@ -167,24 +192,32 @@ Based on findings, append actionable recommendations:
    Path: conductor/
    Pattern: <topic> (case-insensitive)
    ```
-2. **Track context** — Also Grep `conductor/tracks/*/spec.md` and `conductor/tracks/*/plan.md` for the topic.
-3. **Collect unique files** from all Grep results. Deduplicate by file path.
+2. **Track context** — Grep `conductor/tracks/*/spec.md` and `conductor/tracks/*/plan.md` for the topic.
+3. **Graph expansion (1-hop):** Seed files = every doc in `ROUTED` (§4.2) plus the top grep hits from §4.3.1–4.3.2. For each seed, parse its `## See Also` section and any inline `[[wikilinks]]`. Append `.md` and verify each target exists via Glob. Existing targets become **neighbor candidates** — adjacent pages that share no keyword with the query but are structurally linked.
+4. **Collect & dedupe** all candidate paths from `ROUTED` (§4.2), grep (§4.3.1–4.3.2), and neighbors (§4.3.3). Tag each with its source so §4.4 can apply the right bonus.
 
-### 4.3 Read & Rank
+### 4.4 Read & Rank
 
-1. Read up to **5** of the most relevant files (those with the most matches or most specific content).
-2. Also read `conductor/overview.md` for high-level context (if not already in results).
-3. If no results found:
+**Rank by density and context, not raw match count.** A doc with 12 keyword hits across 2,000 lines is a weaker source than one with 6 hits in 80 lines.
+
+1. **Score each candidate:**
+   - **Density** — keyword matches relative to file length. Prefer high matches-per-line.
+   - **Context** — matches landing under a `##` heading whose title contains a topic keyword score higher than scattered body mentions.
+   - **Routing bonus** — docs in `ROUTED` get a bonus; the index explicitly matched them.
+   - **Graph bonus** — neighbor candidates get a smaller bonus; their relevance is inferred, not keyword-matched.
+2. **Read** up to **5** files by score (highest first). Do not re-read `overview.md` (loaded in §4.2). Priority order: routed → high-density grep hits → neighbors.
+3. **No-result path** — if there are no candidates at all:
    - Read `conductor/index.md` to find related topics.
    - Announce: "No matches found for `<topic>` in the wiki."
    - Suggest: "Related topics in the index: <list from index.md>."
    - HALT.
 
-### 4.4 Synthesize Answer
+### 4.5 Synthesize Answer
 
 Synthesize a coherent answer from the loaded documents. Follow these rules:
 
 - **Every factual claim** must cite its source as a `[[wikilink]]`: `Claim text → [[path/to/source]].`
+- **Surface graph neighbors** — if a neighbor (§4.3.3) clarifies the answer, cite it and note the structural link (e.g. "Related via `[[seed]]`").
 - Structure the answer with clear sections if the topic spans multiple documents.
 - If sources contradict each other, note the contradiction explicitly.
 - Keep the answer concise — this is a wiki summary, not a full report.
@@ -202,17 +235,17 @@ Output the answer as:
 - [[path/to/doc2]] — <one-line description>
 ```
 
-### 4.5 Offer Save
+### 4.6 Offer Save
 
 After presenting the answer, ask the user via `AskUserQuestion`:
 
 > "Save this query result to the wiki?"
 
 Options:
-- **Yes, save** → proceed to **Section 4.6**
+- **Yes, save** → proceed to **Section 4.7**
 - **No** → HALT (answer already displayed)
 
-### 4.6 Save Query Result
+### 4.7 Save Query Result
 
 On user confirmation:
 
