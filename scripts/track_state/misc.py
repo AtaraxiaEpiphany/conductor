@@ -7,7 +7,7 @@ from pathlib import Path
 from .core import load, save
 from .helpers import (
     out, now_iso, target, extract_tags, _reset_task,
-    _any_phase_needs_checkpoint, conductor_dir,
+    _any_phase_needs_checkpoint, conductor_dir, _tag_exempt_from_coverage,
 )
 from .mutations import _do_complete
 from .sync import _do_sync_plan
@@ -42,6 +42,69 @@ def cmd_preflight(track_dir):
         missing=missing,
         track_dir=str(td),
         invalid_state=invalid_state,
+    ))
+
+
+def cmd_quality_snapshot(track_dir):
+    """Compute aggregate per-track quality metrics from state (read-only).
+
+    GC-pillar building block realizing the doc's "quality grades per domain":
+    completion breakdown + code-task coverage aggregate + evidence gaps +
+    spec-deviation count, computed on demand. No persistence format is baked
+    in — a future ledger can append this JSON, or skills/the orchestrator read
+    it directly. Coverage is aggregated only over completed non-exempt tasks
+    ([Docs]/[Config]/[Chore]/[Manual] are excluded), from each task's
+    ``evidence.coverage_pct`` written by process-result/dispatch-finalize.
+    """
+    state = load(track_dir)
+    units = []
+    for phase in state.get("phases", []):
+        for task in phase.get("tasks", []):
+            units.append(task)
+            units.extend(task.get("subtasks", []))
+
+    total = len(units)
+    by_status = {}
+    coverage_vals = []
+    coverage_pass = 0
+    code_tasks = 0
+    no_evidence = 0
+    deviations = 0
+
+    for u in units:
+        st = u.get("status", "pending")
+        by_status[st] = by_status.get(st, 0) + 1
+        exempt = _tag_exempt_from_coverage(extract_tags(u.get("name", "")))
+        ev = u.get("evidence") or {}
+        deviations += ev.get("deviations", 0) or 0
+        if st == "completed":
+            if not exempt:
+                code_tasks += 1
+                cov = ev.get("coverage_pct")
+                if isinstance(cov, (int, float)):
+                    coverage_vals.append(cov)
+                    if cov >= 80:
+                        coverage_pass += 1
+            if "evidence" not in u:
+                no_evidence += 1
+
+    completed = by_status.get("completed", 0)
+    completion_pct = round(100 * completed / total, 1) if total else 0.0
+    coverage_mean = (round(sum(coverage_vals) / len(coverage_vals), 1)
+                     if coverage_vals else None)
+    coverage_pass_pct = (round(100 * coverage_pass / code_tasks, 1)
+                         if code_tasks else None)
+
+    out(dict(
+        track_id=state.get("track_id"),
+        total_units=total,
+        by_status=by_status,
+        completion_pct=completion_pct,
+        coverage_mean=coverage_mean,
+        coverage_pass_pct=coverage_pass_pct,
+        code_tasks_completed=code_tasks,
+        tasks_missing_evidence=no_evidence,
+        spec_deviations=deviations,
     ))
 
 
