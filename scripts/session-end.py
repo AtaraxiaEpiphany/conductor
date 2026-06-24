@@ -19,14 +19,20 @@ from lib.logging import init_logging, log_entry
 from lib.path_utils import find_tracks_registry, extract_track_dirs
 
 
-def has_active_tracks(cwd: Path) -> bool:
-    """Check if there are active tracks in the conductor directory
+def has_active_tracks(cwd: Path, log_dir: Path = None) -> bool:
+    """Check if there are active tracks in the conductor directory.
+
+    On any error (malformed tracks registry or state file), conservatively
+    returns True. The caller deletes ``session-handoff.md`` (the cross-session
+    spine) when this returns False, so a parse failure must NOT cause that
+    deletion — losing the handoff is worse than keeping a possibly-stale one.
 
     Args:
         cwd: Current working directory
+        log_dir: Optional logs dir for a recovery warning on the error path
 
     Returns:
-        True if there are active tracks
+        True if there are active tracks (or if activity could not be determined)
     """
     tracks_file = find_tracks_registry(cwd)
     if not tracks_file:
@@ -42,10 +48,17 @@ def has_active_tracks(cwd: Path) -> bool:
                 status = state.get("status", "")
                 if status not in ("completed", "archived", "cancelled"):
                     return True
-    except Exception:
-        pass
-
-    return False
+        return False
+    except Exception as e:
+        # Don't let a malformed registry/state delete the handoff spine.
+        # Treat as active (keep the handoff) and log for manual inspection.
+        if log_dir is not None:
+            try:
+                log_entry(log_dir / "cleanup.log",
+                          f"has_active_tracks error (keeping handoff): {e}")
+            except Exception:
+                pass
+        return True
 
 
 def clean_temp_files(temp_dir: Path, max_age_hours: int = 24) -> int:
@@ -158,7 +171,7 @@ def main():
     # 1. Validate session-handoff.md consistency
     handoff_file = data_dir / "session-handoff.md"
     if handoff_file.exists():
-        if not has_active_tracks(cwd):
+        if not has_active_tracks(cwd, log_dir):
             # No active tracks but handoff exists - cleanup
             handoff_file.unlink()
             message = "cleaned stale session-handoff.md (no active tracks)"
