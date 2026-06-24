@@ -7,6 +7,7 @@ Uses hookSpecificOutput.permissionDecision per the Claude Code hook protocol.
 
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -195,6 +196,102 @@ def is_direct_track_state_modification(command: str) -> bool:
     return False
 
 
+# --- F2 TDD commit gate ------------------------------------------------------
+# Conductor's task-executor commits test+impl together at Step 8, so a feat/fix
+# commit staging source WITHOUT a test is the real "implementation before test"
+# signal. Caught at commit time (a tighter loop than the F3 coverage gate at
+# dispatch-finalize). Exempt by commit TYPE — docs/chore/style/refactor/test and
+# the chore(conductor) bookkeeping never need tests — so no task-tag lookup.
+_TDD_GATED_TYPES = {"feat", "fix"}
+
+_TEST_FILE_RE = re.compile(
+    r'(?:^|/)(?:test|tests|spec|__tests__)(?:/|\.|\b)'
+    r'|(?:[_\-.](?:test|spec)\.[A-Za-z0-9]+$)'
+    r'|(?:\b(?:test|spec)_\w+\.[A-Za-z0-9]+$)',
+    re.IGNORECASE,
+)
+
+_SOURCE_EXTENSIONS = {
+    ".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".vue", ".svelte",
+    ".go", ".rs", ".java", ".kt", ".cs", ".rb", ".php", ".swift",
+    ".c", ".h", ".cpp", ".hpp", ".cc", ".hh", ".dart", ".scala", ".clj",
+    ".ex", ".exs", ".erl", ".hs", ".ml", ".lua", ".pl", ".r", ".jl",
+}
+
+
+def _is_test_file(path: str) -> bool:
+    return bool(_TEST_FILE_RE.search(path))
+
+
+def _is_source_file(path: str) -> bool:
+    return Path(path).suffix.lower() in _SOURCE_EXTENSIONS
+
+
+def _staged_files(cwd: Path) -> list:
+    """Files staged for commit (``git diff --cached``). Empty on any git error."""
+    try:
+        proc = subprocess.run(
+            ["git", "diff", "--cached", "--name-only"],
+            cwd=str(cwd), capture_output=True, text=True, timeout=3,
+        )
+        if proc.returncode != 0:
+            return []
+        return [f for f in proc.stdout.splitlines() if f.strip()]
+    except (OSError, subprocess.SubprocessError):
+        return []
+
+
+def _commit_type_from_command(command: str):
+    """Extract the conventional-commit type from a ``git commit -m "..."`` cmd."""
+    m = re.search(r'(?<![\w-])-m\s*["\']?([^"\']+)["\']?', command)
+    if not m:
+        return None
+    tm = re.match(r'([a-z]+)(?:\([^)]+\))?:', m.group(1).strip())
+    return tm.group(1) if tm else None
+
+
+def _check_f2_tdd_gate(cwd: Path, command: str) -> None:
+    """F2 TDD gate: a feat/fix commit must stage a test alongside source code.
+
+    Returns normally (caller proceeds to allow) when the gate passes or does
+    not apply; calls ``write_hook_output(permission_decision="ask")`` — which
+    exits the process — when it trips. ``ask`` (not ``deny``) keeps it
+    overridable for the rare legitimate no-test feat/fix (test-infra, generated
+    code), matching the campaign's confirmed enforcement philosophy.
+    """
+    if _commit_type_from_command(command) not in _TDD_GATED_TYPES:
+        return  # docs/chore/style/refactor/test + conductor bookkeeping exempt
+
+    staged = _staged_files(cwd)
+    if not staged:
+        return  # nothing staged or git unavailable — don't block blindly
+
+    if any(_is_test_file(f) for f in staged):
+        return  # test present → F2 satisfied
+
+    if not any(_is_source_file(f) for f in staged):
+        return  # only docs/config staged → not an impl commit
+
+    source_eg = next(f for f in staged if _is_source_file(f))
+    additional_context = (
+        f'[Conductor] F2 TDD gate: this feat/fix commit stages source code '
+        f'({source_eg}) without a test file. TDD requires a test in the same '
+        f'commit (task-executor Step 3). Add a test, or if the task is exempt '
+        f'(Docs/Config/Chore/Explore/Manual) use commit type docs/chore/etc.'
+    )
+    permission_reason = (
+        'F2: feat/fix commit adds code without a test file. Add a test '
+        '(Step 3) before committing, or use a non-gated commit type '
+        '(docs/chore/style/refactor) if no test applies.'
+    )
+    write_hook_output(
+        hook_event_name="PreToolUse",
+        additional_context=additional_context,
+        permission_decision="ask",
+        permission_decision_reason=permission_reason,
+    )
+
+
 def main():
     """Main hook function"""
     input_data = read_hook_input()
@@ -299,6 +396,12 @@ def main():
                 permission_decision_reason=permission_reason,
             )
             return
+
+    # F2 TDD gate: feat/fix commits must stage a test alongside source code.
+    # _check_f2_tdd_gate returns when the gate passes; it exits the process
+    # (via write_hook_output) when it trips.
+    if re.search(r'git\s+commit\b', command, re.IGNORECASE):
+        _check_f2_tdd_gate(cwd, command)
 
     # Allow all other commands
     write_hook_output(hook_event_name="PreToolUse")
