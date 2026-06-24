@@ -15,7 +15,7 @@ from .quality import cmd_init, cmd_init_from_plan, cmd_start, cmd_set_mode, cmd_
 from .misc import (
     cmd_reset, cmd_indices, cmd_shas, cmd_add_checkpoint,
     cmd_deferred_report, cmd_phase_done, cmd_registry_update,
-    cmd_record_summary,
+    cmd_record_summary, cmd_preflight,
 )
 from .handoff import cmd_get_handoff, cmd_sync_handoff, cmd_append_handoff, cmd_harvest_candidates
 from .sync import cmd_sync_plan
@@ -214,6 +214,8 @@ COMMAND_HELP = {
                        "Add/update checkpoint SHA for a phase in plan.md"),
     "indices": ("indices <track-dir>",
                 "Print phase/task/subtask index mapping for the track"),
+    "preflight": ("preflight <track-dir>",
+                  "Verify core track files (spec/plan/track-state.json) exist and load; ok:false if not"),
 }
 
 _COMMAND_GROUPS = [
@@ -225,7 +227,7 @@ _COMMAND_GROUPS = [
     ("Result Processing", ["write-result", "process-result"]),
     ("Dispatch Composites", ["dispatch-prepare", "dispatch-finalize", "record-summary"]),
     ("Diagnostics", ["validate", "gc", "shas", "checklist-verify", "deferred-report",
-                     "phase-done", "add-checkpoint"]),
+                     "phase-done", "add-checkpoint", "preflight"]),
 ]
 
 
@@ -395,6 +397,8 @@ def main():
                               flag(args, "--subtask"))
         elif cmd == "harvest-candidates":
             cmd_harvest_candidates(track_dir)
+        elif cmd == "preflight":
+            cmd_preflight(track_dir)
         else:
             print(f"Unknown command: {cmd}", file=sys.stderr)
             sys.exit(1)

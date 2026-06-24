@@ -34,10 +34,10 @@ Tag inheritance: subtasks inherit dispatch tags from parent when subtask name ha
 ## 1.0 SETUP + TRACK SELECTION
 
 1. Locate track from `conductor/tracks.md` — resolve `$ARGUMENTS` or auto-select `[~]`/`[ ]`.
-2. Verify core files exist: `spec.md`, `plan.md`, `track-state.json`, `conductor/workflow/index.md`.
-   Missing → `"Conductor environment incomplete. Run /conductor:setup."` → HALT.
-3. `track-state recover "<track_dir>"` — if error → HALT.
-4. If `status == "new"` → `track-state start` + `registry-update` + commit.
+2. Run `track-state preflight "<track_dir>"`. If `ok: false` (missing `spec.md`/`plan.md`/`track-state.json`, or unreadable state) → `"Conductor environment incomplete. Run /conductor:setup."` → HALT.
+3. Verify `conductor/workflow/index.md` exists. Missing → same halt message → HALT.
+4. `track-state recover "<track_dir>"` — if error → HALT.
+5. If `status == "new"` → `track-state start` + `registry-update` + commit.
 
 ---
 

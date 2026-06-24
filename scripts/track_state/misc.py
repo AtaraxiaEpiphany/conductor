@@ -16,6 +16,35 @@ from .constants import TERMINAL_FOR_PARENT
 from .quality import _checklist_status
 
 
+# Core conductor files every executable track must have. Single source for the
+# setup check repeated (with drift) across skills — preflight centralizes it.
+_TRACK_CORE_FILES = ("spec.md", "plan.md", "track-state.json")
+
+
+def cmd_preflight(track_dir):
+    """Verify a track's core conductor files exist and its state loads.
+
+    Single machine-checkable entry point for skill setup checks, replacing the
+    repeated "verify spec.md/plan.md/track-state.json" prose. Outputs
+    ``{ok, missing, track_dir, invalid_state}`` and ALWAYS exits 0 — callers
+    switch on ``ok`` and emit their own halt message (mirrors ``validate``).
+    """
+    td = Path(track_dir)
+    missing = [f for f in _TRACK_CORE_FILES if not (td / f).exists()]
+    invalid_state = False
+    if not missing:
+        try:
+            load(track_dir)
+        except Exception:
+            invalid_state = True
+    out(dict(
+        ok=not missing and not invalid_state,
+        missing=missing,
+        track_dir=str(td),
+        invalid_state=invalid_state,
+    ))
+
+
 def cmd_reset(track_dir, scope, p=None, t=None):
     """Reset task(s) to pending, clearing all completion fields.
 
