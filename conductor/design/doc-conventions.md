@@ -43,3 +43,5 @@ last_verified: <ISO-8601 date or short git SHA of the commit that last confirmed
 ## See Also
 
 - [[runtime/core-contract]] — behavioral invariants; resident in every session.
+- [[conductor/design/decision-serial-execution]] — why the state model is globally locked (serial execution).
+- [[conductor/design/decision-loop-heartbeat]] — why housekeeping rides deterministic hooks, not a cron.
