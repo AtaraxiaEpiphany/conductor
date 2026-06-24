@@ -461,6 +461,7 @@ def cmd_append_handoff(track_dir, phase, task, entry_type, content_json, subtask
         files_inventory = content_data.get("files_inventory", [])
         out_of_scope = content_data.get("out_of_scope", [])
         graduation = content_data.get("graduation_candidates", [])
+        consulted_docs = content_data.get("consulted_docs", [])
 
         # Completeness gate (agents/explorer.md §4.2): the Exploration Notes are
         # the downstream task-executor's Layer-0 map. Reject a sparse map so the
@@ -502,6 +503,9 @@ def cmd_append_handoff(track_dir, phase, task, entry_type, content_json, subtask
 
 ### Summary
 {content_data.get('summary', '...')}
+
+### Corpus Consulted (Layer-0 provenance — docs this exploration extends)
+{chr(10).join(f'- {cd.get("path", cd) if isinstance(cd, dict) else cd}: {cd.get("relevance", "") if isinstance(cd, dict) else ""}' for cd in consulted_docs) if consulted_docs else '_None recorded — corpus not consulted (verify greenfield/novel area; otherwise a contract violation)_'}
 
 ### Key Findings
 {chr(10).join(f'- {f}' for f in findings) if findings else '- None'}

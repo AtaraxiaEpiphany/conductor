@@ -55,7 +55,7 @@ Two scoped sources — read only what matches this task, never a whole blob.
 track-state get-handoff {TRACK_DIR} {PHASE} {TASK} ${SUBTASK:+--subtask "$SUBTASK"}
 ```
 
-Read the returned `content` and extract the `## Exploration Notes` section (Summary, Key Findings, Architecture, Gotchas & Constraints, Files Inventory, Recommended Approach, Out-of-Scope Notes). This is your per-task "map before manual." If no Exploration Notes exist yet → skip (a).
+Read the returned `content` and extract the `## Exploration Notes` section (Summary, Corpus Consulted, Key Findings, Architecture, Gotchas & Constraints, Files Inventory, Recommended Approach, Out-of-Scope Notes). This is your per-task "map before manual." The **Corpus Consulted** section lists the scoped docs the explorer already judged relevant — read those same docs in Layer 0(b) rather than re-deriving their relevance. If no Exploration Notes exist yet → skip (a).
 
 **(b) Scoped design docs from the corpus:**
 

@@ -42,6 +42,23 @@ CRITICAL: Validate every tool call. On failure → halt → report FAILURE.
 2. Read `{TRACK_DIR}/spec.md` — understand overall track goal.
 3. Derive investigation scope from task description.
 
+### 3.1 Layer 0 — Corpus Consult (READ BEFORE code exploration)
+
+The durable architecture you are paid to investigate is *already documented* in the wiki corpus (`conductor/design/`, `conductor/resource/`). Re-deriving it from code wastes your budget and re-introduces stale assumptions. Consult the corpus first, then explore code to **verify and extend** — not rediscover. (This is the compounding loop paying back this task's own future graduation contributions.)
+
+1. **High-level map** — Read `conductor/overview.md` (the synthesized architecture; component names become your investigation seeds) and `conductor/purpose.md` (direction + Out-of-Scope boundaries — do not investigate areas already settled out of scope).
+2. **Routing index** — Read `conductor/index.md` → the **Scoped Docs** table. Open the scoped doc whose **Match Strategy** matches this task's scope (same routing the downstream task-executor uses):
+
+   | Investigation scope | Read scoped doc |
+   |---|---|
+   | routes / controllers / api | `conductor/design/api-specs/index.md` → matching endpoint docs |
+   | models / migrations / schema | `conductor/design/database/index.md` |
+   | services / lib / src (structural) | `conductor/design/architecture/system-architecture.md` |
+   | components / pages / views | `conductor/requirement/ux-ui/design-spec.md` |
+
+3. **Record provenance** — collect every corpus doc you opened into a `consulted_docs` list (path + one-line relevance). This list becomes the `### Corpus Consulted` section of your handoff (§4.2), so the downstream task-executor and doc-syncer know *which* documented knowledge your findings extend (and can flag where your findings contradict the corpus).
+4. **Greenfield / no match** — if the corpus has no matching scoped doc (greenfield project, or a genuinely novel area), record `consulted_docs: []` and note "no matching corpus doc — first documentation of this area" (this is a graduation signal: your findings will *seed* the corpus). Never skip the consult step silently.
+
 ---
 
 ## 4.0 EXPLORATION PROTOCOL
@@ -75,6 +92,9 @@ cat > "$TMP" << 'EOF'
   "files_inventory": [
     {"path": "src/foo.ts", "purpose": "...", "key_exports": "bar, baz", "related_docs": "conductor/design/architecture/..."}
   ],
+  "consulted_docs": [
+    {"path": "conductor/design/architecture/system-architecture.md", "relevance": "documented the auth boundary this task extends"}
+  ],
   "recommended": "<patterns to follow, anti-patterns to avoid>",
   "out_of_scope": ["<tangentially-related item explicitly excluded from this track>"],
   "graduation_candidates": ["<durable finding for doc-syncer to merge into the corpus>"]
@@ -91,6 +111,7 @@ rm -f "$TMP"
 - `summary` — a substantive answer (≥ ~20 chars), not "looks fine".
 - `findings` — ≥ 1 concrete key finding.
 - `files_inventory` — ≥ 1 entry naming a real file you read, each with `path` + `purpose`.
+- `consulted_docs` — the corpus docs you opened in §3.1 (each `{path, relevance}`). Empty list `[]` is allowed ONLY when no matching scoped doc exists (greenfield/novel area) — record that reason. Omitting the field entirely is a contract violation: it hides whether the corpus consult ran.
 - `architecture` / `gotchas` — populate whenever the task touches >1 file or any non-obvious invariant; empty only when genuinely N/A.
 
 A terse handoff is a contract violation — the downstream task-executor depends on this map.

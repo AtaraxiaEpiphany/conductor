@@ -98,6 +98,42 @@ class TestExploreHandoffFullSchema(TestCase):
         self.assertIn("### Files Inventory", text)
         self.assertIn("### Graduation Candidates", text)
 
+    def test_consulted_docs_rendered_with_provenance(self):
+        # O1: explorer records which corpus docs it consulted (Layer-0 provenance)
+        # so the task-executor + doc-syncer know which documented knowledge the
+        # findings extend.
+        d = _make_track()
+        content = json.dumps({
+            "summary": "Substantive exploration summary for the test track.",
+            "findings": ["f1"],
+            "files_inventory": [{"path": "src/a.ts", "purpose": "P"}],
+            "consulted_docs": [
+                {"path": "conductor/design/architecture/system-architecture.md",
+                 "relevance": "documented the auth boundary this task extends"},
+            ],
+        })
+        res, _ = _out_captured(cmd_append_handoff, d, 1, 1, "explore", content, None)
+        self.assertTrue(res["ok"])
+        text = (Path(d) / ".conductor" / "handoff" / "P1T1.md").read_text()
+        self.assertIn("### Corpus Consulted", text)
+        self.assertIn("conductor/design/architecture/system-architecture.md", text)
+        self.assertIn("auth boundary this task extends", text)
+
+    def test_consulted_docs_absent_warns_not_silent(self):
+        # Omission must be *visible* (the consult step's absence is conspicuous),
+        # not silently dropped — this is the structural pressure to run Layer 0.
+        d = _make_track()
+        content = json.dumps({
+            "summary": "Substantive exploration summary for the test track.",
+            "findings": ["f1"],
+            "files_inventory": [{"path": "src/a.ts", "purpose": "P"}],
+        })
+        res, _ = _out_captured(cmd_append_handoff, d, 1, 1, "explore", content, None)
+        self.assertTrue(res["ok"])
+        text = (Path(d) / ".conductor" / "handoff" / "P1T1.md").read_text()
+        self.assertIn("### Corpus Consulted", text)
+        self.assertIn("None recorded", text)
+
 
 class TestInitCoreGitignore(TestCase):
     def test_writes_conductor_gitignore(self):
