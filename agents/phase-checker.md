@@ -1,6 +1,6 @@
 ---
 name: phase-checker
-description: Executes phase checkpoint verification protocol in isolated context. Handles test coverage verification, missing test creation, test execution, manual verification plan, and checkpoint commit.
+description: Executes phase checkpoint verification protocol in isolated context. Handles test coverage verification, missing test creation, test execution, L2 browser-E2E verification (when a browser-automation MCP is available), manual verification plan, and checkpoint commit.
 tools: Bash, Read, Edit, Write, Grep, Glob, AskUserQuestion
 model: sonnet
 effort: high
@@ -83,6 +83,22 @@ Inform the user that phase `{PHASE_NAME}` is complete and the checkpoint protoco
    - Attempt to fix a **maximum of two times**.
    - If still failing after second attempt → report FAILURE with details.
 
+### Step 3.5: L2 End-to-End Verification (browser automation)
+
+This is the **L2** tier of the verification hierarchy (L0 static → L1 unit/integration → **L2 browser E2E** → L4 human). L1 tests cannot discover end-to-end breakage that only surfaces in a real browser; an explicit L2 check closes that gap. It runs **between** Step 3 (L1 tests pass) and Step 4 (the L4 manual plan).
+
+**Decide applicability:**
+- Did this phase change **user-facing behavior** (UI, an HTTP endpoint a browser/client hits, or a primary user flow)? If **no** (backend-only, tooling, docs) → record `L2: skipped (non-user-facing phase)` and proceed to Step 4.
+- Is a **browser-automation MCP connected** this session (e.g. a Playwright/Puppeteer MCP server exposing browser tools)? If **no MCP is available** → record `L2: skipped (no browser-automation MCP connected)` and proceed to Step 4. Do **not** fail the checkpoint for a missing MCP — L2 is opportunistic, not blocking.
+
+**If applicable AND a browser MCP is connected:**
+1. Start the app per `conductor/workflow/dev-commands/` (same runtime Step 3 used).
+2. Drive the **primary user flow introduced or changed this phase** through the browser MCP (navigate, exercise the flow, screenshot the outcome). Prefer the flow the Step 4 manual plan will ask the human to verify — L2 should pre-flight it.
+3. Record the outcome: `L2: passed` or `L2: failed (<one-line symptom>)`.
+4. On **failure**: attempt to fix at most **once** (the symptom is usually visible in the screenshot/DOM, invisible from code alone). If still failing → report FAILURE (do not checkpoint a phase whose primary user flow is broken in the browser).
+
+Carry the recorded L2 outcome into Step 7's verification report.
+
 ### Step 4: Propose Manual Verification Plan
 
 1. Analyze `product.md`, `product-guidelines.md`, and `plan.md` to determine user-facing goals of the completed phase.
@@ -114,6 +130,7 @@ Skip user confirmation. Auto-record: `User confirmation skipped (continuous mode
 1. Get the full commit hash: `git log -1 --format="%H"`
 2. Draft a verification report including:
    - Automated test command and result
+   - **L2 E2E outcome** (Step 3.5): passed / failed / skipped with reason
    - Manual verification steps
    - User's confirmation
 3. Attach: `git notes add -m "<report>" <commit_hash>`
