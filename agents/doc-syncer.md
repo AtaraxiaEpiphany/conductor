@@ -110,9 +110,25 @@ If any document does not exist, note it and skip the corresponding analysis.
 
 ---
 
-## 4.0 ANALYSIS (Phase 1)
+## 4.0 ANALYSIS (Phase 1) — two-step ingest
 
-Compare the completed track's specification against each project document. Group related changes for a single confirmation prompt.
+This run is a **two-step chain-of-thought ingest** (analysis → generation), which produces materially better synthesis than fusing read+write. Do NOT jump to edits.
+
+### 4.0a STEP 1 — Holistic Analysis (read-only, no edits yet)
+
+Before any per-document work, read the source (§3.1) and the loaded corpus (§3.2) and synthesize a single **ANALYSIS** block capturing:
+
+- **New entities / concepts** the source introduces (component names, tables, endpoints, domain terms).
+- **Contradictions / tensions** with the existing corpus — where the source says something the current docs imply otherwise (surfaced, not hidden; fed to `purpose.md` Thesis in §7.1b).
+- **Targeted docs** — which existing scoped docs this source *extends* (merge targets), and which forward-referenced docs it would *seed* (none yet). Route each via the `conductor/index.md` Scoped Docs Match Strategy.
+- **Cross-reference candidates** — pairs (A ↔ B) the analysis reveals.
+- **Direction shift** — does this source change the project thesis or answer/raise a Key Question (Purpose §7.1b)?
+
+Hold this analysis in working memory; it drives the per-document pass below. If the source adds nothing the corpus doesn't already reflect → the analysis is empty → proceed to §5/§6 as a no-op and report `STATUS: SKIPPED` (idempotent ingest).
+
+### 4.0b STEP 2 — Per-Document Analysis (feeds the generation pass)
+
+Using the holistic ANALYSIS, compare the source against each project document and group related changes for a single confirmation prompt.
 
 ### 4.1 Product Definition Analysis
 
@@ -198,9 +214,9 @@ For each item in the harvested queue (§3.1b), determine its **target scoped doc
 
 ---
 
-## 5.0 UPDATE PROPOSALS (Phase 1)
+## 5.0 UPDATE PROPOSALS (Phase 1) — STEP 2 generation: propose
 
-For each document that needs updating, present a proposal to the user via `AskUserQuestion`. Batch related small changes into a single prompt where possible.
+For each document flagged by the Step-1 ANALYSIS (§4.0a/4.0b) as needing change, present a proposal to the user via `AskUserQuestion`. Batch related small changes into a single prompt where possible. Proposals are grounded in the holistic analysis, not re-derived per doc in isolation.
 
 ### 5.1 Product Definition Update
 

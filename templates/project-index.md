@@ -18,6 +18,7 @@ Always read in full. Provide baseline context for all tasks.
 | Wiki Overview | conductor/overview.md | Global synthesis regenerated after each track |
 | Wiki Purpose | conductor/purpose.md | Directional intent — goals, thesis, decisions (co-evolved) |
 | Wiki Log | conductor/log.md | Append-only chronological record of doc changes |
+| Wiki Queries | conductor/queries/ | Saved query answers (auto-filed by `/conductor:wiki query`, type: query pages) |
 
 ## Scoped Docs
 
