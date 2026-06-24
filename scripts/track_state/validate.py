@@ -6,10 +6,11 @@ from pathlib import Path
 
 from .core import load, save
 from .helpers import (
-    out, now_iso, _is_phase_terminal, _clean_trailing_markers,
+    out, now_iso, _is_phase_terminal,
     _reset_task,
 )
 from .constants import TERMINAL_STATUSES, TERMINAL_FOR_PARENT
+from .plan_parse import parse_plan
 from .sync import _do_sync_plan
 from .git_ops import _find_conductor_shas
 
@@ -106,45 +107,24 @@ def _validate_plan_consistency(track_dir, state, errors, warnings):
 def _parse_plan_structure(plan_path):
     """Parse plan.md into a structure indexed by phase number.
 
-    Returns dict mapping phase_number (int) to phase data. Each phase has
-    'tasks' list. Each task has 'name' and 'subtasks' list.
-    Names are cleaned (markers/SHAs stripped).
+    Returns ``{phase_number: {"tasks": [{"name", "subtasks": [{"name","status"}]}]}}``.
+    Thin reshape over :func:`plan_parse.parse_plan` (the single plan.md parser)
+    so the phase/task regexes and name-cleaning live in one place rather than
+    drifting again. plan_parse produces subtasks as cleaned name strings; this
+    view re-keys by phase number and tags each subtask ``status:"pending"`` —
+    the shape the plan-vs-state consistency checks and the plan-absorb fixer
+    consume. parse_plan's diagnostics are intentionally ignored here; this view
+    is structural only.
     """
-    with open(plan_path) as f:
-        lines = f.readlines()
-
-    phases = {}
-    current_phase = None
-    current_task = None
-
-    for line in lines:
-        stripped = line.rstrip("\n")
-
-        pm = re.match(r"^##\s+Phase\s+(\d+)\b", stripped)
-        if pm:
-            phase_num = int(pm.group(1))
-            current_phase = {"tasks": []}
-            phases[phase_num] = current_phase
-            current_task = None
-            continue
-
-        tm = re.match(r"^(\s*)-\s+\[[ x~!>#\-d]\]\s+(.*)", stripped)
-        if tm and current_phase is not None:
-            indent = tm.group(1)
-            rest = tm.group(2).strip()
-            # Strip HTML comments before marker cleaning so SHA brackets are exposed
-            rest = re.sub(r'<!--.*?-->', '', rest).strip()
-            rest = _clean_trailing_markers(rest)
-            is_subtask = len(indent) > 0
-
-            if is_subtask:
-                if current_task is not None:
-                    current_task["subtasks"].append({"name": rest, "status": "pending"})
-            else:
-                current_task = {"name": rest, "subtasks": []}
-                current_phase["tasks"].append(current_task)
-
-    return phases
+    parsed = parse_plan(plan_path)
+    out = {}
+    for ph in parsed["phases"]:
+        tasks = []
+        for t in ph["tasks"]:
+            subtasks = [{"name": s, "status": "pending"} for s in t["subtasks"]]
+            tasks.append({"name": t["name"], "subtasks": subtasks})
+        out[ph["number"]] = {"tasks": tasks}
+    return out
 
 def _fix_plan_mismatches(track_dir, state, errors=None):
     """Absorb plan.md entries missing from state. Returns list of fixes.
