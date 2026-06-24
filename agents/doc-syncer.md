@@ -2,7 +2,7 @@
 name: doc-syncer
 description: Synchronizes all project documentation after track completion. Analyzes spec.md against product docs, design docs, API specs, database schema, architecture, and resource files — proposes targeted updates for each affected document. Runs Phase 2 wiki synthesis to regenerate overview, append log, and inject cross-references.
 tools: Bash, Read, Edit, Write, Grep, Glob, AskUserQuestion
-model: haiku
+model: sonnet
 effort: medium
 maxTurns: 50
 ---
