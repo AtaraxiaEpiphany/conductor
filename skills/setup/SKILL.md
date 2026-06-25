@@ -19,8 +19,8 @@ Key paths (resolve via `conductor/index.md` if non-default):
 ## 1.0 RESUME CHECK
 
 1. Read `conductor/setup_state.json` if exists.
-2. Resume from `last_successful_step` (keys: `2.1_product_guide` → `2.2_product_guidelines` → `2.3_tech_stack_styleguides` → `2.4_workflow` → `2.5_finalization` → `3.4_track_artifacts_created` → `3.5_setup_complete`).
-3. If `3.5_setup_complete` → announce complete → HALT.
+2. Resume from `last_successful_step` (keys: `2.1_product_guide` → `2.2_product_guidelines` → `2.3_tech_stack_styleguides` → `2.4_workflow` → `2.5_finalization` → `3.5_track_artifacts_created` → `3.6_setup_complete`). Resume at the **first section whose key is NOT yet saved** — i.e. re-run the step that follows `last_successful_step`. Do not treat a mid-chain key (e.g. `3.5_track_artifacts_created`) as complete; only `3.6_setup_complete` is terminal.
+3. If `3.6_setup_complete` → announce complete → HALT.
 4. No file → new setup → proceed.
 
 **Subagents:**
@@ -147,8 +147,10 @@ Parse `---REVIEW RESULT---` block. If `STATUS: CANCELLED` → halt. If `STRUCTUR
 
 ### 3.6 Final Commit
 
-```bash
-git add -A && git commit -m "chore(conductor): Scaffold conductor setup"
-```
-
-Announce: `"Setup complete. Run /conductor:implement to begin."`
+1. Commit all setup artifacts. The `git diff --cached --quiet ||` guard makes the commit a no-op **only** when §3.5's artifacts are already committed (a defensive re-run) — it does NOT skip this step:
+   ```bash
+   git add -A
+   git diff --cached --quiet || git commit -m "chore(conductor): Scaffold conductor setup"
+   ```
+2. Save state: `3.6_setup_complete`.
+3. Announce: `"Setup complete. Run /conductor:implement to begin."`

@@ -42,6 +42,17 @@ class IndexWiringTests(TestCase):
         self.assertIn("templates/wiki-purpose.md", text)
         self.assertIn("conductor/purpose.md", text)
 
+    def test_claude_md_toc_lists_purpose(self):
+        # The File Index appended to the project CLAUDE.md is the canonical path
+        # map agents resolve against — it must list purpose.md (and the other
+        # wiki hubs) just like conductor/index.md does.
+        text = (ROOT / "templates" / "claude-md-toc.md").read_text(encoding="utf-8")
+        self.assertIn("conductor/purpose.md", text)
+        self.assertIn("Wiki Purpose", text)
+        # Round out the wiki/management file map so the TOC is complete.
+        self.assertIn("conductor/tracks.md", text)
+        self.assertIn("conductor/queries/", text)
+
 
 class WikiSkillRoutingTests(TestCase):
     def setUp(self):

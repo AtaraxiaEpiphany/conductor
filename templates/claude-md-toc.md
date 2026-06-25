@@ -9,7 +9,9 @@ Use this map when explicit links are missing. All new documents MUST be created 
 | **Product**     | Product Definition      | `./conductor/product/product.md`                           | Create if missing.                    |
 |                 | Product Guidelines      | `./conductor/product/product-guidelines.md`                | Create if missing.                    |
 |                 | Wiki Overview           | `./conductor/overview.md`                                  | Create if missing.                    |
+|                 | Wiki Purpose            | `./conductor/purpose.md`                                   | Create if missing. Co-evolved.        |
 |                 | Wiki Log                | `./conductor/log.md`                                       | Create if missing.                    |
+|                 | Wiki Queries            | `./conductor/queries/<slug>.md`                            | Auto-filed by `/conductor:wiki query`.|
 | **Requirement** | PRD                     | `./conductor/requirement/prd/<name>.md`                    | **Create here** if missing.           |
 | **Design**      | Tech Stack              | `./conductor/design/tech-stack.md`                         | **Global**: create if missing. Frameworks, languages, versions. Read in full. |
 |                 | UX/UI Spec              | `./conductor/requirement/ux-ui/design-spec.md`             | Create if missing.                    |
@@ -22,4 +24,5 @@ Use this map when explicit links are missing. All new documents MUST be created 
 |                 | Git Flow                | `./conductor/workflow/git-flow.md`                         | Create if missing.                    |
 |                 | Testing                 | `./conductor/workflow/testing/strategy.md`                 | Create if missing.                    |
 | **Resources**   | References/FAQ/Glossary | `./conductor/resource/<type>.md`                           | Create if needed.                     |
-| **Management**  | Track Spec/Plan/Meta    | `./conductor/tracks/<track_id>/`                           | Read/Update based on context.         |
+| **Management**  | Tracks Registry         | `./conductor/tracks.md`                                    | Create if missing.                    |
+|                 | Track Spec/Plan/Meta    | `./conductor/tracks/<track_id>/`                           | Read/Update based on context.         |
