@@ -8,10 +8,10 @@ Conductor coordinates software construction by managing the full lifecycle of de
 
 - **Track-based project management** — Work is organized into tracks (feature / bugfix / chore / docs), each with spec, plan, state, and handoff files
 - **TDD enforcement** — Mandatory test-driven development with an 80 % coverage gate (server-side verification, not agent self-report)
-- **Subagent orchestration** — A main orchestrator dispatches 9 specialized AI agents for isolated, focused work
+- **Subagent orchestration** — A main orchestrator dispatches 10 specialized AI agents for isolated, focused work
 - **State machine CLI** — `track-state` manages all state mutations atomically; `plan.md` stays in sync as the human-readable mirror
 - **Execution firewall** — 6 mandatory pre-action checks (F1–F6) and 11 anti-patterns (V1–V11) prevent workflow violations
-- **Session continuity** — Handoff files, state recovery on resume, and compression priority hints for context management
+- **Session continuity** — Handoff files, state recovery on resume, compression priority hints, and SubagentStop result-block recovery — an agent that crashes before emitting its result block earns a recovery turn instead of being silently lost
 - **Git integration** — Conventional commits, git notes for audit trail, checkpoint commits per phase, SHA tracking on every task
 
 ## Requirements
@@ -36,6 +36,8 @@ All interaction happens through Claude Code slash commands:
 | `/conductor:status [track]` | View project / track progress |
 | `/conductor:review [track]` | Code review of completed work |
 | `/conductor:revert [scope]` | Revert work with state consistency |
+| `/conductor:wiki [topic]` | Query the Conductor docs wiki — status snapshots & topic search |
+| `/conductor:wiki-doctor` | Diagnose wiki health — lint audits & diff vs codebase reality |
 
 ### `track-state` CLI
 
@@ -68,16 +70,17 @@ Commands:
 
 ```
 conductor-plugin/
-├── agents/                 9 specialised agent definitions (.md)
+├── agents/                 10 specialised agent definitions (.md)
 ├── bin/track-state         Shell wrapper for the state CLI
-├── hooks/hooks.json        10 hook event definitions
+├── conductor/design/       Decision records & doc conventions (serial-execution, loop-heartbeat …)
+├── hooks/hooks.json        9 hook event types, 12 matcher entries
 ├── runtime/core-contract.md  System prompt injected into every session
 ├── schemas/                JSON Schema for track-state.json
 ├── scripts/
 │   ├── lib/                Shared library (hook_io, logging, validation …)
 │   ├── track_state/        State machine CLI package
 │   └── *.py                Hook scripts (session start/end, subagent, batch …)
-├── skills/                 6 skill definitions (implement, new-track, setup …)
+├── skills/                 8 slash-command skills (implement, new-track, wiki …)
 └── templates/              Templates copied into target projects
     ├── code-styleguides/   9 language style guides
     ├── dev-commands/       7 language dev-command templates
@@ -95,6 +98,7 @@ conductor-plugin/
 | `spec-planner` | sonnet | Generate spec.md + plan.md |
 | `spec-reviewer` | haiku | Interactive spec/plan review |
 | `doc-syncer` | sonnet | Documentation synchronisation |
+| `doc-linter` | haiku | Docs wiki health-check (broken refs, stale claims, gaps) |
 | `skip-analyst` | haiku | Failed-task skip analysis |
 | `project-analyzer` | sonnet | Brownfield project detection |
 
