@@ -143,102 +143,43 @@ Based on STATUS:
 
 ## 4.0 DIFF
 
-**Inline read-only operation.** Compares wiki documentation against actual codebase state to surface drift — stale references, coverage gaps, and behavioral divergence.
+**Delegates wiki-vs-codebase drift detection to the `conductor:wiki-differ` agent.** The skill validates scope, presents the report, and recommends next steps.
 
-Inspired by the doc-gardening pattern: documentation that cannot be verified against code is documentation that cannot be trusted.
+### 4.1 Validate Scope
 
-### 4.1 Scope
+1. `SUB_ARGS` present → `SCOPE` = `SUB_ARGS` (a wiki page or topic area, e.g. `architecture` checks only architecture-related claims).
+2. `SUB_ARGS` empty → `SCOPE` = full diff (all wiki documents).
 
-If `SUB_ARGS` is provided, restrict the diff to that wiki page or topic area (e.g., `diff conductor/architecture` checks only architecture-related claims). If empty, run a full diff across all wiki documents.
+### 4.2 Dispatch Wiki Differ
 
-### 4.2 Collect Wiki Claims
+1. **Resolve project root:** `PROJECT_DIR` = current working directory.
+2. Dispatch:
 
-1. **Read wiki documents:**
-   - Always read `conductor/overview.md`.
-   - If scoped (`SUB_ARGS` provided), read only the matching wiki file(s) — resolve via Glob: `conductor/**/<SUB_ARGS>*.md`.
-   - If unscoped, read up to **10** most relevant wiki docs (prioritize overview, index, architecture docs).
-
-2. **Extract verifiable claims** from the loaded documents:
-
-   | Claim Type | Extraction Pattern | Example |
-   |-----------|-------------------|---------|
-   | File reference | `path/to/file.ext` mentioned in prose or code blocks | `hooks/pre-commit.sh` |
-   | Module reference | Backtick-wrapped identifiers: `` `module_name` `` | `` `dispatch` `` |
-   | Function/class reference | Backtick-wrapped callables: `` `function_name()` `` | `` `run_dispatch()` `` |
-   | Directory reference | Paths ending in `/` or described as directories | `conductor/tracks/` |
-   | Structural claim | Sentences describing architecture, layering, data flow | "Hooks run in alphabetical order" |
-
-   Collect these into a `CLAIMS` list, each tagged with its source document.
-
-### 4.3 Verify References
-
-For each claim in `CLAIMS`:
-
-1. **File references** — Glob for the exact path. If not found, try fuzzy match (filename only) via broader Glob.
-   - ✅ **valid** — file exists at referenced path
-   - ⚠️ **moved** — file exists elsewhere with same basename
-   - ❌ **stale** — file not found anywhere
-
-2. **Module/directory references** — Glob for the directory or module pattern (e.g., `hooks/*` for `` `hooks` ``).
-   - ✅ **valid** — directory/module exists with files
-   - ⚠️ **sparse** — exists but fewer files than expected (heuristic: < 2 files)
-   - ❌ **stale** — directory/module not found
-
-3. **Function/class references** — Grep the codebase for the identifier.
-   - ✅ **valid** — identifier found in source code
-   - ❌ **stale** — identifier not found (may have been renamed or removed)
-
-4. **Structural claims** — These cannot be verified mechanically. Flag them as **unverifiable** and skip. Do not report unverifiable claims as issues.
-
-### 4.4 Verify Coverage
-
-If unscoped (full diff), also check code-to-wiki coverage:
-
-1. **Identify source directories** — Glob for key code patterns: `bin/*`, `hooks/*`, `agents/*`, `commands/*`, `runtime/*`, `schemas/*`, `monitors/*`, `scripts/*` (or whatever directories exist at project root that are not `conductor/`, `.git/`, or `node_modules/`).
-
-2. **Check wiki mentions** — For each source directory, Grep `conductor/**/*.md` for the directory name.
-   - ✅ **covered** — directory mentioned in at least one wiki doc
-   - ⚠️ **thin** — mentioned but only in passing (fewer than 3 mentions across all docs)
-   - ❌ **uncovered** — not mentioned in any wiki doc
-
-### 4.5 Present Diff Report
-
-Output the report in this format:
+`Agent` tool, `subagent_type: "conductor:wiki-differ"`. Description: `"Wiki diff: <scope>"`.
 
 ```
-# Wiki Diff: Documentation vs Codebase
-Generated: <current date>
-Scope: <full / scoped to: <target>>
-
-## Stale References (<N>)
-<List of stale claims with source doc and what was expected>
--or- "None detected — all referenced files and identifiers exist."
-
-## Moved References (<N>)
-<List of moved files — original path → actual path>
--or- "None detected."
-
-## Coverage
-| Area | Status | Wiki Sources |
-|------|--------|-------------|
-| <dir/module> | ✅ covered / ⚠️ thin / ❌ uncovered | <wiki pages that mention it, or "—"> |
-
-## Structural Claims (<N> unverifiable)
-<Count of architectural/behavioral claims that require manual review>
-<Optional: list the most important ones>
-
-## Summary
-<N> claims verified · <N> stale · <N> moved · <N> uncovered areas · <N> unverifiable
+PROJECT_DIR={PROJECT_DIR}
+SCOPE={scope, or empty for full diff}
 ```
 
-### 4.6 Recommendations
+The agent loads the wiki docs, extracts verifiable claims (file/module/function/directory references; structural claims flagged unverifiable), checks each against the code via Glob/Grep (valid/moved/stale), verifies code→wiki coverage (full diff only), and returns a markdown report followed by a `---WIKI DIFF RESULT---` block.
 
-Based on findings:
+### 4.3 Parse Result
 
-- **If stale references found:** "Run `/conductor:wiki query <topic>` to verify the current state, then update the affected wiki pages."
-- **If moved references found:** "Paths have changed. Update wiki references to match current locations."
-- **If uncovered areas found:** "Code areas exist without wiki coverage. Consider running `/conductor:new-track` to document them."
-- **If all valid:** "Wiki is consistent with codebase. No drift detected."
+Parse the `---WIKI DIFF RESULT---` block:
+
+1. **`STATUS: FAILURE`** → announce the `REASON` → await instructions.
+2. **`STATUS: COMPLETED`** → present the agent's markdown report (above the block) to the user, then proceed to §4.4.
+3. **No block detected** → announce "Wiki-differ completed without structured result. Check the conversation for details."
+
+### 4.4 Recommendations
+
+Branch on the counts from the block:
+
+- `STALE > 0` → "Stale references found. Run `/conductor:wiki query <topic>` to verify the current state, then update the affected wiki pages."
+- `MOVED > 0` → "Paths have moved. Update wiki references to current locations."
+- `UNCOVERED > 0` → "Code areas lack wiki coverage. Consider `/conductor:new-track` to document them."
+- `STALE == 0` and `MOVED == 0` and `UNCOVERED == 0` → "Wiki is consistent with codebase. No drift detected."
 
 ---
 
