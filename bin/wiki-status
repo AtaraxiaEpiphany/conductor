@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Wrapper: delegates to the real wiki-status CLI in scripts/
+PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+exec python3 "${PLUGIN_ROOT}/scripts/wiki-status" "$@"

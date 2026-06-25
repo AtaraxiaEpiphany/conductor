@@ -3,7 +3,7 @@ name: wiki
 description: Queries the Conductor documentation wiki — status snapshots and topic search with citations
 when_to_use: User wants to check wiki health overview or search the wiki for a topic
 argument-hint: "<status|query> [args]"
-allowed-tools: Read, Grep, Glob, Agent, AskUserQuestion, Write, Edit, WebFetch
+allowed-tools: Bash, Read, Grep, Glob, Agent, AskUserQuestion, Write, Edit, WebFetch
 model: sonnet
 ---
 
@@ -87,72 +87,47 @@ Then HALT.
 
 ## 3.0 STATUS
 
-**Inline read-only operation.** No subagent dispatch.
+**Delegates metric gathering to `wiki-status`.** The skill runs the script and renders its JSON.
 
-### 3.1 Gather Metrics
+### 3.1 Run `wiki-status`
 
-Collect the following metrics using Read/Grep/Glob:
+```bash
+wiki-status "<project root>"
+```
 
-1. **Document Count:**
-   ```bash
-   Glob: conductor/**/*.md
-   ```
-   Count results. Exclude `conductor/tracks/` subdirectory from the count (those are track artifacts, not wiki docs).
+Parse the JSON. If `status == "infra_missing"` → halt: "Wiki infrastructure incomplete — missing: `<missing>`. Run `/conductor:setup` to initialize." Otherwise render (§3.2).
 
-2. **Last Log Entry:**
-   - Read `conductor/log.md`.
-   - Parse the pipe-delimited table. Extract the last row's timestamp and summary.
-   - Count total entries (number of data rows).
-
-3. **Overview Freshness:**
-   - Read `conductor/overview.md` first 5 lines.
-   - Extract the `Last updated:` timestamp.
-   - Classify:
-     - ✅ **fresh** — updated within the last 7 days
-     - ⚠️ **stale** — updated 7–30 days ago
-     - ❌ **outdated** — updated >30 days ago or timestamp missing
-
-4. **Quick Orphan Scan:**
-   - Grep all `conductor/**/*.md` for `\[\[([^\]]+)\]\]` to collect all `[[wikilinks]]`.
-   - For each unique link target, append `.md` and check existence via Glob.
-   - Count broken links (targets that don't exist).
-
-5. **Track Summary:**
-   - Read `conductor/tracks.md` if it exists.
-   - Count track status markers: `[x]` completed, `[~]` in-progress, `[ ]` new.
+The JSON carries: `document_count`; `log` (`entries`, `last_timestamp`, `last_summary`); `overview` (`timestamp`, `classification` ∈ fresh/stale/outdated); `orphan_scan` (`broken_count`, `broken_targets[]`, `in_files`); `tracks` (`completed`/`in_progress`/`new`/…).
 
 ### 3.2 Present Status Report
 
-Output the status report in this format:
+Render the metrics:
 
 ```
 # Wiki Status
 Generated: <current date>
 
 ## Infrastructure
-- Overview: <✅ fresh / ⚠️ stale / ❌ outdated> (last updated: <date>)
-- Log: ✅ <N> entries (last: <date> — <summary>)
-- Index: ✅ <N> docs listed
+- Overview: <overview.classification> (last updated: <overview.timestamp>)
+- Log: ✅ <log.entries> entries (last: <log.last_timestamp> — <log.last_summary>)
 
 ## Coverage
-- Wiki documents: <N>
-- Broken [[wikilinks]]: <N> (in <N> files)
+- Wiki documents: <document_count>
+- Broken [[wikilinks]]: <orphan_scan.broken_count> (in <orphan_scan.in_files> files)
+- Targets: <orphan_scan.broken_targets, or "None detected">
 
 ## Tracks
-- Completed: <N> | In Progress: <N> | New: <N>
-
-## Quick Orphan Scan
-- <list of broken [[wikilinks]] and their source files, or "None detected">
+- Completed: <tracks.completed> | In Progress: <tracks.in_progress> | New: <tracks.new>
 ```
 
 ### 3.3 Recommendations
 
-Based on findings, append actionable recommendations:
+Append based on the metrics:
 
-- If overview is stale: "Overview is stale. Run `/conductor:implement` on a track to trigger wiki regeneration."
-- If broken wikilinks found: "Broken cross-references detected. Run `/conductor:wiki-doctor lint` for a full audit."
-- If no log entries: "Log is empty. Wiki may not have been initialized properly."
-- If all healthy: "Wiki is healthy. No action needed."
+- `overview.classification != fresh` → "Overview is <stale|outdated>. Run `/conductor:implement` on a track to trigger wiki regeneration."
+- `orphan_scan.broken_count > 0` → "Broken cross-references detected. Run `/conductor:wiki-doctor lint` for a full audit."
+- `log.entries == 0` → "Log is empty. Wiki may not have been initialized properly."
+- Otherwise → "Wiki is healthy. No action needed."
 
 ---
 
