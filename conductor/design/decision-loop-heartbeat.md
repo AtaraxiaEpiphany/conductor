@@ -15,7 +15,7 @@ deterministic hooks, with an opt-in user-invoked pulse.
 Conductor is **invoke-driven**: you run `/conductor:implement` and the dispatch
 loop pulses until the track completes or you stop. Nothing drives the system on
 a wall clock between invocations — there is no daemon. The opt-in self-review
-loop (the "Ralph Wiggum" pass, §8.2 of the `implement` skill) is the only
+loop (the "Ralph Wiggum" pass, §3.6b of the `implement` skill) is the only
 construct with a pulse, and it is default-off.
 
 The harness-engineering literature notes that adding a triage / gc /
@@ -64,7 +64,7 @@ those who do not.
    emitted in `track-state` output (`quality-snapshot`).
 3. **doc-linter drift** — scan the `conductor/design` corpus for provenance
    (`last_verified`) stale against the code.
-4. *(optional)* **self-review loop** — the §8.2 pass, default off.
+4. *(optional)* **self-review loop** — the §3.6b pass, default off.
 
 ## When a true cron *would* be justified
 

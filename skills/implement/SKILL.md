@@ -186,7 +186,7 @@ Output includes `committed: true/false` and optionally `phase_checkpoint_pending
 
 `[Review]` is a **name marker, not a tag** — it does NOT enter the `[Docs]`/`[Config]`/… exemption logic, so a reviewable task still owes TDD (F2) and coverage (F3).
 
-When opted in (after a SUCCESSFUL `dispatch-finalize`, before §3.7), run ONE bounded review iteration — the loop from §8.2 (review own changes → request a reviewer pass → fix → escalate only on judgment):
+When opted in (after a SUCCESSFUL `dispatch-finalize`, before §3.7), run ONE bounded review iteration (review own changes → request a reviewer pass → fix → escalate only on judgment):
 
 1. **Reviewer pass** — dispatch `conductor:code-reviewer` (read-only) with the task's commit range `<task_sha>~1..<task_sha>`, `TRACK_DIR`, `TRACK_ID`. Prompt: `TRACK_DIR={td} TRACK_ID={id} REVISION_RANGE={sha}~1..{sha}`.
 2. **Decide from the `---REVIEW RESULT---` block** (substring-check the severities):

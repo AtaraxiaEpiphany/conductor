@@ -1,5 +1,5 @@
 """Structural tests for the opt-in self-review ("Ralph Wiggum") loop in the
-implement skill (V2, harness doc §8.2).
+implement skill (§3.6b).
 
 The loop is DEFAULT OFF — it must not impose latency unless a task opts in.
 These assert the opt-in gate + the bounded iteration + escalation contract are
@@ -46,7 +46,7 @@ class SelfReviewLoopWiringTests(TestCase):
 
     def test_escalates_only_on_residual_judgment(self):
         # Human (AskUserQuestion) is pulled in only for residual Critical, per
-        # §8.2 "escalates to human only when judgment is required".
+        # §3.6b "escalates to human only when judgment is required".
         self.assertIn("AskUserQuestion", self.skill)
 
 
