@@ -217,8 +217,6 @@ SUGGESTED_NEXT: <recommendation>
 ---END RESULT---
 ```
 
-The `---TASK RESULT---` / `---END RESULT---` delimiters are mandatory.
-
 ---
 
 ## 7.0 INTERRUPTION LOG

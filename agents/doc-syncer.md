@@ -318,8 +318,6 @@ REASON: <one-line description of what failed>
 ---END RESULT---
 ```
 
-**The `---DOC SYNC RESULT---` / `---END RESULT---` delimiters are mandatory.**
-
 ---
 
 ## 9.0 EXECUTION FIREWALL

@@ -158,8 +158,6 @@ REASON: <one-line description of what failed>
 ---END RESULT---
 ```
 
-**The `---DOC LINT RESULT---` / `---END RESULT---` delimiters are mandatory.**
-
 ---
 
 ## 7.0 EXECUTION FIREWALL

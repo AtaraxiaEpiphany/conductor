@@ -162,8 +162,6 @@ SUMMARY: <single sentence>
 ---END REVIEW RESULT---
 ```
 
-`---REVIEW RESULT---` / `---END REVIEW RESULT---` delimiters are mandatory.
-
 ### 4.3 Failure Format
 
 If a tool call fails and you cannot recover:

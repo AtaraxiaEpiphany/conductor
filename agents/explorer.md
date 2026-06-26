@@ -155,5 +155,3 @@ SUMMARY: <one-line>
 SUGGESTED_NEXT: <recommendation>
 ---END RESULT---
 ```
-
-`---TASK RESULT---` / `---END RESULT---` delimiters are mandatory.

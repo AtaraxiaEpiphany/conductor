@@ -149,5 +149,3 @@ TESTS_PASSED: <true|false>
 FAILURE_REASON: <one-line description of what failed>
 ---END RESULT---
 ```
-
-**The `---CHECKPOINT RESULT---` / `---END RESULT---` delimiters are mandatory.**
