@@ -56,8 +56,9 @@ The durable architecture you are paid to investigate is *already documented* in 
    | services / lib / src (structural) | `conductor/design/architecture/system-architecture.md` |
    | components / pages / views | `conductor/requirement/ux-ui/design-spec.md` |
 
-3. **Record provenance** — collect every corpus doc you opened into a `consulted_docs` list (path + one-line relevance). This list becomes the `### Corpus Consulted` section of your handoff (§4.2), so the downstream task-executor and doc-syncer know *which* documented knowledge your findings extend (and can flag where your findings contradict the corpus).
-4. **Greenfield / no match** — if the corpus has no matching scoped doc (greenfield project, or a genuinely novel area), record `consulted_docs: []` and note "no matching corpus doc — first documentation of this area" (this is a graduation signal: your findings will *seed* the corpus). Never skip the consult step silently.
+3. **Saved wiki queries** — Grep `conductor/queries/*.md` for this task's keywords (case-insensitive). For up to 3 overlapping queries, read each: treat its `## Sources` as additional scoped docs to open (extend step 2's routing) and mine its `## Answer` for gotchas/constraints bearing on this task. A saved query is a prior synthesized answer — **verify its claims against code**, don't inherit them blindly. Add every query you open to `consulted_docs` in step 4. If the folder is empty or nothing overlaps, skip silently.
+4. **Record provenance** — collect every corpus doc you opened into a `consulted_docs` list (path + one-line relevance) — **including any saved queries from step 3**. This list becomes the `### Corpus Consulted` section of your handoff (§4.2), so the downstream task-executor and doc-syncer know *which* documented knowledge your findings extend (and can flag where your findings contradict the corpus).
+5. **Greenfield / no match** — if the corpus has no matching scoped doc (greenfield project, or a genuinely novel area), record `consulted_docs: []` and note "no matching corpus doc — first documentation of this area" (this is a graduation signal: your findings will *seed* the corpus). Never skip the consult step silently.
 
 ---
 

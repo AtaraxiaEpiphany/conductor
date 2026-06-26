@@ -52,7 +52,8 @@ The orchestrator provides file paths only — you read and synthesize all conten
    - Use Glob to search for relevant file patterns.
    - Use Grep to search for keywords from the description.
    - Read and synthesize discovered docs.
-4. **Related Documents** — If `RELATED_DOCS` contains paths, read each file. These are scoped docs discovered by the orchestrator.
+4. **Saved Wiki Queries** — Scan `conductor/queries/*.md` for any saved query whose `topic:` (frontmatter) or body overlaps `TRACK_DESCRIPTION` (Grep task keywords, case-insensitive). For up to 3 overlapping queries, read each and treat its `## Sources` list as additional scoped-doc candidates — fold any source path not already discovered into the context you synthesize in §3.2. A saved query is a *routing hint + prior answer*, not ground truth: weigh the scoped docs it points to over its synthesized prose, and honor `purpose.md` Out-of-Scope (a query about an out-of-scope topic reinforces the exclusion, it doesn't re-open it). If `conductor/queries/` is empty or no query overlaps, skip silently.
+5. **Related Documents** — If `RELATED_DOCS` contains paths, read each file. These are scoped docs discovered by the orchestrator.
 
 ### 3.2 Understand the Requirements (includes Out-of-Scope Inference)
 
