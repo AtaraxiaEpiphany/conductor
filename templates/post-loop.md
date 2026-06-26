@@ -86,6 +86,25 @@ If STATUS: FAILURE (agent error) → announce and continue (non-blocking).
 
 ---
 
+## 7.5 COMPREHENSION DIGEST
+
+Before archive, surface a terse digest so the human reads what the loop shipped. Compose it from data **already in context** — the SHA range (§7.1), the review findings (§7.3), and the finalize outcome (§5.5). **No new dispatch, no agent call.**
+
+Present ≤ 8 lines:
+
+- **What shipped** — `<track goal, one line>`.
+- **Outcome** — `<N> done · <N> skipped · <N> deferred`.
+- **Shape of the change** — primary files/areas touched + the one-line "why" from the review.
+- **🔍 Read this first** — the 1–3 highest-risk diffs the review flagged, or "none flagged".
+
+Then the nudge, before §8's archive prompt:
+
+> Before archiving, read the "Read this first" items. This track now compounds — its decisions graduate into the wiki and shape the next track. Skipping the read is how comprehension debt accrues.
+
+Informational and **non-blocking** — proceed to §8 regardless. Its only job is to make "the loop shipped code you didn't write" visible enough to read.
+
+---
+
 ## 8.0 CLEANUP & ARCHIVE
 
 Present options via `AskUserQuestion`:
