@@ -82,6 +82,8 @@ Carry the harvested queue into §4 alongside the spec analysis.
 
 Resolve all paths via `conductor/index.md`. Doc-syncer reads **all** documents (Global + Scoped) because its responsibility is to detect and propagate any spec-vs-doc divergence.
 
+**Read the procedure reference:** `conductor/design/doc-sync-procedure.md` — the per-document analysis table (§A), the proposal template + variants (§A), and the Phase 2 synthesis specs (§B overview, §C purpose). §4/§5/§7 below point into it; this is the canonical reference for what each document owes an update and how overview/purpose are (re)generated.
+
 **Global Docs:**
 2. **Product Definition** — `conductor/product/product.md`
 3. **Product Guidelines** — `conductor/product/product-guidelines.md`
@@ -123,65 +125,9 @@ Hold this analysis in working memory; it drives the per-document pass below. If 
 
 Using the holistic ANALYSIS, compare the source against each project document and group related changes for a single confirmation prompt.
 
-### 4.1 Product Definition Analysis
+### 4.1–4.8 Per-Document Analysis (criteria in the procedure reference)
 
-- Does the completed feature significantly change the product description?
-- Are there new user-facing features or capabilities to document?
-- Are there removed or deprecated features?
-
-**Decision:** Needs update → proceed to **Section 5.1**.
-
-### 4.2 Tech Stack Analysis
-
-- Did the track introduce new technologies, frameworks, or libraries?
-- Were any technologies removed or replaced?
-- Are there version changes that need documentation?
-
-**Decision:** Needs update → proceed to **Section 5.2**.
-
-### 4.3 Product Guidelines Analysis
-
-- ONLY analyze if the track explicitly describes branding, voice, or strategy changes.
-- If the track is a technical feature with no UX/brand impact → SKIP entirely.
-
-**Decision:** Needs update → proceed to **Section 5.3**. Apply with **extreme caution**.
-
-### 4.4 System Architecture Analysis
-
-- Did the track add, remove, or modify system components, services, or data flows?
-- Are there new integrations, external services, or infrastructure changes?
-- Did component boundaries or responsibilities change?
-
-**Decision:** Needs update → proceed to **Section 5.4**.
-
-### 4.5 Database Schema Analysis
-
-- Did the track create, modify, or drop tables, columns, indexes, or constraints?
-- Are there new migrations or schema changes that need documentation?
-
-**Decision:** Needs update → proceed to **Section 5.5**.
-
-### 4.6 API Specifications Analysis
-
-- Did the track add, modify, or remove API endpoints?
-- Are there changes to request/response schemas, authentication, or error codes?
-- If changes exist, also check individual endpoint spec files in `conductor/design/api-specs/`.
-
-**Decision:** Needs update → proceed to **Section 5.6**.
-
-### 4.7 UX/UI Design Spec Analysis
-
-- ONLY analyze if the track changes user interface components, layouts, or interaction flows.
-- Are there new screens, components, or navigation changes?
-
-**Decision:** Needs update → proceed to **Section 5.7**.
-
-### 4.8 Glossary Analysis
-
-- Did the track introduce new domain terms, acronyms, or concepts that need defining?
-- Are there terms used in the spec that are not yet in the glossary?
-
-**Decision:** Needs update → proceed to **Section 5.8**.
+For each project document, apply its **analysis criteria** from `conductor/design/doc-sync-procedure.md` §A (Per-Document table — Analysis-criteria column). The source owes an update when any criterion matches; skip a document whose guard says SKIP, and skip any document that does not exist (per §3.2). Carry each flagged document (with its Proposal variant + Doc name from the §A table) into §5.
 
 ### 4.9 Cross-Reference Analysis
 
@@ -211,39 +157,7 @@ For each item in the harvested queue (§3.1b), determine its **target scoped doc
 
 For each document flagged by the Step-1 ANALYSIS (§4.0a/4.0b) as needing change, present a proposal to the user via `AskUserQuestion`. Batch related small changes into a single prompt where possible. Proposals are grounded in the holistic analysis, not re-derived per doc in isolation.
 
-**Proposal template** — §5.1–5.8 all use this prompt; only the doc name and change list vary:
-
-> "The completed track '{TRACK_DESCRIPTION}' affects {DocName}. Proposed changes:\n\n{specific additions/modifications}\n\nApply these updates?"
-
-Options: "Yes, apply" / "Skip"
-
-**Variants:**
-- **Product Guidelines (§5.3)** — prefix the prompt with `⚠️ ` and append " (Use extreme caution)".
-- **Glossary (§5.8)** — replace the "Proposed changes" line with "introduces new terms. Proposed additions:\n\n{term definitions}".
-
-### 5.1 Product Definition Update
-Base proposal template (§5.0). Doc name: **Product Definition**.
-
-### 5.2 Tech Stack Update
-Base proposal template (§5.0). Doc name: **Tech Stack**.
-
-### 5.3 Product Guidelines Update
-**Caution variant** (§5.0): prefix `⚠️`, append "(Use extreme caution)". Doc name: **Product Guidelines**.
-
-### 5.4 System Architecture Update
-Base proposal template (§5.0). Doc name: **System Architecture**.
-
-### 5.5 Database Schema Update
-Base proposal template (§5.0). Doc name: **Database Schema**.
-
-### 5.6 API Specifications Update
-Base proposal template (§5.0). Doc name: **API Specifications**.
-
-### 5.7 UX/UI Design Spec Update
-Base proposal template (§5.0). Doc name: **UX/UI Design Spec**.
-
-### 5.8 Glossary Update
-**Terms variant** (§5.0): "introduces new terms. Proposed additions: {term definitions}". Doc name: **Glossary**.
+**Proposal template + variants** live in `conductor/design/doc-sync-procedure.md` §A (Proposal template + Per-Document table → Proposal column). Render each flagged document's proposal using its row's variant (`base` / `caution` / `terms`) and Doc name. §5.1–5.8 are now that table; the only prompts retained inline are the two non-table ones below.
 
 ### 5.9 Cross-Reference Proposals
 
@@ -315,28 +229,11 @@ Runs **unconditionally** after Phase 1 — even if no document updates were conf
 
 ### 7.1 Regenerate `conductor/overview.md`
 
-Rewrite `conductor/overview.md` **in its entirety** (not append). Synthesize from all currently loaded documents:
-
-1. **Summary:** 2–4 sentences synthesizing the project from `product.md` + track history.
-2. **Architecture:** High-level system description from `system-architecture.md`. Component names become `[[wikilinks]]`.
-3. **Knowledge Base:** Table of key concepts from all docs. Format: `| Topic | Summary | Source |` where Source is a `[[wikilink]]`.
-4. **Active Decisions:** Architecture/design decisions accumulated from track specs and design docs.
-5. **Track History Summary:** Compact summary of completed tracks from `tracks.md` + `log.md`.
-6. **Cross-Reference Index:** Alphabetical list of all `conductor/**/*.md` files with their `[[wikilink]]` paths.
-
-Use the Write tool to replace the entire file.
+Regenerate per `conductor/design/doc-sync-procedure.md` §B (Overview Regeneration Spec) — rewrite `overview.md` **in its entirety** (Write, not append) with the six sections (Summary, Architecture, Knowledge Base, Active Decisions, Track History Summary, Cross-Reference Index) synthesized from the currently loaded documents.
 
 ### 7.1b Update `conductor/purpose.md` (partial — preserve user-authored sections)
 
-`purpose.md` is the wiki's directional intent — **co-evolved**, not auto-owned like `overview.md`. Update it with Edit (targeted), **never** a wholesale Write. The Goals and In/Out-of-Scope sections are **user-authored**; touch them only to append a settled exclusion the user confirmed. LLM-maintained sections:
-
-1. **Evolving Thesis** — refresh the synthesized direction from this track's spec + the harvested `decisions[]` (§3.1b). Surface — do not hide — any contradiction this track introduced with the prior thesis.
-2. **Active Decisions** — append each harvested `## Technical Decision:` outcome as one bullet: `**{title}**: {chosen} — {reasoning} → [[source doc]]`. Merge (dedupe by title); never re-add a decision already present.
-3. **Key Questions** — if this track resolved an open question, strike it (`~~question~~`) and move the resolution into Thesis; if it surfaced a new open question, add it.
-
-If `purpose.md` does not exist, create it from the `${CLAUDE_PLUGIN_ROOT}/templates/wiki-purpose.md` template, seed Goals from `conductor/product/product.md`, then apply the updates above.
-
-If this run had **no** decisions, no spec-level direction change, and resolved/raised no key questions → leave `purpose.md` unchanged (a no-op Phase 2 is correct; do not force a touch).
+Update per `conductor/design/doc-sync-procedure.md` §C (Purpose Update Spec) — `purpose.md` is **co-evolved**, updated with Edit (targeted, **never** a wholesale Write); the Goals and In/Out-of-Scope sections are **user-authored** (touch only to append a user-confirmed exclusion). Apply the LLM-maintained sections (Evolving Thesis, Active Decisions, Key Questions) per §C, sourced from this track's spec + the harvested `decisions[]` (§3.1b). If `purpose.md` is missing, create it from the template per §C. If this run had no decisions, no direction shift, and resolved/raised no key questions → leave it unchanged (a no-op Phase 2 is correct).
 
 ### 7.2 Append to `conductor/log.md`
 
