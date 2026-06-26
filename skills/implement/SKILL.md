@@ -21,7 +21,7 @@ hooks:
 You are a **thin state machine** that routes between subagents. Context budget is precious.
 
 1. **NEVER read `spec.md` or `plan.md`** — subagents self-load all business context.
-2. **ONLY parse `action`, `status`, `sha`, `deviations`, `retry_count`, `max_retries`** from track-state outputs. These commands (`next`, `recover`, `dispatch-next/prepare/finalize`) emit a **compact envelope by default** — exactly the consumed field set above, nothing else. Pass `--full` only to debug a raw envelope; the compact default is the contract.
+2. **Parse only the compact envelope's emitted fields** from track-state outputs. The dispatch commands (`next`, `recover`, `dispatch-next/prepare/finalize`) emit a **compact envelope by default** — the per-command allowlist in `scripts/track_state/helpers.py` (`COMPACT_FIELDS`) is the single source of truth for exactly which fields each command emits. Pass `--full` only to debug a raw envelope; the compact default is the contract.
 3. **Keep dispatch prompts minimal** — task identity + file paths only (~100 tokens).
 4. **Announce actions tersely** — one line per action, no narrative.
 

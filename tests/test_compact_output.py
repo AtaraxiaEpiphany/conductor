@@ -142,10 +142,13 @@ class TestCompactDefault(TestCase):
         self.assertIn("retry_count", result)
         self.assertIn("max_retries", result)
         # The three biggest wins: the redundant next echo, sync_count, and the
-        # free-text last_failure_summary.
+        # free-text last_failure_summary. `tags` is also dropped: it is consumed
+        # only server-side by _classify_task and never emitted onward to the
+        # orchestrator (the executor prompt carries no TAGS= field).
         self.assertNotIn("next", result)
         self.assertNotIn("sync_count", result)
         self.assertNotIn("last_failure_summary", result)
+        self.assertNotIn("tags", result)
 
 
 class TestFullRestoresEnvelope(TestCase):
@@ -198,6 +201,30 @@ class TestCliFullFlag(TestCase):
         from scripts.track_state.cli import _BOOL_FLAGS
         self.assertIn("--full", _BOOL_FLAGS)
         self.assertNotIn("--compact", _BOOL_FLAGS)
+
+
+class TestErrorEnvelopeBypassesAllowlist(TestCase):
+    """Error envelopes must survive compaction — diagnostics never strip to {}.
+
+    The orchestrator HALTs on `error`/`status:"error"`, so stripping such an
+    envelope to an empty object would silently swallow the diagnostic. Both
+    error shapes bypass the compact allowlist and emit the full object.
+    """
+
+    def test_error_key_bypasses_compact(self):
+        from scripts.track_state.helpers import emit
+        result = _out_captured(
+            emit, {"error": "boom", "phase": 1, "extra": "x"}, "dispatch-prepare")
+        self.assertEqual(result["error"], "boom")
+        self.assertEqual(result["extra"], "x")
+
+    def test_status_error_bypasses_compact(self):
+        from scripts.track_state.helpers import emit
+        result = _out_captured(
+            emit, {"status": "error", "message": "nope", "detail": "d"}, "next")
+        self.assertEqual(result["status"], "error")
+        self.assertIn("message", result)
+        self.assertIn("detail", result)
 
 
 if __name__ == "__main__":

@@ -52,7 +52,7 @@ COMPACT_FIELDS = {
                 "execution_mode", "fixes_applied"),
     "dispatch-next": ("action", "phase", "task", "subtask", "name",
                       "execution_mode"),
-    "dispatch-prepare": ("action", "phase", "task", "subtask", "name", "tags",
+    "dispatch-prepare": ("action", "phase", "task", "subtask", "name",
                          "sha", "commit_msg", "is_resume", "retry_count",
                          "max_retries", "execution_mode"),
     "dispatch-finalize": ("status", "sha", "deviations", "committed",

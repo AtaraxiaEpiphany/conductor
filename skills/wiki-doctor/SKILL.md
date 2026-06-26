@@ -25,14 +25,7 @@ CRITICAL: You must validate the success of every tool call. If any tool call fai
 
 ## 1.1 SETUP CHECK
 
-**PROTOCOL: Verify that the Conductor wiki infrastructure exists.**
-
-1. **Locate Wiki Files:** Resolve via project CLAUDE.md TOC or default paths:
-   - `conductor/overview.md` — Wiki overview (regenerated after each track)
-   - `conductor/log.md` — Append-only chronological record
-   - `conductor/index.md` — Central navigation hub
-2. **Verify Existence:** Check each file exists using Glob.
-3. **Handle Failure:** If `conductor/overview.md` or `conductor/log.md` is missing → halt: "Wiki infrastructure incomplete — missing: `<files>`. Run `/conductor:setup` to initialize."
+Fetch and execute `conductor/design/wiki-setup-check.md`. (`wiki-doctor` does not require `purpose.md`.)
 
 ---
 
@@ -185,26 +178,4 @@ Branch on the counts from the block:
 
 ## 5.0 ERROR HANDLING
 
-### 5.1 Infrastructure Missing
-
-If `conductor/overview.md` or `conductor/log.md` does not exist:
-
-→ HALT: "Wiki infrastructure missing: `<files>`. Run `/conductor:setup` to initialize."
-
-### 5.2 Tool Call Failure
-
-If any Read/Grep/Glob/Agent/Write/Edit tool call fails:
-
-→ STOP → announce: "Wiki tool failure: `<tool>` failed with: `<error>`." → await instructions.
-
-### 5.3 Agent Failure
-
-If doc-linter agent returns `STATUS: FAILURE`:
-
-→ Announce: "Doc-linter failed: `<reason>`." → await instructions.
-
-### 5.4 No Result Block
-
-If doc-linter completes but no `---DOC LINT RESULT---` block is detected:
-
-→ Announce: "Doc-linter completed without structured result. Check the conversation for details."
+Fetch and execute `conductor/design/agent-error-handling.md`. Substitute the relevant agent + result-block delimiter for the current path: lint (§3) → `conductor:doc-linter` / `---DOC LINT RESULT---`; diff (§4) → `conductor:wiki-differ` / `---WIKI DIFF RESULT---`.

@@ -41,18 +41,7 @@ The wiki is navigable through its index and overview. Read them first to route t
    - `conductor/overview.md` — high-level context. Its **Knowledge Base** table maps concepts to source `[[wikilinks]]`; any topic hit there is a highest-confidence seed. This read also satisfies the high-level-context requirement — do not re-read it in §5.
    - `conductor/index.md` — the **Scoped Docs** table is a routing index with an explicit Match Strategy per category.
 
-2. **Route the topic** through the Scoped Docs Match Strategy to identify the most relevant scoped doc(s):
-
-   | Topic signal | Route to |
-   |--------------|----------|
-   | Endpoint path, request/response, API verb | `conductor/design/api-specs/index.md` → matching endpoint file |
-   | Table, column, or entity name | `conductor/design/database/schema.md` |
-   | Component, service, or data flow | `conductor/design/architecture/system-architecture.md` |
-   | User-facing feature, screen, UX flow | `conductor/requirement/` (PRD or UX-UI spec) |
-   | Domain term or acronym | `conductor/resource/glossary.md` |
-   | Technology, framework, or version | `conductor/design/tech-stack.md` |
-
-   Collect routed path(s) into a `ROUTED` list (read first in §5).
+2. **Route the topic** through the Scoped Docs Match Strategy (routing: `conductor/design/doc-routing.md`) to identify the most relevant scoped doc(s). Collect routed path(s) into a `ROUTED` list (read first in §5).
 
 3. **Nothing routes?** Leave `ROUTED` empty — §4 grep + graph expansion carry the query.
 

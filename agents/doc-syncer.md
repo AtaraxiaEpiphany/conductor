@@ -85,15 +85,8 @@ Resolve all paths via `conductor/index.md`. Doc-syncer reads **all** documents (
 **Global Docs:**
 2. **Product Definition** — `conductor/product/product.md`
 3. **Product Guidelines** — `conductor/product/product-guidelines.md`
-4. **Tech Stack** — `conductor/design/tech-stack.md`
-5. **Glossary** — `conductor/resource/glossary.md`
 
-**Scoped Docs:**
-6. **System Architecture** — `conductor/design/architecture/system-architecture.md`
-7. **Database Schema** — `conductor/design/database/schema.md`
-8. **API Specs Index** — `conductor/design/api-specs/index.md`
-   - If API-related changes exist, also read individual endpoint specs referenced in the index.
-9. **UX/UI Design Spec** — `conductor/requirement/ux-ui/design-spec.md`
+**Scoped Docs:** read **every** row of `conductor/design/doc-routing.md` (doc-syncer reads all scoped docs — not just the matching one — to detect corpus-wide divergence): architecture, database (`index.md`, with `schema.md` for per-table detail), api-specs index (also read individual endpoint specs referenced there if API-related changes exist), ux-ui design spec, tech-stack, glossary.
 
 If any document does not exist, note it and skip the corresponding analysis.
 

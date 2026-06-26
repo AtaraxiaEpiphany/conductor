@@ -47,14 +47,7 @@ CRITICAL: Validate every tool call. On failure → halt → report FAILURE.
 The durable architecture you are paid to investigate is *already documented* in the wiki corpus (`conductor/design/`, `conductor/resource/`). Re-deriving it from code wastes your budget and re-introduces stale assumptions. Consult the corpus first, then explore code to **verify and extend** — not rediscover. (This is the compounding loop paying back this task's own future graduation contributions.)
 
 1. **High-level map** — Read `conductor/overview.md` (the synthesized architecture; component names become your investigation seeds) and `conductor/purpose.md` (direction + Out-of-Scope boundaries — do not investigate areas already settled out of scope).
-2. **Routing index** — Read `conductor/index.md` → the **Scoped Docs** table. Open the scoped doc whose **Match Strategy** matches this task's scope (same routing the downstream task-executor uses):
-
-   | Investigation scope | Read scoped doc |
-   |---|---|
-   | routes / controllers / api | `conductor/design/api-specs/index.md` → matching endpoint docs |
-   | models / migrations / schema | `conductor/design/database/index.md` |
-   | services / lib / src (structural) | `conductor/design/architecture/system-architecture.md` |
-   | components / pages / views | `conductor/requirement/ux-ui/design-spec.md` |
+2. **Routing index** — Read `conductor/index.md` → the **Scoped Docs** table. Open the scoped doc whose **Match Strategy** matches this task's scope (routing: `conductor/design/doc-routing.md` — same routing the downstream task-executor uses).
 
 3. **Saved wiki queries** — Grep `conductor/queries/*.md` for this task's keywords (case-insensitive). For up to 3 overlapping queries, read each: treat its `## Sources` as additional scoped docs to open (extend step 2's routing) and mine its `## Answer` for gotchas/constraints bearing on this task. A saved query is a prior synthesized answer — **verify its claims against code**, don't inherit them blindly. Add every query you open to `consulted_docs` in step 4. If the folder is empty or nothing overlaps, skip silently.
 4. **Record provenance** — collect every corpus doc you opened into a `consulted_docs` list (path + one-line relevance) — **including any saved queries from step 3**. This list becomes the `### Corpus Consulted` section of your handoff (§4.2), so the downstream task-executor and doc-syncer know *which* documented knowledge your findings extend (and can flag where your findings contradict the corpus).

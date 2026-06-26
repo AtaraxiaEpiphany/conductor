@@ -59,16 +59,7 @@ Read the returned `content` and extract the `## Exploration Notes` section (Summ
 
 **(b) Scoped design docs from the corpus:**
 
-Read `conductor/index.md` → the **Scoped Docs** table. For each entry whose **Match Strategy** matches this task's scope (areas/components named in the task description or spec ACs), open the matching doc. Typical routing:
-
-| Task scope / area | Read scoped doc |
-|---|---|
-| routes / controllers / api | `conductor/design/api-specs/index.md` (matching endpoint docs) |
-| models / migrations / schema | `conductor/design/database/index.md` |
-| services / lib / src (structural) | `conductor/design/architecture/system-architecture.md` |
-| components / pages / views | `conductor/requirement/ux-ui/design-spec.md` |
-
-Skip any scoped doc that does not exist or whose Match Strategy doesn't apply. Read only matching docs — never the whole corpus. (Retrieval is scoped on purpose: the durable architecture lives in the corpus and compounds across tracks via `doc-syncer`.)
+Read `conductor/index.md` → the **Scoped Docs** table. For each entry whose **Match Strategy** matches this task's scope (areas/components named in the task description or spec ACs), open the matching doc. Routing: `conductor/design/doc-routing.md`. Read only matching docs — never the whole corpus.
 
 ### Layer 1: Task Identity (READ FIRST)
 

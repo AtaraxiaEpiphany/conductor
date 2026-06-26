@@ -76,16 +76,7 @@ Read these files unconditionally:
 
 ### 3.3 Load Scoped Context
 
-Match changed files to scoped design docs. Only read documents relevant to the diff.
-
-| Changed File Pattern | Read Scoped Doc | Match By |
-|----------------------|-----------------|----------|
-| `routes/**`, `controllers/**`, `api/**` | `conductor/design/api-specs/index.md` → matching endpoint docs | Endpoint path or handler name |
-| `models/**`, `migrations/**`, `schema/**` | `conductor/design/database/index.md` | Table name from file path |
-| `services/**`, `lib/**`, `src/**` (structural) | `conductor/design/architecture/system-architecture.md` | Component name from directory structure |
-| `components/**`, `pages/**`, `views/**` | `conductor/requirement/ux-ui/design-spec.md` | Page or component name |
-
-Skip any scoped doc that does not exist or has no matching changes.
+Match changed files to scoped design docs (routing: `conductor/design/doc-routing.md`). Only read documents relevant to the diff; skip any scoped doc that does not exist or has no matching changes.
 
 ### 3.4 Verify Checklist
 
