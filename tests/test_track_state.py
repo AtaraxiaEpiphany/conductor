@@ -7,6 +7,7 @@ import sys
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from unittest import TestCase, main
+from unittest.mock import patch
 
 from scripts.track_state.core import load, save
 from scripts.track_state.validate import (
@@ -16,7 +17,7 @@ from scripts.track_state.validate import (
 from scripts.track_state.dispatch import cmd_recover, cmd_dispatch_next
 from scripts.track_state.quality import cmd_init, cmd_init_from_plan, cmd_set_mode, _validate_plan_structure
 from scripts.track_state.plan_parse import parse_plan, to_plan_structure
-from scripts.track_state.misc import cmd_shas
+from scripts.track_state.misc import cmd_shas, cmd_derive_name
 
 
 def _out_captured(fn, *args, **kwargs):
@@ -425,7 +426,7 @@ class TestInitValidation(TestCase):
 
     def test_init_rejects_bad_structure(self):
         d = tempfile.mkdtemp()
-        result, _ = _out_captured(cmd_init, d, '{"phases": []}', 't1', 'feature', 'desc')
+        result, _ = _out_captured(cmd_init, d, '{"phases": []}', 't1_20260626', 'feature', 'desc')
         self.assertFalse(result["ok"])
         self.assertTrue(len(result["errors"]) > 0)
         shutil.rmtree(d)
@@ -437,7 +438,7 @@ class TestInitValidation(TestCase):
         structure = json.dumps({"phases": [
             {"name": "Build", "tasks": [{"name": "Task A"}, {"name": "Task B"}]},
         ]})
-        result, _ = _out_captured(cmd_init, d, structure, 't1', 'feature', 'desc')
+        result, _ = _out_captured(cmd_init, d, structure, 't1_20260626', 'feature', 'desc')
         self.assertTrue(result["ok"])
         self.assertIn("warnings", result)
         self.assertTrue(any("3 tasks" in w for w in result["warnings"]))
@@ -450,10 +451,66 @@ class TestInitValidation(TestCase):
         structure = json.dumps({"phases": [
             {"name": "Build", "tasks": [{"name": "Task A"}, {"name": "Task B"}]},
         ]})
-        result, _ = _out_captured(cmd_init, d, structure, 't1', 'feature', 'desc')
+        result, _ = _out_captured(cmd_init, d, structure, 't1_20260626', 'feature', 'desc')
         self.assertTrue(result["ok"])
         self.assertNotIn("warnings", result)
         shutil.rmtree(d)
+
+    def test_init_rejects_undated_id(self):
+        # shortname_YYYYMMDD guard: a bare id fails BEFORE mkdir (track names
+        # are unrecoverable post-commit) with a derive-name hint.
+        d = tempfile.mkdtemp()
+        sub = str(Path(d, "auth_gateway"))
+        good = json.dumps({"phases": [{"name": "P1", "tasks": [{"name": "T1"}]}]})
+        result, _ = _out_captured(cmd_init, sub, good, "auth_gateway", "feature", "desc")
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("shortname_YYYYMMDD" in e for e in result["errors"]))
+        self.assertFalse(Path(sub).exists(), "no directory should be created on a bad id")
+        shutil.rmtree(d)
+
+    def test_init_accepts_dated_id(self):
+        d = tempfile.mkdtemp()
+        good = json.dumps({"phases": [{"name": "P1", "tasks": [{"name": "T1"}]}]})
+        result, _ = _out_captured(cmd_init, d, good, "auth_gateway_20260626", "feature", "desc")
+        self.assertTrue(result["ok"])
+        shutil.rmtree(d)
+
+
+class TestDeriveName(TestCase):
+    """cmd_derive_name: deterministic shortname_YYYYMMDD resolution (stateless)."""
+
+    _fixed_now = datetime(2026, 6, 26, 12, 0, 0)
+
+    @patch("scripts.track_state.misc.datetime")
+    def _derive(self, raw, mock_dt):
+        mock_dt.now.return_value = self._fixed_now
+        return _out_captured(cmd_derive_name, raw)[0]
+
+    def test_lowercases_and_underscores(self):
+        r = self._derive("Auth-Gateway")
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["track_id"], "auth_gateway_20260626")
+        self.assertEqual(r["track_dir"], "conductor/tracks/auth_gateway_20260626")
+        self.assertEqual(r["shortname"], "auth_gateway")
+        self.assertEqual(r["date"], "20260626")
+
+    def test_collapses_repeats_and_trims(self):
+        r = self._derive("  Auth__Gateway 2!! ")
+        self.assertEqual(r["track_id"], "auth_gateway_2_20260626")
+
+    def test_strips_existing_date(self):
+        # A pre-existing date is re-stamped to today, never doubled.
+        r = self._derive("auth_gateway_20250101")
+        self.assertEqual(r["track_id"], "auth_gateway_20260626")
+
+    def test_same_day_idempotent(self):
+        self.assertEqual(self._derive("auth-gateway")["track_id"],
+                         self._derive("auth_gateway")["track_id"])
+
+    def test_empty_falls_back_to_track(self):
+        r = self._derive("---")
+        self.assertEqual(r["track_id"], "track_20260626")
+        self.assertEqual(r["shortname"], "track")
 
 
 class TestLegacy0BasedMigration(TestCase):
@@ -819,38 +876,38 @@ class TestExecutionMode(TestCase):
 
     def test_init_accepts_continuous(self):
         d = self._plan_dir()
-        result, _ = _out_captured(cmd_init_from_plan, d, "demo", "feature", "d", "continuous")
+        result, _ = _out_captured(cmd_init_from_plan, d, "demo_20260101", "feature", "d", "continuous")
         self.assertTrue(result["ok"])
         self.assertEqual(load(d)["execution_mode"], "continuous")
 
     def test_init_accepts_interactive(self):
         d = self._plan_dir()
-        result, _ = _out_captured(cmd_init_from_plan, d, "demo", "feature", "d", "interactive")
+        result, _ = _out_captured(cmd_init_from_plan, d, "demo_20260101", "feature", "d", "interactive")
         self.assertTrue(result["ok"])
         self.assertEqual(load(d)["execution_mode"], "interactive")
 
     def test_init_rejects_autonomous(self):
         # 'autonomous' was advertised by stale `init` help but is not a valid enum.
         d = self._plan_dir()
-        result, _ = _out_captured(cmd_init_from_plan, d, "demo", "feature", "d", "autonomous")
+        result, _ = _out_captured(cmd_init_from_plan, d, "demo_20260101", "feature", "d", "autonomous")
         self.assertFalse(result["ok"])
         self.assertFalse((Path(d, "track-state.json")).exists())
         self.assertTrue(any("execution_mode" in e for e in result["errors"]))
 
     def test_init_rejects_typo(self):
         d = self._plan_dir()
-        result, _ = _out_captured(cmd_init_from_plan, d, "demo", "feature", "d", "continuouos")
+        result, _ = _out_captured(cmd_init_from_plan, d, "demo_20260101", "feature", "d", "continuouos")
         self.assertFalse(result["ok"])
 
     def test_init_none_leaves_unset(self):
         # None means "leave execution_mode unset" (back-compat) — not an error.
         d = self._plan_dir()
-        result, _ = _out_captured(cmd_init_from_plan, d, "demo", "feature", "d", None)
+        result, _ = _out_captured(cmd_init_from_plan, d, "demo_20260101", "feature", "d", None)
         self.assertTrue(result["ok"])
 
     def test_set_mode_flips_interactive_to_continuous(self):
         d = self._plan_dir()
-        _out_captured(cmd_init_from_plan, d, "demo", "feature", "d", "interactive")
+        _out_captured(cmd_init_from_plan, d, "demo_20260101", "feature", "d", "interactive")
         result, _ = _out_captured(cmd_set_mode, d, "continuous")
         self.assertTrue(result["ok"])
         self.assertEqual(result["previous"], "interactive")
@@ -859,7 +916,7 @@ class TestExecutionMode(TestCase):
 
     def test_set_mode_rejects_missing(self):
         d = self._plan_dir()
-        _out_captured(cmd_init_from_plan, d, "demo", "feature", "d", "interactive")
+        _out_captured(cmd_init_from_plan, d, "demo_20260101", "feature", "d", "interactive")
         result, _ = _out_captured(cmd_set_mode, d, None)
         self.assertFalse(result["ok"])
         # Unchanged.
@@ -867,7 +924,7 @@ class TestExecutionMode(TestCase):
 
     def test_set_mode_rejects_invalid(self):
         d = self._plan_dir()
-        _out_captured(cmd_init_from_plan, d, "demo", "feature", "d", "interactive")
+        _out_captured(cmd_init_from_plan, d, "demo_20260101", "feature", "d", "interactive")
         result, _ = _out_captured(cmd_set_mode, d, "autonomous")
         self.assertFalse(result["ok"])
         # Unchanged.

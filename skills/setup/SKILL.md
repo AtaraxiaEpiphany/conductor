@@ -105,7 +105,12 @@ Interactive (up to 5 questions).
 
 ### 3.2 Propose Track
 
-Analyze context → generate track title → user confirms.
+1. Analyze context → propose a track title → user confirms.
+2. From the confirmed title, pick a short slug (1–3 lowercase words). **Derive the id deterministically:**
+   ```bash
+   track-state derive-name <slug>
+   ```
+   Parse the JSON. Use `track_id` and `track_dir` from the result for §3.3 (`TRACK_DIR`), §3.4, and §3.5 (`<track_dir>` and `--track-id`). Never hand-write the date — the command stamps it from the clock.
 
 ### 3.3 Dispatch Spec-Planner
 

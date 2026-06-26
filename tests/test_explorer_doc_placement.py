@@ -139,7 +139,7 @@ class TestInitCoreGitignore(TestCase):
     def test_writes_conductor_gitignore(self):
         d = tempfile.mkdtemp()
         plan = {"phases": [{"name": "P1", "tasks": [{"name": "T1"}]}]}
-        result = _init_core(d, plan, "test", "feature", "desc")
+        result = _init_core(d, plan, "test_20260626", "feature", "desc")
         self.assertTrue(result["ok"])
         gi = Path(d) / ".conductor" / ".gitignore"
         self.assertTrue(gi.exists(), ".conductor/.gitignore must be written at init")

@@ -2,6 +2,7 @@
 import json
 import re
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from .core import load, save
@@ -208,6 +209,41 @@ def cmd_indices(track_dir):
         result.append(phase_info)
 
     out(dict(indices=result))
+
+def cmd_derive_name(shortname):
+    """Derive the canonical track_id and track_dir for a shortname, today.
+
+    Stateless name resolver — the single source of truth for the
+    ``shortname_YYYYMMDD`` convention (schemas/track-state.schema.json). The
+    skills call this instead of hand-formatting the id, so the date always comes
+    from the clock rather than the model's recall.
+
+    Normalizes the shortname (lowercase, non ``[a-z0-9]`` runs → ``_``,
+    collapsed + trimmed), strips any pre-existing trailing date, and appends
+    today's date. Idempotent: re-running on the same day yields the same id.
+    Collision detection is intentionally NOT done here — the skill owns
+    uniqueness (new-track §2.6) — which keeps this trivially testable (no fs).
+    """
+    # Local date, not UTC: a track name is a human-facing label (ls, commit
+    # messages, registry), unlike now_iso()'s UTC which is for ordering-
+    # sensitive timestamps. Wall-clock "today" is what the user expects.
+    raw = shortname or ""
+    slug = re.sub(r"[^a-z0-9]+", "_", raw.lower())
+    slug = re.sub(r"_+", "_", slug).strip("_")
+    # Drop a pre-existing _YYYYMMDD so a re-stamp never double-appends.
+    slug = re.sub(r"_\d{8}$", "", slug)
+    if not slug:
+        slug = "track"  # matches the cli.py default fallback
+    date = datetime.now().strftime("%Y%m%d")
+    track_id = f"{slug}_{date}"
+    out(dict(
+        ok=True,
+        track_id=track_id,
+        track_dir=f"conductor/tracks/{track_id}",
+        shortname=slug,
+        date=date,
+    ))
+
 
 def _get_all_shas(state):
     """Extract all commit SHAs from state. Returns list."""

@@ -49,7 +49,11 @@ CRITICAL: Validate every tool call. On failure → halt → announce.
 
 1. Get description from `$ARGUMENTS` or `AskUserQuestion`.
 2. Infer track type (feature/bugfix/chore) — do NOT ask user.
-3. Resolve `track_id` = `shortname_YYYYMMDD` and `track_dir` = `conductor/tracks/<track_id>`.
+3. **Derive the track id deterministically** — pick a short slug (1–3 lowercase words) summarizing the track, then run:
+   ```bash
+   track-state derive-name <slug>
+   ```
+   Parse the JSON. Use `track_id` and `track_dir` from the result for **everything** below (resume marker, spec-planner `TRACK_DIR`, §2.6 init `--track-id` and `<track_dir>`). Never hand-write the date — the command stamps it from the clock.
 4. **Initialize resume marker** (skip if resuming — the file already exists): create `<track_dir>/.conductor/` and write `new-track-progress.json`:
    ```json
    {"track_id":"<id>","track_dir":"<track_dir>","description":"<desc>","type":"<type>","execution_mode":null,"steps_done":[],"committed":false}
@@ -114,7 +118,7 @@ Store the user's choice as `$EXECUTION_MODE` for use in Section 2.6.
 1. **Check uniqueness:** List existing track dirs. If `track_dir` already exists:
    - Contains `.conductor/new-track-progress.json` → **this is a resume** (not a collision) — proceed.
    - Otherwise → halt → suggest alternatives.
-2. **Track ID:** Format `shortname_YYYYMMDD`.
+2. **Track ID:** Already derived in §2.1 via `track-state derive-name`. Do not re-derive or hand-write the date.
 3. **Initialize track** (structure derived mechanically from `plan.md` — the orchestrator never hand-extracts tasks/subtasks):
    ```bash
    track-state init-from-plan "<track_dir>" \

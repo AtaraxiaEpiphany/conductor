@@ -1,6 +1,7 @@
 """Quality scoring and track lifecycle commands."""
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -120,6 +121,16 @@ def _init_core(track_dir, plan, track_id, track_type, description, execution_mod
     mode_err = _mode_error(execution_mode, allow_none=True)
     if mode_err:
         return dict(ok=False, errors=[mode_err])
+
+    # schemas/track-state.schema.json:11 requires ^[a-z0-9_]+_\d{8}$ (shortname_YYYYMMDD).
+    # "track" is the cli.py default when --track-id is omitted (ad-hoc CLI use); the
+    # skills always pass a real id via `derive-name`, so enforce the format there.
+    # Checked before mkdir so a bad id never creates a directory.
+    if track_id != "track" and not re.match(r"^[a-z0-9_]+_\d{8}$", track_id):
+        return dict(ok=False, errors=[
+            f"track_id {track_id!r} must match shortname_YYYYMMDD "
+            f"(e.g. auth_gateway_20260626). Run: track-state derive-name <shortname>"
+        ])
 
     track_path = Path(track_dir)
     track_path.mkdir(parents=True, exist_ok=True)

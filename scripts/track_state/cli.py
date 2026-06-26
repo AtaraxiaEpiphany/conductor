@@ -16,6 +16,7 @@ from .misc import (
     cmd_reset, cmd_indices, cmd_shas, cmd_add_checkpoint,
     cmd_deferred_report, cmd_phase_done, cmd_registry_update,
     cmd_record_summary, cmd_preflight, cmd_quality_snapshot,
+    cmd_derive_name,
 )
 from .handoff import cmd_get_handoff, cmd_sync_handoff, cmd_append_handoff, cmd_harvest_candidates
 from .sync import cmd_sync_plan
@@ -218,6 +219,9 @@ COMMAND_HELP = {
                   "Verify core track files (spec/plan/track-state.json) exist and load; ok:false if not"),
     "quality-snapshot": ("quality-snapshot <track-dir>",
                          "Read-only aggregate quality grades: completion, coverage, evidence gaps"),
+    "derive-name": ("derive-name <shortname>",
+                    "Derive canonical track_id (<shortname>_<YYYYMMDD>) and track_dir for "
+                    "today; idempotent. Uniqueness is the skill's job (new-track §2.6)."),
 }
 
 _COMMAND_GROUPS = [
@@ -228,6 +232,7 @@ _COMMAND_GROUPS = [
     ("Handoff", ["get-handoff", "append-handoff", "harvest-candidates"]),
     ("Result Processing", ["write-result", "process-result"]),
     ("Dispatch Composites", ["dispatch-prepare", "dispatch-finalize", "record-summary"]),
+    ("Naming", ["derive-name"]),
     ("Diagnostics", ["validate", "gc", "shas", "checklist-verify", "deferred-report",
                      "phase-done", "add-checkpoint", "preflight", "quality-snapshot"]),
 ]
@@ -403,6 +408,10 @@ def main():
             cmd_harvest_candidates(track_dir)
         elif cmd == "preflight":
             cmd_preflight(track_dir)
+        elif cmd == "derive-name":
+            # sys.argv[2] is the shortname here, not a track-dir (the only
+            # command where the positional isn't a directory).
+            cmd_derive_name(track_dir)
         else:
             print(f"Unknown command: {cmd}", file=sys.stderr)
             sys.exit(1)
