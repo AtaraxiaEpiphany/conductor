@@ -29,6 +29,8 @@ track-state sync-plan "<track_dir>"
 track-state registry-update "<track_dir>" "conductor/tracks.md"
 ```
 
+**Completion guard:** if `track-state finalize` returns `ok: false` (status `in_progress`, with an `incomplete` list), announce the unfinished tasks and **HALT here** — do not proceed to commit, §6.0+ doc sync, or §8.0 archive. Finalize refuses false completion: a track with any pending/in_progress task is not done. Resolve the outstanding work (dispatch the incomplete tasks, or explicitly skip/defer/cancel them with the proper state mutation) and re-run `finalize` until it returns `ok: true`.
+
 Commit: `chore(conductor): Complete track '<desc>'`.
 
 ---

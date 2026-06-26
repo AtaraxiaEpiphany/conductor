@@ -338,6 +338,14 @@ def cmd_set_mode(track_dir, mode):
     out(dict(ok=True, execution_mode=mode, previous=previous))
 
 
+# Statuses that are acceptable end-states for a COMPLETED track (finalize).
+# failed/blocked are intentionally excluded — they flip the track to failed/blocked
+# via the earlier branches. pending/in_progress mean work remains and finalize
+# must refuse false completion rather than declaring the track done. `cancelled`
+# IS acceptable: a fully-cancelled track is a legitimate (if void) end-state.
+_FINALIZE_OK_STATUSES = ("completed", "skipped", "deferred", "cancelled")
+
+
 def cmd_finalize(track_dir):
     state = load(track_dir)
     state["current_phase_index"] = 0
@@ -355,10 +363,29 @@ def cmd_finalize(track_dir):
         state["status"] = "blocked"
     elif "failed" in statuses:
         state["status"] = "failed"
-    elif all(s in ("completed", "skipped", "deferred") for s in statuses):
+    elif all(s in _FINALIZE_OK_STATUSES for s in statuses):
         state["status"] = "completed"
     else:
-        state["status"] = "completed"
+        # Non-terminal tasks (pending/in_progress) remain — refuse false completion.
+        # Keep the track in_progress (schema-valid, marker '~', validate-clean) and
+        # surface the unfinished units so the caller can act. No quality_score: an
+        # incomplete track has no honest score, and cmd_archive already refuses
+        # unless status is 'completed', so archiving is correctly blocked too.
+        incomplete = []
+        for pi, phase in enumerate(state.get("phases", []), 1):
+            for ti, task in enumerate(phase.get("tasks", []), 1):
+                if task.get("status") not in _FINALIZE_OK_STATUSES:
+                    incomplete.append(f"P{pi}.T{ti} {task.get('name', '?')}: {task.get('status')}")
+                for si, sub in enumerate(task.get("subtasks", []), 1):
+                    if sub.get("status") not in _FINALIZE_OK_STATUSES:
+                        incomplete.append(f"P{pi}.T{ti}.S{si} {sub.get('name', '?')}: {sub.get('status')}")
+        state["status"] = "in_progress"
+        state["updated_at"] = now_iso()
+        save(track_dir, state)
+        out(dict(ok=False, status="in_progress",
+                 reason=f"{len(incomplete)} task(s) still non-terminal",
+                 incomplete=incomplete))
+        return
 
     # Feature checklist verification
     checklist = _checklist_status(track_dir)
@@ -371,6 +398,7 @@ def cmd_finalize(track_dir):
     save(track_dir, state)
 
     result = dict(
+        ok=True,
         status=state["status"],
         quality_score=quality_score,
     )
