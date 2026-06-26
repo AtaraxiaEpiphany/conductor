@@ -93,7 +93,7 @@ plan.md/spec.md" case (issue #2). Skip this guard when resuming via §0.5 with
      `AskUserQuestion`: **Regenerate** (dispatch spec-planner below) or
      **Cancel** (halt). Never reuse a broken plan.
 
-`Agent` tool, `subagent_type: "conductor:spec-planner"`. Description: `"Generate spec/plan for '<desc>'"`.
+Dispatch `conductor:spec-planner`, prompt:
 
 ```
 TRACK_DIR={track_dir}
@@ -109,7 +109,7 @@ Parse `---SPEC PLAN RESULT---` block. Confirm `STATUS: SUCCESS` (halt on FAILURE
 
 ### 2.4 Dispatch Spec-Reviewer
 
-`Agent` tool, `subagent_type: "conductor:spec-reviewer"`. Description: `"Review spec/plan for '<desc>'"`.
+Dispatch `conductor:spec-reviewer`, prompt:
 
 ```
 TRACK_DIR={track_dir}

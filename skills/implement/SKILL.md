@@ -66,7 +66,7 @@ If state changed → commit: `chore(conductor): Fix state consistency after reco
 ### 2.1 Resume Phase Checkpoint
 
 If recover output contains `phase_checkpoint_pending: <phase_index>`:
-- Dispatch `conductor:phase-checker` with `TRACK_DIR TRACK_ID PHASE=<phase_index> EXECUTION_MODE`
+- Dispatch `conductor:phase-checker` (§3.2), `PHASE=<phase_index>`
 - After return → **Section 3.7** (Phase Boundary)
 
 ### 2.2 Failed Task Decision (interactive only)
@@ -102,7 +102,14 @@ Returns `action` enum — switch on it:
 
 ### 3.2 Action: `dispatch_phase_checker`
 
-Dispatch `conductor:phase-checker` with `TRACK_DIR TRACK_ID PHASE=<phase from output> EXECUTION_MODE`.
+Dispatch `conductor:phase-checker`, prompt (canonical dispatch — §2.1, §3.5b, §3.7 reuse this; only the `PHASE` value source differs):
+
+```
+TRACK_DIR={td}
+TRACK_ID={id}
+PHASE={phase from output}
+EXECUTION_MODE={interactive|continuous}
+```
 
 After return → **Section 3.6** (Phase Boundary).
 
@@ -114,7 +121,15 @@ track-state dispatch-prepare "<track_dir>"
 if commit_msg: git add -A && git diff --cached --quiet || git commit -m "<commit_msg>"
 ```
 
-Dispatch `conductor:explorer`. Prompt: `TRACK_DIR={td} PHASE={p} TASK={t} SUBTASK={s} NAME={name}`
+Dispatch `conductor:explorer`, prompt:
+
+```
+TRACK_DIR={td}
+PHASE={p}
+TASK={t}
+SUBTASK={s}
+NAME={name}
+```
 
 After return → `track-state dispatch-finalize "<track_dir>"` → **Section 3.7**.
 
@@ -128,7 +143,18 @@ track-state dispatch-prepare "<track_dir>"
 if commit_msg: git add -A && git diff --cached --quiet || git commit -m "<commit_msg>"
 ```
 
-Dispatch `conductor:task-executor`. Prompt: `TRACK_DIR={td} PHASE={p} TASK={t} SUBTASK={s} NAME={name} ATTEMPT={n} MAX_RETRIES={m} IS_RETRY={bool}`
+Dispatch `conductor:task-executor`, prompt (canonical dispatch — retry re-dispatches in §2.2 and §3.6 reuse this with `IS_RETRY=true` and an incremented `ATTEMPT`):
+
+```
+TRACK_DIR={td}
+PHASE={p}
+TASK={t}
+SUBTASK={s}
+NAME={name}
+ATTEMPT={n}
+MAX_RETRIES={m}
+IS_RETRY={bool}
+```
 
 After return → **Section 3.6**.
 
@@ -150,7 +176,7 @@ git commit -m "chore(conductor): Defer manual task '<name>'"
 
 Check the output of ALL three commands (especially `defer` and `sync-plan`) for `phase_checkpoint_pending` or `next_action: dispatch_phase_checker`.
 
-If found → dispatch `conductor:phase-checker` with `TRACK_DIR TRACK_ID PHASE=<phase from output> EXECUTION_MODE`, then → **Section 3.1**.
+If found → dispatch `conductor:phase-checker` (§3.2), `PHASE=<phase from output>`, then → **Section 3.1**.
 
 If NOT found → **Section 3.7**.
 
@@ -176,7 +202,17 @@ Output includes `committed: true/false` and optionally `phase_checkpoint_pending
 
 **SUCCESS**: `committed: false` → announce `"conductor commit failed, result.json preserved"` → re-run `dispatch-finalize` (max 3 attempts, then HALT with `"dispatch-finalize stuck"`). Deviations > 0 → announce. If `phase_checkpoint_pending` present → dispatch `conductor:phase-checker` immediately. Otherwise → **Section 3.6b** (self-review, if the task opted in) → **Section 3.7**.
 
-**FAILURE**: retry < max → re-dispatch (Section 3.1). retry >= max → dispatch `conductor:skip-analyst`. Skip-analyst result: `can_skip` → `track-state skip` or `block` → `sync-plan` → commit → Section 3.1 or HALT.
+**FAILURE**: retry < max → re-dispatch (Section 3.1). retry >= max → dispatch `conductor:skip-analyst`, prompt:
+
+```
+TRACK_DIR={td}
+TRACK_ID={id}
+PHASE_INDEX={p}
+TASK_INDEX={t}
+TASK_NAME={name}
+```
+
+Skip-analyst result: `can_skip` → `track-state skip` or `block` → `sync-plan` → commit → Section 3.1 or HALT.
 
 ### 3.6b Self-Review Loop (opt-in — "Ralph Wiggum")
 
@@ -188,7 +224,13 @@ Output includes `committed: true/false` and optionally `phase_checkpoint_pending
 
 When opted in (after a SUCCESSFUL `dispatch-finalize`, before §3.7), run ONE bounded review iteration (review own changes → request a reviewer pass → fix → escalate only on judgment):
 
-1. **Reviewer pass** — dispatch `conductor:code-reviewer` (read-only) with the task's commit range `<task_sha>~1..<task_sha>`, `TRACK_DIR`, `TRACK_ID`. Prompt: `TRACK_DIR={td} TRACK_ID={id} REVISION_RANGE={sha}~1..{sha}`.
+1. **Reviewer pass** — dispatch `conductor:code-reviewer` (read-only) on the task's own commit range `<task_sha>~1..<task_sha>`, prompt:
+
+   ```
+   TRACK_DIR={td}
+   TRACK_ID={id}
+   REVISION_RANGE={sha}~1..{sha}
+   ```
 2. **Decide from the `---REVIEW RESULT---` block** (substring-check the severities):
    - **No `Critical`/`High` findings** → loop satisfied → announce `"🔍 Self-review [Review]: clean"` → §3.7.
    - **`Critical`/`High` present** → re-dispatch `conductor:task-executor` with `IS_RETRY=true ATTEMPT={n+1}` and the findings as remediation context (the agent fixes its own changes), then `dispatch-finalize` again.
@@ -203,7 +245,7 @@ This loop is orchestration over the existing `code-reviewer` + `task-executor` a
 track-state phase-done "<track_dir>" <phase>
 ```
 
-`complete=true` → dispatch `conductor:phase-checker` with `TRACK_DIR TRACK_ID PHASE_INDEX EXECUTION_MODE`. FAILED → HALT. Otherwise → Section 3.1.
+`complete=true` → dispatch `conductor:phase-checker` (§3.2), `PHASE=<phase>`. FAILED → HALT. Otherwise → Section 3.1.
 `complete=false` → Section 3.1.
 
 ### 3.8 Action: `finalize`

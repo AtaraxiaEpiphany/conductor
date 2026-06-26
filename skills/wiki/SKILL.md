@@ -160,9 +160,7 @@ On any edit: announce the section changed and note "doc-syncer will reconcile Th
 
 ### 4.2 Dispatch Wiki Researcher
 
-Dispatch the `conductor:wiki-researcher` agent with the topic:
-
-`Agent` tool, `subagent_type: "conductor:wiki-researcher"`. Description: `"Wiki query: <topic>"`.
+Dispatch `conductor:wiki-researcher`, prompt:
 
 ```
 PROJECT_DIR={project root}
@@ -259,9 +257,7 @@ Fetch and execute `conductor/design/agent-error-handling.md`. Substitute the rel
 
 ### 6.2 Dispatch Doc-Syncer (ad-hoc mode)
 
-Dispatch the `conductor:doc-syncer` agent with a **synthetic ad-hoc assignment** — no `TRACK_DIR` / `TRACK_ID`:
-
-`Agent` tool, `subagent_type: "conductor:doc-syncer"`. Description: `"Ad-hoc wiki ingest: <slug>"`.
+Dispatch `conductor:doc-syncer` in ad-hoc mode (synthetic assignment — no `TRACK_DIR` / `TRACK_ID`), prompt:
 
 ```
 SOURCE_TYPE=ad-hoc

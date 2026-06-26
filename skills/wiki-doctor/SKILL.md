@@ -72,9 +72,7 @@ Then HALT.
 ### 3.1 Dispatch Doc Linter
 
 1. **Resolve project root:** Set `PROJECT_DIR` to the current working directory (project root).
-2. Dispatch:
-
-`Agent` tool, `subagent_type: "conductor:doc-linter"`. Description: `"Lint documentation wiki"`.
+2. Dispatch `conductor:doc-linter`, prompt:
 
 ```
 PROJECT_DIR={PROJECT_DIR}
@@ -146,9 +144,7 @@ Based on STATUS:
 ### 4.2 Dispatch Wiki Differ
 
 1. **Resolve project root:** `PROJECT_DIR` = current working directory.
-2. Dispatch:
-
-`Agent` tool, `subagent_type: "conductor:wiki-differ"`. Description: `"Wiki diff: <scope>"`.
+2. Dispatch `conductor:wiki-differ`, prompt:
 
 ```
 PROJECT_DIR={PROJECT_DIR}

@@ -36,7 +36,13 @@ CRITICAL: Validate every tool call. On failure → halt → announce.
 ### 2.0 Project Inception
 
 1. **Detect maturity:** Brownfield (`.git`, `package.json`, `go.mod`, etc.) vs Greenfield.
-2. **Brownfield:** Dispatch `conductor:project-analyzer`. Parse `---ANALYSIS RESULT---` block.
+2. **Brownfield:** Dispatch `conductor:project-analyzer`, prompt:
+
+   ```
+   PROJECT_DIR={project root}
+   ```
+
+   Parse `---ANALYSIS RESULT---` block.
 3. **Greenfield:** Ask "What do you want to build?"
 4. Init git if needed. Create `conductor/` directory.
 

@@ -51,7 +51,7 @@ Parse output: use the `range` field (`{first}~1..{last}`) — it includes the fi
 
 ### 2.3 Dispatch Code Reviewer
 
-`Agent` tool, `subagent_type: "conductor:code-reviewer"`. Description: `"Review track '<track_id>' [{range}]"`.
+Dispatch `conductor:code-reviewer`, prompt:
 
 ```
 TRACK_DIR={track_dir}
@@ -99,7 +99,7 @@ Parse `---REVIEW RESULT---` block.
 
 ## 3.0 COMPLETION
 
-1. If user chose "Apply Fixes" → these are **post-review patches, not plan tasks**. Dispatch ONE free-form patch agent (`Agent`, `subagent_type: "general-purpose"`):
+1. If user chose "Apply Fixes" → these are **post-review patches, not plan tasks**. Dispatch ONE free-form patch agent (`general-purpose`), prompt:
    ```
    Apply the review findings in {TRACK_DIR}/.conductor/review-result.json.
    For each finding, apply its `suggestion`, then commit it separately as
