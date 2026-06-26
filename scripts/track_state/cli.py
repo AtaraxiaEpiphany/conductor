@@ -135,12 +135,12 @@ _EXEC_MODE_CHOICES = "|".join(EXECUTION_MODES)
 COMMAND_HELP = {
     "init": ("init <track-dir> --plan-structure <json> --track-id <id>\n"
              "              --type <feature|bugfix|chore|docs> --description <text>\n"
-             f"              [--execution-mode <{_EXEC_MODE_CHOICES}>]",
-             "Create track-state.json and index.md from plan structure"),
+             f"              [--execution-mode <{_EXEC_MODE_CHOICES}>] [--force]",
+             "Create track-state.json and index.md from plan structure (refuses to overwrite; --force re-bootstraps)"),
     "init-from-plan": ("init-from-plan <track-dir> --track-id <id>\n"
                        "                  --type <feature|bugfix|chore|docs> --description <text>\n"
-                       f"                  [--execution-mode <{_EXEC_MODE_CHOICES}>] [--check]",
-                       "Create track-state.json by parsing plan.md (validates plan syntax)"),
+                       f"                  [--execution-mode <{_EXEC_MODE_CHOICES}>] [--check] [--force]",
+                       "Create track-state.json by parsing plan.md (refuses to overwrite; --force re-bootstraps)"),
     "start": ("start <track-dir>",
               "Transition track from 'new' to 'in_progress'"),
     "set-mode": (f"set-mode <track-dir> --mode <{_EXEC_MODE_CHOICES}>",
@@ -386,14 +386,16 @@ def main():
                      flag(args, "--track-id") or "track",
                      flag(args, "--type") or "feature",
                      flag(args, "--description") or "",
-                     flag(args, "--execution-mode"))
+                     flag(args, "--execution-mode"),
+                     force="--force" in args)
         elif cmd == "init-from-plan":
             cmd_init_from_plan(track_dir,
                                flag(args, "--track-id") or "track",
                                flag(args, "--type") or "feature",
                                flag(args, "--description") or "",
                                flag(args, "--execution-mode"),
-                               check="--check" in args)
+                               check="--check" in args,
+                               force="--force" in args)
         elif cmd == "get-handoff":
             cmd_get_handoff(track_dir, pos[0], pos[1],
                            flag(args, "--subtask"))

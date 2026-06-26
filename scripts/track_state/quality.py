@@ -108,11 +108,17 @@ def _mode_error(mode, allow_none=False):
     return None
 
 
-def _init_core(track_dir, plan, track_id, track_type, description, execution_mode=None):
+def _init_core(track_dir, plan, track_id, track_type, description, execution_mode=None,
+               force=False):
     """Build track-state.json + index.md + handoff.md from a plan structure dict.
 
     Returns the result dict without printing. Shared by cmd_init (JSON input)
     and cmd_init_from_plan (parsed from plan.md).
+
+    ``force`` re-bootstraps an existing track (resets all progress to pending).
+    Without it, an existing track-state.json is refused — re-running init on a
+    live track would otherwise silently reconstruct state from plan.md and wipe
+    every task's status/SHA (V7, core-contract.md).
     """
     errors = _validate_plan_structure(plan)
     if errors:
@@ -133,6 +139,18 @@ def _init_core(track_dir, plan, track_id, track_type, description, execution_mod
         ])
 
     track_path = Path(track_dir)
+    # V7 (core-contract.md): never reconstruct/overwrite EXISTING state from plan.md.
+    # The mechanical parse is the sanctioned bootstrap ONLY when no state exists.
+    # Re-running init on a live track would silently reset every task to pending
+    # (data loss); refuse unless --force explicitly re-bootstraps. Checked before
+    # mkdir so a refusal never creates a directory either.
+    state_path = track_path / "track-state.json"
+    if state_path.exists() and not force:
+        return dict(ok=False, errors=[
+            f"track-state.json already exists at {state_path}. "
+            f"Pass --force to re-bootstrap (this resets all task progress to pending)."
+        ])
+
     track_path.mkdir(parents=True, exist_ok=True)
 
     # Build track-state.json from the plan structure
@@ -226,18 +244,19 @@ def _init_core(track_dir, plan, track_id, track_type, description, execution_mod
     return result
 
 
-def cmd_init(track_dir, plan_structure_json, track_id, track_type, description, execution_mode=None):
+def cmd_init(track_dir, plan_structure_json, track_id, track_type, description, execution_mode=None,
+             force=False):
     """Create track-state.json and index.md from a PLAN_STRUCTURE JSON string.
 
     Thin wrapper over _init_core; kept for backward compatibility with the
     explicit `--plan-structure` init path.
     """
     plan = json.loads(plan_structure_json)
-    out(_init_core(track_dir, plan, track_id, track_type, description, execution_mode))
+    out(_init_core(track_dir, plan, track_id, track_type, description, execution_mode, force=force))
 
 
 def cmd_init_from_plan(track_dir, track_id, track_type, description,
-                       execution_mode=None, check=False):
+                       execution_mode=None, check=False, force=False):
     """Create track-state.json by parsing <track-dir>/plan.md mechanically.
 
     Validates plan.md syntax first — errors block initialization so a malformed
@@ -276,7 +295,7 @@ def cmd_init_from_plan(track_dir, track_id, track_type, description,
         return
 
     result = _init_core(track_dir, structure, track_id, track_type,
-                        description, execution_mode)
+                        description, execution_mode, force=force)
     # Structure was derived from plan.md itself, so count cross-checks always
     # pass; the only advisory notes are plan-syntax warnings from parse_plan.
     if plan_warnings and result.get("ok"):

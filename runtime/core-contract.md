@@ -101,13 +101,15 @@ Conductor commits use `conductor` as the **scope**, never as a type. Valid prefi
 | V4   | Skip Steps 4-7 (non-Explore tasks)         | F2, F3       |
 | V5   | Bundle test + implementation in one commit | F2           |
 | V6   | Skip phase checkpoint                      | F5           |
-| V7   | Derive state from plan.md                  | State Lock   |
+| V7   | Reconstruct/overwrite EXISTING state from plan.md | State Lock   |
 | V8   | More than ONE parent `[~]` + ONE child `[~]` simultaneously | F1           |
 | V9   | Skip git notes                             | Audit        |
 | V10  | Non-conventional commit message            | Quality      |
 | V11  | Subagent modifying state                   | Orchestrator |
 
 **Recovery:** If you violate any → STOP → announce `WORKFLOW VIOLATION: <code>` → revert → restart from last valid step.
+
+**V7 scope:** plan→state derivation is sanctioned in exactly two paths — **bootstrap** (state absent: `init-from-plan` builds the initial state from plan.md) and **additive absorption** (`sync-plan` adds new plan.md subtasks as `pending`). Reconstructing or overwriting *existing* status / `commit_sha` / completion from plan.md — or re-running `init`/`init-from-plan` on a live track — is the violation. Both init commands refuse an existing `track-state.json` unless `--force` explicitly re-bootstraps (resetting all progress to pending).
 
 ---
 

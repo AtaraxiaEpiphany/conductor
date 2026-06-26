@@ -865,6 +865,42 @@ class TestInitFromPlan(TestCase):
                                   "feature", "demo track")
         self.assertNotIn("warnings", result)
 
+    def test_init_from_plan_refuses_to_overwrite_existing_state(self):
+        # V7: re-running init on a live track must not wipe existing progress.
+        d = self._plan(self.GOOD)
+        _out_captured(cmd_init_from_plan, d, "demo_20260101", "feature", "demo track")
+        live = load(d)
+        live["status"] = "in_progress"
+        live["phases"][0]["tasks"][0]["status"] = "completed"
+        live["phases"][0]["tasks"][0]["commit_sha"] = "abc1234"
+        save(d, live)
+
+        result, _ = _out_captured(cmd_init_from_plan, d, "demo_20260101",
+                                  "feature", "demo track")
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("already exists" in e for e in result["errors"]))
+        # Existing progress is preserved untouched.
+        after = load(d)
+        self.assertEqual(after["status"], "in_progress")
+        self.assertEqual(after["phases"][0]["tasks"][0]["status"], "completed")
+        self.assertEqual(after["phases"][0]["tasks"][0]["commit_sha"], "abc1234")
+
+    def test_init_from_plan_force_rebootstraps(self):
+        d = self._plan(self.GOOD)
+        _out_captured(cmd_init_from_plan, d, "demo_20260101", "feature", "demo track")
+        live = load(d)
+        live["phases"][0]["tasks"][0]["status"] = "completed"
+        save(d, live)
+
+        result, _ = _out_captured(cmd_init_from_plan, d, "demo_20260101",
+                                  "feature", "demo track", force=True)
+        self.assertTrue(result["ok"])
+        after = load(d)
+        # --force resets the whole track back to its bootstrap state.
+        self.assertEqual(after["status"], "new")
+        self.assertTrue(all(t["status"] == "pending"
+                            for t in after["phases"][0]["tasks"]))
+
 
 class TestExecutionMode(TestCase):
     """execution_mode enum validation at init + set-mode on an existing track."""
