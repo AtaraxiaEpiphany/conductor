@@ -22,7 +22,7 @@ from .handoff import cmd_get_handoff, cmd_sync_handoff, cmd_append_handoff, cmd_
 from .sync import cmd_sync_plan
 
 
-_BOOL_FLAGS = {"--compact", "--fix", "--check", "--force"}
+_BOOL_FLAGS = {"--full", "--fix", "--check", "--force"}
 
 
 def positional(args):
@@ -145,11 +145,11 @@ COMMAND_HELP = {
               "Transition track from 'new' to 'in_progress'"),
     "set-mode": (f"set-mode <track-dir> --mode <{_EXEC_MODE_CHOICES}>",
                  "Switch execution_mode on an existing track (no re-init)"),
-    "next": ("next <track-dir> [--compact]",
-             "Find the next task to execute (JSON or compact format)"),
-    "dispatch-next": ("dispatch-next <track-dir>",
+    "next": ("next <track-dir> [--full]",
+             "Find the next task to execute (compact JSON by default; --full for complete envelope)"),
+    "dispatch-next": ("dispatch-next <track-dir> [--full]",
                       "One-call dispatch: next + parent-complete + tag routing"),
-    "recover": ("recover <track-dir> [--compact]",
+    "recover": ("recover <track-dir> [--full]",
                 "Recover current task after interruption (auto-fixes state, advances past terminal)"),
     "lock": ("lock <track-dir> <phase> <task> [<subtask>]\n"
              "       lock <track-dir> --phase <n> --task <n> [--subtask <n>]",
@@ -193,9 +193,9 @@ COMMAND_HELP = {
                      "Write result.json from --data or stdin (SUCCESS|FAILURE)"),
     "process-result": ("process-result <track-dir>",
                        "Read result.json, update state, sync plan, write git notes, enforce gates"),
-    "dispatch-prepare": ("dispatch-prepare <track-dir>",
+    "dispatch-prepare": ("dispatch-prepare <track-dir> [--full]",
                          "Composite: next + lock + sync-plan + route (reduces round trips)"),
-    "dispatch-finalize": ("dispatch-finalize <track-dir> [--override k=v,k2=v2]",
+    "dispatch-finalize": ("dispatch-finalize <track-dir> [--override k=v,k2=v2] [--full]",
                           "Composite: process-result + conductor commit + sync-plan. --override patches empty result fields"),
     "record-summary": ("record-summary <track-dir>",
                        "Record compact task summary (stdin JSON) for post-compaction recovery"),
@@ -324,11 +324,11 @@ def main():
                           flag(args, "--reason") or "")
 
         elif cmd == "next":
-            cmd_next(track_dir, compact="--compact" in args)
+            cmd_next(track_dir, compact="--full" not in args)
         elif cmd == "dispatch-next":
-            cmd_dispatch_next(track_dir)
+            cmd_dispatch_next(track_dir, compact="--full" not in args)
         elif cmd == "recover":
-            cmd_recover(track_dir, compact="--compact" in args)
+            cmd_recover(track_dir, compact="--full" not in args)
         elif cmd == "reset":
             scope = flag(args, "--scope") or "task"
             cmd_reset(track_dir, scope,
@@ -375,9 +375,9 @@ def main():
         elif cmd == "write-result":
             cmd_write_result(track_dir)
         elif cmd == "dispatch-prepare":
-            cmd_dispatch_prepare(track_dir)
+            cmd_dispatch_prepare(track_dir, compact="--full" not in args)
         elif cmd == "dispatch-finalize":
-            cmd_dispatch_finalize(track_dir)
+            cmd_dispatch_finalize(track_dir, compact="--full" not in args)
         elif cmd == "record-summary":
             cmd_record_summary(track_dir)
         elif cmd == "init":

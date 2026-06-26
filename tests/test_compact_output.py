@@ -1,0 +1,204 @@
+"""Contract tests: dispatch-loop commands emit compact envelopes by default.
+
+Locks the filtered-JSON compaction so future re-bloat fails CI. "Compact" is
+pure subtraction — the 5 dispatch-loop commands emit only the field set the
+orchestrator consumes (skills/implement/SKILL.md) by default; --full
+(compact=False) restores the complete envelope.
+
+Assertions name concrete dropped/kept keys per command rather than re-reading
+COMPACT_FIELDS, so the test still catches re-bloat if the allowlist dict is
+edited to match it.
+"""
+import io
+import json
+import shutil
+import subprocess
+import sys
+import tempfile
+from datetime import datetime, timezone, timedelta
+from pathlib import Path
+from unittest import TestCase, main
+
+from scripts.track_state.core import load, save
+from scripts.track_state.dispatch import (
+    cmd_next, cmd_recover, cmd_dispatch_next,
+    cmd_dispatch_prepare, cmd_dispatch_finalize,
+)
+
+
+def _out_captured(fn, *args, **kwargs):
+    """Capture stdout (must be a single JSON object). Returns parsed dict."""
+    old_out, old_err = sys.stdout, sys.stderr
+    sys.stdout = io.StringIO()
+    sys.stderr = io.StringIO()
+    try:
+        fn(*args, **kwargs)
+        return json.loads(sys.stdout.getvalue())
+    finally:
+        sys.stdout, sys.stderr = old_out, old_err
+
+
+def _recent_iso():
+    return (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+
+
+def _make_state(**overrides):
+    state = {
+        "track_id": "test",
+        "type": "feature",
+        "status": "in_progress",
+        "description": "test track",
+        "current_phase_index": 1,
+        "current_task_index": 1,
+        "updated_at": _recent_iso(),
+        "phases": [{
+            "name": "Phase 1",
+            "status": "pending",
+            "tasks": [{"name": "Task A", "status": "pending"}],
+        }],
+    }
+    state.update(overrides)
+    return state
+
+
+def _make_track_dir(state):
+    d = tempfile.mkdtemp()
+    Path(d, "plan.md").write_text("# Plan\n\n## Phase 1: Build\n- [ ] Task A\n")
+    save(d, state)
+    return d
+
+
+def _make_git_track_dir():
+    """git repo + track-state.json (Task A in_progress) + plan.md."""
+    d = tempfile.mkdtemp()
+    for args in (["git", "init", d],
+                 ["git", "-C", d, "config", "user.email", "t@t.com"],
+                 ["git", "-C", d, "config", "user.name", "T"]):
+        subprocess.run(args, capture_output=True, check=True)
+    Path(d, "README.md").write_text("# t")
+    subprocess.run(["git", "-C", d, "add", "README.md"], capture_output=True, check=True)
+    subprocess.run(["git", "-C", d, "commit", "-m", "init"], capture_output=True, check=True)
+    Path(d, "plan.md").write_text("# Plan\n\n## Phase 1: Build\n- [ ] Task A\n")
+    state = _make_state()
+    state["phases"][0]["tasks"][0]["status"] = "in_progress"
+    save(d, state)
+    return d
+
+
+def _write_success_result(d, commit_sha=""):
+    cond = Path(d, ".conductor")
+    cond.mkdir(exist_ok=True)
+    (cond / "result.json").write_text(json.dumps({
+        "status": "SUCCESS",
+        "commit_sha": commit_sha,
+        "summary": "Done",
+        "phase": 1,
+        "task": 1,
+        "subtask": None,
+        "task_name": "Task A",
+    }))
+
+
+class TestCompactDefault(TestCase):
+    """Default output (compact=True) emits only the consumed field set."""
+
+    def setUp(self):
+        self.d = _make_track_dir(_make_state())
+        self.addCleanup(shutil.rmtree, self.d, ignore_errors=True)
+
+    def test_next_drops_type_and_tags(self):
+        result = _out_captured(cmd_next, self.d)
+        self.assertEqual(result["phase"], 1)
+        self.assertEqual(result["name"], "Task A")
+        self.assertIn("execution_mode", result)
+        self.assertNotIn("type", result)
+        self.assertNotIn("tags", result)
+
+    def test_recover_drops_type_tags_last_failure_summary(self):
+        state = load(self.d)
+        state["phases"][0]["tasks"][0]["status"] = "in_progress"
+        save(self.d, state)
+        result = _out_captured(cmd_recover, self.d)
+        self.assertEqual(result["status"], "in_progress")
+        self.assertEqual(result["name"], "Task A")
+        self.assertIn("retry_count", result)
+        self.assertIn("max_retries", result)
+        self.assertIn("execution_mode", result)
+        self.assertNotIn("type", result)
+        self.assertNotIn("tags", result)
+        self.assertNotIn("last_failure_summary", result)
+
+    def test_dispatch_next_drops_type_tags(self):
+        result = _out_captured(cmd_dispatch_next, self.d)
+        self.assertEqual(result["action"], "dispatch_executor")
+        self.assertIn("execution_mode", result)
+        self.assertNotIn("type", result)
+        self.assertNotIn("tags", result)
+
+    def test_dispatch_prepare_drops_next_echo_and_sync_count(self):
+        result = _out_captured(cmd_dispatch_prepare, self.d)
+        self.assertEqual(result["action"], "execute")
+        self.assertIn("commit_msg", result)
+        self.assertIn("retry_count", result)
+        self.assertIn("max_retries", result)
+        # The three biggest wins: the redundant next echo, sync_count, and the
+        # free-text last_failure_summary.
+        self.assertNotIn("next", result)
+        self.assertNotIn("sync_count", result)
+        self.assertNotIn("last_failure_summary", result)
+
+
+class TestFullRestoresEnvelope(TestCase):
+    """compact=False (the --full flag) restores the complete envelope."""
+
+    def setUp(self):
+        self.d = _make_track_dir(_make_state())
+        self.addCleanup(shutil.rmtree, self.d, ignore_errors=True)
+
+    def test_next_full_keeps_type_and_tags(self):
+        result = _out_captured(cmd_next, self.d, compact=False)
+        self.assertIn("type", result)
+        self.assertIn("tags", result)
+
+    def test_dispatch_prepare_full_keeps_next_and_sync_count(self):
+        result = _out_captured(cmd_dispatch_prepare, self.d, compact=False)
+        self.assertIn("next", result)
+        self.assertIn("sync_count", result)
+        self.assertIn("last_failure_summary", result)
+
+
+class TestDispatchFinalizeCompact(TestCase):
+    """dispatch-finalize SUCCESS: compact drops parent_completed + sync_count."""
+
+    def test_success_compact_drops_parent_completed_and_sync_count(self):
+        d = _make_git_track_dir()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        _write_success_result(d)
+        result = _out_captured(cmd_dispatch_finalize, d)
+        self.assertEqual(result["status"], "success")
+        self.assertIn("sha", result)
+        self.assertIn("committed", result)
+        self.assertIn("deviations", result)
+        self.assertNotIn("parent_completed", result)
+        self.assertNotIn("sync_count", result)
+
+    def test_success_full_keeps_parent_completed_and_sync_count(self):
+        d = _make_git_track_dir()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        _write_success_result(d)
+        result = _out_captured(cmd_dispatch_finalize, d, compact=False)
+        self.assertIn("parent_completed", result)
+        self.assertIn("sync_count", result)
+
+
+class TestCliFullFlag(TestCase):
+    """--full replaced --compact as the bool flag controlling compaction."""
+
+    def test_full_is_bool_flag_compact_is_gone(self):
+        from scripts.track_state.cli import _BOOL_FLAGS
+        self.assertIn("--full", _BOOL_FLAGS)
+        self.assertNotIn("--compact", _BOOL_FLAGS)
+
+
+if __name__ == "__main__":
+    main()

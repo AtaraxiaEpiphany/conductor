@@ -40,27 +40,40 @@ def _display_loc(pi, ti, si=None):
     return loc
 
 
-def out_compact(obj):
-    """Ultra-compact single-line output for --compact mode."""
-    if obj.get("phase", 0) < 1:
-        print("ALL_DONE")
-        return
-    p, t = obj.get("phase", "?"), obj.get("task", "?")
-    s = obj.get("subtask")
-    name = obj.get("name", "?")
-    ttype = obj.get("type", "?")
-    tags = ",".join(obj.get("tags", []))
-    status = obj.get("status", "")
-    loc = _display_loc(p, t, s) if isinstance(p, int) and isinstance(t, int) else f"P{p}.T{t}"
-    parts = [loc, name, ttype]
-    if tags:
-        parts.append(f"tags=[{tags}]")
-    if status:
-        parts.append(f"status={status}")
-    retry = obj.get("retry_count")
-    if retry is not None and retry != 0:
-        parts.append(f"retry={retry}")
-    print(" | ".join(parts))
+# Per-command allowlists for default-compact envelopes. "Compact" is pure
+# subtraction: each dispatch-loop command keeps only the fields the orchestrator
+# consumes (skills/implement/SKILL.md); --full restores the complete envelope.
+# Adding a key to a tuple means the skill now relies on it, so update the
+# consumer before, not after, emitting it.
+COMPACT_FIELDS = {
+    "next": ("phase", "task", "subtask", "name", "execution_mode"),
+    "recover": ("status", "phase", "task", "subtask", "name",
+                "retry_count", "max_retries", "phase_checkpoint_pending",
+                "execution_mode", "fixes_applied"),
+    "dispatch-next": ("action", "phase", "task", "subtask", "name",
+                      "execution_mode"),
+    "dispatch-prepare": ("action", "phase", "task", "subtask", "name", "tags",
+                         "sha", "commit_msg", "is_resume", "retry_count",
+                         "max_retries", "execution_mode"),
+    "dispatch-finalize": ("status", "sha", "deviations", "committed",
+                          "phase_checkpoint_pending", "retry_count",
+                          "phase", "task", "subtask", "summary"),
+}
+
+
+def emit(obj, command, compact=True):
+    """Emit obj as JSON, filtered to the command's compact allowlist by default.
+
+    Output always stays a single JSON object (the test harness json.loads it),
+    so --full falls back to the whole envelope rather than a non-JSON pipe form.
+    Error envelopes (carrying an ``error`` key or ``status == "error"``) bypass
+    the allowlist — diagnostics must survive compaction, not be stripped to an
+    empty object.
+    """
+    if compact and "error" not in obj and obj.get("status") != "error":
+        out({k: obj[k] for k in COMPACT_FIELDS[command] if k in obj})
+    else:
+        out(obj)
 
 
 def _index_map(state):

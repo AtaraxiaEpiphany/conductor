@@ -5,7 +5,7 @@ from pathlib import Path
 
 from .core import load
 from .helpers import (
-    out, out_compact, now_iso, extract_tags, _inherit_tags,
+    emit, now_iso, extract_tags, _inherit_tags,
     conductor_dir, _store_evidence, _last_subtask_sha, _any_phase_needs_checkpoint,
     flag, _normalize_sha, target,
 )
@@ -118,18 +118,15 @@ def _find_next_task(state):
     return result
 
 
-def cmd_next(track_dir, compact=False):
+def cmd_next(track_dir, compact=True):
     state = load(track_dir)
     execution_mode = state.get("execution_mode", "interactive")
     result = _find_next_task(state)
     result["execution_mode"] = execution_mode
-    if compact:
-        out_compact(result)
-    else:
-        out(result)
+    emit(result, "next", compact)
     return result
 
-def cmd_dispatch_next(track_dir):
+def cmd_dispatch_next(track_dir, compact=True):
     """One-call dispatch decision: next + parent-complete resolution + tag routing.
     Returns action enum for orchestrator to switch on."""
     # Auto-fix state before dispatching
@@ -146,15 +143,15 @@ def cmd_dispatch_next(track_dir):
         # Check if any phase needs a checkpoint before doing anything else
         cp = _any_phase_needs_checkpoint(track_dir, state)
         if cp is not None:
-            out(dict(action="dispatch_phase_checker", phase=cp,
-                     execution_mode=execution_mode))
+            emit(dict(action="dispatch_phase_checker", phase=cp,
+                      execution_mode=execution_mode), "dispatch-next", compact)
             return
 
         # Find next task
         result = _find_next_task(state)
 
         if result.get("phase", 0) < 1:
-            out(dict(action="finalize"))
+            emit(dict(action="finalize"), "dispatch-next", compact)
             return
 
         # Resolve action from type + tags
@@ -168,7 +165,7 @@ def cmd_dispatch_next(track_dir):
             try:
                 _, state = _do_complete(track_dir, result["phase"], result["task"], None, sha)
             except (ValueError, IndexError) as e:
-                out(dict(error=str(e), status="error"))
+                emit(dict(error=str(e), status="error"), "dispatch-next", compact)
                 return
             _do_sync_plan(track_dir, state)
 
@@ -196,7 +193,7 @@ def cmd_dispatch_next(track_dir):
             except (ValueError, IndexError) as e:
                 # All subtasks should be terminal (failed counts), but guard
                 # against edge cases where non-terminal subtasks still exist.
-                out(dict(error=str(e), status="error"))
+                emit(dict(error=str(e), status="error"), "dispatch-next", compact)
                 return
             state = load(track_dir)
             _do_sync_plan(track_dir, state)
@@ -209,9 +206,9 @@ def cmd_dispatch_next(track_dir):
             final_sha = _finalize_parent(
                 track_dir, result["phase"], result["task"], sha, ensure_evidence=False)
 
-            out(dict(action="parent_stuck", phase=result["phase"], task=result["task"],
-                     name=parent_name, sha=final_sha, failed=True,
-                     execution_mode=execution_mode))
+            emit(dict(action="parent_stuck", phase=result["phase"], task=result["task"],
+                      name=parent_name, sha=final_sha, failed=True,
+                      execution_mode=execution_mode), "dispatch-next", compact)
             return
 
         # Route by tags
@@ -228,11 +225,11 @@ def cmd_dispatch_next(track_dir):
 
         result["action"] = action
         result["execution_mode"] = execution_mode
-        out(result)
+        emit(result, "dispatch-next", compact)
         return
 
-    out(dict(error="dispatch-next exceeded max iterations — possible state corruption",
-             status="error"))
+    emit(dict(error="dispatch-next exceeded max iterations — possible state corruption",
+              status="error"), "dispatch-next", compact)
 
 
 def _emit_no_active_task(track_dir, state, fixes, compact):
@@ -243,13 +240,10 @@ def _emit_no_active_task(track_dir, state, fixes, compact):
         result["phase_checkpoint_pending"] = checkpoint_pending
     if fixes:
         result["fixes_applied"] = fixes
-    if compact:
-        print("NO_ACTIVE_TASK")
-    else:
-        out(result)
+    emit(result, "recover", compact)
 
 
-def cmd_recover(track_dir, compact=False):
+def cmd_recover(track_dir, compact=True):
     """Recover current task after interruption, with auto-fix and smart advancement.
 
     1. Runs ensure_healthy() to validate and auto-fix state.
@@ -259,10 +253,7 @@ def cmd_recover(track_dir, compact=False):
     state, fixes, verrors = ensure_healthy(track_dir)
     if state is None:
         result = dict(status="error", errors=verrors)
-        if compact:
-            print("ERROR")
-        else:
-            out(result)
+        emit(result, "recover", compact)
         return
 
     if fixes:
@@ -319,18 +310,16 @@ def cmd_recover(track_dir, compact=False):
     if checkpoint_pending is not None:
         result["phase_checkpoint_pending"] = checkpoint_pending
 
-    if compact:
-        out_compact(result)
-    else:
-        out(result)
+    emit(result, "recover", compact)
 
 
-def cmd_dispatch_prepare(track_dir):
+def cmd_dispatch_prepare(track_dir, compact=True):
     """Lock + sync-plan + return commit message template. Reduces CLI round trips."""
     # Auto-fix state (includes plan reconciliation + all other fixes)
     state, fixes, _ = ensure_healthy(track_dir)
     if state is None:
-        out(dict(action="error", error="Cannot read track-state.json"))
+        emit(dict(action="error", error="Cannot read track-state.json"),
+             "dispatch-prepare", compact)
         return
     if fixes:
         print(f"Dispatch-prepare auto-fixed {len(fixes)} issue(s): {'; '.join(fixes)}", file=sys.stderr)
@@ -342,7 +331,7 @@ def cmd_dispatch_prepare(track_dir):
     nxt["execution_mode"] = execution_mode
 
     if nxt.get("phase", 0) < 1:
-        out(dict(action="done", next=nxt))
+        emit(dict(action="done"), "dispatch-prepare", compact)
         return
     pi, ti = nxt["phase"], nxt["task"]
     si = nxt.get("subtask")
@@ -366,23 +355,25 @@ def cmd_dispatch_prepare(track_dir):
             action = "execute"
 
     if action == "parent-complete":
-        out(dict(action=action, phase=pi, task=ti, name=name,
-                 sha=sha, next=nxt))
+        emit(dict(action=action, phase=pi, task=ti, name=name,
+                  sha=sha, next=nxt), "dispatch-prepare", compact)
         return
     if action == "parent_stuck":
-        out(dict(action=action, phase=pi, task=ti, name=name,
-                 sha=sha, execution_mode=execution_mode, next=nxt))
+        emit(dict(action=action, phase=pi, task=ti, name=name,
+                  sha=sha, execution_mode=execution_mode, next=nxt),
+             "dispatch-prepare", compact)
         return
     if action == "manual_task":
         # Interactive: surface to the user — no lock (manual tasks aren't executed).
-        out(dict(action="manual_task", phase=pi, task=ti, name=name,
-                 execution_mode=execution_mode, next=nxt))
+        emit(dict(action="manual_task", phase=pi, task=ti, name=name,
+                  execution_mode=execution_mode, next=nxt),
+             "dispatch-prepare", compact)
         return
     if action == "defer":
         # Auto-defer (continuous): lock not needed
-        out(dict(action="defer", phase=pi, task=ti, name=name,
-                 reason="Deferred: manual task requires human verification",
-                 next=nxt))
+        emit(dict(action="defer", phase=pi, task=ti, name=name,
+                  reason="Deferred: manual task requires human verification",
+                  next=nxt), "dispatch-prepare", compact)
         return
 
     # Lock + sync-plan for explore/execute
@@ -399,14 +390,14 @@ def cmd_dispatch_prepare(track_dir):
     else:
         commit_msg = f"chore(conductor): Start task '{name}' [P{pi}.T{ti}]"
 
-    out(dict(action=action, phase=pi, task=ti, subtask=si, name=name,
-             tags=tags, sync_count=synced, commit_msg=commit_msg,
-             is_resume=is_resume,
-             retry_count=tgt.get("retry_count", 0),
-             max_retries=MAX_RETRIES,
-             last_failure_summary=tgt.get("last_failure_summary"),
-             execution_mode=nxt.get("execution_mode", "interactive"),
-             next=nxt))
+    emit(dict(action=action, phase=pi, task=ti, subtask=si, name=name,
+              tags=tags, sync_count=synced, commit_msg=commit_msg,
+              is_resume=is_resume,
+              retry_count=tgt.get("retry_count", 0),
+              max_retries=MAX_RETRIES,
+              last_failure_summary=tgt.get("last_failure_summary"),
+              execution_mode=nxt.get("execution_mode", "interactive"),
+              next=nxt), "dispatch-prepare", compact)
 
 
 def _last_subtask_sha_from_state(track_dir, pi, ti):
@@ -570,7 +561,7 @@ def _resolve_finalize_target(track_dir, result_path):
     return r, p, t, s, task_name, status
 
 
-def cmd_dispatch_finalize(track_dir):
+def cmd_dispatch_finalize(track_dir, compact=True):
     """Process result + create conductor commit + sync-plan.
     Creates the conductor commit internally so each task/subtask gets a unique SHA.
     Accepts --override key=value to patch result fields before processing.
@@ -579,7 +570,8 @@ def cmd_dispatch_finalize(track_dir):
 
     resolved = _resolve_finalize_target(track_dir, result_path)
     if resolved is None:
-        out(dict(error="No result file at .conductor/result.json and no locked task in state"))
+        emit(dict(error="No result file at .conductor/result.json and no locked task in state"),
+             "dispatch-finalize", compact)
         return
     if not result_path.exists():
         print("NOTE: result.json missing — synthesized from locked task state",
@@ -592,12 +584,12 @@ def cmd_dispatch_finalize(track_dir):
             parent_completed, state = _do_complete(track_dir, p, t, s, code_sha)
         except ValueError as e:
             # Parent has non-terminal subtasks — retryable, keep result.json
-            out(dict(error=str(e), status="error"))
+            emit(dict(error=str(e), status="error"), "dispatch-finalize", compact)
             return
         except IndexError as e:
             # Stale indices — unrecoverable, clean up result.json
             result_path.unlink(missing_ok=True)
-            out(dict(error=str(e), status="error"))
+            emit(dict(error=str(e), status="error"), "dispatch-finalize", compact)
             return
 
         _store_evidence(state, track_dir, p, t, s, r)
@@ -655,7 +647,7 @@ def cmd_dispatch_finalize(track_dir):
         if checkpoint_pending is not None:
             result["phase_checkpoint_pending"] = checkpoint_pending
 
-        out(result)
+        emit(result, "dispatch-finalize", compact)
 
     elif status == "FAILURE":
         summary = r.get("summary", "")
@@ -676,9 +668,9 @@ def cmd_dispatch_finalize(track_dir):
             result_path.unlink(missing_ok=True)
         else:
             print(f"WARNING: result.json preserved due to commit failure", file=sys.stderr)
-        out(dict(status="failure", retry_count=retry_count, summary=summary,
-                 sync_count=synced, committed=committed,
-                 phase=p, task=t, subtask=s))
+        emit(dict(status="failure", retry_count=retry_count, summary=summary,
+                  sync_count=synced, committed=committed,
+                  phase=p, task=t, subtask=s), "dispatch-finalize", compact)
 
     else:
-        out(dict(error=f"Unknown status: {status}"))
+        emit(dict(error=f"Unknown status: {status}"), "dispatch-finalize", compact)
