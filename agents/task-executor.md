@@ -112,44 +112,16 @@ Check task tag to determine workflow:
 | Tag | Workflow |
 |-----|----------|
 | `[Docs]`, `[Config]`, `[Chore]` | TDD Gate exempt → Step 8 only |
-| Default | Full TDD (Steps 3-8 below) |
+| Default | Full TDD (Steps 3-8) |
 | `[Explore]` | **ERROR** → report FAILURE |
 
-### Step 3: Write Failing Tests (Red)
+**Canonical TDD cycle (Steps 3-8):** `conductor/workflow/task-workflow.md` is authoritative for the generic mechanics — Red (failing test first) → Green (minimum code to pass) → Refactor (under passing tests) → Coverage (must be >80%; do **not** commit below threshold) → Document deviations → Commit. Read its **Steps 3-8 section only** (skip Steps 1-2, 9-11 — orchestrator-owned per its ownership split).
 
-1. Derive test cases from self-extracted ACs/TCs (Layer 2).
-2. Each TC row → one test case. Map `TC-{n}.{m}` to function names.
-3. Create test file. Write tests: happy paths, edge cases, errors.
-4. Run tests. **CONFIRM FAILURE.** Show failing output.
-5. Do NOT proceed until failure confirmed.
+**Agent-specific bindings (override / extend the template):**
 
-### Step 4: Implement to Pass (Green)
-
-1. Write **minimum** code to make failing tests pass.
-2. Run tests. Confirm ALL pass.
-3. No over-engineering.
-
-### Step 5: Refactor (Optional)
-
-Refactor under passing tests. Rerun to confirm no regressions.
-
-### Step 6: Verify Coverage
-
-1. Run coverage tool. >80% required for new code.
-2. Below threshold → add tests → re-verify.
-3. Do NOT commit if below 80%.
-
-### Step 7: Document Deviations
-
-1. **Tech Stack Deviation**: Implementation diverges from `tech-stack.md` → update `tech-stack.md` → resume.
-2. **Spec Deviation**: AC not met → report as `SPEC_DEVIATION` in result.
-3. **TC Coverage**: Compare implemented TCs vs expected. Report gaps.
-
-### Step 8: Commit
-
-Stage + commit: `<type>(<scope>): <description>`
-
-Git notes (audit trail) are written automatically by the orchestrator via `track-state dispatch-finalize`. You do NOT write git notes.
+- **Step 3 (Red)** — derive test cases from your self-extracted ACs/TCs (Layer 2); map each `TC-{n}.{m}` row → one test function covering happy paths, edge cases, and errors. Run tests and **CONFIRM FAILURE** (show output) before proceeding.
+- **Step 7 (Deviations)** — *Tech Stack* divergence → update `tech-stack.md` → resume; *Spec* deviation (AC unmet) → report as `SPEC_DEVIATION` in your result (§6.1); *TC Coverage* → compare implemented vs expected TCs, report gaps.
+- **Step 8 (Commit)** — stage + commit `<type>(<scope>): <description>`. **Git notes are written by `track-state dispatch-finalize` — you do NOT write git notes, modify plan markers, or append SHAs** (orchestrator-owned Steps 9-11).
 
 ---
 

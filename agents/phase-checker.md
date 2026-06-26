@@ -50,40 +50,17 @@ CRITICAL: You must validate the success of every tool call. If any tool call fai
 
 ## 4.0 PROTOCOL STEPS
 
-Execute the following steps in order. Refer to the Phase Checkpoint Protocol file for detailed instructions.
+**Authoritative step-by-step:** Execute the Phase Checkpoint Protocol loaded in §3.0 (`conductor/workflow/phase-checkpoint.md`), Steps 1-10 in order. The addenda below are **binding** where they extend or override the template — they carry this agent's runtime gates plus the `EXECUTION_MODE` and L2 extensions the template predates.
 
-### Step 1: Announce Protocol Start
+### Addendum — Step 2.2: non-code extension filter (binding)
 
-Inform the user that phase `{PHASE_NAME}` is complete and the checkpoint protocol has begun.
+Filter changed files by extension: `.md`, `.json`, `.yaml`, `.yml`, `.toml`, `.lock`, `.gitkeep` (the template lists examples only; this is the full exclude set).
 
-### Step 2: Ensure Test Coverage for Phase Changes
+### Addendum — Step 3: test-command resolution + retry cap
 
-**Step 2.1: Determine Phase Scope**
-- Read `plan.md`. Find the Git commit SHA of the previous phase's checkpoint (format: `[checkpoint: <sha>]` in the phase heading).
-- If no previous checkpoint exists, use the first commit in the repo as the starting point.
+Resolve the correct test command from `conductor/workflow/dev-commands/` (matching the project's language), announce it, then run. On failure, attempt a fix a **maximum of two times**; still failing after the second attempt → report FAILURE with details.
 
-**Step 2.2: List Changed Files**
-- Run: `git diff --name-only <previous_checkpoint_sha_or_initial_commit> HEAD`
-- Filter out non-code files (`.md`, `.json`, `.yaml`, `.yml`, `.toml`, `.lock`, `.gitkeep`).
-
-**Step 2.3: Verify and Create Tests**
-- For each remaining code file, check if a corresponding test file exists.
-- Common conventions: `file.ts` → `file.test.ts`, `file.py` → `test_file.py`, `file.go` → `file_test.go`.
-- If a test file is missing:
-  1. Analyze existing test files in the repository to determine naming convention and testing style.
-  2. Create a test file with basic smoke tests validating the functionality described in this phase's tasks.
-  3. Write the test file using the project's testing framework.
-
-### Step 3: Execute Automated Tests
-
-1. Announce the exact test command.
-2. Resolve the correct test command from `conductor/workflow/dev-commands/` (matching the project's language).
-3. Run the tests.
-4. If tests fail:
-   - Attempt to fix a **maximum of two times**.
-   - If still failing after second attempt → report FAILURE with details.
-
-### Step 3.5: L2 End-to-End Verification (browser automation)
+### Addendum — Step 3.5: L2 End-to-End Verification (INSERT between Step 3 and Step 4)
 
 This is the **L2** tier of the verification hierarchy: L0 static → L1 unit/integration → **L2 browser E2E** → L3 production observability → L4 human. L1 tests cannot discover end-to-end breakage that only surfaces in a real browser; an explicit L2 check closes that gap. It runs **between** Step 3 (L1 tests pass) and Step 4 (the L4 manual plan).
 
@@ -101,56 +78,21 @@ This is the **L2** tier of the verification hierarchy: L0 static → L1 unit/int
 
 Carry the recorded L2 outcome into Step 7's verification report.
 
-### Step 4: Propose Manual Verification Plan
+### Addendum — Step 5: continuous mode
 
-1. Analyze `product.md`, `product-guidelines.md`, and `plan.md` to determine user-facing goals of the completed phase.
-2. Generate a step-by-step manual verification plan with:
-   - Exact commands to run
-   - Specific expected outcomes
-   - URLs or endpoints to check (if applicable)
-
-### Step 5: Await User Feedback
-
-**If `EXECUTION_MODE == "interactive"`:**
-Present the manual verification plan to the user via `AskUserQuestion`:
+**If `EXECUTION_MODE == "interactive"`:** present the manual verification plan via `AskUserQuestion` and **PAUSE** for confirmation (do not proceed without it), as the template specifies:
 
 > "Phase `{PHASE_NAME}` automated tests have passed. Please verify manually:\n\n{verification_steps}\n\nDoes this meet your expectations?"
 
-**PAUSE** and await the user's response. Do not proceed without confirmation.
+**If `EXECUTION_MODE == "continuous"`:** skip user confirmation, auto-record `User confirmation skipped (continuous mode)`, and proceed to Step 6.
 
-**Otherwise (continuous mode):**
-Skip user confirmation. Auto-record: `User confirmation skipped (continuous mode)`. Proceed to Step 6.
+### Addendum — Step 7: report must include the L2 outcome
 
-### Step 6: Create Checkpoint Commit
+The git-notes verification report must include the **L2 E2E outcome** from Step 3.5 (passed / failed / skipped with reason) — alongside the automated test command + result, manual verification steps, and user confirmation the template lists.
 
-1. Stage all changes (including any test files created in Step 2).
-2. If no changes occurred, use an empty commit.
-3. Commit: `chore(conductor): Checkpoint end of {PHASE_NAME}`
+### Addendum — Step 8: checkpoint gate (binding)
 
-### Step 7: Attach Git Notes
-
-1. Get the full commit hash: `git log -1 --format="%H"`
-2. Draft a verification report including:
-   - Automated test command and result
-   - **L2 E2E outcome** (Step 3.5): passed / failed / skipped with reason
-   - Manual verification steps
-   - User's confirmation
-3. Attach: `git notes add -m "<report>" <commit_hash>`
-
-### Step 8: Update Plan
-
-1. Get the 7-char short SHA: `git log -1 --format="%h"`
-2. Run: `track-state add-checkpoint {TRACK_DIR} {PHASE_INDEX} {sha}`
-3. Verify the command succeeded (check JSON output contains `ok: true`).
-
-### Step 9: Commit Plan Update
-
-1. Stage `plan.md`.
-2. Commit: `chore(conductor): Mark phase '{PHASE_NAME}' as complete`
-
-### Step 10: Announce Completion
-
-Inform the user that the phase checkpoint is complete with the checkpoint SHA.
+Get the short SHA (`git log -1 --format="%h"`), run `track-state add-checkpoint {TRACK_DIR} {PHASE_INDEX} {sha}` (the `track-state` CLI — not a raw `python3` invocation), and **verify the JSON output contains `ok: true`** before proceeding.
 
 ---
 
