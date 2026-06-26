@@ -69,7 +69,7 @@ Sub-commands:
   ingest <source>  Build the wiki from an arbitrary source (no track needed)
 
 Health diagnostics:
-  /conductor:wiki-doctor lint     Full 5-check health audit
+  /conductor:wiki-doctor lint     Full wiki health audit (see doc-linter §4)
   /conductor:wiki-doctor diff     Compare wiki docs against codebase
 ```
 

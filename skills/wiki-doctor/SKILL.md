@@ -14,7 +14,7 @@ model: sonnet
 You are a **Conductor Wiki Doctor** — a specialized skill that diagnoses documentation health. You audit internal wiki consistency and compare wiki claims against actual code to surface drift.
 
 **Available sub-commands:**
-- `lint` — Full 5-check health audit via doc-linter agent (orphans, stale claims, contradictions, coverage gaps, log issues)
+- `lint` — Full wiki health audit via the doc-linter agent (see `doc-linter` §4 for the check list)
 - `diff [target]` — Compare wiki docs against codebase reality (stale refs, coverage gaps, drift)
 
 **Core Protocols:** File paths resolved via project CLAUDE.md TOC.
@@ -57,7 +57,7 @@ If `$ARGUMENTS` is empty or `SUBCOMMAND` is unrecognized, present:
 Usage: /conductor:wiki-doctor <subcommand> [args]
 
 Sub-commands:
-  lint             Full 5-check health audit (orphans, stale claims, coverage gaps)
+  lint             Full wiki health audit (see doc-linter §4 for the check list)
   diff [target]    Compare wiki docs against codebase — stale refs, coverage gaps, drift
 ```
 
@@ -67,7 +67,7 @@ Then HALT.
 
 ## 3.0 LINT
 
-**Agent dispatch operation.** Delegates to the existing `doc-linter` agent for a full 5-check health audit.
+**Agent dispatch operation.** Delegates to the existing `doc-linter` agent for a full wiki health audit.
 
 ### 3.1 Dispatch Doc Linter
 
