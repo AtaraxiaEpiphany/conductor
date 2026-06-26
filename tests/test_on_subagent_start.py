@@ -152,5 +152,21 @@ class SafetyFloorInjectionTests(TestCase):
         self.assertIn("WARNING", captured.getvalue())
 
 
+class SubagentMatcherCompletenessTests(TestCase):
+    def test_every_subagent_is_in_the_subagentstart_matcher(self):
+        """Completeness guard: every agents/*.md must be in the SubagentStart
+        matcher, so no subagent is ever dispatched without the safety floor +
+        result-format reminder. Prevents the wiki-differ/wiki-researcher gap
+        (closed in the follow-up commit) from recurring for a future agent."""
+        matched = set(_subagent_start_agents())
+        roster = {p.stem for p in (_scripts.parent / "agents").glob("*.md")}
+        unguarded = roster - matched
+        self.assertFalse(
+            unguarded,
+            f"agents/*.md not in the SubagentStart matcher (no safety floor): "
+            f"{sorted(unguarded)}",
+        )
+
+
 if __name__ == "__main__":
     main()

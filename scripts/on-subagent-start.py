@@ -57,6 +57,8 @@ AGENT_REMINDERS = {
     "spec-planner": "[Conductor] Result format: ---SPEC PLAN RESULT--- ... ---END SPEC PLAN RESULT---",
     "spec-reviewer": "[Conductor] Result format: ---REVIEW RESULT--- ... ---END REVIEW RESULT---",
     "project-analyzer": "[Conductor] Result format: ---ANALYSIS RESULT--- ... ---END ANALYSIS RESULT---",
+    "wiki-differ": "[Conductor] Result format: ---WIKI DIFF RESULT--- ... ---END RESULT---",
+    "wiki-researcher": "[Conductor] Result format: ---WIKI RESEARCH RESULT--- ... ---END RESULT---",
 }
 
 

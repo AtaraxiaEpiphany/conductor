@@ -69,7 +69,7 @@
     ],
     "SubagentStart": [
       {
-        "matcher": "task-executor|code-reviewer|explorer|phase-checker|doc-syncer|doc-linter|skip-analyst|spec-planner|spec-reviewer|project-analyzer",
+        "matcher": "task-executor|code-reviewer|explorer|phase-checker|doc-syncer|doc-linter|skip-analyst|spec-planner|spec-reviewer|project-analyzer|wiki-differ|wiki-researcher",
         "hooks": [
           {
             "type": "command",
