@@ -2,27 +2,35 @@
 
 ## File Index
 
-Use this map when explicit links are missing. All new documents MUST be created in the following **RELEVANT** paths:
+**Creation map** — where new documents go. Use this when an explicit path is
+missing; all new documents MUST be created at the following paths. For *read
+strategy* (which docs to read in full vs. on-demand), see `conductor/index.md` —
+the two list the same first-class docs but group them differently.
 
-| Category        | Document Type           | Default Path Pattern                                       | Creation Rule                         |
-| :-------------- | :---------------------- | :--------------------------------------------------------- | :------------------------------------ |
-| **Product**     | Product Definition      | `./conductor/product/product.md`                           | Create if missing.                    |
-|                 | Product Guidelines      | `./conductor/product/product-guidelines.md`                | Create if missing.                    |
-|                 | Wiki Overview           | `./conductor/overview.md`                                  | Create if missing.                    |
-|                 | Wiki Purpose            | `./conductor/purpose.md`                                   | Create if missing. Co-evolved.        |
-|                 | Wiki Log                | `./conductor/log.md`                                       | Create if missing.                    |
-|                 | Wiki Queries            | `./conductor/queries/<slug>.md`                            | Auto-filed by `/conductor:wiki query`.|
-| **Requirement** | PRD                     | `./conductor/requirement/prd/<name>.md`                    | **Create here** if missing.           |
+| Category        | Document Type           | Default Path Pattern                                       | Creation Rule                                                                 |
+| :-------------- | :---------------------- | :--------------------------------------------------------- | :---------------------------------------------------------------------------- |
+| **Product**     | Product Definition      | `./conductor/product/product.md`                           | Create if missing.                                                            |
+|                 | Product Guidelines      | `./conductor/product/product-guidelines.md`                | Create if missing.                                                            |
+| **Requirement** | PRD                     | `./conductor/requirement/prd/<name>.md`                    | **Create here** if missing.                                                   |
+|                 | UX/UI Spec              | `./conductor/requirement/ux-ui/design-spec.md`             | Create if missing.                                                            |
 | **Design**      | Tech Stack              | `./conductor/design/tech-stack.md`                         | **Global**: create if missing. Frameworks, languages, versions. Read in full. |
-|                 | UX/UI Spec              | `./conductor/requirement/ux-ui/design-spec.md`             | Create if missing.                    |
-|                 | Architecture            | `./conductor/design/architecture/system-architecture.md`   | **Scoped**: seeded by doc-syncer (post-track). Do not hand-create. Match by component. |
-|                 | DB Design               | `./conductor/design/database/schema.md`                    | Create if missing.                    |
-|                 | API Specs               | `./conductor/design/api-specs/<endpoint>.md`               | **Strict Schema Adherence Required**. |
-| **Workflow**    | Workflow Index          | `./conductor/workflow/index.md`                            | Create if missing.                    |
-|                 | Code Patterns           | `./conductor/workflow/code-styleguides/<code-patterns>.md` | Create if missing.                    |
-|                 | Code Style              | `./conductor/workflow/code-styleguides/<language>.md`      | Create if missing.                    |
-|                 | Git Flow                | `./conductor/workflow/git-flow.md`                         | Create if missing.                    |
-|                 | Testing                 | `./conductor/workflow/testing/strategy.md`                 | Create if missing.                    |
-| **Resources**   | References/FAQ/Glossary | `./conductor/resource/<type>.md`                           | Create if needed.                     |
-| **Management**  | Tracks Registry         | `./conductor/tracks.md`                                    | Create if missing.                    |
-|                 | Track Spec/Plan/Meta    | `./conductor/tracks/<track_id>/`                           | Read/Update based on context.         |
+|                 | Architecture            | `./conductor/design/architecture/system-architecture.md`   | **Scoped**: seeded by doc-syncer (post-track). Do not hand-create.            |
+|                 | DB Schema               | `./conductor/design/database/schema.md`                    | Create if missing.                                                            |
+|                 | API Specs               | `./conductor/design/api-specs/<endpoint>.md`               | **Strict Schema Adherence Required**.                                         |
+|                 | Decision Records        | `./conductor/design/decision-*.md`                         | ADR-style — append, never delete.                                             |
+|                 | Doc Conventions         | `./conductor/design/doc-conventions.md`                    | Authoring rules — reference, do not hand-create.                              |
+| **Wiki**        | Wiki Overview           | `./conductor/overview.md`                                  | Auto-regenerated by doc-syncer — do not edit.                                 |
+|                 | Wiki Purpose            | `./conductor/purpose.md`                                   | Create if missing. **Co-evolved** (user owns Goals/Scope).                    |
+|                 | Wiki Log                | `./conductor/log.md`                                       | Append-only.                                                                  |
+|                 | Wiki Queries            | `./conductor/queries/<slug>.md`                            | Auto-filed by `/conductor:wiki query`.                                        |
+| **Workflow**    | Workflow Index          | `./conductor/workflow/index.md`                            | Create if missing.                                                            |
+|                 | Code Patterns           | `./conductor/workflow/code-styleguides/<code-patterns>.md` | Create if missing.                                                            |
+|                 | Code Style              | `./conductor/workflow/code-styleguides/<language>.md`      | Create if missing.                                                            |
+|                 | Git Flow                | `./conductor/workflow/git-flow.md`                         | Create if missing.                                                            |
+|                 | Testing                 | `./conductor/workflow/testing/strategy.md`                 | Create if missing.                                                            |
+| **Resources**   | Glossary                | `./conductor/resource/glossary.md`                         | **Global** — create if missing.                                               |
+|                 | References              | `./conductor/resource/references/index.md`                 | Create if needed.                                                             |
+|                 | FAQ                     | `./conductor/resource/faq/index.md`                        | Create if needed.                                                             |
+|                 | Graduated Findings      | `./conductor/resource/<topic>.md`                          | Seeded by doc-syncer (inventory/gotcha/facts).                                |
+| **Management**  | Tracks Registry         | `./conductor/tracks.md`                                    | Create if missing.                                                            |
+|                 | Track Spec/Plan/Meta    | `./conductor/tracks/<track_id>/`                           | Read/Update based on context.                                                 |

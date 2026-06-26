@@ -40,6 +40,24 @@ last_verified: <ISO-8601 date or short git SHA of the commit that last confirmed
 - **Writers:** `doc-syncer` emits/updates frontmatter on every merge or seed; the `wiki` query-save writes `type: query` pages. Merge updates `last_verified`; seed writes the full block.
 - **Checkers:** `doc-linter` (§4.6) and the SessionStart GC hook report missing/empty frontmatter. `lib/frontmatter.py` is the single deterministic parser used by hooks.
 
+## Type → Folder Placement
+
+The frontmatter `type` (above) tells checkers *what* a doc is; this table tells writers *where* it goes. Every type has a canonical home — there is no "unplaceable" type. When doc-syncer graduates a finding (§4.10) or an agent creates a scoped doc, file it by type:
+
+| `type`         | Canonical folder                 | Notes                                                      |
+| :------------- | :------------------------------- | :--------------------------------------------------------- |
+| `architecture` | `conductor/design/architecture/` | Component/structural; syncer-seeded.                       |
+| `api`          | `conductor/design/api-specs/`    | One doc per endpoint; strict schema adherence.             |
+| `database`     | `conductor/design/database/`     | Schema/migrations.                                         |
+| `ux`           | `conductor/requirement/ux-ui/`   | UX/UI design specs.                                        |
+| `concept`      | `conductor/design/`              | Cross-cutting ideas + decision records (`decision-*.md`).  |
+| `entity`       | `conductor/resource/`            | Domain entities / inventory-style knowledge.               |
+| `resource`     | `conductor/resource/`            | References, gotchas, external-tool facts, run constraints. |
+| `source`       | `conductor/resource/`            | Ad-hoc ingest origin (provenance for a synthesized page).  |
+| `query`        | `conductor/queries/`             | Saved `/conductor:wiki query` results.                     |
+
+`overview.md`, `purpose.md`, `log.md`, and every `index.md` are exempt navigation/synthesis pages — they have no `type` and are not placed by this table.
+
 ## See Also
 
 - [[runtime/core-contract]] — behavioral invariants; resident in every session.
