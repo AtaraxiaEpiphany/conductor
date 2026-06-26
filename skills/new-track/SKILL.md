@@ -69,6 +69,30 @@ CRITICAL: Validate every tool call. On failure → halt → announce.
 
 ### 2.3 Dispatch Spec-Planner
 
+**Existing spec/plan guard (collision check).** Before regenerating, detect a
+pre-existing `plan.md` — the user may have re-invoked new-track, or a prior run
+wrote `plan.md` but left no resume marker. This is the "create fail on existing
+plan.md/spec.md" case (issue #2). Skip this guard when resuming via §0.5 with
+`spec_planned` already in `steps_done` (that plan is owned by the active run).
+
+1. If `<track_dir>/plan.md` exists, validate it in place — `--check` writes
+   nothing:
+   ```bash
+   track-state init-from-plan "<track_dir>" --check
+   ```
+   - `ok: true` → the existing plan.md is well-formed (the JSON reports
+     `phases`/`tasks` counts). `AskUserQuestion`:
+     *"An existing `plan.md` (N phases, M tasks) was found at `<track_dir>`. How should I proceed?"*
+     - **Reuse existing plan** → skip spec-planner, append `"spec_planned"` to
+       `steps_done`, and jump to §2.4 review.
+     - **Regenerate (overwrite)** → continue to dispatch spec-planner below.
+     - **Cancel** → halt.
+   - `ok: false` → the existing plan.md is malformed (missing `## Phase N:`
+     headings or `Task:`/`Subtask:` lines — the same defect that caused the
+     false-completion bug, issue #4). Announce the reported `errors`, then
+     `AskUserQuestion`: **Regenerate** (dispatch spec-planner below) or
+     **Cancel** (halt). Never reuse a broken plan.
+
 `Agent` tool, `subagent_type: "conductor:spec-planner"`. Description: `"Generate spec/plan for '<desc>'"`.
 
 ```
