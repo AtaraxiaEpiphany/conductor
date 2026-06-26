@@ -2,7 +2,7 @@
 name: doc-linter
 description: Health-checks the Conductor documentation wiki for broken cross-references, stale claims, coverage gaps, and consistency issues. Read-only analysis agent.
 tools: Read, Grep, Glob
-model: haiku
+model: sonnet
 effort: medium
 maxTurns: 30
 ---

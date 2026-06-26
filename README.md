@@ -98,7 +98,7 @@ conductor-plugin/
 | `spec-planner` | sonnet | Generate spec.md + plan.md |
 | `spec-reviewer` | haiku | Interactive spec/plan review |
 | `doc-syncer` | sonnet | Documentation synchronisation |
-| `doc-linter` | haiku | Docs wiki health-check (broken refs, stale claims, gaps) |
+| `doc-linter` | sonnet | Docs wiki health-check (broken refs, stale claims, gaps) |
 | `wiki-researcher` | sonnet | Wiki topic query — cited answer synthesis (read-only) |
 | `wiki-differ` | sonnet | Wiki-vs-codebase drift detection (read-only) |
 | `skip-analyst` | haiku | Failed-task skip analysis |

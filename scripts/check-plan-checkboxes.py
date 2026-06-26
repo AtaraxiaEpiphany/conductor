@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """PreToolUse hook: enforce ``[ ]`` checkboxes on plan.md task/subtask lines.
 
-spec-planner (haiku) occasionally emits ``- Subtask: x`` without the ``[ ]``
+spec-planner (sonnet) occasionally emits ``- Subtask: x`` without the ``[ ]``
 status marker. plan_parse._TASK_LINE requires the marker, so a bracket-less
 line is silently dropped and the subtask vanishes from track-state.json — a
 silent data-loss defect.
