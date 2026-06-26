@@ -1,12 +1,16 @@
 """Regression tests for /conductor:setup resume state-key consistency.
 
-Guards the bug where the §1.0 resume key chain drifted from the keys actually
-saved by each step. The chain once listed ``3.4_track_artifacts_created`` and a
-terminal ``3.5_setup_complete`` that **no step ever wrote**, while §3.5 actually
-saved ``3.5_track_artifacts_created`` and §3.6 saved nothing. On re-run at §3.5
-the unrecognized key made the orchestrator skip the §3.6 commit and prematurely
-announce "Run /conductor:implement" — even when the user had chosen to skip the
-initial track. These tests pin the chain to the keys each step really saves.
+Guards the bugs where the §1.0 resume key chain drifted from the keys actually
+saved by each step. History: the chain once listed ``3.4_track_artifacts_created``
+and a terminal ``3.5_setup_complete`` that **no step ever wrote**. A later fix
+renumbered to ``3.5_track_artifacts_created`` + ``3.6_setup_complete``. The
+delegation refactor (setup → /conductor:new-track) then removed the
+artifact-creation step entirely, so ``3.5_track_artifacts_created`` is now a
+phantom too — the chain drops it and ``3.6_setup_complete`` is the only §3 key.
+
+Also pins the issue #1 fix: the terminal resume key must be saved BEFORE the
+final commit, so ``setup_state.json`` lands in the committed tree instead of
+being left dirty on the working tree.
 """
 import re
 from pathlib import Path
@@ -27,8 +31,9 @@ class ResumeChainTests(TestCase):
     def test_chain_head_and_tail(self):
         keys = _chain()
         self.assertEqual(keys[0], "2.1_product_guide")
-        # The two Phase-3 keys must follow the section numbering (3.5 then 3.6).
-        self.assertEqual(keys[-2], "3.5_track_artifacts_created")
+        # Delegation removed the §3.x artifact step, so the chain's Phase-3 tail
+        # is just the terminal key, preceded by the last Phase-2 key.
+        self.assertEqual(keys[-2], "2.5_finalization")
         self.assertEqual(keys[-1], "3.6_setup_complete")
 
     def test_terminal_key_is_the_halt_check(self):
@@ -36,8 +41,12 @@ class ResumeChainTests(TestCase):
         self.assertIn("If `3.6_setup_complete`", SKILL)
 
     def test_no_phantom_keys_remain(self):
-        # The old mis-numbered / never-written keys must be gone entirely.
-        for phantom in ("3.4_track_artifacts_created", "3.5_setup_complete"):
+        # All historical / removed keys must be gone entirely.
+        for phantom in (
+            "3.4_track_artifacts_created",  # never written (original bug)
+            "3.5_setup_complete",           # never written (original bug)
+            "3.5_track_artifacts_created",  # removed by new-track delegation
+        ):
             self.assertNotIn(phantom, SKILL,
                              f"phantom state key {phantom!r} still present")
 
@@ -65,6 +74,23 @@ class CommitGuardTests(TestCase):
         # Re-running §3.6 after artifacts were already committed must not trip the
         # "validate every tool call" contract — hence the diff-cached guard.
         self.assertIn("git diff --cached --quiet", SKILL)
+
+    def test_terminal_save_precedes_commit(self):
+        # Issue #1 regression guard: the terminal Save state must come BEFORE the
+        # git commit, so setup_state.json is staged and committed (clean tree)
+        # rather than left dirty. Earlier the order was reversed.
+        idx_terminal = SKILL.index("Save state: `3.6_setup_complete`")
+        idx_commit = SKILL.index("git diff --cached --quiet")
+        self.assertLess(idx_terminal, idx_commit,
+                        "terminal Save state must precede the final git commit")
+
+
+class DelegationTests(TestCase):
+    def test_setup_delegates_initial_track_to_new_track(self):
+        # §3.0 must hand initial-track creation to /conductor:new-track rather
+        # than running its own spec-planner/spec-reviewer/init.
+        self.assertIn("/conductor:new-track", SKILL)
+        self.assertIn("### 3.2 Delegate to /conductor:new-track", SKILL)
 
 
 if __name__ == "__main__":

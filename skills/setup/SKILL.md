@@ -19,14 +19,13 @@ Key paths (resolve via `conductor/index.md` if non-default):
 ## 1.0 RESUME CHECK
 
 1. Read `conductor/setup_state.json` if exists.
-2. Resume from `last_successful_step` (keys: `2.1_product_guide` → `2.2_product_guidelines` → `2.3_tech_stack_styleguides` → `2.4_workflow` → `2.5_finalization` → `3.5_track_artifacts_created` → `3.6_setup_complete`). Resume at the **first section whose key is NOT yet saved** — i.e. re-run the step that follows `last_successful_step`. Do not treat a mid-chain key (e.g. `3.5_track_artifacts_created`) as complete; only `3.6_setup_complete` is terminal.
+2. Resume from `last_successful_step` (keys: `2.1_product_guide` → `2.2_product_guidelines` → `2.3_tech_stack_styleguides` → `2.4_workflow` → `2.5_finalization` → `3.6_setup_complete`). Resume at the **first section whose key is NOT yet saved** — i.e. re-run the step that follows `last_successful_step`. Do not treat a mid-chain key (e.g. `2.5_finalization`) as complete; only `3.6_setup_complete` is terminal.
 3. If `3.6_setup_complete` → announce complete → HALT.
 4. No file → new setup → proceed.
 
 **Subagents:**
-- `conductor:project-analyzer` — brownfield project analysis
-- `conductor:spec-planner` — spec.md and plan.md generation
-- `conductor:spec-reviewer` — interactive spec/plan review
+- `conductor:project-analyzer` — brownfield project analysis (§2.0)
+- `/conductor:new-track` — owns the entire initial-track lifecycle (§3.2): derive-name, spec-planner, spec-reviewer, `init-from-plan`, registry-update, commit, announce, auto-start. It also resumes any partial track via its own §0.5 marker.
 
 CRITICAL: Validate every tool call. On failure → halt → announce.
 
@@ -97,65 +96,50 @@ Save state: `2.4_workflow`.
 
 ---
 
-## 3.0 INITIAL TRACK GENERATION
+## 3.0 INITIAL TRACK (delegates to /conductor:new-track)
+
+setup no longer creates the track itself — the entire track lifecycle lives in
+`/conductor:new-track`, which owns derive-name, spec-planner, spec-reviewer,
+`init-from-plan` (mechanical, from plan.md — no large `--plan-structure` arg),
+registry-update, the track commit, announce, and auto-start. It also resumes any
+partial track via its §0.5 marker (issue #3). setup's only unique responsibilities
+here are the greenfield product requirements (§3.1), delegating (§3.2), and its
+own final commit (§3.6).
+
+Re-entering §3.0 after an interruption lets new-track resume the partial track
+automatically — **do not** re-derive a track id, re-init state, or pass a
+`--plan-structure` from setup.
 
 ### 3.1 Product Requirements (Greenfield only)
 
 Interactive (up to 5 questions).
 
-### 3.2 Propose Track
+### 3.2 Delegate to /conductor:new-track
 
-1. Analyze context → propose a track title → user confirms.
-2. From the confirmed title, pick a short slug (1–3 lowercase words). **Derive the id deterministically:**
-   ```bash
-   track-state derive-name <slug>
-   ```
-   Parse the JSON. Use `track_id` and `track_dir` from the result for §3.3 (`TRACK_DIR`), §3.4, and §3.5 (`<track_dir>` and `--track-id`). Never hand-write the date — the command stamps it from the clock.
-
-### 3.3 Dispatch Spec-Planner
-
-`Agent` tool, `subagent_type: "conductor:spec-planner"`. Description: `"Generate spec/plan for '<track_desc>'"`.
-
-```
-TRACK_DIR={track_dir}
-TRACK_DESCRIPTION={desc}
-TRACK_TYPE={type}
-USER_ANSWERS={answers or N/A}
-RELATED_DOCS={paths or N/A}
-```
-
-Parse `---SPEC PLAN RESULT---` block. Extract `PLAN_STRUCTURE`. Files are on disk.
-
-### 3.4 Dispatch Spec-Reviewer
-
-`Agent` tool, `subagent_type: "conductor:spec-reviewer"`. Description: `"Review spec/plan for '<desc>'"`.
-
-```
-TRACK_DIR={track_dir}
-```
-
-Parse `---REVIEW RESULT---` block. If `STATUS: CANCELLED` → halt. If `STRUCTURE_CHANGED: true` → note for init.
-
-### 3.5 Create State Artifacts
-
-1. **Tracks Registry:** Create `conductor/tracks.md` if missing.
-2. **Initialize track:**
-   ```bash
-   track-state init "<track_dir>" \
-     --plan-structure '<PLAN_STRUCTURE json>' \
-     --track-id <id> \
-     --type <type> \
-     --description '<desc>'
-   ```
-3. **Update Tracks Registry:** Append new entry.
-4. Save state: `3.5_track_artifacts_created`.
+1. If the user chose "later" at §2.5 step 5 → Phase 1 is already committed → HALT.
+2. Gather the track description: greenfield → synthesize from the §3.1 answers;
+   brownfield → one short description (the analyzer's top recommendation). Pass
+   the greenfield product answers as context.
+3. Invoke `/conductor:new-track <description>`. new-track does the rest —
+   including resuming a partial track if one exists at the derived `track_dir`,
+   and validating any pre-existing `plan.md` (its §2.3 guard).
+4. On return, fall through to §3.6. (The old §3.3 spec-planner / §3.4
+   spec-reviewer / §3.5 `init --plan-structure` steps are now owned by new-track
+   — hence the numbering gap. This also retires the large CLI arg of issue #6 and
+   the parser-bypass of issue #4a.)
 
 ### 3.6 Final Commit
 
-1. Commit all setup artifacts. The `git diff --cached --quiet ||` guard makes the commit a no-op **only** when §3.5's artifacts are already committed (a defensive re-run) — it does NOT skip this step:
+1. **Save the terminal resume key BEFORE committing** (issue #1: the old order
+   committed first, then saved `setup_state.json`, leaving it dirty on the
+   working tree). Saving first means `git add -A` stages the completed marker:
+   Save state: `3.6_setup_complete`.
+2. Commit all setup artifacts. The `git diff --cached --quiet ||` guard makes the
+   commit a no-op **only** when the artifacts are already committed (a defensive
+   re-run) — it does NOT skip this step:
    ```bash
    git add -A
    git diff --cached --quiet || git commit -m "chore(conductor): Scaffold conductor setup"
    ```
-2. Save state: `3.6_setup_complete`.
 3. Announce: `"Setup complete. Run /conductor:implement to begin."`
+
