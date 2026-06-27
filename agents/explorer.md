@@ -73,11 +73,11 @@ Record findings to this task's handoff via the sanctioned channel — **not** a 
 - **Per-task** investigation (architecture understanding, this task's gotchas, file inventory, recommended approach) → the body fields below.
 - **Durable, cross-task** findings (component architecture that outlives this task, reusable inventories, broadly-applicable gotchas) → the `graduation_candidates` list. `doc-syncer` harvests these into `conductor/design/` + `conductor/resource/` after the track completes.
 
-Build the content JSON in a temp file (avoids shell-quoting issues), then append:
+Pipe the content JSON on stdin (a quoted heredoc makes quotes/backticks/`$` literal and drops the temp-file ceremony). `append-handoff` reads stdin when `--content` is absent:
 
 ```bash
-TMP="$(mktemp)"
-cat > "$TMP" << 'EOF'
+track-state append-handoff "{TRACK_DIR}" {PHASE} {TASK} \
+  --type explore ${SUBTASK:+--subtask "$SUBTASK"} << 'EOF'
 {
   "summary": "<2-3 sentence answer>",
   "findings": ["<key finding>", "<key finding>"],
@@ -94,9 +94,6 @@ cat > "$TMP" << 'EOF'
   "graduation_candidates": ["<durable finding for doc-syncer to merge into the corpus>"]
 }
 EOF
-track-state append-handoff "{TRACK_DIR}" {PHASE} {TASK} \
-  --type explore ${SUBTASK:+--subtask "$SUBTASK"} --content "$(cat "$TMP")"
-rm -f "$TMP"
 ```
 
 `track-state append-handoff` merges this into `{TRACK_DIR}/.conductor/handoff/P{PHASE}T{TASK}.md` under an `## Exploration Notes` section, preserving the full schema above.
@@ -120,20 +117,20 @@ Dual output: result file + terse stdout.
 
 ### 5.1 Result File
 
-Write `{TRACK_DIR}/.conductor/result.json` via `track-state write-result` — the atomic, validated channel task-executor uses (you have no Write tool). Build the JSON in a temp file to avoid shell-quoting issues, then pass it via `--data` (same idiom as your §4.2 handoff write):
+Write `{TRACK_DIR}/.conductor/result.json` via `track-state write-result` — the atomic, validated channel task-executor uses (you have no Write tool). **Pass fields as flags** so you never hand-write JSON (the quote/type slips that caused the intermittent "result.json missing" failure). `write-result` validates that `status` is `SUCCESS` or `FAILURE`; any other value is rejected (non-zero exit) and fails this task, so the result is never silently malformed.
 
 ```bash
-TMP="$(mktemp)"
-cat > "$TMP" << 'EOF'
-{"status":"SUCCESS","commit_sha":"","files_changed":".conductor/handoff/","summary":"<one-line>","phase":PHASE,"task":TASK,"subtask":SUBTASK,"task_name":"NAME"}
-EOF
-track-state write-result "{TRACK_DIR}" --data "$(cat "$TMP")"
-rm -f "$TMP"
+track-state write-result "{TRACK_DIR}" \
+  --status success \
+  --commit-sha "" \
+  --files-changed ".conductor/handoff/" \
+  --summary "<one-line>" \
+  --phase PHASE --task TASK ${SUBTASK:+--subtask "$SUBTASK"} --task-name NAME
 ```
 
-On **FAILURE**, write the same way with `"status":"FAILURE"` and a `summary` of what blocked you — the orchestrator's retry/skip path reads it.
+On **FAILURE**, swap `--status failure` and make `--summary` state what blocked you — the orchestrator's retry/skip path reads it.
 
-`commit_sha` is left empty — the orchestrator fills it from the conductor completion commit. `files_changed` is `.conductor/handoff/` (the sanctioned channel), never a track-dir doc. `write-result` validates that `status` is `SUCCESS` or `FAILURE`; any other value is rejected (non-zero exit) and fails this task, so the result is never silently malformed.
+`commit_sha` is left empty — the orchestrator fills it from the conductor completion commit. `files_changed` is `.conductor/handoff/` (the sanctioned channel), never a track-dir doc.
 
 ### 5.2 Stdout (terse)
 

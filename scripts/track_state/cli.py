@@ -183,14 +183,16 @@ COMMAND_HELP = {
                     "Read handoff content for a specific task"),
     "append-handoff": ("append-handoff <track-dir> <phase> <task>\n"
                        "                  --type <explore|decision|risk|deviation>\n"
-                       "                  --content '<json>' [--subtask <n>]",
+                       "                  --content '<json>' (or stdin) [--subtask <n>]",
                        "Append notes to a task's handoff file"),
     "harvest-candidates": ("harvest-candidates <track-dir>",
                            "Extract durable findings (graduation candidates + decisions) from handoffs for doc-syncer"),
     "registry-update": ("registry-update <track-dir> <tracks-md-path>",
                         "Update track entry in Tracks Registry (tracks.md)"),
-    "write-result": ("write-result <track-dir> [--data '<json>']",
-                     "Write result.json from --data or stdin (SUCCESS|FAILURE)"),
+    "write-result": ("write-result <track-dir> --status success|failure --commit-sha <sha>\n"
+                     "                                --summary <text> --coverage-pct <n> ...\n"
+                     "                  <track-dir> [--data '<json>']   (or pipe JSON on stdin)",
+                     "Write result.json from typed flags (no JSON), --data, or stdin"),
     "process-result": ("process-result <track-dir>",
                        "Read result.json, update state, sync plan, write git notes, enforce gates"),
     "dispatch-prepare": ("dispatch-prepare <track-dir> [--full]",
@@ -402,9 +404,15 @@ def main():
         elif cmd == "sync-handoff":
             cmd_sync_handoff(track_dir)
         elif cmd == "append-handoff":
+            content = flag(args, "--content")
+            if content is None:
+                # No --content flag → read JSON from stdin (same quote-safe
+                # channel write-result uses; lets agents pipe a heredoc instead
+                # of hand-quoting inline --content '<json>').
+                content = sys.stdin.read()
             cmd_append_handoff(track_dir, pos[0], pos[1],
                               flag(args, "--type") or "explore",
-                              flag(args, "--content") or "{}",
+                              content,
                               flag(args, "--subtask"))
         elif cmd == "harvest-candidates":
             cmd_harvest_candidates(track_dir)

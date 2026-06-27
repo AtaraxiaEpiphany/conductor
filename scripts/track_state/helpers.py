@@ -24,6 +24,26 @@ def flag(args, name):
     return None
 
 
+def flags_all(args, name):
+    """All values for a repeatable --flag, in order (supports --flag val and --flag=val).
+
+    Unlike ``flag`` (first match only), returns every occurrence — for repeatable
+    flags such as write-result's ``--deviation``. Empty list if absent.
+    """
+    vals = []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == name and i + 1 < len(args):
+            vals.append(args[i + 1])
+            i += 2
+            continue
+        if a.startswith(name + "="):
+            vals.append(a[len(name) + 1:])
+        i += 1
+    return vals
+
+
 def now_iso():
     return datetime.now(timezone.utc).isoformat()
 

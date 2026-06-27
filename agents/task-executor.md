@@ -143,62 +143,42 @@ Dual output: result file + terse stdout.
 
 ### 6.1 Result File
 
-Write via CLI (handles atomic write and validation). **Build the JSON in a temp file** — do NOT pass it inline as `--data '<json>'`. An inline single-quoted payload breaks on any `'`, `"`, `` ` ``, `$`, or `\` inside `summary`/`files_changed`/`failure_detail`; the JSON then fails to parse, `write-result` exits non-zero, and `result.json` is **never written** — the root cause of the intermittent "result.json missing" failure (a missing file forces a recovery turn and ultimately a synthesized result that loses your coverage/evidence). The temp-file + quoted-heredoc idiom is quote-safe:
-
-```bash
-TMP="$(mktemp)"
-cat > "$TMP" << 'EOF'
-{ ...result JSON — Success or Failure shape below... }
-EOF
-track-state write-result "{TRACK_DIR}" --data "$(cat "$TMP")"
-rm -f "$TMP"
-```
-
-`<< 'EOF'` is quoted, so quotes/backticks/`$` inside the JSON are literal. Confirm the call exits 0 (prints `{"ok": true}`); a non-zero exit means the result was rejected (bad JSON or missing/invalid `status`) — fix the JSON and retry, else report FAILURE.
+Write via CLI (handles atomic write and validation). **Pass fields as flags** — `write-result` assembles and type-validates the JSON for you, so you never hand-write JSON. Hand-writing was the root cause of the intermittent "result.json missing" failure: a stray quote/comma or a `"94%"`-style type slip made the payload fail to parse, `write-result` exited non-zero, and `result.json` was **never written** — forcing a recovery turn and ultimately a synthesized result that loses your coverage/evidence. Each flag is one field; integer flags (`--phase`, `--task`, `--subtask`, `--coverage-pct`, `--attempt`, `--max-retries`) are validated — a non-integer exits non-zero with a clear message naming the offending flag.
 
 **Success:**
-```json
-{
-  "status": "SUCCESS",
-  "commit_sha": "<7-char-hash>",
-  "files_changed": "<comma-separated>",
-  "summary": "<one-line>",
-  "tc_coverage": "<TC IDs>",
-  "spec_deviation": "NONE",
-  "spec_deviation_detail": [],
-  "coverage_pct": 94,
-  "coverage_tool": "<command used>",
-  "phase": PHASE,
-  "task": TASK,
-  "subtask": SUBTASK,
-  "task_name": "NAME",
-  "attempt": ATTEMPT,
-  "max_retries": MAX_RETRIES,
-  "context_footprint": "minimal"
-}
+```bash
+track-state write-result "{TRACK_DIR}" \
+  --status success \
+  --commit-sha <7-char-hash> \
+  --files-changed "<comma-separated>" \
+  --summary "<one-line>" \
+  --tc-coverage "<TC IDs>" \
+  --coverage-pct 94 \
+  --coverage-tool "<command used>" \
+  --phase PHASE --task TASK ${SUBTASK:+--subtask "$SUBTASK"} --task-name NAME \
+  --attempt ATTEMPT --max-retries MAX_RETRIES
 ```
 
 **Failure:**
-```json
-{
-  "status": "FAILURE",
-  "commit_sha": "N/A",
-  "files_changed": "<files or N/A>",
-  "summary": "<one-line>",
-  "failure_detail": {
-    "what_was_done": "<actions>",
-    "failure_reason": "<error>",
-    "suggested_next_step": "<recommendation>"
-  },
-  "phase": PHASE,
-  "task": TASK,
-  "subtask": SUBTASK,
-  "task_name": "NAME",
-  "attempt": ATTEMPT,
-  "max_retries": MAX_RETRIES,
-  "context_footprint": "minimal"
-}
+```bash
+track-state write-result "{TRACK_DIR}" \
+  --status failure \
+  --summary "<one-line>" \
+  --failure-done "<actions>" \
+  --failure-reason "<error>" \
+  --failure-suggested "<recommendation>" \
+  --phase PHASE --task TASK ${SUBTASK:+--subtask "$SUBTASK"} --task-name NAME \
+  --attempt ATTEMPT --max-retries MAX_RETRIES
 ```
+
+**Spec deviations** (only if an AC went unmet — otherwise omit entirely). Repeatable `--deviation`, each a small JSON object:
+```bash
+  --deviation '{"ac_id":"AC-2","reason":"<why>","suggested_revision":"<fix>"}'
+```
+
+Confirm the call exits 0 (prints `{"ok": true, ...}`); a non-zero exit means the result was rejected (bad/missing field) — fix it and retry, else report FAILURE.
+
+> Fallback: raw JSON is still accepted via `--data '<json>'` or piped on stdin (quoted heredoc) if a field the flags don't cover is ever needed. On failure, `commit_sha`/`files_changed` may be omitted — the orchestrator's retry/skip path reads `summary` + `failure_detail`.
 
 ### 6.2 Stdout (terse)
 
@@ -240,16 +220,13 @@ Only write to handoff when execution is interrupted or fails — NOT on every st
 
 ### How to write
 
-Build the content JSON in a temp file — the same quote-safe idiom as §6.1. An inline `--content '<json>'` breaks on any quote/`` ` ``/`$` in the detail text, and a failed `append-handoff` here silently loses the retry context the next attempt depends on:
+Pipe the content JSON on stdin — the same quote-safe idiom as §6.1. An inline `--content '<json>'` breaks on any quote/`` ` ``/`$` in the detail text, and a failed `append-handoff` here silently loses the retry context the next attempt depends on. `append-handoff` reads stdin when `--content` is absent:
 
 ```bash
-TMP="$(mktemp)"
-cat > "$TMP" << 'EOF'
+track-state append-handoff "{TRACK_DIR}" {PHASE} {TASK} \
+  --type deviation << 'EOF'
 {"title":"Step N interrupted","detail":"what was done, what failed, suggested approach"}
 EOF
-track-state append-handoff "{TRACK_DIR}" {PHASE} {TASK} \
-  --type deviation --content "$(cat "$TMP")"
-rm -f "$TMP"
 ```
 
 This ensures the retry agent (on `IS_RETRY=true`) gets useful context via `track-state get-handoff`.
