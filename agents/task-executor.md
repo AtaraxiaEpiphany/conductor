@@ -143,7 +143,7 @@ Dual output: result file + terse stdout.
 
 ### 6.1 Result File
 
-Write via CLI (handles atomic write and validation). **Pass fields as flags** — `write-result` assembles and type-validates the JSON for you, so you never hand-write JSON. Hand-writing was the root cause of the intermittent "result.json missing" failure: a stray quote/comma or a `"94%"`-style type slip made the payload fail to parse, `write-result` exited non-zero, and `result.json` was **never written** — forcing a recovery turn and ultimately a synthesized result that loses your coverage/evidence. Each flag is one field; integer flags (`--phase`, `--task`, `--subtask`, `--coverage-pct`, `--attempt`, `--max-retries`) are validated — a non-integer exits non-zero with a clear message naming the offending flag.
+Write via CLI (handles atomic write and validation). **Pass fields as flags** — `write-result` assembles and type-validates the JSON for you, so you never hand-write JSON (a stray quote/comma or `"94%"`-style type slip makes the payload fail to parse, so `result.json` is not written). Each flag is one field; integer flags (`--phase`, `--task`, `--subtask`, `--coverage-pct`, `--attempt`, `--max-retries`) are validated — a non-integer exits non-zero with a clear message naming the offending flag.
 
 **Success:**
 ```bash
@@ -220,9 +220,9 @@ Only write to handoff when execution is interrupted or fails — NOT on every st
 
 ### How to write
 
-An interruption produces **two** artifacts, both mandatory, in this order. Writing only the handoff (the old behavior) left no `result.json`, so the `on-subagent-stop` hook had to fire a recovery turn and synthesize a lossy result from git state — writing `result.json` yourself keeps the completion signal deterministic and preserves your real `failure_detail`.
+An interruption produces **two** artifacts, both mandatory, in this order — the handoff feeds the retry, and `result.json` is the completion signal `process-result` reads (omit it and `on-subagent-stop` forces a recovery turn).
 
-**1. Handoff deviation log** (retry context for `IS_RETRY=true`). Pipe the JSON on stdin — the same quote-safe idiom as §6.1. An inline `--content '<json>'` breaks on any quote/`` ` ``/`$` in the detail text, and a failed `append-handoff` here silently loses the retry context the next attempt depends on. `append-handoff` reads stdin when `--content` is absent:
+**1. Handoff deviation log** (retry context for `IS_RETRY=true`). Pipe the JSON on stdin — an inline `--content '<json>'` breaks on quotes/`` ` ``/`$` in the detail text (same reason as §6.1). `append-handoff` reads stdin when `--content` is absent:
 
 ```bash
 track-state append-handoff "{TRACK_DIR}" {PHASE} {TASK} \
@@ -244,4 +244,4 @@ track-state write-result "{TRACK_DIR}" \
   --attempt ATTEMPT --max-retries MAX_RETRIES
 ```
 
-Confirm both calls exit 0. The handoff ensures the retry agent gets context via `track-state get-handoff`; the `result.json` ensures the orchestrator's `process-result` reads your real failure detail instead of a synthesized fallback.
+Confirm both calls exit 0. The handoff feeds the retry agent (`track-state get-handoff`); the `result.json` carries your real failure detail to `process-result`.
