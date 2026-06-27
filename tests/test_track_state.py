@@ -15,7 +15,7 @@ from scripts.track_state.validate import (
     _auto_fix, cmd_validate, ensure_healthy,
 )
 from scripts.track_state.dispatch import cmd_recover, cmd_dispatch_next
-from scripts.track_state.quality import cmd_init, cmd_init_from_plan, cmd_set_mode, _validate_plan_structure
+from scripts.track_state.quality import cmd_init_from_plan, cmd_set_mode, _validate_plan_structure, _init_core
 from scripts.track_state.plan_parse import parse_plan, to_plan_structure
 from scripts.track_state.misc import cmd_shas, cmd_derive_name
 
@@ -426,7 +426,7 @@ class TestInitValidation(TestCase):
 
     def test_init_rejects_bad_structure(self):
         d = tempfile.mkdtemp()
-        result, _ = _out_captured(cmd_init, d, '{"phases": []}', 't1_20260626', 'feature', 'desc')
+        result = _init_core(d, {"phases": []}, 't1_20260626', 'feature', 'desc')
         self.assertFalse(result["ok"])
         self.assertTrue(len(result["errors"]) > 0)
         shutil.rmtree(d)
@@ -435,10 +435,10 @@ class TestInitValidation(TestCase):
         d = tempfile.mkdtemp()
         Path(d, "plan.md").write_text(
             "# Plan\n\n## Phase 1: Build\n- [ ] Task A\n- [ ] Task B\n- [ ] Task C\n")
-        structure = json.dumps({"phases": [
+        structure = {"phases": [
             {"name": "Build", "tasks": [{"name": "Task A"}, {"name": "Task B"}]},
-        ]})
-        result, _ = _out_captured(cmd_init, d, structure, 't1_20260626', 'feature', 'desc')
+        ]}
+        result = _init_core(d, structure, 't1_20260626', 'feature', 'desc')
         self.assertTrue(result["ok"])
         self.assertIn("warnings", result)
         self.assertTrue(any("3 tasks" in w for w in result["warnings"]))
@@ -448,10 +448,10 @@ class TestInitValidation(TestCase):
         d = tempfile.mkdtemp()
         Path(d, "plan.md").write_text(
             "# Plan\n\n## Phase 1: Build\n- [ ] Task A\n- [ ] Task B\n")
-        structure = json.dumps({"phases": [
+        structure = {"phases": [
             {"name": "Build", "tasks": [{"name": "Task A"}, {"name": "Task B"}]},
-        ]})
-        result, _ = _out_captured(cmd_init, d, structure, 't1_20260626', 'feature', 'desc')
+        ]}
+        result = _init_core(d, structure, 't1_20260626', 'feature', 'desc')
         self.assertTrue(result["ok"])
         self.assertNotIn("warnings", result)
         shutil.rmtree(d)
@@ -461,8 +461,8 @@ class TestInitValidation(TestCase):
         # are unrecoverable post-commit) with a derive-name hint.
         d = tempfile.mkdtemp()
         sub = str(Path(d, "auth_gateway"))
-        good = json.dumps({"phases": [{"name": "P1", "tasks": [{"name": "T1"}]}]})
-        result, _ = _out_captured(cmd_init, sub, good, "auth_gateway", "feature", "desc")
+        good = {"phases": [{"name": "P1", "tasks": [{"name": "T1"}]}]}
+        result = _init_core(sub, good, "auth_gateway", "feature", "desc")
         self.assertFalse(result["ok"])
         self.assertTrue(any("shortname_YYYYMMDD" in e for e in result["errors"]))
         self.assertFalse(Path(sub).exists(), "no directory should be created on a bad id")
@@ -470,8 +470,8 @@ class TestInitValidation(TestCase):
 
     def test_init_accepts_dated_id(self):
         d = tempfile.mkdtemp()
-        good = json.dumps({"phases": [{"name": "P1", "tasks": [{"name": "T1"}]}]})
-        result, _ = _out_captured(cmd_init, d, good, "auth_gateway_20260626", "feature", "desc")
+        good = {"phases": [{"name": "P1", "tasks": [{"name": "T1"}]}]}
+        result = _init_core(d, good, "auth_gateway_20260626", "feature", "desc")
         self.assertTrue(result["ok"])
         shutil.rmtree(d)
 

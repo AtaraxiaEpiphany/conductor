@@ -408,7 +408,7 @@ def _run_all_checks(track_dir, state, errors, warnings):
     if state["type"] not in ("feature", "bugfix", "chore", "docs"):
         errors.append(
             f"Invalid type: '{state['type']}'. Valid types: feature, bugfix, chore, docs. "
-            f"Run track-state init to recreate the track."
+            f"Run track-state init-from-plan to recreate the track."
         )
     if state["status"] not in ("new", "in_progress", "completed", "archived", "blocked", "cancelled"):
         errors.append(

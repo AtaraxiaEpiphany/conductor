@@ -13,7 +13,7 @@ Checkbox marker chars are the values of constants.MARKER_MAP:
     ' ' pending   x completed   ~ in_progress   ! failed
     > skipped     # blocked      - cancelled     d deferred
 
-This module produces the PLAN_STRUCTURE shape that quality.cmd_init expects,
+This module produces the PLAN_STRUCTURE shape that quality._init_core expects,
 plus structural diagnostics. Name cleaning mirrors validate._parse_plan_structure
 so a structure derived here round-trips cleanly with sync-plan.
 """
@@ -177,11 +177,11 @@ def parse_plan(plan_path):
 
 
 def to_plan_structure(parsed):
-    """Convert parse_plan() output → PLAN_STRUCTURE dict for cmd_init.
+    """Convert parse_plan() output → PLAN_STRUCTURE dict for _init_core.
 
     Drops phase 'number'/'line' and task 'line' metadata. Tasks with subtasks
     carry a 'subtasks' list; tasks without omit the key — matching the contract
-    that quality.cmd_init / spec-planner PLAN_STRUCTURE both follow.
+    that quality._init_core consumes.
     """
     out_phases = []
     for ph in parsed["phases"]:

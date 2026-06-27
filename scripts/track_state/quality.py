@@ -112,8 +112,8 @@ def _init_core(track_dir, plan, track_id, track_type, description, execution_mod
                force=False):
     """Build track-state.json + index.md + handoff.md from a plan structure dict.
 
-    Returns the result dict without printing. Shared by cmd_init (JSON input)
-    and cmd_init_from_plan (parsed from plan.md).
+    Returns the result dict without printing. Consumed by cmd_init_from_plan
+    (parsed from plan.md).
 
     ``force`` re-bootstraps an existing track (resets all progress to pending).
     Without it, an existing track-state.json is refused — re-running init on a
@@ -242,17 +242,6 @@ def _init_core(track_dir, plan, track_id, track_type, description, execution_mod
     if warnings:
         result["warnings"] = warnings
     return result
-
-
-def cmd_init(track_dir, plan_structure_json, track_id, track_type, description, execution_mode=None,
-             force=False):
-    """Create track-state.json and index.md from a PLAN_STRUCTURE JSON string.
-
-    Thin wrapper over _init_core; kept for backward compatibility with the
-    explicit `--plan-structure` init path.
-    """
-    plan = json.loads(plan_structure_json)
-    out(_init_core(track_dir, plan, track_id, track_type, description, execution_mode, force=force))
 
 
 def cmd_init_from_plan(track_dir, track_id, track_type, description,
