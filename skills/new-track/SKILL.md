@@ -105,7 +105,32 @@ RELATED_DOCS={paths or N/A}
 
 Parse `---SPEC PLAN RESULT---` block. Confirm `STATUS: SUCCESS` (halt on FAILURE and announce `SUMMARY`). `plan.md` and `spec.md` are now on disk — `PLAN_STRUCTURE` is **no longer required**: Section 2.6 derives the full task/subtask structure mechanically from `plan.md`, eliminating manual transcription.
 
-> **Resume:** append `"spec_planned"` to `steps_done` in `<track_dir>/.conductor/new-track-progress.json`.
+**Validate the generated plan (catch format defects now, not at §2.6).** `plan.md` is sometimes written with a format defect the LLM does not self-catch — a task/subtask line missing its `- [ ]` checkbox or `Task:`/`Subtask:` marker, or a missing `## Phase N:` heading. Such a plan reads fine to a human but fails `init-from-plan` at §2.6, halting the whole track. Validate it *now* with `--check` (writes nothing — same `parse_plan` parser §2.6 uses) and re-dispatch spec-planner with the exact errors if it fails, instead of halting.
+
+Loop — max **2 re-dispatches (3 total attempts)**, counting from the first dispatch above:
+
+1. ```bash
+   track-state init-from-plan "<track_dir>" --check
+   ```
+2. `ok: true` → plan conforms (note the reported `phases`/`tasks` counts) → break out of the loop, proceed to the resume marker below.
+3. `ok: false` → the emitted `errors` describe the defect(s). If a re-dispatch remains, dispatch `conductor:spec-planner` again with the errors appended so it can fix the format:
+
+   ```
+   TRACK_DIR={track_dir}
+   TRACK_DESCRIPTION={desc}
+   TRACK_TYPE={type}
+   USER_ANSWERS={answers or N/A}
+   RELATED_DOCS={paths or N/A}
+   PREVIOUS_ERRORS:
+   {the errors[] list, verbatim}
+   REGEN_FOCUS: The prior plan.md failed the format contract. Every task AND subtask line MUST begin with `- [ ]`; every phase MUST begin with `## Phase N: Name`; subtasks are indented 2 spaces under their parent and never replace the `[ ]` with a tag. Re-read conductor/design/plan-format-contract.md, then regenerate a conforming plan.md (keep the existing spec.md if it is adequate).
+   ```
+
+   Re-parse the returned `---SPEC PLAN RESULT---` block (halt on FAILURE), then re-run step 1.
+
+4. Still `ok: false` after the final attempt → **halt**: `"Spec-planner produced a malformed plan.md after 3 attempts — errors: <errors>. Inspect <track_dir>/plan.md."` Do NOT proceed to §2.6 (it would fail identically).
+
+> **Resume:** append `"spec_planned"` to `steps_done` in `<track_dir>/.conductor/new-track-progress.json` **only after the `--check` loop returns `ok: true`** — a plan that has not yet validated is not "planned".
 
 ### 2.4 Dispatch Spec-Reviewer
 

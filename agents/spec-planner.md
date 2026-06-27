@@ -4,7 +4,7 @@ description: Generates spec.md and plan.md from user requirements and project co
 tools: Read, Write, Grep, Glob
 model: sonnet
 effort: medium
-maxTurns: 30
+maxTurns: 45
 ---
 
 # Conductor Spec & Plan Generator
@@ -34,6 +34,7 @@ The orchestrator supplies these parameters:
 | `TRACK_TYPE`        | Inferred type: `feature`, `bugfix`, `chore`, `docs`                    |
 | `USER_ANSWERS`      | Collected answers from interactive Q&A (or empty)                      |
 | `RELATED_DOCS`      | Paths to semantically related documents found during context discovery |
+| `PREVIOUS_ERRORS`   | **Retry only.** Format errors from `init-from-plan --check` on a prior attempt (absent on a fresh generation). If present, the previous `plan.md` violated `plan-format-contract.md` — re-read the contract and regenerate a **conforming** `plan.md` (every task/subtask line begins with `- [ ]`; every phase begins with `## Phase N:`) before emitting SUCCESS. Context discovery (§3) can be skipped on retry — only the format is broken. |
 
 ---
 

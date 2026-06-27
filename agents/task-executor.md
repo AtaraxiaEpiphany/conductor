@@ -4,7 +4,7 @@ description: Executes a single track task via TDD workflow (Steps 3-8). Self-loa
 tools: Bash, Read, Edit, Write, Grep, Glob, NotebookEdit
 model: sonnet
 effort: high
-maxTurns: 50
+maxTurns: 70
 permissionMode: acceptEdits
 ---
 
@@ -143,12 +143,18 @@ Dual output: result file + terse stdout.
 
 ### 6.1 Result File
 
-Write via CLI (handles atomic write and validation):
+Write via CLI (handles atomic write and validation). **Build the JSON in a temp file** — do NOT pass it inline as `--data '<json>'`. An inline single-quoted payload breaks on any `'`, `"`, `` ` ``, `$`, or `\` inside `summary`/`files_changed`/`failure_detail`; the JSON then fails to parse, `write-result` exits non-zero, and `result.json` is **never written** — the root cause of the intermittent "result.json missing" failure (a missing file forces a recovery turn and ultimately a synthesized result that loses your coverage/evidence). The temp-file + quoted-heredoc idiom is quote-safe:
 
 ```bash
-track-state write-result {TRACK_DIR} --data '<json>'
-# Or pipe: echo '<json>' | track-state write-result {TRACK_DIR}
+TMP="$(mktemp)"
+cat > "$TMP" << 'EOF'
+{ ...result JSON — Success or Failure shape below... }
+EOF
+track-state write-result "{TRACK_DIR}" --data "$(cat "$TMP")"
+rm -f "$TMP"
 ```
+
+`<< 'EOF'` is quoted, so quotes/backticks/`$` inside the JSON are literal. Confirm the call exits 0 (prints `{"ok": true}`); a non-zero exit means the result was rejected (bad JSON or missing/invalid `status`) — fix the JSON and retry, else report FAILURE.
 
 **Success:**
 ```json
@@ -228,16 +234,22 @@ Only write to handoff when execution is interrupted or fails — NOT on every st
 | Condition | Action |
 |-----------|--------|
 | Step fails and you cannot recover | Write interruption log + report FAILURE |
-| Turn budget approaching (~30 turns) with no commit | Write interruption log + report FAILURE |
+| Turn budget approaching (~80% of maxTurns) with no commit | Write interruption log + report FAILURE |
 | `on-subagent-stop` recovery fails | Write interruption log + report FAILURE |
 | Normal completion (commit succeeded) | Do NOT write — `process-result` handles handoff |
 
 ### How to write
 
+Build the content JSON in a temp file — the same quote-safe idiom as §6.1. An inline `--content '<json>'` breaks on any quote/`` ` ``/`$` in the detail text, and a failed `append-handoff` here silently loses the retry context the next attempt depends on:
+
 ```bash
-track-state append-handoff {TRACK_DIR} {PHASE} {TASK} \
-  --type deviation \
-  --content '{"title":"Step N interrupted","detail":"what was done, what failed, suggested approach"}'
+TMP="$(mktemp)"
+cat > "$TMP" << 'EOF'
+{"title":"Step N interrupted","detail":"what was done, what failed, suggested approach"}
+EOF
+track-state append-handoff "{TRACK_DIR}" {PHASE} {TASK} \
+  --type deviation --content "$(cat "$TMP")"
+rm -f "$TMP"
 ```
 
 This ensures the retry agent (on `IS_RETRY=true`) gets useful context via `track-state get-handoff`.

@@ -4,7 +4,7 @@ description: Read-only code exploration agent. Records findings to the task hand
 tools: Bash, Read, Grep, Glob
 model: sonnet
 effort: high
-maxTurns: 40
+maxTurns: 56
 permissionMode: plan
 ---
 
