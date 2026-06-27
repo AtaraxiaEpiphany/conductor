@@ -107,19 +107,19 @@ If any document does not exist, note it and skip the corresponding analysis.
 
 ## 4.0 ANALYSIS (Phase 1) — two-step ingest
 
-This run is a **two-step chain-of-thought ingest** (analysis → generation), which produces materially better synthesis than fusing read+write. Do NOT jump to edits.
+This run is a **two-step** ingest: analyze fully (Step 1) → generate (Step 2). Do NOT jump to edits — fusing read+write degrades synthesis.
 
 ### 4.0a STEP 1 — Holistic Analysis (read-only, no edits yet)
 
-Before any per-document work, read the source (§3.1) and the loaded corpus (§3.2) and synthesize a single **ANALYSIS** block capturing:
+Read the source (§3.1) + loaded corpus (§3.2) and synthesize one **ANALYSIS** block:
 
-- **New entities / concepts** the source introduces (component names, tables, endpoints, domain terms).
-- **Contradictions / tensions** with the existing corpus — where the source says something the current docs imply otherwise (surfaced, not hidden; fed to `purpose.md` Thesis in §7.1b).
-- **Targeted docs** — which existing scoped docs this source *extends* (merge targets), and which forward-referenced docs it would *seed* (none yet). Route each via the `conductor/index.md` Scoped Docs Match Strategy.
+- **New entities** / concepts the source introduces (components, tables, endpoints, domain terms).
+- **Contradictions** / tensions with the corpus — surface, don't hide; feed to `purpose.md` Thesis in §7.1b.
+- **Targeted docs** — existing scoped docs this source *extends* (merge targets) vs forward-referenced docs it would *seed*. Route each via the `conductor/index.md` Scoped Docs Match Strategy.
 - **Cross-reference candidates** — pairs (A ↔ B) the analysis reveals.
-- **Direction shift** — does this source change the project thesis or answer/raise a Key Question (Purpose §7.1b)?
+- **Direction shift** — does this source change the thesis or answer/raise a Key Question (Purpose §7.1b)?
 
-Hold this analysis in working memory; it drives the per-document pass below. If the source adds nothing the corpus doesn't already reflect → the analysis is empty → proceed to §5/§6 as a no-op and report `STATUS: SKIPPED` (idempotent ingest).
+Hold this in working memory; it drives the per-document pass. If the source adds nothing the corpus doesn't already reflect → analysis is empty → §5/§6 are a no-op → report `STATUS: SKIPPED` (idempotent ingest).
 
 ### 4.0b STEP 2 — Per-Document Analysis (feeds the generation pass)
 
@@ -229,7 +229,7 @@ Runs **unconditionally** after Phase 1 — even if no document updates were conf
 
 ### 7.1 Regenerate `conductor/overview.md`
 
-Regenerate per `conductor/design/doc-sync-procedure.md` §B (Overview Regeneration Spec) — rewrite `overview.md` **in its entirety** (Write, not append) with the six sections (Summary, Architecture, Knowledge Base, Active Decisions, Track History Summary, Cross-Reference Index) synthesized from the currently loaded documents.
+Regenerate per `conductor/design/doc-sync-procedure.md` §B (Overview Regeneration Spec) — rewrite `overview.md` **in its entirety** (Write, not append), synthesizing the six §B sections from the currently loaded documents. (§B is authoritative for the section list; don't restate it here.)
 
 ### 7.1b Update `conductor/purpose.md` (partial — preserve user-authored sections)
 
@@ -254,26 +254,17 @@ Operations to log:
 
 ### 7.3 Verify Before Commit (Drift Gate)
 
-doc-syncer writes `overview.md` from **intent** (spec.md + track knowledge) — never against **reality** (the code). This step closes that gap for the same run: before the wiki commit ships, confirm the files this run touched contain no broken `[[wikilinks]]` or stale path references. Inline only — Grep + Glob (doc-syncer has no subagent dispatch; the heavier `wiki-doctor diff` stays a separate manual command).
+`overview.md` is written from **intent** (spec + track knowledge), not **reality** (the code). Before the wiki commit, verify the files this run touched have no broken `[[wikilinks]]` or stale paths — inline Grep + Glob only (no subagent dispatch; the heavier `wiki-doctor diff` is a separate manual command).
 
-**Scope (files this run authored or modified):**
-- `conductor/overview.md` — always (regenerated in §7.1).
-- Any scoped doc **seeded** in §6, and any doc that received an injected `## See Also` cross-reference in §6.
-- Phase 1 user-confirmed updates — scanned, but **report-only** (that content was user-confirmed; do not auto-edit).
+**Scope** — `conductor/overview.md` (always, regenerated in §7.1); any doc **seeded** in §6 or given an injected `## See Also` cross-reference in §6; Phase 1 user-confirmed updates (**report-only** — that content was confirmed, do not auto-edit).
 
-**Method:**
-1. For each scoped file, Grep `\[\[([^\]]+)\]\]`. Resolve each link by appending `.md` and checking existence via Glob (the resolution rule in the core contract). Collect unresolved targets as `BROKEN`.
-2. Separately, Glob-verify any explicit repo path this run introduced into prose/code (e.g. `hooks/pre-commit.sh`, `scripts/…`).
+**Verify + repair (auto-owned files only: `overview.md` and injected crossrefs):**
+1. Grep `\[\[([^\]]+)\]\]` per scoped file; resolve each link by appending `.md` + Glob existence (core-contract rule). Unresolved → `BROKEN`. Separately, Glob-verify any explicit repo path this run introduced into prose/code (e.g. `hooks/pre-commit.sh`, `scripts/…`).
+2. Per `BROKEN` link: Glob the basename elsewhere under `conductor/`; exactly one match → rewrite the `[[wikilink]]` there (a *moved* ref); no match → remove it from `overview.md` (auto-owned repair, no confirmation — overview must never link to a non-existent doc). Re-run steps 1–2 until stable (a path repair can cascade).
 
-**Repair (auto-owned files only — `overview.md` and injected crossrefs):**
-3. For each `BROKEN` link, Glob for the same basename elsewhere under `conductor/`. If exactly one candidate exists → rewrite the `[[wikilink]]` to that path (a *moved* reference).
-4. If no candidate exists → remove the reference from `overview.md`. `overview.md` is auto-owned and must never link to a non-existent doc; this is a targeted repair, not a content change requiring confirmation.
-5. Re-run steps 1–4 until no further auto-fix applies (a path repair can cascade).
+**Report (do NOT edit user-confirmed content):** broken links/paths in Phase 1 docs → surface in SUMMARY, count in `DRIFT_REPORTED` (§8.0).
 
-**Report (user-confirmed content — do NOT edit):**
-6. Broken links/paths in Phase 1 user-confirmed docs are surfaced in the SUMMARY and counted in `DRIFT_REPORTED` (§8.0). They are not auto-edited.
-
-**Gate decision:** verification **never blocks the commit** — the `[{TRACK_ID}]` commit is load-bearing for the `track-state archive` gate. It fixes what it can in auto-owned files and reports the rest.
+**Gate decision:** verification **never blocks the commit** — the `[{TRACK_ID}]` commit is load-bearing for the `track-state archive` gate. Fix what you can in auto-owned files; report the rest.
 
 ### 7.4 Commit Wiki Changes
 
