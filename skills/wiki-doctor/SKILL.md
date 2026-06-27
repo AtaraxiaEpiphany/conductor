@@ -151,14 +151,14 @@ PROJECT_DIR={PROJECT_DIR}
 SCOPE={scope, or empty for full diff}
 ```
 
-The agent loads the wiki docs, extracts verifiable claims (file/module/function/directory references; structural claims flagged unverifiable), checks each against the code via Glob/Grep (valid/moved/stale), verifies code→wiki coverage (full diff only), and returns a markdown report followed by a `---WIKI DIFF RESULT---` block.
+The agent loads the wiki docs, extracts verifiable claims (file/module/function/directory references; structural claims flagged unverifiable), checks each against the code via Glob/Grep (valid/moved/stale), verifies code→wiki coverage (full diff only), and returns a single `---WIKI DIFF RESULT---` block whose body carries the structured counts **and** the full markdown report inside it (the output filter strips anything outside the block, so wiki-differ emits no separate report).
 
 ### 4.3 Parse Result
 
 Parse the `---WIKI DIFF RESULT---` block:
 
 1. **`STATUS: FAILURE`** → announce the `REASON` → await instructions.
-2. **`STATUS: COMPLETED`** → present the agent's markdown report (above the block) to the user, then proceed to §4.4.
+2. **`STATUS: COMPLETED`** → the block body below the count fields **is** the markdown diff report; present it to the user, then proceed to §4.4. (The report lives inside the block because the output filter strips anything outside it — wiki-differ emits no separate report.)
 3. **No block detected** → announce "Wiki-differ completed without structured result. Check the conversation for details."
 
 ### 4.4 Recommendations

@@ -133,39 +133,11 @@ STATUS: SUCCESS
 FILES_WRITTEN:
 - {TRACK_DIR}/spec.md
 - {TRACK_DIR}/plan.md
-PLAN_STRUCTURE:
-{
-  "phases": [
-    {
-      "name": "Phase 1: ...",
-      "tasks": [
-        { "name": "Task 1 name" },
-        {
-          "name": "Task 2 name",
-          "subtasks": ["Subtask 2.1 name", "Subtask 2.2 name"]
-        },
-        { "name": "[Manual] Conductor - User Manual Verification 'Phase 1'" }
-      ]
-    },
-    {
-      "name": "Phase 2: ...",
-      "tasks": [
-        { "name": "Task 3 name" },
-        { "name": "[Manual] Conductor - User Manual Verification 'Phase 2'" }
-      ]
-    }
-  ]
-}
 SUMMARY: <one-line summary of what was generated>
 ---END SPEC PLAN RESULT---
 ```
 
-**`PLAN_STRUCTURE` rules:**
-- Extract phase names and task names from the generated `plan.md`.
-- Tasks WITH subtasks: use `{ "name": "...", "subtasks": ["..."] }` format.
-- Tasks WITHOUT subtasks: use `{ "name": "..." }` format (no `subtasks` key).
-- This compact JSON is used by the parent to generate `track-state.json` without reading the full file.
-- Exclude HTML comments (`<!-- ... -->`) from task names. **Preserve** dispatch tags (`[Explore]`, `[Docs]`, `[Config]`, `[Chore]`, `[Manual]`) — the dispatch router depends on them being present in track-state.json.
+The orchestrator derives the full task/subtask structure **mechanically from `plan.md`** via `track-state init-from-plan` — do **NOT** transcribe the plan structure back into this block. Dispatch tags (`[Explore]`, `[Docs]`, `[Config]`, `[Chore]`, `[Manual]`) are parsed from `plan.md` by that command, so they reach `track-state.json` without you echoing them here; just write them into `plan.md` per §4.2.
 
 On failure:
 

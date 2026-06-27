@@ -102,11 +102,21 @@ Check the reverse direction — code areas the wiki never mentions:
 
 ## 7.0 REPORT RESULT
 
-Write the full **user-facing diff report** as normal markdown (this is what the user reads), then append the result block.
+Emit a single result block carrying **both** the structured counts (the orchestrator branches on these) and the full user-facing markdown report (the user reads this). The orchestrator's output filter preserves everything inside the `---WIKI DIFF RESULT--- ... ---END RESULT---` delimiters and discards anything outside them — so the report MUST live **inside** the block, not before it.
 
-### Report body
+Put the count fields first (the orchestrator parses them from the top of the block), then a blank line, then the report body, then the close tag:
 
 ```
+---WIKI DIFF RESULT---
+STATUS: COMPLETED|FAILURE
+SCOPE: <full | scoped: <target>>
+STALE: <count>
+MOVED: <count>
+UNCOVERED: <count>
+THIN: <count>
+STRUCTURAL: <count>
+SUMMARY: <one-line>
+
 # Wiki Diff: Documentation vs Codebase
 Generated: <current date>
 Scope: <full / scoped to: <target>>
@@ -129,24 +139,14 @@ Scope: <full / scoped to: <target>>
 
 ## Summary
 <N> claims verified · <N> stale · <N> moved · <N> uncovered · <N> unverifiable
-```
-
-(For a scoped diff, omit the Coverage section.)
-
-### Result block — append after the report
-
-```
----WIKI DIFF RESULT---
-STATUS: COMPLETED|FAILURE
-SCOPE: <full | scoped: <target>>
-STALE: <count>
-MOVED: <count>
-UNCOVERED: <count>
-THIN: <count>
-STRUCTURAL: <count>
-SUMMARY: <one-line>
 ---END RESULT---
 ```
+
+(For a scoped diff, omit the Coverage section from the report body.)
+
+**Block integrity rules:**
+- The report body sits **inside** the delimiters. Never place report content before `---WIKI DIFF RESULT---` — the output filter strips anything outside the block before the parent sees it (relocating the report inside is what stops it being silently lost).
+- The orchestrator captures the block up to the **first** `---END RESULT---`. Do not place a literal `---END RESULT---` line inside the report. (A markdown horizontal rule `---` is safe — it does not match the close tag.)
 
 On agent-level error:
 

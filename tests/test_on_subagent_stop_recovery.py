@@ -149,10 +149,11 @@ class RecoveryGuardTests(TestCase):
             self.assertNotIn("decision", out)
 
     def test_spec_planner_without_close_tag_blocks(self):
-        """spec-planner now runs sync + STDOUT_BLOCK_AGENTS — its PLAN_STRUCTURE
-        block is foundational (the parent builds track-state.json from it), so a
-        crash before emitting ---END SPEC PLAN RESULT--- must earn a recovery
-        turn rather than silently losing the plan."""
+        """spec-planner runs STDOUT_BLOCK_AGENTS — its ---SPEC PLAN RESULT---
+        block is the completion signal the parent parses for STATUS (the plan
+        structure itself is derived from plan.md by init-from-plan, not from
+        this block), so a crash before emitting ---END SPEC PLAN RESULT--- must
+        earn a recovery turn rather than silently losing the write confirmation."""
         with tempfile.TemporaryDirectory() as d:
             rc, out = self._run("spec-planner", d, last_message="stopped mid-plan")
             self.assertEqual(rc, 2)
