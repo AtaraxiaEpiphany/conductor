@@ -220,7 +220,9 @@ Only write to handoff when execution is interrupted or fails — NOT on every st
 
 ### How to write
 
-Pipe the content JSON on stdin — the same quote-safe idiom as §6.1. An inline `--content '<json>'` breaks on any quote/`` ` ``/`$` in the detail text, and a failed `append-handoff` here silently loses the retry context the next attempt depends on. `append-handoff` reads stdin when `--content` is absent:
+An interruption produces **two** artifacts, both mandatory, in this order. Writing only the handoff (the old behavior) left no `result.json`, so the `on-subagent-stop` hook had to fire a recovery turn and synthesize a lossy result from git state — writing `result.json` yourself keeps the completion signal deterministic and preserves your real `failure_detail`.
+
+**1. Handoff deviation log** (retry context for `IS_RETRY=true`). Pipe the JSON on stdin — the same quote-safe idiom as §6.1. An inline `--content '<json>'` breaks on any quote/`` ` ``/`$` in the detail text, and a failed `append-handoff` here silently loses the retry context the next attempt depends on. `append-handoff` reads stdin when `--content` is absent:
 
 ```bash
 track-state append-handoff "{TRACK_DIR}" {PHASE} {TASK} \
@@ -229,4 +231,17 @@ track-state append-handoff "{TRACK_DIR}" {PHASE} {TASK} \
 EOF
 ```
 
-This ensures the retry agent (on `IS_RETRY=true`) gets useful context via `track-state get-handoff`.
+**2. `result.json`** via §6.1's failure block — the same validated channel as a normal completion, so the result is never silently malformed:
+
+```bash
+track-state write-result "{TRACK_DIR}" \
+  --status failure \
+  --summary "<one-line: what blocked you>" \
+  --failure-done "<actions taken before the block>" \
+  --failure-reason "<error>" \
+  --failure-suggested "<recommendation for the retry agent>" \
+  --phase PHASE --task TASK ${SUBTASK:+--subtask "$SUBTASK"} --task-name NAME \
+  --attempt ATTEMPT --max-retries MAX_RETRIES
+```
+
+Confirm both calls exit 0. The handoff ensures the retry agent gets context via `track-state get-handoff`; the `result.json` ensures the orchestrator's `process-result` reads your real failure detail instead of a synthesized fallback.

@@ -121,6 +121,23 @@ def _block_recovery(agent_type: str, lead: str, instruction: str,
     write_hook_output(decision="block", reason=f"{lead} {instruction}")
 
 
+def _log_result_event(log_file, session_id: str, agent_type: str,
+                      outcome: str, reason: str) -> None:
+    """Record a result-file-agent stop outcome to the recovery-rate log.
+
+    Logs BOTH outcomes so the recovery-fire rate is measurable as
+    ``recovered / (ok + recovered)``: ``ok`` = a fresh result.json was present
+    (allow stop); ``recovered`` = the hook had to fire a recovery turn.
+    Previously only the recovery (failure) side reached subagent-failures.log,
+    leaving the denominator unknown — this is the missing measurement for the
+    result-reliability campaign (it tells us whether prevention is working or
+    whether the orchestrator-derives refactor is warranted).
+    """
+    log_entry(Path(log_file).parent / "result-recovery.log",
+              f"session={session_id} agent={agent_type} "
+              f"outcome={outcome} reason={reason}")
+
+
 def main():
     """Main hook function"""
     input_data = read_hook_input()
@@ -137,15 +154,19 @@ def main():
     # orchestrator's retry/skip path reads it). Only a missing file means the
     # agent never reached its result step.
     if agent_type in RESULT_FILE_AGENT_TYPES:
-        if not fresh_result_exists(cwd):
-            _block_recovery(
-                agent_type,
-                f"{RECOVERY_MARKER} You stopped without writing a result.",
-                _RESULT_FILE_INSTRUCTIONS[agent_type],
-                log_file, session_id, "no_result_file_detected",
-            )
+        if fresh_result_exists(cwd):
+            _log_result_event(log_file, session_id, agent_type,
+                              "ok", "fresh_result_present")
+            write_hook_output()  # result.json present → allow normal stop
             return
-        write_hook_output()  # result.json present → allow normal stop
+        _log_result_event(log_file, session_id, agent_type,
+                          "recovered", "no_fresh_result")
+        _block_recovery(
+            agent_type,
+            f"{RECOVERY_MARKER} You stopped without writing a result.",
+            _RESULT_FILE_INSTRUCTIONS[agent_type],
+            log_file, session_id, "no_result_file_detected",
+        )
         return
 
     # stdout-block agents: must emit their close tag.

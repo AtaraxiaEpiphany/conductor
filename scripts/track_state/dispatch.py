@@ -313,6 +313,18 @@ def cmd_recover(track_dir, compact=True):
     emit(result, "recover", compact)
 
 
+def _clear_stale_result(track_dir):
+    """Remove any prior attempt's result.json before dispatching a fresh run.
+
+    dispatch-finalize reads ``.conductor/result.json`` on existence (not
+    freshness), so an agent that stops without writing a fresh file could
+    otherwise leave a STALE result from a previous attempt/retry read as the
+    current task's result. Clearing here guarantees the next result.json is
+    genuinely from this run. ``missing_ok=True`` makes it a no-op on a fresh task.
+    """
+    (conductor_dir(track_dir) / "result.json").unlink(missing_ok=True)
+
+
 def cmd_dispatch_prepare(track_dir, compact=True):
     """Lock + sync-plan + return commit message template. Reduces CLI round trips."""
     # Auto-fix state (includes plan reconciliation + all other fixes)
@@ -382,6 +394,9 @@ def cmd_dispatch_prepare(track_dir, compact=True):
     tgt = target(state, pi, ti, si)
     is_resume = tgt.get("status") == "in_progress"
 
+    # Clear any result.json left by a prior attempt so finalize can't read it
+    # as this run's result (see _clear_stale_result).
+    _clear_stale_result(track_dir)
     _do_lock(track_dir, pi, ti, si)
     synced = _do_sync_plan(track_dir)
 
