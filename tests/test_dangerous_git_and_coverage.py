@@ -143,6 +143,9 @@ class BatchGateOrderingTests(TestCase):
         import io
         import json
         old_in, old_out = sys.stdin, sys.stdout
+        # read_hook_input caches stdin in a module-global; reset it so each call
+        # re-reads our fresh stdin instead of a prior test's payload.
+        _abc.read_hook_input.__globals__["_cached_hook_input"] = None
         buf = io.StringIO()
         sys.stdin = io.StringIO(json.dumps({
             "session_id": "t", "cwd": "", "tool_calls": tool_calls or []}))

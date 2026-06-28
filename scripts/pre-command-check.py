@@ -5,6 +5,7 @@ Validates commands before execution, blocks suspicious operations.
 Uses hookSpecificOutput.permissionDecision per the Claude Code hook protocol.
 """
 
+import hashlib
 import json
 import re
 import subprocess
@@ -23,6 +24,28 @@ from lib.hook_io import (
 from lib.json_utils import load_json_safe
 from lib.validation import validate_commit_message, _extract_commit_message
 from lib.path_utils import find_tracks_registry, extract_track_dirs
+from lib.logging import log_entry
+from lib.env import get_logs_dir
+
+
+def _audit_ask(gate: str, command: str) -> None:
+    """Record that a PreToolUse ``ask`` was issued for ``gate``.
+
+    The hook returns before the user's allow/deny decision is known, so this
+    logs that an ask was *issued* — the actionable signal of which gate fires
+    how often (and thus which gates users routinely override). The command is
+    stored as a 12-char sha256 digest, not verbatim, to keep the audit log
+    compact and avoid persisting full commands. Best-effort: a write failure
+    must never block the gate decision itself.
+    """
+    try:
+        log_dir = get_logs_dir()
+        log_dir.mkdir(parents=True, exist_ok=True)
+        digest = hashlib.sha256(command.encode("utf-8")).hexdigest()[:12]
+        log_entry(log_dir / "override-audit.log",
+                  f"gate={gate} digest={digest}")
+    except Exception:
+        pass
 
 
 def has_in_progress_task(state_file: Path) -> bool:
@@ -354,6 +377,7 @@ def _check_f2_tdd_gate(cwd: Path, command: str) -> None:
         '(Step 3) before committing, or use a non-gated commit type '
         '(docs/chore/style/refactor) if no test applies.'
     )
+    _audit_ask("f2_tdd", command)
     write_hook_output(
         hook_event_name="PreToolUse",
         additional_context=additional_context,
@@ -391,6 +415,7 @@ def main():
             'Use /conductor:revert workflow instead.'
         )
 
+        _audit_ask("dangerous_git", command)
         write_hook_output(
             hook_event_name="PreToolUse",
             additional_context=additional_context,
@@ -413,6 +438,7 @@ def main():
                 'Complete or revert first to maintain state consistency.'
             )
 
+            _audit_ask("state_lock", command)
             write_hook_output(
                 hook_event_name="PreToolUse",
                 additional_context=additional_context,
@@ -432,6 +458,7 @@ def main():
             'Use /conductor:revert or track-state CLI.'
         )
 
+        _audit_ask("state_lock", command)
         write_hook_output(
             hook_event_name="PreToolUse",
             additional_context=additional_context,
@@ -458,6 +485,7 @@ def main():
                 f'Suggested: {suggested_fix}'
             )
 
+            _audit_ask("v10_commit", command)
             write_hook_output(
                 hook_event_name="PreToolUse",
                 additional_context=additional_context,

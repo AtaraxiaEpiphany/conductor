@@ -6,6 +6,7 @@ On compact events, inject a compact summary to reduce context pressure.
 
 import re
 import sys
+import time
 from pathlib import Path
 
 # Add lib directory to path for imports
@@ -15,6 +16,7 @@ from lib.hook_io import read_hook_input, write_simple_output
 from lib.env import get_data_dir
 from lib.path_utils import get_file_age_hours
 from lib.frontmatter import check_corpus_frontmatter
+from lib.atomic_io import atomic_write_text
 
 
 COMPACT_CONTENT = """## Conductor Core (compact)
@@ -144,15 +146,43 @@ def get_wiki_drift_warnings(project_root: Path) -> str:
     return f"\n\n--- Wiki drift (advisory GC) ---\n{body}\n"
 
 
+def _write_session_start(data_dir: Path, session_id: str) -> None:
+    """Stamp the session start time so the SessionEnd hook can log duration.
+
+    Writes ``int(time.time())`` atomically to ``.data/logs/.session-{id}.start``;
+    ``session-end.py::log_session_duration`` reads it, appends a
+    ``duration_seconds=`` line to ``session-metrics.log``, and unlinks it. This
+    closes the loop that was dead (session-end read a file nothing wrote).
+    Missing ``session_id`` or a write failure is non-fatal — metrics are
+    best-effort and must never break session bootstrap.
+    """
+    if not session_id:
+        return
+    try:
+        log_dir = data_dir / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(log_dir / f".session-{session_id}.start",
+                          str(int(time.time())))
+    except OSError:
+        pass
+
+
 def main():
     """Main hook function"""
     # Read hook input
     input_data = read_hook_input()
     source = input_data.get("source", "startup")
+    session_id = input_data.get("session_id", "")
 
     # Get paths
     plugin_root = Path(__file__).parent.parent
     data_dir = get_data_dir()
+
+    # Stamp session start for duration metrics. Skipped on compact — compaction
+    # is a mid-session event and would reset the timer (startup's stamp must
+    # survive so end-of-session measures the full duration).
+    if source != "compact":
+        _write_session_start(data_dir, session_id)
 
     # Get content
     content = get_conductor_content(plugin_root, source)
