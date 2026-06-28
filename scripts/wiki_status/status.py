@@ -94,8 +94,8 @@ def _log_metrics(log_path):
     if not data_rows:
         return dict(entries=0, last_timestamp=None, last_summary=None)
     last = data_rows[-1]
-    timestamp = last[0] if last else None
-    summary = next((c for c in reversed(last) if c), None) if last else None
+    timestamp = last[0]
+    summary = next((c for c in reversed(last) if c), None)
     return dict(entries=len(data_rows), last_timestamp=timestamp, last_summary=summary)
 
 
@@ -122,9 +122,7 @@ def _classify_freshness(ts):
     if when.tzinfo is None:
         when = when.replace(tzinfo=timezone.utc)
     age_days = (datetime.now(timezone.utc) - when).total_seconds() / 86400
-    if age_days < 0:
-        return "fresh"  # clock skewed forward; treat as fresh
-    if age_days <= 7:
+    if age_days <= 7:  # <=7d fresh; a negative age (clock skewed forward) is also fresh
         return "fresh"
     if age_days <= 30:
         return "stale"

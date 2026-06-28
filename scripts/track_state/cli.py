@@ -407,9 +407,7 @@ def main():
         elif cmd == "preflight":
             cmd_preflight(track_dir)
         elif cmd == "derive-name":
-            # sys.argv[2] is the shortname here, not a track-dir (the only
-            # command where the positional isn't a directory).
-            cmd_derive_name(track_dir)
+            cmd_derive_name(sys.argv[2])  # shortname — the one positional that isn't a track-dir
         else:
             print(f"Unknown command: {cmd}", file=sys.stderr)
             sys.exit(1)

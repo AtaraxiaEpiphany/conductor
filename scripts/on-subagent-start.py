@@ -8,6 +8,7 @@ Unknown agent types get no context (the SubagentStart matcher gates which agents
 fire this hook at all).
 """
 
+import functools
 import sys
 from pathlib import Path
 
@@ -24,8 +25,14 @@ from lib.hook_io import read_hook_input, write_simple_output
 FLOOR_FILE = Path(__file__).parent.parent / "runtime" / "subagent-firewall.md"
 
 
+@functools.lru_cache(maxsize=1)
 def _load_safety_floor() -> str:
     """Load the universal subagent safety floor.
+
+    Cached for the process: ``subagent-firewall.md`` is a static curatorial doc
+    that only changes across plugin upgrades, so it is read once and reused for
+    every SubagentStart fire in the session (SubagentStart fires once per
+    subagent dispatch — the per-call disk read it replaced was new hot-path I/O).
 
     Returns '' if the file is missing/unreadable, after warning on stderr so the
     degradation is visible rather than silent (mirrors session-start.py's handling
