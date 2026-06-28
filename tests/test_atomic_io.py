@@ -14,7 +14,7 @@ from unittest import TestCase, main
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
-from lib.atomic_io import atomic_write_json
+from lib.atomic_io import atomic_write_json, atomic_write_text
 
 
 class AtomicWriteJsonTests(TestCase):
@@ -64,6 +64,48 @@ class AtomicWriteJsonTests(TestCase):
                 self.assertEqual(json.loads(p.read_text()), {"original": True})
             finally:
                 os.chmod(d, stat.S_IRWXU)  # restore so cleanup can delete
+
+
+class AtomicWriteTextTests(TestCase):
+    """Pins atomic_write_text — same crash-safe semantics as the JSON variant,
+    but caller-owned line endings (no injected trailing newline) for the
+    non-JSON files conductor writes (session-handoff.md, session start markers).
+    """
+
+    def test_writes_text_verbatim_no_injected_newline(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "handoff.md"
+            atomic_write_text(p, "line one\nline two")  # no trailing \n
+            self.assertEqual(p.read_text(), "line one\nline two")
+
+    def test_overwrites_existing_file_atomically(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "handoff.md"
+            p.write_text("old content")
+            atomic_write_text(p, "new content")
+            self.assertEqual(p.read_text(), "new content")
+
+    def test_no_temp_file_left_behind(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "handoff.md"
+            atomic_write_text(p, "x")
+            temps = [f for f in os.listdir(d) if f.startswith(".handoff.md.tmp")]
+            self.assertEqual(temps, [])
+
+    def test_write_error_leaves_original_untouched(self):
+        if os.name == "nt":
+            self.skipTest("read-only-dir semantics differ on Windows")
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            p = d / "handoff.md"
+            p.write_text("original")
+            os.chmod(d, stat.S_IRUSR | stat.S_IXUSR)  # r-x: no write/create
+            try:
+                with self.assertRaises(OSError):
+                    atomic_write_text(p, "new")
+                self.assertEqual(p.read_text(), "original")
+            finally:
+                os.chmod(d, stat.S_IRWXU)
 
 
 if __name__ == "__main__":

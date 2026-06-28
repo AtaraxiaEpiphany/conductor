@@ -36,3 +36,14 @@ RESULT_FILE_AGENT_TYPES = frozenset({"task-executor", "explorer"})
 # from this one definition of what a result block looks like.
 RESULT_END_TAG = r"---END [A-Z ]+---"
 RESULT_BLOCK_PATTERN = rf"---[A-Z][A-Z ]+---.*?{RESULT_END_TAG}"
+
+# Bounded recovery: how many SubagentStop recovery turns a result-file agent
+# gets before the hook stops forcing them and lets dispatch-finalize synthesize
+# a result (→ ``_do_fail`` retry queue). Caps a crash-looping agent at this many
+# extra turns instead of burning its whole ``maxTurns`` budget before Layer-2
+# synthesis engages. Counted per locked task and reset when a new task is locked
+# (see ``track_state.mutations._do_lock`` / ``increment_recovery_turns``). Lives
+# here alongside ``RESULT_FILE_AGENT_TYPES`` so the SubagentStop hook and the
+# state-machine counter share one vocabulary.
+MAX_RECOVERY_TURNS = 2
+RECOVERY_TURN_FIELD = "recovery_turns"  # track-state.json key on the locked task

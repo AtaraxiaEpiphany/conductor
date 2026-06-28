@@ -30,15 +30,25 @@ def is_fresh(path: Path, threshold: float) -> bool:
         return False
 
 
-def fresh_result_exists(cwd: str, seconds: int = RESULT_FRESHNESS_SECONDS) -> bool:
-    """True if a result.json was freshly written (within ``seconds``) under ``cwd``.
+def fresh_result_exists(cwd: str, seconds: int = RESULT_FRESHNESS_SECONDS,
+                        track_dir: str = None) -> bool:
+    """True if a result.json was freshly written (within ``seconds``).
 
-    Checks ``.conductor/result.json`` directly first (most common path), then
+    With ``track_dir`` given, checks ONLY that track's
+    ``.conductor/result.json`` — the track-scoped path. This avoids the
+    cross-track false positive where a fresh result.json in track B satisfies a
+    probe running for track A (the caller knows which track is locked; scope to
+    it). ``on-subagent-stop`` resolves the locked track and passes it here.
+
+    Without ``track_dir`` (default), falls back to the cwd-relative checks:
+    ``.conductor/result.json`` directly first (most common path), then
     ``conductor/tracks/*/.conductor/result.json``. Short-circuits on the first
     fresh hit; stale files never match.
     """
     threshold = time.time() - seconds
     try:
+        if track_dir is not None:
+            return is_fresh(Path(track_dir) / ".conductor" / "result.json", threshold)
         base = Path(cwd)
         if is_fresh(base / ".conductor" / "result.json", threshold):
             return True

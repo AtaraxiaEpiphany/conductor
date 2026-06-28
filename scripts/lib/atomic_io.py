@@ -53,3 +53,41 @@ def atomic_write_json(path, data, *, indent=2, ensure_ascii=False):
 
     os.replace(tmp.name, str(path))
     return path
+
+
+def atomic_write_text(path, text, *, encoding="utf-8"):
+    """Atomically write ``text`` to ``path`` (caller controls newlines).
+
+    Same temp+fsync+``os.replace`` semantics as :func:`atomic_write_json`, for
+    the non-JSON files conductor writes (e.g. the resume-spine
+    ``session-handoff.md`` whose mid-write corruption would break the next
+    session's resume). Unlike the JSON variant NO trailing newline is appended
+    — the caller owns line endings. Returns the resolved ``path``.
+
+    On any write error the temp file is removed and the exception propagates;
+    the original file is left untouched.
+    """
+    path = Path(path)
+    tmp = tempfile.NamedTemporaryFile(
+        mode="w",
+        dir=str(path.parent),
+        prefix=f".{path.name}.tmp.",
+        delete=False,
+        encoding=encoding,
+    )
+    try:
+        tmp.write(text)
+        tmp.flush()
+        os.fsync(tmp.fileno())
+    except (OSError, IOError):
+        tmp.close()
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
+        raise
+    finally:
+        tmp.close()
+
+    os.replace(tmp.name, str(path))
+    return path

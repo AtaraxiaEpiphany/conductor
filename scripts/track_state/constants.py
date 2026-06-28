@@ -39,6 +39,16 @@ SHA_MARKERS = {"x", "!", ">", "#", "-", "d"}
 #    every consumer follows.
 MAX_RETRIES = 3
 
+# Stuck-lock heartbeat. ``_do_lock`` stamps ``locked_at`` (epoch seconds) on the
+# task; a task still ``in_progress`` past this threshold is treated as a
+# killed-session orphan and reaped to ``pending`` by
+# ``validate._fix_stale_lock`` (surfaced via ``recover``'s ``fixes_applied``).
+# Shorter than the legacy 24h ``updated_at`` reaper so a killed session unblocks
+# in minutes, not hours; tasks missing ``locked_at`` (pre-change state) are left
+# to the 24h reaper, which can still determine their age via ``updated_at``.
+STALE_LOCK_SECONDS = 1800  # 30 min
+LOCKED_AT_FIELD = "locked_at"  # epoch-seconds key on the task object
+
 # Execution modes for the implement skill (schema: track-state.schema.json).
 # interactive: pauses for user confirmation at each phase checkpoint.
 # continuous: auto-proceeds through all phases without pausing (phase-checker

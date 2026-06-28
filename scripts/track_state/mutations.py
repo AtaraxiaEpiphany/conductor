@@ -1,7 +1,9 @@
 """State mutation operations: lock, complete, fail, skip, block, defer."""
+import time
 from .core import load, save, transaction
 from .helpers import target, clean, now_iso, out, _last_subtask_sha, _reset_task, _propagate_to_subtasks, _any_phase_needs_checkpoint, _normalize_sha
-from .constants import TERMINAL_FOR_PARENT, AUTO_COMPLETE_OK, MAX_RETRIES
+from .constants import TERMINAL_FOR_PARENT, AUTO_COMPLETE_OK, MAX_RETRIES, LOCKED_AT_FIELD
+from lib.recovery import RECOVERY_TURN_FIELD
 
 
 class F1StateLockError(ValueError):
@@ -67,6 +69,15 @@ def _do_lock(track_dir, p, t, s=None):
         tgt["status"] = "in_progress"
         # retry_count/last_failure_summary are intrinsic task history, never reset on lock.
         clean(tgt, {"status", "retry_count", "last_failure_summary"})
+        # Fresh recovery budget — a new (re)lock is a new attempt. The SubagentStop
+        # hook bumps RECOVERY_TURN_FIELD each time a result-file agent stops
+        # without a fresh result.json, bounded by lib.recovery.MAX_RECOVERY_TURNS.
+        # Not in _RESET_FIELDS, so clean() above leaves it; we set it explicitly
+        # every lock so a resumed/re-locked task starts at zero.
+        tgt[RECOVERY_TURN_FIELD] = 0
+        # Heartbeat for the stale-lock reaper (validate._fix_stale_lock): a task
+        # still in_progress past STALE_LOCK_SECONDS is a killed-session orphan.
+        tgt[LOCKED_AT_FIELD] = time.time()
 
         _set_current_indices(state, pi, ti, si)
         if si is not None:
@@ -75,6 +86,32 @@ def _do_lock(track_dir, p, t, s=None):
                 parent["status"] = "in_progress"
 
         state["updated_at"] = now_iso()
+
+def increment_recovery_turns(track_dir, p, t, s=None):
+    """Atomically bump the SubagentStop recovery counter on the locked task.
+
+    Called by ``on-subagent-stop`` each time a result-file agent (task-executor,
+    explorer) stops without a fresh ``result.json``. Returns the new count, or
+    ``None`` if the target isn't currently ``in_progress`` (already finalized,
+    or stale indices) — the hook treats ``None`` as "can't bound this one" and
+    falls back to blocking (fail-safe toward recovery).
+
+    The counter is reset to 0 by ``_do_lock`` (a new lock is a fresh budget), so
+    this only ever counts recovery turns within one lock lifetime. The hook
+    bounds it against ``lib.recovery.MAX_RECOVERY_TURNS``.
+    """
+    pi, ti = int(p), int(t)
+    si = int(s) if s is not None else None
+    with transaction(track_dir) as state:
+        try:
+            tgt = target(state, pi, ti, si)
+        except IndexError:
+            return None
+        if tgt.get("status") != "in_progress":
+            return None
+        tgt[RECOVERY_TURN_FIELD] = tgt.get(RECOVERY_TURN_FIELD, 0) + 1
+        state["updated_at"] = now_iso()
+        return tgt[RECOVERY_TURN_FIELD]
 
 def _do_complete(track_dir, p, t, s=None, sha=None):
     """Returns ``(parent_completed, state)``.

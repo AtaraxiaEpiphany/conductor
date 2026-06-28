@@ -1,5 +1,6 @@
 """State validation and auto-fix operations."""
 import re
+import time
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -9,7 +10,7 @@ from .helpers import (
     out, now_iso, _is_phase_terminal,
     _reset_task,
 )
-from .constants import TERMINAL_STATUSES, TERMINAL_FOR_PARENT
+from .constants import TERMINAL_STATUSES, TERMINAL_FOR_PARENT, STALE_LOCK_SECONDS, LOCKED_AT_FIELD
 from .plan_parse import parse_plan
 from .sync import _do_sync_plan
 from .git_ops import _find_conductor_shas
@@ -207,6 +208,44 @@ def _fix_indices(state):
     return fixes
 
 
+def _fix_stale_lock(state, threshold_seconds=STALE_LOCK_SECONDS):
+    """Reset ``in_progress`` tasks whose ``locked_at`` heartbeat is past threshold.
+
+    A finer-grained complement to :func:`_fix_stale_in_progress`: that one reaps
+    when the WHOLE state's ``updated_at`` is older than 24h (catching legacy
+    state that pre-dates ``locked_at``); this one reaps a SPECIFIC task whose lock
+    heartbeat (``locked_at``, stamped by ``mutations._do_lock``) is past the short
+    :data:`STALE_LOCK_SECONDS` threshold — so a session killed mid-dispatch
+    unblocks in minutes, not hours. Tasks missing a numeric ``locked_at``
+    (pre-change state, or locked via a path that didn't stamp it) are left alone
+    — the 24h reaper still governs them via ``updated_at``.
+
+    Reset clears ``retry_count`` (it's in ``_RESET_FIELDS``) — acceptable, since a
+    stuck lock means the attempt is dead and the retry budget should restart.
+    Returns the list of fixes applied.
+    """
+    fixes = []
+    now = time.time()
+    for pi, phase in enumerate(state.get("phases", []), 1):
+        for ti, task in enumerate(phase.get("tasks", []), 1):
+            if task.get("status") == "in_progress":
+                locked_at = task.get(LOCKED_AT_FIELD)
+                if isinstance(locked_at, (int, float)) and (now - locked_at) > threshold_seconds:
+                    _reset_task(task)
+                    fixes.append(
+                        f"P{pi}.T{ti}.{task.get('name', '?')}: "
+                        f"reset stale lock → pending ({(now - locked_at) / 60:.0f}min since lock)")
+            for si, sub in enumerate(task.get("subtasks", []), 1):
+                if sub.get("status") == "in_progress":
+                    locked_at = sub.get(LOCKED_AT_FIELD)
+                    if isinstance(locked_at, (int, float)) and (now - locked_at) > threshold_seconds:
+                        _reset_task(sub)
+                        fixes.append(
+                            f"P{pi}.T{ti}.S{si}.{sub.get('name', '?')}: "
+                            f"reset stale lock → pending ({(now - locked_at) / 60:.0f}min since lock)")
+    return fixes
+
+
 def _fix_stale_in_progress(state, threshold_hours=24):
     """Reset in_progress tasks that haven't been updated within threshold.
 
@@ -362,7 +401,12 @@ def _auto_fix(state, track_dir=None, errors=None, stale_threshold_hours=24):
         plan_fixes = _fix_plan_mismatches(track_dir, state, errors)
         fixes.extend(plan_fixes)
 
-    # Reset stale in_progress tasks
+    # Reset stale-locked tasks (short per-task threshold via locked_at heartbeat);
+    # runs before the 24h reaper so a killed session unblocks in minutes. Tasks
+    # without a numeric locked_at fall through to the 24h updated_at reaper below.
+    fixes.extend(_fix_stale_lock(state))
+
+    # Reset stale in_progress tasks (24h fallback, governs legacy state without locked_at)
     fixes.extend(_fix_stale_in_progress(state, threshold_hours=stale_threshold_hours))
 
     for pi, phase in enumerate(state.get("phases", []), 1):

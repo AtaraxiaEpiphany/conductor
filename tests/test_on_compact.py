@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest import TestCase, main
 
 _HOOK = Path(__file__).resolve().parent.parent / "scripts" / "on-compact.py"
+_HOOKS_JSON = Path(__file__).resolve().parent.parent / "hooks" / "hooks.json"
 
 
 def _run():
@@ -31,6 +32,16 @@ class OnCompactTests(TestCase):
         ctx = out.get("hookSpecificOutput", {}).get("additionalContext", "")
         self.assertIn("[KEEP]", ctx)
         self.assertIn("[DISCARD]", ctx)
+
+    def test_precompact_matcher_covers_manual_compact(self):
+        """A user-initiated /compact must also fire the priority injection — the
+        resume story assumes §3.0–3.7 survived compaction, so the matcher can't
+        be ``auto``-only (Gap #6)."""
+        spec = json.loads(_HOOKS_JSON.read_text())
+        matchers = [entry.get("matcher", "")
+                    for entry in spec["hooks"]["PreCompact"]]
+        joined = "|".join(matchers)
+        self.assertIn("manual", joined)
 
 
 if __name__ == "__main__":

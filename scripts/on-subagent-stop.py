@@ -39,7 +39,9 @@ from lib.logging import init_logging, log_entry
 from lib.result_probe import fresh_result_exists
 from lib.recovery import (
     RECOVERY_MARKER, RESULT_FILE_AGENT_TYPES, RESULT_END_TAG,
+    MAX_RECOVERY_TURNS,
 )
+from lib.locked_task import resolve as resolve_locked_task
 
 
 # Per-agent recovery instructions for result-file agents. The GATE (which
@@ -121,6 +123,20 @@ def _block_recovery(agent_type: str, lead: str, instruction: str,
     write_hook_output(decision="block", reason=f"{lead} {instruction}")
 
 
+def _resolve_locked(cwd):
+    """Resolve the active ``in_progress`` task, or ``None`` if none/unresolvable.
+
+    Wraps :func:`lib.locked_task.resolve` so the hook's control flow is a simple
+    None-check and a resolution error can never crash SubagentStop (which would
+    silently drop the recovery contract for the stdout-block agents too).
+    Returns ``(track_dir, phase, task, subtask)`` or ``None``.
+    """
+    try:
+        return resolve_locked_task(cwd)
+    except Exception:
+        return None
+
+
 def _log_result_event(log_file, session_id: str, agent_type: str,
                       outcome: str, reason: str) -> None:
     """Record a result-file-agent stop outcome to the recovery-rate log.
@@ -154,11 +170,36 @@ def main():
     # orchestrator's retry/skip path reads it). Only a missing file means the
     # agent never reached its result step.
     if agent_type in RESULT_FILE_AGENT_TYPES:
-        if fresh_result_exists(cwd):
+        # Resolve the locked track once — scope the result.json freshness check
+        # to IT (avoids a fresh result in another track satisfying this probe)
+        # and identify the task whose recovery counter is bounded below.
+        locked = _resolve_locked(cwd)
+        track_dir = locked[0] if locked is not None else None
+        if fresh_result_exists(cwd, track_dir=track_dir):
             _log_result_event(log_file, session_id, agent_type,
                               "ok", "fresh_result_present")
             write_hook_output()  # result.json present → allow normal stop
             return
+        # No fresh result → a recovery fire. Bound it so a crash-looping agent
+        # can't burn its whole maxTurns budget before Layer-2 synthesis
+        # (dispatch-finalize's _synthesize_result_from_state) engages: bump the
+        # locked task's recovery counter, and once it exceeds MAX_RECOVERY_TURNS
+        # stop forcing recovery — allow the stop so dispatch-finalize synthesizes
+        # a result and the _do_fail retry queue takes over. Unresolvable locked
+        # task or counter write-failure → fall back to blocking (fail-safe toward
+        # recovery, the prior unbounded behavior).
+        if locked is not None:
+            _, p, t, s = locked
+            try:
+                from track_state.mutations import increment_recovery_turns
+                count = increment_recovery_turns(track_dir, p, t, s)
+            except Exception:
+                count = None
+            if count is not None and count > MAX_RECOVERY_TURNS:
+                _log_result_event(log_file, session_id, agent_type,
+                                  "exhausted", f"recovery_turns={count}")
+                write_hook_output()  # budget exhausted → allow stop → finalize synthesizes
+                return
         _log_result_event(log_file, session_id, agent_type,
                           "recovered", "no_fresh_result")
         _block_recovery(

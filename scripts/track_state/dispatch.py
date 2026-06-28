@@ -264,12 +264,17 @@ def cmd_recover(track_dir, compact=True):
     si = state.get("current_subtask_index")
 
     if pi < 1 or ti < 1:
+        # No active task → any leftover result.json is an orphan from a crashed
+        # finalize. Reap it so the next dispatch-finalize can't misread a stale
+        # file as this run's result.
+        _clear_stale_result(track_dir)
         _emit_no_active_task(track_dir, state, fixes, compact)
         return
 
     try:
         task = state["phases"][pi - 1]["tasks"][ti - 1]
     except IndexError:
+        _clear_stale_result(track_dir)
         _emit_no_active_task(track_dir, state, fixes, compact)
         return
 
@@ -283,6 +288,13 @@ def cmd_recover(track_dir, compact=True):
         tgt = task
         name = task["name"]
         ttype = "flat"
+
+    # Reap an orphaned result.json when the resolved target is not in_progress
+    # (a stale lock just reaped to pending by ensure_healthy, or a terminal
+    # task). dispatch-finalize owns the in_progress case — leave that result.json
+    # for it to consume.
+    if tgt.get("status") != "in_progress":
+        _clear_stale_result(track_dir)
 
     # Best-effort: recover missing git notes for completed tasks
     _recover_git_notes(track_dir, state)

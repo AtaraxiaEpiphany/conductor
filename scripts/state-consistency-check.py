@@ -21,6 +21,7 @@ from lib.hook_io import read_hook_input, write_hook_output
 from lib.json_utils import load_json_safe
 from lib.env import get_data_dir
 from lib.path_utils import find_tracks_registry, extract_track_dirs
+from lib.atomic_io import atomic_write_text
 
 
 def find_stale_in_progress_tasks(state_file: Path) -> list[str]:
@@ -77,7 +78,10 @@ def write_session_handoff(data_dir: Path, handoff_data: str, gc_summary: str = "
             handoff_content += f"\n{gc_summary}\n"
         handoff_content += "Run /conductor:implement to continue, or /conductor:status for overview."
 
-        handoff_file.write_text(handoff_content, encoding="utf-8")
+        # Atomic write (temp + fsync + os.replace): this file is the resume spine
+        # session-start.py injects, rewritten on every Stop. A crash mid-write
+        # would leave it truncated/partial and break the next session's resume.
+        atomic_write_text(handoff_file, handoff_content)
     elif handoff_file.exists():
         handoff_file.unlink()
 
