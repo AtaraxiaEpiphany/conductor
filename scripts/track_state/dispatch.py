@@ -7,10 +7,11 @@ from .core import load
 from .helpers import (
     emit, now_iso, extract_tags, _inherit_tags,
     conductor_dir, _store_evidence, _last_subtask_sha, _any_phase_needs_checkpoint,
-    flag, _normalize_sha, target,
+    flag, _normalize_sha, target, _extract_tags_for_task,
 )
 from .constants import AUTO_COMPLETE_OK, MAX_RETRIES
 from .mutations import _do_lock, _do_complete, _do_fail, _do_fail_parent
+from .result import _evaluate_gates
 from .sync import _do_sync_plan
 from .git_ops import (
     _git_commit, _git_commit_ensured, _git_head_sha, _write_git_note,
@@ -207,7 +208,7 @@ def cmd_dispatch_next(track_dir, compact=True):
                 track_dir, result["phase"], result["task"], sha, ensure_evidence=False)
 
             emit(dict(action="parent_stuck", phase=result["phase"], task=result["task"],
-                      name=parent_name, sha=final_sha, failed=True,
+                      name=parent_name, sha=final_sha,
                       execution_mode=execution_mode), "dispatch-next", compact)
             return
 
@@ -665,9 +666,21 @@ def cmd_dispatch_finalize(track_dir, compact=True):
         r["commit_sha"] = note_sha
         _write_git_note(track_dir, r, state)
 
+        # F2/F3 advisory gates on the hot path (WARN-only — matches process-result
+        # via the shared _evaluate_gates helper). Computed AFTER _do_complete so a
+        # gate status never blocks completion; real teeth stay at the commit-time
+        # F2 ask gate + on-batch-complete F3 probe. Sub-80% coverage now surfaces
+        # in the envelope instead of completing silently.
+        tags = _extract_tags_for_task(state, p, t)
+        coverage_gate, tdd_gate, cov_pct = _evaluate_gates(tags, r, code_sha, track_dir)
         result = dict(status="success", sha=final_sha, parent_completed=parent_completed,
                       deviations=len(r.get("spec_deviation_detail", [])),
-                      sync_count=synced, committed=committed)
+                      sync_count=synced, committed=committed,
+                      coverage_gate=coverage_gate, tdd_gate=tdd_gate,
+                      phase=int(p), task=int(t),
+                      subtask=(int(s) if s is not None else None))
+        if cov_pct is not None:
+            result["coverage_pct"] = cov_pct
 
         # Check if ANY phase needs checkpoint after this completion
         checkpoint_pending = _any_phase_needs_checkpoint(track_dir, state)
@@ -697,7 +710,9 @@ def cmd_dispatch_finalize(track_dir, compact=True):
             print(f"WARNING: result.json preserved due to commit failure", file=sys.stderr)
         emit(dict(status="failure", retry_count=retry_count, summary=summary,
                   sync_count=synced, committed=committed,
-                  phase=p, task=t, subtask=s), "dispatch-finalize", compact)
+                  phase=int(p), task=int(t),
+                  subtask=(int(s) if s is not None else None)),
+             "dispatch-finalize", compact)
 
     else:
         emit(dict(error=f"Unknown status: {status}"), "dispatch-finalize", compact)

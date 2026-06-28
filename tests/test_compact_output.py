@@ -99,6 +99,44 @@ def _write_success_result(d, commit_sha=""):
     }))
 
 
+def _make_git_parent_stuck_dir():
+    """git repo + a parent task whose subtasks are all terminal with ≥1 failed
+    (and no other dispatchable work) so dispatch-next returns ``parent-stuck``."""
+    d = tempfile.mkdtemp()
+    for args in (["git", "init", d],
+                 ["git", "-C", d, "config", "user.email", "t@t.com"],
+                 ["git", "-C", d, "config", "user.name", "T"]):
+        subprocess.run(args, capture_output=True, check=True)
+    Path(d, "README.md").write_text("# t")
+    subprocess.run(["git", "-C", d, "add", "README.md"], capture_output=True, check=True)
+    subprocess.run(["git", "-C", d, "commit", "-m", "init"], capture_output=True, check=True)
+    Path(d, "plan.md").write_text(
+        "# Plan\n\n## Phase 1: Build\n- [ ] Build feature\n  - [x] S1\n  - [!] S2\n")
+    state = {
+        "track_id": "test",
+        "type": "feature",
+        "status": "in_progress",
+        "description": "test track",
+        "current_phase_index": 1,
+        "current_task_index": 1,
+        "updated_at": _recent_iso(),
+        "phases": [{
+            "name": "Phase 1",
+            "status": "pending",
+            "tasks": [{
+                "name": "Build feature",
+                "status": "in_progress",
+                "subtasks": [
+                    {"name": "S1", "status": "completed", "commit_sha": "abc1234"},
+                    {"name": "S2", "status": "failed"},
+                ],
+            }],
+        }],
+    }
+    save(d, state)
+    return d
+
+
 class TestCompactDefault(TestCase):
     """Default output (compact=True) emits only the consumed field set."""
 
@@ -192,6 +230,47 @@ class TestDispatchFinalizeCompact(TestCase):
         result = _out_captured(cmd_dispatch_finalize, d, compact=False)
         self.assertIn("parent_completed", result)
         self.assertIn("sync_count", result)
+
+    def test_success_compact_carries_indices(self):
+        """Gap #8: the finalize SUCCESS envelope carries phase/task/subtask so the
+        orchestrator can place the result without re-reading state. The indices are
+        in the dispatch-finalize allowlist, so they survive compaction."""
+        d = _make_git_track_dir()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        _write_success_result(d)
+        result = _out_captured(cmd_dispatch_finalize, d)
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["phase"], 1)
+        self.assertEqual(result["task"], 1)
+        self.assertIn("subtask", result)
+        # Indices are ints, matching the next/dispatch-prepare/dispatch-next
+        # envelopes (contract alignment — not the string form p/t carry internally).
+        self.assertIsInstance(result["phase"], int)
+        self.assertIsInstance(result["task"], int)
+
+
+class TestParentStuckCompact(TestCase):
+    """Gap #8: the parent_stuck emit no longer carries ``failed=True`` — it was
+    redundant with ``action="parent_stuck"`` and silently stripped by compact
+    anyway (not in the dispatch-next allowlist)."""
+
+    def test_parent_stuck_drops_failed_in_compact_and_full(self):
+        d = _make_git_parent_stuck_dir()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        compact_result = _out_captured(cmd_dispatch_next, d)
+        self.assertEqual(compact_result["action"], "parent_stuck")
+        self.assertNotIn("failed", compact_result)
+        # Useful fields still present.
+        self.assertIn("phase", compact_result)
+        self.assertIn("task", compact_result)
+        self.assertIn("name", compact_result)
+
+        # And the redundant field is gone from the full envelope too.
+        d2 = _make_git_parent_stuck_dir()
+        self.addCleanup(shutil.rmtree, d2, ignore_errors=True)
+        full_result = _out_captured(cmd_dispatch_next, d2, compact=False)
+        self.assertEqual(full_result["action"], "parent_stuck")
+        self.assertNotIn("failed", full_result)
 
 
 class TestCliFullFlag(TestCase):

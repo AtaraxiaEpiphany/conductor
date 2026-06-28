@@ -77,7 +77,8 @@ COMPACT_FIELDS = {
                          "max_retries", "execution_mode"),
     "dispatch-finalize": ("status", "sha", "deviations", "committed",
                           "phase_checkpoint_pending", "retry_count",
-                          "phase", "task", "subtask", "summary"),
+                          "phase", "task", "subtask", "summary",
+                          "coverage_gate", "tdd_gate", "coverage_pct"),
 }
 
 

@@ -110,5 +110,115 @@ class ShouldVerifyCoverageTests(TestCase):
         self.assertFalse(_cov(self._tc("git status")))
 
 
+class BatchGateOrderingTests(TestCase):
+    """Gap #9: the cheap V6 checkpoint gate runs BEFORE the expensive F3 coverage
+    probe, so a slow/timeout coverage run cannot starve it under the 35s
+    PostToolBatch hook budget."""
+
+    def setUp(self):
+        # Snapshot the surfaces main() touches so each test restores cleanly.
+        self._orig = {
+            "scp": _abc.should_verify_checkpoint,
+            "scv": _abc.should_verify_coverage,
+            "vpc": _abc.verify_phase_checkpoint,
+            "vcg": _abc.verify_coverage_gate,
+            "ilog": _abc.init_logging,
+            "lbm": _abc.log_batch_metrics,
+        }
+        # Keep main()'s disk I/O out of the test sandbox.
+        _abc.init_logging = lambda name: None
+        _abc.log_batch_metrics = lambda *a, **k: None
+
+    def tearDown(self):
+        for k, v in self._orig.items():
+            setattr(_abc,
+                    {"scp": "should_verify_checkpoint",
+                     "scv": "should_verify_coverage",
+                     "vpc": "verify_phase_checkpoint",
+                     "vcg": "verify_coverage_gate",
+                     "ilog": "init_logging",
+                     "lbm": "log_batch_metrics"}[k], v)
+
+    def _run_main(self, tool_calls=None):
+        import io
+        import json
+        old_in, old_out = sys.stdin, sys.stdout
+        buf = io.StringIO()
+        sys.stdin = io.StringIO(json.dumps({
+            "session_id": "t", "cwd": "", "tool_calls": tool_calls or []}))
+        sys.stdout = buf
+        try:
+            _abc.main()
+        except SystemExit:
+            pass  # write_simple_output exits 0 after emitting
+        finally:
+            sys.stdin, sys.stdout = old_in, old_out
+        return buf.getvalue()
+
+    def test_checkpoint_emits_and_short_circuits_before_coverage(self):
+        """When both gates would fire, the checkpoint gate emits first and the
+        expensive coverage probe never runs — the ordering guarantee that a slow
+        coverage run can't drop the checkpoint signal."""
+        calls = []
+        _abc.should_verify_checkpoint = lambda tc: True
+        _abc.should_verify_coverage = lambda tc: True
+        _abc.verify_phase_checkpoint = lambda cwd: (calls.append("ckpt"), "CKPT MSG")[1]
+        _abc.verify_coverage_gate = lambda cwd: (calls.append("cov"), "COV MSG")[1]
+        out = self._run_main()
+        self.assertIn("CKPT MSG", out)
+        self.assertEqual(calls, ["ckpt"])  # coverage gate never reached
+
+    def test_coverage_runs_when_checkpoint_has_no_finding(self):
+        """No checkpoint finding → execution proceeds to the coverage gate, in
+        that order (ckpt evaluated before cov)."""
+        calls = []
+        _abc.should_verify_checkpoint = lambda tc: True
+        _abc.should_verify_coverage = lambda tc: True
+        _abc.verify_phase_checkpoint = lambda cwd: (calls.append("ckpt"), None)[1]
+        _abc.verify_coverage_gate = lambda cwd: (calls.append("cov"), "COV MSG")[1]
+        out = self._run_main()
+        self.assertEqual(calls, ["ckpt", "cov"])
+        self.assertIn("COV MSG", out)
+
+
+class CoverageProbeContractTests(TestCase):
+    """Gap #9: coverage subprocess timeout is 20s (headroom under the 35s hook
+    budget) and a timeout degrades to None rather than crashing the hook."""
+
+    def setUp(self):
+        self._orig_dpt = _abc.detect_project_type
+        self._orig_run = _abc.subprocess.run
+
+    def tearDown(self):
+        _abc.detect_project_type = self._orig_dpt
+        _abc.subprocess.run = self._orig_run
+
+    def test_subprocess_timeout_is_20_seconds(self):
+        captured = {}
+
+        class _R:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        def fake_run(cmd, **kwargs):
+            captured["timeout"] = kwargs.get("timeout")
+            return _R()
+
+        _abc.detect_project_type = lambda cwd: "python"
+        _abc.subprocess.run = fake_run
+        _abc.get_coverage_percent(Path("."))
+        self.assertEqual(captured["timeout"], 20)
+
+    def test_returns_none_on_timeout(self):
+        def raise_timeout(cmd, **kwargs):
+            raise _abc.subprocess.TimeoutExpired(
+                cmd=cmd, timeout=kwargs.get("timeout", 20))
+
+        _abc.detect_project_type = lambda cwd: "python"
+        _abc.subprocess.run = raise_timeout
+        self.assertIsNone(_abc.get_coverage_percent(Path(".")))
+
+
 if __name__ == "__main__":
     main()

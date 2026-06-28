@@ -87,7 +87,7 @@ def get_coverage_percent(cwd: Path) -> Optional[float]:
             capture_output=True,
             text=True,
             cwd=cwd,
-            timeout=30
+            timeout=20
         )
 
         if result.returncode != 0:
@@ -426,20 +426,25 @@ def main():
             write_simple_output(additional_context=context_msg)
             return
 
-    # Server-side coverage verification (F3 gate)
-    # Only runs after git commit to prevent agent self-report bypass
-    if should_verify_coverage(tool_calls):
-        coverage_msg = verify_coverage_gate(cwd)
-        if coverage_msg:
-            write_simple_output(additional_context=coverage_msg)
-            return
-
-    # Phase checkpoint verification (V6 gate)
-    # Only runs after track-state complete/skip operations
+    # Phase checkpoint verification (V6 gate) — runs FIRST.
+    # Cheap git-log scan (5s budget) and high-signal: a phase boundary crossed
+    # without a checkpoint commit is a structural-integrity issue. Running it
+    # before the F3 coverage probe guarantees a slow/timeout coverage run can't
+    # starve it under the 35s PostToolBatch hook budget.
     if should_verify_checkpoint(tool_calls):
         checkpoint_msg = verify_phase_checkpoint(cwd)
         if checkpoint_msg:
             write_simple_output(additional_context=checkpoint_msg)
+            return
+
+    # Server-side coverage verification (F3 gate)
+    # Only runs after git commit to prevent agent self-report bypass. Runs second
+    # so its 20s subprocess timeout (headroom under the 35s hook budget) cannot
+    # drop the cheaper checkpoint gate above.
+    if should_verify_coverage(tool_calls):
+        coverage_msg = verify_coverage_gate(cwd)
+        if coverage_msg:
+            write_simple_output(additional_context=coverage_msg)
             return
 
     # Default output

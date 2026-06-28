@@ -35,6 +35,30 @@ def _verify_tdd_gate(track_dir, sha, result_data):
     return "PASS" if has_test else "NO_TESTS_FOUND"
 
 
+def _evaluate_gates(tags, result_data, sha, track_dir=None):
+    """Advisory F2/F3 gate evaluation — the single source shared by both the
+    legacy ``process-result`` path and the ``dispatch-finalize`` hot path so the
+    two cannot drift (the hot path previously skipped gates entirely, letting
+    sub-80% coverage complete silently).
+
+    Returns ``(coverage_gate, tdd_gate, cov_pct)``. WARN-only: emits status
+    strings, never fails the task. The real teeth stay at the commit-time F2
+    ``ask`` gate (pre-command-check) and the F3 server-side coverage probe
+    (on-batch-complete); this surfaces the signal in the finalize envelope so the
+    orchestrator/plan can see it. ``[Docs]``/``[Config]``/``[Chore]``/``[Manual]``
+    tasks are exempt from coverage; ``[Explore]`` is additionally TDD-exempt.
+    """
+    cov_pct = result_data.get("coverage_pct")
+    coverage_gate = "PASS"
+    if cov_pct is not None and not _tag_exempt_from_coverage(tags):
+        if cov_pct < 80:
+            coverage_gate = f"FAILED ({cov_pct}% < 80%)"
+    tdd_gate = "PASS"
+    if not _tag_exempt_from_tdd(tags):
+        tdd_gate = _verify_tdd_gate(track_dir, sha, result_data)
+    return coverage_gate, tdd_gate, cov_pct
+
+
 # (cli flag, result key, coerce) for write-result field mode. A nested
 # failure_detail sub-field uses a (section, key) tuple so flat flags populate a
 # nested object without the agent hand-writing JSON.
@@ -177,17 +201,9 @@ def cmd_process_result(track_dir):
     if status == "SUCCESS":
         sha = r.get("commit_sha", "")
 
-        # F3 Coverage Gate — warn if below threshold (not enforced for [Docs]/[Config]/[Chore])
-        cov_pct = r.get("coverage_pct")
-        coverage_gate = "PASS"
-        if cov_pct is not None and not _tag_exempt_from_coverage(tags):
-            if cov_pct < 80:
-                coverage_gate = f"FAILED ({cov_pct}% < 80%)"
-
-        # F2 TDD Gate — verify test files present in commit (best-effort)
-        tdd_gate = "PASS"
-        if not _tag_exempt_from_tdd(tags):
-            tdd_gate = _verify_tdd_gate(track_dir, sha, r)
+        # F2/F3 advisory gates — WARN-only, shared with dispatch-finalize via
+        # _evaluate_gates so the two paths can't drift.
+        coverage_gate, tdd_gate, cov_pct = _evaluate_gates(tags, r, sha, track_dir)
 
         try:
             parent_completed, state = _do_complete(track_dir, p, t, s, sha)
