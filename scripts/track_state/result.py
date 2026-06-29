@@ -5,7 +5,8 @@ from pathlib import Path
 
 from lib.atomic_io import atomic_write_json
 from .core import load
-from .spec_integrity import _ac_integrity_gate
+from .spec_integrity import _ac_integrity_gate, _TC_ID
+from .plan_parse import parse_plan
 from .helpers import (
     out, conductor_dir, _store_evidence, _extract_tags_for_task,
     _tag_exempt_from_coverage, _tag_exempt_from_tdd, flag, flags_all,
@@ -45,6 +46,68 @@ def _verify_tdd_gate(track_dir, sha, result_data):
     return ("NO_TESTS_FOUND — add a test file matching test*/, tests*/, "
             "spec*/, or *_test.*/*_spec.*/*.test.*/*.spec.* naming to the "
             "commit (Step 3 Red), or tag the task [Explore] if TDD-exempt.")
+
+
+def _declared_tcs_for_task(track_dir, phase, task):
+    """TC IDs this task's ``<!-- TC-n.m -->`` plan annotation declares.
+
+    Resolved structurally via parse_plan — the guaranteed half of the
+    self-extraction chain. Subtasks inherit their parent's annotation, so refs
+    live on the parent task. Returns [] when plan.md, the phase, or the task is
+    absent, or the task carries no TC comment.
+    """
+    plan_path = Path(track_dir) / "plan.md"
+    if not plan_path.exists():
+        return []
+    try:
+        pi, ti = int(phase) - 1, int(task) - 1
+    except (TypeError, ValueError):
+        return []
+    phases = parse_plan(plan_path).get("phases", [])
+    if not (0 <= pi < len(phases)):
+        return []
+    tasks = phases[pi].get("tasks", [])
+    if not (0 <= ti < len(tasks)):
+        return []
+    return tasks[ti].get("tc_refs", [])
+
+
+def _tc_consistency_gate(track_dir, result_data):
+    """Advisory per-task gate: do the TCs the result *claims* (tc_coverage)
+    match the TCs the task's plan comment *declared* (``<!-- TC-n.m -->``)?
+
+    Verifies the self-extraction post-hoc rather than pre-injecting refs for the
+    agent — closes the "agent extracted the wrong AC/TC" gap without touching the
+    minimal-dispatch contract. WARN-only sibling to ``_evaluate_gates``; verdict
+    + remediation in one string. Returns PASS / WRONG_AC / PARTIAL / UNKNOWN /
+    N/A. Structural only — PASS is consistency, not a proof the tests are
+    semantically correct (that needs the test↔TC link).
+    """
+    declared = _declared_tcs_for_task(track_dir, result_data.get("phase"),
+                                      result_data.get("task"))
+    if not declared:
+        return "N/A"
+    raw = (result_data.get("tc_coverage") or "").strip()
+    if not raw:
+        return ("UNKNOWN — no tc_coverage recorded; pass --tc-coverage to "
+                "write-result so the declared-vs-claimed check can run.")
+    claimed = set(_TC_ID.findall(raw))
+    if not claimed:
+        return ("UNKNOWN — tc_coverage present but no TC-n.m IDs parsed; pass "
+                "--tc-coverage with the covered TC IDs.")
+    declared_set = set(declared)
+    overlap = claimed & declared_set
+    if not overlap:
+        return (f"WRONG_AC — claimed TCs {', '.join(sorted(claimed))} intersect "
+                f"none of declared {', '.join(sorted(declared_set))}; re-read "
+                f"your task's `<!-- ... -->` annotation and spec.md §Acceptance "
+                f"Criteria — you implemented the wrong AC.")
+    missing = sorted(declared_set - claimed)
+    if missing:
+        return (f"PARTIAL — claimed {', '.join(sorted(overlap))} but declared "
+                f"also has {', '.join(missing)}; add a test for the missing TC "
+                f"(Step 3 Red) or report it SPEC_DEVIATION (§6.1).")
+    return "PASS"
 
 
 def _evaluate_gates(tags, result_data, sha, track_dir=None):
@@ -275,6 +338,7 @@ def cmd_process_result(track_dir):
             coverage_gate=coverage_gate,
             tdd_gate=tdd_gate,
             ac_integrity_gate=_ac_integrity_gate(track_dir),
+            tc_consistency_gate=_tc_consistency_gate(track_dir, r),
         )
         if cov_pct is not None:
             result["coverage_pct"] = cov_pct

@@ -69,7 +69,8 @@ def _make_git_track_dir(task_name="Task A"):
 
 
 def _write_success_result(d, *, coverage_pct=None, commit_sha="abc1234",
-                          files_changed="src/foo.py tests/test_foo.py"):
+                          files_changed="src/foo.py tests/test_foo.py",
+                          tc_coverage=None):
     cond = Path(d, ".conductor")
     cond.mkdir(exist_ok=True)
     payload = {
@@ -84,6 +85,8 @@ def _write_success_result(d, *, coverage_pct=None, commit_sha="abc1234",
     }
     if coverage_pct is not None:
         payload["coverage_pct"] = coverage_pct
+    if tc_coverage is not None:
+        payload["tc_coverage"] = tc_coverage
     (cond / "result.json").write_text(json.dumps(payload))
 
 
@@ -200,6 +203,81 @@ class FinalizeACIntegrityGateTests(TestCase):
         # allowlist (else emit() would strip it).
         self.assertIn("ac_integrity_gate", result)
         self.assertTrue(result["ac_integrity_gate"].startswith("FAILED"))
+
+
+class TCConsistencyGateUnitTests(TestCase):
+    """``_tc_consistency_gate`` verdict logic — declared (plan comment) vs
+    claimed (``tc_coverage``). No git/state needed: the gate reads plan.md by
+    index and the TC IDs out of the result dict."""
+
+    _PLAN = ("# Plan\n\n## Phase 1: Build\n"
+             "- [ ] Task A <!-- AC-2, TC-2.1, TC-2.2 -->\n")
+
+    def _gate(self, plan_text, result):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        if plan_text is not None:
+            Path(d, "plan.md").write_text(plan_text)
+        from scripts.track_state.result import _tc_consistency_gate
+        return _tc_consistency_gate(d, result)
+
+    def test_pass_when_claimed_superset_of_declared(self):
+        r = {"phase": 1, "task": 1, "tc_coverage": "TC-2.1 TC-2.2"}
+        self.assertEqual(self._gate(self._PLAN, r), "PASS")
+
+    def test_wrong_ac_when_no_overlap(self):
+        r = {"phase": 1, "task": 1, "tc_coverage": "TC-1.1 TC-1.3"}
+        g = self._gate(self._PLAN, r)
+        self.assertTrue(g.startswith("WRONG_AC"))
+        self.assertIn("TC-1.1", g)
+        self.assertIn("none of declared", g)
+
+    def test_partial_names_the_missing_declared_tc(self):
+        r = {"phase": 1, "task": 1, "tc_coverage": "TC-2.1"}
+        g = self._gate(self._PLAN, r)
+        self.assertTrue(g.startswith("PARTIAL"))
+        self.assertIn("TC-2.2", g)  # the missing declared TC is named in the fix
+
+    def test_unknown_when_no_tc_coverage(self):
+        g = self._gate(self._PLAN, {"phase": 1, "task": 1})
+        self.assertTrue(g.startswith("UNKNOWN"))
+
+    def test_na_when_task_declares_no_refs(self):
+        plan = "# Plan\n\n## Phase 1: Build\n- [ ] Task A\n"
+        r = {"phase": 1, "task": 1, "tc_coverage": "TC-9.9"}
+        self.assertEqual(self._gate(plan, r), "N/A")
+
+    def test_na_when_no_plan(self):
+        r = {"phase": 1, "task": 1, "tc_coverage": "TC-2.1"}
+        self.assertEqual(self._gate(None, r), "N/A")
+
+
+class FinalizeTCConsistencyGateTests(TestCase):
+    """tc_consistency_gate surfaces in the dispatch-finalize envelope and
+    survives ``--compact`` (so it's in the COMPACT_FIELDS allowlist), computed
+    after completion — never blocks (mirrors coverage_gate/tdd_gate)."""
+
+    def test_wrong_ac_surfaces_and_survives_compact(self):
+        d = _make_git_track_dir()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        # Task declares TC-2.1/TC-2.2; the agent claims the wrong AC's TCs.
+        Path(d, "plan.md").write_text(
+            "# Plan\n\n## Phase 1: Build\n- [ ] Task A <!-- AC-2, TC-2.1, TC-2.2 -->\n")
+        _write_success_result(d, coverage_pct=90, tc_coverage="TC-1.1 TC-1.3")
+        result = _out_captured(cmd_dispatch_finalize, d)
+        # Field present under default --compact ⇒ it's in COMPACT_FIELDS
+        # (else emit() would strip it).
+        self.assertIn("tc_consistency_gate", result)
+        self.assertTrue(result["tc_consistency_gate"].startswith("WRONG_AC"))
+
+    def test_pass_when_claimed_matches_declared(self):
+        d = _make_git_track_dir()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        Path(d, "plan.md").write_text(
+            "# Plan\n\n## Phase 1: Build\n- [ ] Task A <!-- AC-2, TC-2.1, TC-2.2 -->\n")
+        _write_success_result(d, coverage_pct=90, tc_coverage="TC-2.1 TC-2.2")
+        result = _out_captured(cmd_dispatch_finalize, d)
+        self.assertEqual(result["tc_consistency_gate"], "PASS")
 
 
 if __name__ == "__main__":
