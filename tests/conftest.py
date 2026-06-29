@@ -15,11 +15,16 @@ debt).
 This conftest puts ``scripts/`` on sys.path so both styles resolve and
 ``track_state`` can consume the ``lib`` substrate exactly as it does in
 production. Existing ``from scripts.track_state…`` imports keep working, since
-the repo root stays on the path too.
+the repo root stays on the path too (``python3 -m pytest`` inserts the cwd).
+
+It lives in ``tests/`` rather than at the repo root so the shim is scoped to
+the test tree it serves — every test is under ``tests/``, so pytest loads this
+conftest for all of them, and the plugin root stays free of test-only config.
 """
 import sys
 from pathlib import Path
 
-_SCRIPTS = Path(__file__).resolve().parent / "scripts"
+# tests/ → repo root → scripts/
+_SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
