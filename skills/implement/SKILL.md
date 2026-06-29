@@ -24,6 +24,9 @@ You are a **thin state machine** that routes between subagents. Context budget i
 2. **Parse only the compact envelope's emitted fields** from track-state outputs. The dispatch commands (`next`, `recover`, `dispatch-next/prepare/finalize`) emit a **compact envelope by default** — the per-command allowlist in `scripts/track_state/helpers.py` (`COMPACT_FIELDS`) is the single source of truth for exactly which fields each command emits. Pass `--full` only to debug a raw envelope; the compact default is the contract.
 3. **Keep dispatch prompts minimal** — task identity + file paths only (~100 tokens).
 4. **Announce actions tersely** — one line per action, no narrative.
+5. **Yield cleanly when context runs low.** The dispatch loop is long-running; if your context budget is running low (heuristic: ~6+ subagent dispatches this session, or you sense compaction approaching), first finish the in-flight task to a terminal, committed state, then stop with exactly:
+   `"⏸️ Conductor checkpoint at P{phase}.T{task} — state committed. Re-invoke /conductor:implement to resume (recover picks up here)."`
+   **NEVER stop between `dispatch-prepare` and `dispatch-finalize`** — that abandons a stale `[~]` lock the next run's `recover` must reap (and the Stop hook will flag it). Yield only at a clean task boundary: after `dispatch-finalize` succeeds, after a phase boundary, or at a genuine HALT.
 
 Dispatch loop: `RECOVER → DISPATCH → PROCESS → PHASE_BOUNDARY → (repeat) → FINALIZE`
 
@@ -34,8 +37,8 @@ Tag inheritance: subtasks inherit dispatch tags from parent when subtask name ha
 ## 1.0 SETUP + TRACK SELECTION
 
 1. Locate track from `conductor/tracks.md` — resolve `$ARGUMENTS` or auto-select `[~]`/`[ ]`.
-2. Run `track-state preflight "<track_dir>"`. If `ok: false` (missing `spec.md`/`plan.md`/`track-state.json`, or unreadable state) → `"Conductor environment incomplete. Run /conductor:setup."` → HALT.
-3. Verify `conductor/workflow/index.md` exists. Missing → same halt message → HALT.
+2. Run `track-state preflight "<track_dir>"`. If `ok: false` (missing `spec.md`/`plan.md`/`track-state.json`, unreadable state, **or missing `conductor/workflow/index.md`/`post-loop.md`** — reported in `missing_workflow`) → `"Conductor environment incomplete. Run /conductor:setup."` → HALT.
+3. (Belt-and-suspenders) `conductor/workflow/index.md` is already gated by preflight step 2; if it is somehow still missing here → same halt message → HALT.
 4. `track-state recover "<track_dir>"` — if error → HALT.
 5. If `status == "new"` → `track-state start` + `registry-update` + commit.
 
