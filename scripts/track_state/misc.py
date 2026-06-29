@@ -22,14 +22,47 @@ from .spec_integrity import compute_ac_integrity
 # setup check repeated (with drift) across skills — preflight centralizes it.
 _TRACK_CORE_FILES = ("spec.md", "plan.md", "track-state.json")
 
+# Project-level workflow files every /conductor:implement run depends on
+# (implement §1.0 reads index.md; §4.0 reads post-loop.md). They live at the
+# conductor ROOT, not inside the track dir, so preflight resolves the root from
+# the track path and checks them alongside the track-core files. Fail-open: when
+# no conductor root is locatable (no tracks.md ancestor — e.g. a bare temp dir),
+# the workflow check is skipped rather than failing ok, so a resolution miss can
+# never HALT setup on a non-standard layout (and the existing preflight tests,
+# which use temp dirs without a project layout, stay green).
+_WORKFLOW_FILES = ("workflow/index.md", "workflow/post-loop.md")
+
+
+def _resolve_conductor_root(track_dir):
+    """Walk up from ``track_dir`` to the conductor root (the dir holding tracks.md).
+
+    Returns the conductor root ``Path``, or ``None`` when no ancestor contains
+    ``tracks.md`` — the fail-open signal that tells ``cmd_preflight`` to skip the
+    workflow-files check rather than guess a location. Standard track layout is
+    ``conductor/tracks/<name>``, so the ancestor two levels up (``conductor/``)
+    is the root; walking is robust to nesting depth and to relative paths.
+    """
+    try:
+        p = Path(track_dir).resolve(strict=False)
+    except OSError:
+        return None
+    for cand in (p, *p.parents):
+        if (cand / "tracks.md").exists():
+            return cand
+    return None
+
 
 def cmd_preflight(track_dir):
     """Verify a track's core conductor files exist and its state loads.
 
     Single machine-checkable entry point for skill setup checks, replacing the
-    repeated "verify spec.md/plan.md/track-state.json" prose. Outputs
-    ``{ok, missing, track_dir, invalid_state}`` and ALWAYS exits 0 — callers
-    switch on ``ok`` and emit their own halt message (mirrors ``validate``).
+    repeated "verify spec.md/plan.md/track-state.json" prose. Also gates the two
+    project-level workflow files (``conductor/workflow/index.md`` and
+    ``post-loop.md``) that implement depends on — fail-open per
+    ``_resolve_conductor_root``. Outputs
+    ``{ok, missing, missing_workflow, track_dir, invalid_state}`` and ALWAYS
+    exits 0 — callers switch on ``ok`` and emit their own halt message (mirrors
+    ``validate``).
     """
     td = Path(track_dir)
     missing = [f for f in _TRACK_CORE_FILES if not (td / f).exists()]
@@ -39,9 +72,19 @@ def cmd_preflight(track_dir):
             load(track_dir)
         except Exception:
             invalid_state = True
+
+    # Project-level workflow files. Skipped (empty) when no conductor root is
+    # locatable — fail-open so this never blocks setup on an unusual layout.
+    conductor_root = _resolve_conductor_root(track_dir)
+    missing_workflow = []
+    if conductor_root is not None:
+        missing_workflow = [f for f in _WORKFLOW_FILES
+                            if not (conductor_root / f).exists()]
+
     out(dict(
-        ok=not missing and not invalid_state,
+        ok=not missing and not invalid_state and not missing_workflow,
         missing=missing,
+        missing_workflow=missing_workflow,
         track_dir=str(td),
         invalid_state=invalid_state,
     ))
