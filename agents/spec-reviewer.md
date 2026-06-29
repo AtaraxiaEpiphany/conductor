@@ -53,11 +53,15 @@ Present a **structured summary** of spec.md to the user:
 **Acceptance Criteria**: {count} criteria
 **Test Scenarios**: {count} scenarios
 **References**: {count} documents cited
+**EARS conformance**: {compliant}/{total} requirements use a mandatory `shall` in an EARS pattern
 
 ### Key Requirements
 - FR-1: {summary}
 - FR-2: {summary}
 - ...
+
+### EARS issues (if any)
+- {FR-N / NFR-N}: {missing `shall` | negation `shall not`} — suggest the matching pattern (`When/While/Where/If-then … shall …`, or ubiquitous `The <system> shall …`)
 
 ### Key Acceptance Criteria
 - AC-1: {summary}
@@ -108,6 +112,7 @@ When making revisions:
 - Edit the file directly using the Edit tool.
 - Only modify what the user requests — do not rewrite entire sections.
 - If the user's change affects plan structure (adding/removing tasks or phases), note this in the output so the orchestrator can regenerate `track-state.json`.
+- If any Functional/Non-Functional requirement is not in EARS form (missing `shall`, or `shall not`), offer to rewrite it into the matching EARS pattern (see `${CLAUDE_PLUGIN_ROOT}/templates/spec-scaffold.md` §Requirements) and apply on the user's confirmation.
 
 ---
 

@@ -79,7 +79,7 @@ COMPACT_FIELDS = {
                           "phase_checkpoint_pending", "retry_count",
                           "phase", "task", "subtask", "summary",
                           "coverage_gate", "tdd_gate", "coverage_pct",
-                          "ac_integrity_gate", "tc_consistency_gate"),
+                          "ac_integrity_gate", "ears_gate", "tc_consistency_gate"),
 }
 
 

@@ -15,9 +15,30 @@
 
 ## Requirements
 
+> **Write requirements in EARS** (Easy Approach to Requirements Syntax). Every
+> requirement below uses one fixed clause pattern so it is clear, unambiguous,
+> and testable. The EARS ruleset: zero-or-more pre-conditions, zero-or-one
+> trigger, exactly one system name, one-or-more responses — and **every response
+> uses `shall`** (never `should`/`may`/`will`; model optionality with a `Where`
+> clause, not a weaker verb). One requirement per statement — no `and`-bundling;
+> prefer positive recovery over negation (`If X, then … shall …`, not `shall not`).
+> Be specific and measurable (`within 200 ms`, `≥ 12 chars`, `99.9%`), never vague
+> (`fast`, `user-friendly`). The conductor's EARS lint flags any requirement
+> missing `shall` or using `shall not`.
+
+**EARS patterns** (keyword → when to use it):
+
+| Pattern            | Template                                                        | Use when                                              |
+| ------------------ | --------------------------------------------------------------- | ----------------------------------------------------- |
+| Ubiquitous         | `The <system> shall <response>.`                                | Always in force — invariants and most NFRs.           |
+| Event-driven       | `When <trigger>, the <system> shall <response>.`                | A discrete event causes an action.                    |
+| State-driven       | `While <state>, the <system> shall <response>.`                 | Behavior must hold throughout a mode/condition.       |
+| Optional feature   | `Where <feature>, the <system> shall <response>.`               | Only for a variant/config/feature (product-line).    |
+| Unwanted behavior  | `If <trigger>, then the <system> shall <recovery>.`             | Error / exception / edge-case handling.               |
+
 ### Functional Requirements
-- FR-1: [requirement] [(ref)](path/to/doc)
-- FR-2: [requirement]
+- FR-1: When a user submits valid credentials, the system shall authenticate and issue a session token within 1 second. [(ref)](path/to/doc)
+- FR-2: The system shall hash all passwords using bcrypt.
 
 **Inline citations (optional but recommended for traceability):**
 - Use Markdown links: `FR-1: User must be able to [reset password via email](conductor/design/api-specs/auth.md)`
@@ -25,11 +46,14 @@
 - Keep inline citations lightweight — detailed derivation goes in References section.
 
 ### Non-Functional Requirements
-- NFR-1: [requirement]
+- NFR-1: The system shall respond to read requests within 200 ms at the 95th percentile.
 
 ## Acceptance Criteria
 - AC-1: [measurable criterion]
 - AC-2: [measurable criterion]
+
+> Acceptance Criteria are measurable pass/fail conditions derived from the
+> requirements above; they need not use EARS (`shall`), though behavioral ACs may.
 
 ## Test Scenarios
 

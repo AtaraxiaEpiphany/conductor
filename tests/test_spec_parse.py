@@ -90,5 +90,33 @@ class SpecParseTests(TestCase):
         self.assertEqual(inv["errors"], [])
 
 
+class RequirementBodyTests(TestCase):
+    """parse_spec also exposes the FR/NFR body text (fr_items/nfr_items) so the
+    EARS lint in spec_integrity can inspect wording. ID lists stay unchanged."""
+
+    def test_fr_items_capture_body_text(self):
+        inv = parse_spec(_write(_SPEC))
+        bodies = {it["id"]: it["text"] for it in inv["fr_items"]}
+        self.assertEqual(bodies["FR-1"],
+                         "User can reset password [(ref)](conductor/design/auth.md)")
+        self.assertEqual(bodies["FR-2"], "User can log out")
+
+    def test_nfr_items_capture_body_text(self):
+        inv = parse_spec(_write(_SPEC))
+        bodies = {it["id"]: it["text"] for it in inv["nfr_items"]}
+        self.assertEqual(bodies["NFR-1"], "Responses under 200ms")
+        self.assertEqual(bodies["NFR-2"], "99.9% uptime")
+
+    def test_item_ids_match_id_lists_in_order(self):
+        inv = parse_spec(_write(_SPEC))
+        self.assertEqual([it["id"] for it in inv["fr_items"]], inv["frs"])
+        self.assertEqual([it["id"] for it in inv["nfr_items"]], inv["nfrs"])
+
+    def test_items_empty_when_no_requirements(self):
+        inv = parse_spec(_write("# Spec\n\n## Overview\nNothing here.\n"))
+        self.assertEqual(inv["fr_items"], [])
+        self.assertEqual(inv["nfr_items"], [])
+
+
 if __name__ == "__main__":
     main()

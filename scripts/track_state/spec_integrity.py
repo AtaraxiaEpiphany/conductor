@@ -42,6 +42,19 @@ _SKIP_PARTS = {".git", ".conductor", "node_modules", "__pycache__", ".venv",
                ".pytest_cache", "site-packages"}
 
 
+# --- EARS (Easy Approach to Requirements Syntax) advisory lint ----------------
+# Every Functional / Non-Functional requirement must carry the mandatory ``shall``
+# response verb, and must avoid negation (``shall not`` / ``shall never``) — EARS
+# §12 says rephrase as a positive ``If <trigger>, then the <system> shall
+# <recovery>.`` unwanted-behavior clause rather than negating. ACs are NOT linted:
+# they are measurable pass/fail criteria, not EARS requirements, and legitimately
+# may not use ``shall``. Advisory only — authoring quality never blocks a task
+# (same WARN-only posture as ``ac_integrity_gate``).
+_EARS_SHALL = re.compile(r"\bshall\b", re.IGNORECASE)
+_EARS_NEGATION = re.compile(r"\bshall\s+(?:not|never)\b|\bshan['’]t\b",
+                            re.IGNORECASE)
+
+
 def _covered_tcs(state):
     """Set of TC IDs reported covered by completed tasks' evidence."""
     covered = set()
@@ -133,6 +146,8 @@ def _empty(fr_count=0, nfr_count=0):
         "partial_acs": [],
         "spec_errors": [],
         "ac_integrity_gate": "N/A",
+        "ears_warnings": [],
+        "ears_gate": "N/A",
     }
 
 
@@ -166,6 +181,44 @@ def _gate(ac_tc_coverage_rate, orphan_acs, ac_traceability_rate, untraced_acs,
     return "FAILED (" + "; ".join(problems) + ") — fix: " + "; ".join(fixes)
 
 
+def _ears_item_warnings(item):
+    """Return a reason string if requirement ``item`` (``{"id","text"}``) breaks an
+    EARS invariant, else ``None``. Missing-``shall`` takes priority; a requirement
+    that has ``shall`` but negates it (``shall not``) gets the negation reason."""
+    text = item.get("text", "")
+    if not _EARS_SHALL.search(text):
+        return ("missing mandatory 'shall' response verb — EARS requires 'shall' "
+                "(avoid should/may/will)")
+    if _EARS_NEGATION.search(text):
+        return ("negation — rephrase as a positive 'If <trigger>, then the "
+                "<system> shall <recovery>.' unwanted-behavior clause "
+                "(avoid 'shall not')")
+    return None
+
+
+def _ears_warnings(items):
+    """List of ``{"id","reason"}`` for requirements breaking an EARS invariant."""
+    out = []
+    for it in items:
+        reason = _ears_item_warnings(it)
+        if reason:
+            out.append({"id": it.get("id", "?"), "reason": reason})
+    return out
+
+
+def _ears_gate_str(warnings):
+    """``PASS`` / ``WARN(...)`` advisory string. WARN names the offending IDs and
+    appends a one-clause fix — the same verdict+fix-in-one-string contract
+    ``_gate`` uses, so the message closes the feedback loop on its own."""
+    if not warnings:
+        return "PASS"
+    ids = ", ".join(w["id"] for w in warnings)
+    return (f"WARN ({len(warnings)} requirement(s) not EARS-compliant: {ids}) — "
+            "fix: rewrite each in an EARS pattern with a mandatory 'shall' "
+            "(When/While/Where/If-then, or ubiquitous 'The <system> shall ...'); "
+            "see spec-scaffold.md Requirements (EARS)")
+
+
 def compute_ac_integrity(track_dir):
     """Compute the AC integrity dict for a track (read-only).
 
@@ -178,11 +231,17 @@ def compute_ac_integrity(track_dir):
         return _empty()
 
     spec = parse_spec(spec_path)
+    # EARS advisory lint over FR/NFR (ACs are criteria, not EARS requirements) —
+    # independent of AC coverage, so computed even when the spec has no ACs.
+    ears_warn = _ears_warnings(spec["fr_items"] + spec["nfr_items"])
     acs = sorted(set(spec["acs"]))
     tc_to_ac = spec["tc_to_ac"]
     if not acs:
-        return _empty(fr_count=len(set(spec["frs"])),
+        base = _empty(fr_count=len(set(spec["frs"])),
                       nfr_count=len(set(spec["nfrs"])))
+        base["ears_warnings"] = ears_warn
+        base["ears_gate"] = _ears_gate_str(ears_warn)
+        return base
 
     # --- Rate 1: AC → TC coverage (every AC has ≥1 TC in the Test Scenarios table)
     acs_with_tc = {a for a in tc_to_ac.values()}
@@ -240,6 +299,8 @@ def compute_ac_integrity(track_dir):
         "ac_integrity_gate": _gate(
             ac_tc_coverage_rate, orphan_acs, ac_traceability_rate,
             untraced_acs, dangling_ac_refs),
+        "ears_warnings": ears_warn,
+        "ears_gate": _ears_gate_str(ears_warn),
     }
 
 
@@ -252,5 +313,18 @@ def _ac_integrity_gate(track_dir):
     """
     try:
         return compute_ac_integrity(track_dir).get("ac_integrity_gate", "N/A")
+    except Exception:
+        return "N/A"
+
+
+def _ears_gate(track_dir):
+    """Advisory track-level EARS gate string. Never raises.
+
+    Sits beside ``_ac_integrity_gate`` in both finalize paths so the requirement-
+    authoring signal reaches the operator the same way. WARN-only: requirement
+    quality never blocks a task.
+    """
+    try:
+        return compute_ac_integrity(track_dir).get("ears_gate", "N/A")
     except Exception:
         return "N/A"

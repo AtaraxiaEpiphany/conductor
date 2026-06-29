@@ -24,9 +24,12 @@ from pathlib import Path
 # Markdown heading: group(1)=_hashes, group(2)=title text.
 _HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*$")
 
-# Requirement/criterion bullets: ``- FR-1: ...``. group(1)=number.
-_FR = re.compile(r"^-\s+FR-(\d+)\b")
-_NFR = re.compile(r"^-\s+NFR-(\d+)\b")
+# Requirement/criterion bullets: ``- FR-1: ...``. group(1)=number; group(2)=the
+# body text after the ID (consumed by the EARS lint in spec_integrity). group(1)
+# is unchanged, so the frs/nfrs ID lists stay byte-identical. The separator class
+# eats the ``:``/space/dash between ID and body so it isn't carried into the text.
+_FR = re.compile(r"^-\s+FR-(\d+)\b[\s:\-]*([^\n]*)")
+_NFR = re.compile(r"^-\s+NFR-(\d+)\b[\s:\-]*([^\n]*)")
 _AC = re.compile(r"^-\s+AC-(\d+)\b")
 
 # Test-scenario table row: ``| TC-1.1 | AC-1 | ... |``. group(1)/group(2)=TC
@@ -48,6 +51,8 @@ def parse_spec(spec_path):
     Returns::
 
         {"frs": ["FR-1", ...], "nfrs": [...], "acs": [...],
+         "fr_items": [{"id": "FR-1", "text": "<body>"}, ...],
+         "nfr_items": [{"id": "NFR-1", "text": "<body>"}, ...],
          "tcs": [{"id": "TC-1.1", "ac": "AC-1"}, ...],
          "tc_to_ac": {"TC-1.1": "AC-1", ...},
          "errors": [...], "warnings": [...]}
@@ -59,6 +64,7 @@ def parse_spec(spec_path):
     errors = []
     warnings = []
     frs, nfrs, acs = [], [], []
+    fr_items, nfr_items = [], []
     tcs = []
     tc_to_ac = {}
 
@@ -75,11 +81,15 @@ def parse_spec(spec_path):
         if section == "fr":
             m = _FR.match(line.lstrip())
             if m:
-                frs.append(f"FR-{m.group(1)}")
+                rid = f"FR-{m.group(1)}"
+                frs.append(rid)
+                fr_items.append({"id": rid, "text": m.group(2).strip()})
         elif section == "nfr":
             m = _NFR.match(line.lstrip())
             if m:
-                nfrs.append(f"NFR-{m.group(1)}")
+                rid = f"NFR-{m.group(1)}"
+                nfrs.append(rid)
+                nfr_items.append({"id": rid, "text": m.group(2).strip()})
         elif section == "ac":
             m = _AC.match(line.lstrip())
             if m:
@@ -99,6 +109,8 @@ def parse_spec(spec_path):
         "frs": frs,
         "nfrs": nfrs,
         "acs": acs,
+        "fr_items": fr_items,
+        "nfr_items": nfr_items,
         "tcs": tcs,
         "tc_to_ac": tc_to_ac,
         "errors": errors,

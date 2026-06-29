@@ -5,7 +5,7 @@ from pathlib import Path
 
 from lib.atomic_io import atomic_write_json
 from .core import load
-from .spec_integrity import _ac_integrity_gate, _TC_ID, _measured_tcs
+from .spec_integrity import _ac_integrity_gate, _ears_gate, _TC_ID, _measured_tcs
 from .plan_parse import parse_plan
 from .helpers import (
     out, conductor_dir, _store_evidence, _extract_tags_for_task,
@@ -384,6 +384,7 @@ def cmd_process_result(track_dir):
             coverage_gate=coverage_gate,
             tdd_gate=tdd_gate,
             ac_integrity_gate=_ac_integrity_gate(track_dir),
+            ears_gate=_ears_gate(track_dir),
             tc_consistency_gate=_tc_consistency_gate(track_dir, r, tags),
         )
         if cov_pct is not None:

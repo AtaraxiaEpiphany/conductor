@@ -12,7 +12,7 @@ from .helpers import (
 from .constants import AUTO_COMPLETE_OK, MAX_RETRIES
 from .mutations import _do_lock, _do_complete, _do_fail, _do_fail_parent
 from .result import _evaluate_gates, _tc_consistency_gate
-from .spec_integrity import _ac_integrity_gate
+from .spec_integrity import _ac_integrity_gate, _ears_gate
 from .sync import _do_sync_plan
 from .git_ops import (
     _git_commit, _git_commit_ensured, _git_head_sha, _write_git_note,
@@ -679,6 +679,7 @@ def cmd_dispatch_finalize(track_dir, compact=True):
                       sync_count=synced, committed=committed,
                       coverage_gate=coverage_gate, tdd_gate=tdd_gate,
                       ac_integrity_gate=_ac_integrity_gate(track_dir),
+                      ears_gate=_ears_gate(track_dir),
                       tc_consistency_gate=_tc_consistency_gate(track_dir, r, tags),
                       phase=int(p), task=int(t),
                       subtask=(int(s) if s is not None else None))

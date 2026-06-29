@@ -91,6 +91,7 @@ Read `${CLAUDE_PLUGIN_ROOT}/templates/spec-scaffold.md` and generate `spec.md` f
 - **Only include** documents that actively informed this spec's requirements.
 - Acceptance criteria must be measurable and testable.
 - Keep functional requirements specific and atomic.
+- **Write every Functional and Non-Functional Requirement in EARS syntax** (see `${CLAUDE_PLUGIN_ROOT}/templates/spec-scaffold.md` §Requirements). Each requirement is exactly one EARS pattern: `When <trigger>, the <system> shall …` (event-driven), `While <state>, the <system> shall …` (state-driven), `Where <feature>, the <system> shall …` (optional feature), `If <trigger>, then the <system> shall …` (unwanted/error), or the ubiquitous `The <system> shall …`. Rules: mandatory `shall` (never `should`/`may`/`will`); exactly one system name; one requirement per statement (no `and`-bundling — split instead); prefer positive recovery over `shall not`. Be specific and measurable (thresholds, counts). The conductor's EARS lint (`spec-integrity`) flags any requirement missing `shall` or using negation, so non-EARS requirements surface as a WARN at finalize.
 - **Test Scenarios** must cover every AC: happy path + at least one edge case per AC.
 - TC IDs follow the pattern `TC-{AC_NUMBER}.{SCENARIO_INDEX}` for traceability.
 

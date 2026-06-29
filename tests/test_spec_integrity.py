@@ -36,14 +36,16 @@ def _state(tasks_p1):
     ]}
 
 
-# spec with 2 ACs, each with one TC; FR/NFR for inventory counts.
+# spec with 2 ACs, each with one TC; FR/NFR for inventory counts. Requirements
+# are EARS-compliant (mandatory ``shall``) so the "all green" fixture is green on
+# every axis — the EARS WARN path is covered separately in EarsLintTests.
 _SPEC_2AC = """\
 # Specification: Demo
 ## Requirements
 ### Functional Requirements
-- FR-1: do thing
+- FR-1: The system shall do the thing.
 ### Non-Functional Requirements
-- NFR-1: fast
+- NFR-1: The system shall respond within 200 ms.
 ## Acceptance Criteria
 - AC-1: crit one
 - AC-2: crit two
@@ -305,6 +307,112 @@ class MeasuredRateTests(TestCase):
             ("foo/site-packages/pkg/test_TC_1_1_pkg.py",
              "def test_TC_1_1_pkg():\n    pass\n"))
         self.assertEqual(_measured_tcs(d), set())
+
+
+class EarsLintTests(TestCase):
+    """The EARS advisory lint: every FR/NFR must carry a mandatory ``shall`` and
+    must avoid negation (``shall not``). ACs are criteria, not requirements, so
+    they are never linted. WARN-only — ``ears_gate`` never blocks; it rides the
+    same advisory channel as ``ac_integrity_gate``."""
+
+    def test_pass_when_all_requirements_have_shall(self):
+        spec = ("# Specification: Demo\n## Requirements\n"
+                "### Functional Requirements\n"
+                "- FR-1: When a user logs in, the system shall issue a token.\n"
+                "### Non-Functional Requirements\n"
+                "- NFR-1: The system shall respond within 200 ms.\n"
+                "## Acceptance Criteria\n- AC-1: crit\n"
+                "## Test Scenarios\n| ID | AC Ref | S | O |\n| -- | ------ | - | - |\n"
+                "| TC-1.1 | AC-1 | x | y |\n")
+        d = _track(spec, _PLAN_2AC, _state([
+            {"name": "a", "status": "completed", "evidence": {"tc_coverage": "TC-1.1"}},
+        ]))
+        r = compute_ac_integrity(d)
+        self.assertEqual(r["ears_gate"], "PASS")
+        self.assertEqual(r["ears_warnings"], [])
+
+    def test_warn_lists_ids_missing_shall(self):
+        # FR-1 is EARS; FR-2 and NFR-1 lack 'shall' → flagged, in document order.
+        spec = ("# Specification: Demo\n## Requirements\n"
+                "### Functional Requirements\n"
+                "- FR-1: The system shall do the thing.\n"
+                "- FR-2: fast login\n"
+                "### Non-Functional Requirements\n"
+                "- NFR-1: snappy\n"
+                "## Acceptance Criteria\n- AC-1: crit\n- AC-2: crit two\n"
+                "## Test Scenarios\n| ID | AC Ref | S | O |\n| -- | ------ | - | - |\n"
+                "| TC-1.1 | AC-1 | x | y |\n| TC-2.1 | AC-2 | x | y |\n")
+        d = _track(spec, _PLAN_2AC, _state([
+            {"name": "a", "status": "completed", "evidence": {"tc_coverage": "TC-1.1"}},
+        ]))
+        r = compute_ac_integrity(d)
+        self.assertEqual([w["id"] for w in r["ears_warnings"]], ["FR-2", "NFR-1"])
+        self.assertTrue(r["ears_gate"].startswith("WARN"))
+        self.assertIn("FR-2", r["ears_gate"])
+        self.assertIn("NFR-1", r["ears_gate"])
+        # AC integrity is unaffected — EARS is a separate axis.
+        self.assertEqual(r["ac_integrity_gate"], "PASS")
+
+    def test_negation_anti_pattern_flagged(self):
+        spec = ("# Specification: Demo\n## Requirements\n"
+                "### Functional Requirements\n"
+                "- FR-1: The system shall not crash on bad input.\n"
+                "## Acceptance Criteria\n- AC-1: crit\n"
+                "## Test Scenarios\n| ID | AC Ref | S | O |\n| -- | ------ | - | - |\n"
+                "| TC-1.1 | AC-1 | x | y |\n")
+        d = _track(spec, _PLAN_2AC, _state([
+            {"name": "a", "status": "completed", "evidence": {"tc_coverage": "TC-1.1"}},
+        ]))
+        r = compute_ac_integrity(d)
+        self.assertEqual([w["id"] for w in r["ears_warnings"]], ["FR-1"])
+        self.assertIn("negation", r["ears_warnings"][0]["reason"])
+
+    def test_acceptance_criteria_are_not_linted(self):
+        # AC-1 has no 'shall' and that is fine — ACs are criteria, not EARS reqs.
+        spec = ("# Specification: Demo\n## Requirements\n"
+                "### Functional Requirements\n"
+                "- FR-1: The system shall do the thing.\n"
+                "## Acceptance Criteria\n- AC-1: login completes within 1s\n"
+                "## Test Scenarios\n| ID | AC Ref | S | O |\n| -- | ------ | - | - |\n"
+                "| TC-1.1 | AC-1 | x | y |\n")
+        d = _track(spec, _PLAN_2AC, _state([
+            {"name": "a", "status": "completed", "evidence": {"tc_coverage": "TC-1.1"}},
+        ]))
+        r = compute_ac_integrity(d)
+        self.assertEqual(r["ears_gate"], "PASS")
+        self.assertEqual(r["ears_warnings"], [])
+
+    def test_ears_computed_even_when_spec_has_no_acs(self):
+        # No ACs → ac_integrity_gate is N/A, but EARS still lints the FRs present.
+        spec = ("# Specification: Demo\n## Requirements\n"
+                "### Functional Requirements\n- FR-1: fast login\n")
+        d = _track(spec, _PLAN_2AC, _state([
+            {"name": "a", "status": "pending"},
+        ]))
+        r = compute_ac_integrity(d)
+        self.assertEqual(r["ac_integrity_gate"], "N/A")
+        self.assertTrue(r["ears_gate"].startswith("WARN"))
+        self.assertEqual([w["id"] for w in r["ears_warnings"]], ["FR-1"])
+
+    def test_ears_gate_na_when_no_spec(self):
+        d = _track(plan=_PLAN_2AC, state=_state([
+            {"name": "a", "status": "pending"},
+        ]))
+        r = compute_ac_integrity(d)
+        self.assertEqual(r["ears_gate"], "N/A")
+        self.assertEqual(r["ears_warnings"], [])
+
+    def test_ears_keys_always_present(self):
+        d = _track()  # completely empty dir
+        r = compute_ac_integrity(d)
+        self.assertIn("ears_warnings", r)
+        self.assertIn("ears_gate", r)
+        self.assertEqual(r["ears_gate"], "N/A")
+
+    def test_helper_never_raises_on_garbage(self):
+        d = _track()  # empty dir
+        from scripts.track_state.spec_integrity import _ears_gate
+        self.assertEqual(_ears_gate(d), "N/A")
 
 
 if __name__ == "__main__":
