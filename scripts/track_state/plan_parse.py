@@ -49,6 +49,14 @@ _MISSING_CHECKBOX_LINE = re.compile(
 # Trailing checkpoint marker on a phase heading: [checkpoint:abcdef1]
 _CHECKPOINT = re.compile(r"\[checkpoint:\s*[0-9a-f]+\]", re.IGNORECASE)
 
+# AC/TC traceability refs live inside ``<!-- AC-1, TC-1.1 -->`` comments on the
+# parent task line (plan-format-contract.md rule 6). Captured BEFORE _clean_name
+# strips the comment, so ac_integrity can trace ACs → tasks without changing the
+# stored task name or the PLAN_STRUCTURE shape.
+_HTML_COMMENT = re.compile(r"<!--(.*?)-->", re.DOTALL)
+_AC_REF = re.compile(r"AC-\d+")
+_TC_REF = re.compile(r"TC-\d+\.\d+")
+
 _VALID_MARKERS = set(MARKER_MAP.values())
 
 
@@ -65,15 +73,38 @@ def _clean_name(rest):
     return rest.strip()
 
 
+def _extract_refs(rest):
+    """Pull AC-n / TC-n.m IDs from ``<!-- ... -->`` comments on a task line.
+
+    Returns ``(ac_refs, tc_refs)`` as de-duped lists in first-seen order. Only
+    refs inside HTML comments count — a stray ``AC-1`` in prose is ignored, so
+    the annotation contract (rule 6) is what's measured.
+    """
+    ac_refs, tc_refs = [], []
+    for m in _HTML_COMMENT.finditer(rest):
+        body = m.group(1)
+        for ref in _AC_REF.findall(body):
+            if ref not in ac_refs:
+                ac_refs.append(ref)
+        for ref in _TC_REF.findall(body):
+            if ref not in tc_refs:
+                tc_refs.append(ref)
+    return ac_refs, tc_refs
+
+
 def parse_plan(plan_path):
     """Parse plan.md → {"phases": [...], "errors": [...], "warnings": [...]}.
 
     phases is an ordered list of:
         {"name": str, "number": int, "line": int,
-         "tasks": [{"name": str, "subtasks": [str, ...], "line": int}, ...]}
+         "tasks": [{"name": str, "subtasks": [str, ...], "line": int,
+                    "ac_refs": [str, ...], "tc_refs": [str, ...]}, ...]}
 
-    Names are cleaned; dispatch tags are preserved. errors block initialization;
-    warnings are advisory.
+    Names are cleaned; dispatch tags are preserved. ``ac_refs``/``tc_refs`` carry
+    the AC/TC IDs from each parent task's ``<!-- ... -->`` annotation (captured
+    before the comment is stripped); subtasks have neither (they inherit).
+    ``to_plan_structure`` drops both, so they never reach track-state.json.
+    errors block initialization; warnings are advisory.
     """
     errors = []
     warnings = []
@@ -114,6 +145,7 @@ def parse_plan(plan_path):
                 errors.append(
                     f"line {lineno}: task/subtask appears before any Phase heading")
                 continue
+            ac_refs, tc_refs = _extract_refs(rest)
             name = _clean_name(rest)
             if not name:
                 errors.append(f"line {lineno}: empty task/subtask name")
@@ -124,9 +156,12 @@ def parse_plan(plan_path):
                         f"line {lineno}: subtask '{name}' has no parent task "
                         f"(Phase {current_phase['number']})")
                     continue
+                # Subtasks inherit AC context from their parent (rule 6) and are
+                # stored as plain strings, so no ac_refs/tc_refs here.
                 current_task["subtasks"].append(name)
             else:
-                current_task = {"name": name, "subtasks": [], "line": lineno}
+                current_task = {"name": name, "subtasks": [], "line": lineno,
+                                "ac_refs": ac_refs, "tc_refs": tc_refs}
                 current_phase["tasks"].append(current_task)
             continue
 
@@ -193,3 +228,20 @@ def to_plan_structure(parsed):
             tasks.append(entry)
         out_phases.append({"name": ph["name"], "tasks": tasks})
     return {"phases": out_phases}
+
+
+def collect_ac_refs(parsed):
+    """Aggregate every AC-n referenced by a task's ``<!-- AC-n -->`` annotation.
+
+    Returns a de-duped list (first-seen order) across all phases/tasks. Used by
+    ac_integrity to compute traceability (spec ACs ∩ plan ACs) and to flag
+    dangling refs (plan ACs not present in spec.md).
+    """
+    refs, seen = [], set()
+    for ph in parsed.get("phases", []):
+        for t in ph.get("tasks", []):
+            for ref in t.get("ac_refs", []):
+                if ref not in seen:
+                    seen.add(ref)
+                    refs.append(ref)
+    return refs

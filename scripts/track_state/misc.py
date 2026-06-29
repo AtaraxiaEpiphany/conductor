@@ -15,6 +15,7 @@ from .sync import _do_sync_plan
 from .git_ops import _git_commit, _git_head_sha, _ensure_note
 from .constants import TERMINAL_FOR_PARENT
 from .quality import _checklist_status
+from .spec_integrity import compute_ac_integrity
 
 
 # Core conductor files every executable track must have. Single source for the
@@ -96,6 +97,9 @@ def cmd_quality_snapshot(track_dir):
     coverage_pass_pct = (round(100 * coverage_pass / code_tasks, 1)
                          if code_tasks else None)
 
+    # AC integrity rates + advisory gate (None/"N/A" when no spec.md or no ACs).
+    ac = compute_ac_integrity(track_dir)
+
     out(dict(
         track_id=state.get("track_id"),
         total_units=total,
@@ -106,7 +110,26 @@ def cmd_quality_snapshot(track_dir):
         code_tasks_completed=code_tasks,
         tasks_missing_evidence=no_evidence,
         spec_deviations=deviations,
+        ac_tc_coverage_rate=ac["ac_tc_coverage_rate"],
+        ac_traceability_rate=ac["ac_traceability_rate"],
+        ac_verification_rate=ac["ac_verification_rate"],
+        ac_integrity_gate=ac["ac_integrity_gate"],
     ))
+
+
+def cmd_spec_integrity(track_dir):
+    """Compute AC coverage rates + advisory integrity gate (read-only).
+
+    The measurable guarantee over Acceptance Criteria: cross-checks spec.md
+    (the AC/TC inventory), plan.md (``<!-- AC-n -->`` task annotations), and
+    track-state.json evidence (``tc_coverage``) into three rates — AC→TC
+    coverage, AC→plan traceability, AC verification — plus diagnostic lists
+    (orphan/untraced/dangling/unverified/partial ACs) and a WARN-only gate.
+    FR/NFR are counts only (no traceability channel exists today, so no rate).
+    Degrades to ``None`` rates / ``"N/A"`` gate when spec.md is absent or has
+    no ACs — tracks without a formal spec are not penalized.
+    """
+    out(compute_ac_integrity(track_dir))
 
 
 def cmd_reset(track_dir, scope, p=None, t=None):

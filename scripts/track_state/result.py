@@ -5,6 +5,7 @@ from pathlib import Path
 
 from lib.atomic_io import atomic_write_json
 from .core import load
+from .spec_integrity import _ac_integrity_gate
 from .helpers import (
     out, conductor_dir, _store_evidence, _extract_tags_for_task,
     _tag_exempt_from_coverage, _tag_exempt_from_tdd, flag, flags_all,
@@ -255,6 +256,7 @@ def cmd_process_result(track_dir):
             deviations=len(deviations),
             coverage_gate=coverage_gate,
             tdd_gate=tdd_gate,
+            ac_integrity_gate=_ac_integrity_gate(track_dir),
         )
         if cov_pct is not None:
             result["coverage_pct"] = cov_pct

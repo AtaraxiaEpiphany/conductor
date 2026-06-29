@@ -16,7 +16,7 @@ from scripts.track_state.validate import (
 )
 from scripts.track_state.dispatch import cmd_recover, cmd_dispatch_next
 from scripts.track_state.quality import cmd_init_from_plan, cmd_set_mode, _validate_plan_structure, _init_core
-from scripts.track_state.plan_parse import parse_plan, to_plan_structure
+from scripts.track_state.plan_parse import parse_plan, to_plan_structure, collect_ac_refs
 from scripts.track_state.misc import cmd_shas, cmd_derive_name
 
 
@@ -771,6 +771,24 @@ class TestInitFromPlan(TestCase):
         self.assertIn("[Config]", name)
         self.assertNotIn("<!--", name)
         self.assertNotIn("AC-1", name)
+
+    def test_parse_captures_ac_refs_before_strip(self):
+        # The <!-- AC-n, TC-n.n --> annotation is captured into ac_refs/tc_refs
+        # on the parent task dict BEFORE _clean_name strips it from the name —
+        # so ac_integrity can trace ACs to tasks without changing stored names.
+        d = self._plan(self.GOOD)
+        parsed = parse_plan(Path(d, "plan.md"))
+        p1 = parsed["phases"][0]
+        self.assertEqual(p1["tasks"][0]["ac_refs"], ["AC-1"])
+        self.assertEqual(p1["tasks"][0]["tc_refs"], ["TC-1.1"])
+        self.assertEqual(p1["tasks"][1]["ac_refs"], ["AC-2"])
+        self.assertEqual(p1["tasks"][1]["tc_refs"], [])
+        # Subtasks stay plain strings (inherit AC context; shape unchanged).
+        self.assertIsInstance(p1["tasks"][1]["subtasks"][0], str)
+        # Phase 2 task carries AC-3.
+        self.assertEqual(parsed["phases"][1]["tasks"][0]["ac_refs"], ["AC-3"])
+        # Aggregator de-dupes across the whole plan, first-seen order.
+        self.assertEqual(collect_ac_refs(parsed), ["AC-1", "AC-2", "AC-3"])
 
     def test_error_bad_marker(self):
         d = self._plan("## Phase 1: P\n- [X] Task: bad\n- [ ] [Manual] Task: v\n")

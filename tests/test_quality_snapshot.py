@@ -178,5 +178,38 @@ class TestSubtasks(TestCase):
         self.assertEqual(r["coverage_mean"], 90.0)
 
 
+class TestACIntegrityFields(TestCase):
+    """quality-snapshot now carries AC coverage rates + advisory gate (None/N/A
+    when no spec.md, computed when present)."""
+
+    def test_ac_fields_none_when_no_spec(self):
+        d = _make_track_dir(_make_state([{"name": "P1", "status": "in_progress", "tasks": [
+            _task("A", "completed", evidence={"coverage_pct": 90}),
+        ]}]))
+        r = _capture(cmd_quality_snapshot, d)
+        self.assertIsNone(r["ac_tc_coverage_rate"])
+        self.assertIsNone(r["ac_traceability_rate"])
+        self.assertIsNone(r["ac_verification_rate"])
+        self.assertEqual(r["ac_integrity_gate"], "N/A")
+
+    def test_ac_fields_computed_when_spec_present(self):
+        phases = [{"name": "Phase 1", "status": "in_progress", "tasks": [
+            _task("Task a", "completed",
+                  evidence={"coverage_pct": 90, "tc_coverage": "TC-1.1"}),
+            _task("[Manual] verify P1", "pending"),
+        ]}]
+        d = _make_track_dir(_make_state(phases))
+        Path(d, "spec.md").write_text(
+            "# S\n## Acceptance Criteria\n- AC-1: x\n"
+            "## Test Scenarios\n| ID | AC Ref | S | O |\n| -- | -- | -- | -- |\n| TC-1.1 | AC-1 | x | y |\n")
+        Path(d, "plan.md").write_text(
+            "# P\n## Phase 1: B\n- [ ] Task a <!-- AC-1, TC-1.1 -->\n- [ ] [Manual] verify P1\n")
+        r = _capture(cmd_quality_snapshot, d)
+        self.assertEqual(r["ac_tc_coverage_rate"], 100.0)
+        self.assertEqual(r["ac_traceability_rate"], 100.0)
+        self.assertEqual(r["ac_verification_rate"], 100.0)
+        self.assertEqual(r["ac_integrity_gate"], "PASS")
+
+
 if __name__ == "__main__":
     main()

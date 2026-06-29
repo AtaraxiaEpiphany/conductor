@@ -16,7 +16,7 @@ from .misc import (
     cmd_reset, cmd_indices, cmd_shas, cmd_add_checkpoint,
     cmd_deferred_report, cmd_phase_done, cmd_registry_update,
     cmd_record_summary, cmd_preflight, cmd_quality_snapshot,
-    cmd_derive_name,
+    cmd_spec_integrity, cmd_derive_name,
 )
 from .handoff import cmd_get_handoff, cmd_sync_handoff, cmd_append_handoff, cmd_harvest_candidates
 from .sync import cmd_sync_plan
@@ -217,6 +217,8 @@ COMMAND_HELP = {
                   "Verify core track files (spec/plan/track-state.json) exist and load; ok:false if not"),
     "quality-snapshot": ("quality-snapshot <track-dir>",
                          "Read-only aggregate quality grades: completion, coverage, evidence gaps"),
+    "spec-integrity": ("spec-integrity <track-dir>",
+                       "Read-only AC coverage rates (TC/plan/verification) + advisory gate; FR/NFR counts"),
     "derive-name": ("derive-name <shortname>",
                     "Derive canonical track_id (<shortname>_<YYYYMMDD>) and track_dir for "
                     "today; idempotent. Uniqueness is the skill's job (new-track §2.6)."),
@@ -232,7 +234,8 @@ _COMMAND_GROUPS = [
     ("Dispatch Composites", ["dispatch-prepare", "dispatch-finalize", "record-summary"]),
     ("Naming", ["derive-name"]),
     ("Diagnostics", ["validate", "gc", "shas", "checklist-verify", "deferred-report",
-                     "phase-done", "add-checkpoint", "preflight", "quality-snapshot"]),
+                     "phase-done", "add-checkpoint", "preflight", "quality-snapshot",
+                     "spec-integrity"]),
 ]
 
 
@@ -355,6 +358,8 @@ def main():
             cmd_shas(track_dir)
         elif cmd == "quality-snapshot":
             cmd_quality_snapshot(track_dir)
+        elif cmd == "spec-integrity":
+            cmd_spec_integrity(track_dir)
         elif cmd == "add-checkpoint":
             if len(pos) < 2:
                 out(dict(error="Missing phase or sha argument"))

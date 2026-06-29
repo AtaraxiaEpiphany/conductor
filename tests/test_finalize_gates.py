@@ -173,5 +173,30 @@ class FinalizeSharedHelperParityTests(TestCase):
         self.assertEqual(cov_pr, "FAILED (50% < 80%)")
 
 
+class FinalizeACIntegrityGateTests(TestCase):
+    """ac_integrity_gate (track-level, WARN-only) surfaces in the dispatch-finalize
+    envelope and survives --compact — proving it's in COMPACT_FIELDS. Computed
+    after completion, never blocks (mirrors coverage_gate/tdd_gate)."""
+
+    def test_na_gate_when_no_spec(self):
+        d = _make_git_track_dir()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        _write_success_result(d, coverage_pct=90)
+        result = _out_captured(cmd_dispatch_finalize, d)
+        self.assertEqual(result["ac_integrity_gate"], "N/A")
+
+    def test_failed_gate_with_bad_spec_survives_compact(self):
+        d = _make_git_track_dir()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        # AC-1 has no TC and no plan trace → gate FAILED.
+        Path(d, "spec.md").write_text("# S\n## Acceptance Criteria\n- AC-1: x\n")
+        _write_success_result(d, coverage_pct=90)
+        result = _out_captured(cmd_dispatch_finalize, d)
+        # Field present under default --compact ⇒ it's in the COMPACT_FIELDS
+        # allowlist (else emit() would strip it).
+        self.assertIn("ac_integrity_gate", result)
+        self.assertTrue(result["ac_integrity_gate"].startswith("FAILED"))
+
+
 if __name__ == "__main__":
     main()

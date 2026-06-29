@@ -78,7 +78,8 @@ COMPACT_FIELDS = {
     "dispatch-finalize": ("status", "sha", "deviations", "committed",
                           "phase_checkpoint_pending", "retry_count",
                           "phase", "task", "subtask", "summary",
-                          "coverage_gate", "tdd_gate", "coverage_pct"),
+                          "coverage_gate", "tdd_gate", "coverage_pct",
+                          "ac_integrity_gate"),
 }
 
 
