@@ -50,8 +50,11 @@ class MapAgreementTests(TestCase):
     def test_creation_map_is_the_superset(self):
         # Placement targets the creation map must surface even when the
         # read-map doesn't single them out: decision records + authoring rules.
+        # doc-conventions is plugin-provided (never copied into a project), so
+        # the map surfaces it as authoring-rules guidance — NOT a project path,
+        # which would dangle (see test_templates_no_dangling_plugin_docs).
         self.assertIn("conductor/design/decision", TOC)
-        self.assertIn("conductor/design/doc-conventions.md", TOC)
+        self.assertIn("doc-conventions", TOC)
 
     def test_creation_map_states_its_role(self):
         # The TOC must distinguish itself from conductor/index.md so agents
