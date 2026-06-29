@@ -44,7 +44,7 @@ user-invoked pulse** (the user is the clock).
 
    | Event | Housekeeping already wired |
    |-------|----------------------------|
-   | `SessionStart` | state-consistency check; stale-temp GC |
+   | `SessionStart` | state-consistency check; stale-temp GC; wiki-drift scan; comprehension-debt nudge (latest active track's Critical/High review findings) |
    | `SessionEnd` | `track-state gc`; session-handoff written |
    | `SubagentStop` | result validation / recovery gating |
    | `dispatch-finalize` | per-cycle accounting — the natural seat for a quality-snapshot |

@@ -103,6 +103,8 @@ Then the nudge, before §8's archive prompt:
 
 Informational and **non-blocking** — proceed to §8 regardless. Its only job is to make "the loop shipped code you didn't write" visible enough to read.
 
+The SessionStart hook re-surfaces the latest active track's high-risk review findings as a "Loop digest" on every resume until the track archives — so the comprehension nudge recurs between tracks, not only once at archive.
+
 ---
 
 ## 8.0 CLEANUP & ARCHIVE

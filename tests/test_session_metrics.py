@@ -86,9 +86,10 @@ class SessionMetricsRoundTripTests(TestCase):
 
 
 class MainStampBehaviorTests(TestCase):
-    """main() writes the stamp on startup but skips it on compact."""
+    """main() wiring: the stamp and advisory scans run on startup/resume but are
+    skipped on compact (compaction is mid-session; keep that context minimal)."""
 
-    def _run_main(self, source, session_id):
+    def _run_main(self, source, session_id, digest_marker=""):
         td = tempfile.mkdtemp()
         self.addCleanup(os.environ.pop, "CLAUDE_PLUGIN_DATA", None)
         os.environ["CLAUDE_PLUGIN_DATA"] = td
@@ -96,11 +97,14 @@ class MainStampBehaviorTests(TestCase):
         # re-reads our fresh stdin instead of returning a prior test's payload.
         _ss.read_hook_input.__globals__["_cached_hook_input"] = None
         # Stub the heavy content builders so the test is fast and isolated.
+        # digest_marker lets a gate test assert get_loop_digest's output is
+        # appended on non-compact sources and absent on compact.
         orig = (_ss.get_conductor_content, _ss.get_session_handoff,
-                _ss.get_wiki_drift_warnings)
+                _ss.get_wiki_drift_warnings, _ss.get_loop_digest)
         _ss.get_conductor_content = lambda *a, **k: ""
         _ss.get_session_handoff = lambda *a, **k: ""
         _ss.get_wiki_drift_warnings = lambda *a, **k: ""
+        _ss.get_loop_digest = lambda *a, **k: digest_marker
         old_in, old_out = sys.stdin, sys.stdout
         sys.stdin = io.StringIO(json.dumps({
             "session_id": session_id, "source": source, "cwd": td}))
@@ -113,16 +117,28 @@ class MainStampBehaviorTests(TestCase):
         finally:
             sys.stdin, sys.stdout = old_in, old_out
             (_ss.get_conductor_content, _ss.get_session_handoff,
-             _ss.get_wiki_drift_warnings) = orig
-        return Path(td)
+             _ss.get_wiki_drift_warnings, _ss.get_loop_digest) = orig
+        return Path(td), buf.getvalue()
 
     def test_main_writes_start_file_on_startup(self):
-        td = self._run_main("startup", "st1")
+        td, _ = self._run_main("startup", "st1")
         self.assertTrue((td / "logs" / ".session-st1.start").exists())
 
     def test_main_skips_start_file_on_compact(self):
-        td = self._run_main("compact", "cmp")
+        td, _ = self._run_main("compact", "cmp")
         self.assertFalse((td / "logs" / ".session-cmp.start").exists())
+
+    def test_loop_digest_present_on_startup(self):
+        _td, out = self._run_main("startup", "s1", digest_marker="DIGEST-MARKER")
+        self.assertIn("DIGEST-MARKER", out)
+
+    def test_loop_digest_present_on_resume(self):
+        _td, out = self._run_main("resume", "s2", digest_marker="DIGEST-MARKER")
+        self.assertIn("DIGEST-MARKER", out)
+
+    def test_loop_digest_absent_on_compact(self):
+        _td, out = self._run_main("compact", "s3", digest_marker="DIGEST-MARKER")
+        self.assertNotIn("DIGEST-MARKER", out)
 
 
 if __name__ == "__main__":

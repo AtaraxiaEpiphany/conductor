@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent / "lib"))
 
 from lib.hook_io import read_hook_input, write_simple_output
 from lib.env import get_data_dir
+from lib.json_utils import load_json_safe
 from lib.path_utils import get_file_age_hours
 from lib.frontmatter import check_corpus_frontmatter
 from lib.atomic_io import atomic_write_text
@@ -146,6 +147,84 @@ def get_wiki_drift_warnings(project_root: Path) -> str:
     return f"\n\n--- Wiki drift (advisory GC) ---\n{body}\n"
 
 
+def get_loop_digest(project_root: Path) -> str:
+    """Comprehension-debt nudge: re-surface the latest active track's high-risk
+    review findings so the operator reads what the loop shipped.
+
+    Countermeasure to Osmani's comprehension debt — "the faster the loop ships
+    code you didn't write… unless you read what the loop made." The post-loop
+    §7.5 digest fires once per track before archive; this re-surfaces those same
+    Critical/High findings on every non-compact SessionStart, the deterministic
+    event the loop-heartbeat ADR sanctions (no wall-clock cron, no watermark to
+    GC — the nudge self-retires once the track archives). Advisory only: returns
+    '' when there is nothing worth surfacing, and the whole body is wrapped so a
+    malformed review/state file can never break session bootstrap.
+
+    Resolution mirrors ``scripts/lib/result_probe.py``: tracks live at
+    ``{project_root}/conductor/tracks/<id>/`` with review files at
+    ``{TRACK_DIR}/.conductor/review-result.json``. Terminal-status tracks
+    (``archived``/``cancelled``) are filtered out *before* picking the newest by
+    mtime, so a freshly-archived track can't shadow an active one. ``completed``
+    is NOT terminal — a finalized-but-unarchived track still nudges.
+
+    Limitation: if ``project_root`` isn't the real project root (e.g. resumed
+    from a subdir) the glob silently misses, same tolerance as the wiki-drift
+    scan. We deliberately do not walk upward (monorepo wrong-project risk).
+    """
+    try:
+        base = Path(project_root)
+        candidates = []
+        for p in base.glob("conductor/tracks/*/.conductor/review-result.json"):
+            track_dir = p.parents[1]  # conductor/tracks/<id>/
+            state = load_json_safe(track_dir / "track-state.json", default={})
+            if not isinstance(state, dict):
+                state = {}
+            if state.get("status") in ("archived", "cancelled"):
+                continue  # terminal — neither nag forever nor shadow an active track
+            candidates.append(p)
+        if not candidates:
+            return ""
+        chosen = max(candidates, key=lambda p: p.stat().st_mtime)
+        data = load_json_safe(chosen, default=None)
+        if not isinstance(data, dict):
+            return ""
+        findings = data.get("findings")
+        if not isinstance(findings, list):
+            return ""
+        # .capitalize() tolerates LLM severity-casing drift (critical / HIGH).
+        hits = [
+            f for f in findings
+            if isinstance(f, dict)
+            and (f.get("severity", "") or "").capitalize() in ("Critical", "High")
+        ]
+        if not hits:
+            return ""
+
+        track_id = chosen.parents[1].name
+        lines = [
+            f"Track `{track_id}` — {len(hits)} Critical/High review finding(s) "
+            f"you haven't re-read:"
+        ]
+        for f in hits[:3]:
+            title = f.get("title") or "(untitled)"
+            file_ = f.get("file") or ""
+            loc = f.get("lines") or ""
+            where = f"{file_}:{loc}" if (file_ and loc) else (file_ or loc)
+            lines.append(f"- {title}" + (f" ({where})" if where else ""))
+        if len(hits) > 3:
+            lines.append(f"(+{len(hits) - 3} more)")
+        lines.append(
+            "Re-read these before starting new work — this is how comprehension "
+            "debt accrues."
+        )
+        lines.append(f"Full review: {chosen}")
+        body = "\n".join(lines)
+        return f"\n\n--- Loop digest (advisory) ---\n{body}\n"
+    except Exception:
+        # Advisory context must never break session bootstrap.
+        return ""
+
+
 def _write_session_start(data_dir: Path, session_id: str) -> None:
     """Stamp the session start time so the SessionEnd hook can log duration.
 
@@ -191,11 +270,12 @@ def main():
     handoff = get_session_handoff(data_dir)
     full_content = content + handoff
 
-    # Wiki drift GC (advisory) — skip on compact (keep that context minimal).
+    # Advisory scans — skip on compact (keep that context minimal).
     if source != "compact":
         cwd_str = input_data.get("cwd", "")
         project_root = Path(cwd_str) if cwd_str else Path.cwd()
         full_content += get_wiki_drift_warnings(project_root)
+        full_content += get_loop_digest(project_root)
 
     # Output
     write_simple_output(additional_context=full_content)
