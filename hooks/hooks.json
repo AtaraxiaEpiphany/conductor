@@ -31,6 +31,16 @@
             "timeout": 3
           }
         ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/check-plan-annotations.py\"",
+            "timeout": 3
+          }
+        ]
       }
     ],
     "SessionStart": [
