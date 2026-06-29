@@ -70,15 +70,30 @@ def _gate(ac_tc_coverage_rate, orphan_acs, ac_traceability_rate, untraced_acs,
           dangling_ac_refs):
     """PASS iff every AC has a TC, every AC is traced to a task, and no plan AC
     ref dangles (references an AC absent from spec). Verification is reported
-    separately and NOT gated on — evidence.tc_coverage is best-effort."""
+    separately and NOT gated on — evidence.tc_coverage is best-effort.
+
+    The FAILED string names the offending AC IDs and appends a per-problem fix
+    clause, so the message closes the feedback loop on its own (verdict + fix in
+    one string — the contract the blocking hooks already use). The verdict
+    prefix and the "without a TC"/"untraced in plan"/"dangling" substrings are
+    preserved for prefix/substring matching."""
     problems = []
+    fixes = []
     if ac_tc_coverage_rate is not None and ac_tc_coverage_rate < 100.0:
-        problems.append(f"{len(orphan_acs)} AC(s) without a TC")
+        problems.append(f"{len(orphan_acs)} AC(s) without a TC: {', '.join(orphan_acs)}")
+        fixes.append("add a `TC-{n}.{m} | AC-{n} | ...` row under ## Test "
+                     "Scenarios in spec.md for each orphan AC")
     if ac_traceability_rate is not None and ac_traceability_rate < 100.0:
-        problems.append(f"{len(untraced_acs)} AC(s) untraced in plan")
+        problems.append(f"{len(untraced_acs)} AC(s) untraced in plan: {', '.join(untraced_acs)}")
+        fixes.append("annotate the implementing task in plan.md with a "
+                     "`<!-- AC-n -->` comment for each untraced AC")
     if dangling_ac_refs:
-        problems.append(f"{len(dangling_ac_refs)} dangling plan AC ref(s)")
-    return "PASS" if not problems else "FAILED (" + "; ".join(problems) + ")"
+        problems.append(f"{len(dangling_ac_refs)} dangling plan AC ref(s): {', '.join(dangling_ac_refs)}")
+        fixes.append("remove the dangling AC-n ref(s) from plan.md, or add "
+                     "the missing AC-n to spec.md")
+    if not problems:
+        return "PASS"
+    return "FAILED (" + "; ".join(problems) + ") — fix: " + "; ".join(fixes)
 
 
 def compute_ac_integrity(track_dir):

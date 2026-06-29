@@ -21,19 +21,30 @@ from .handoff import (
 
 
 def _verify_tdd_gate(track_dir, sha, result_data):
-    """Best-effort TDD verification: check that test files exist in the commit."""
+    """Best-effort TDD verification: check that test files exist in the commit.
+
+    Returns ``PASS`` or a non-PASS verdict that carries its own remediation
+    (what to do) so the agent can self-correct in one turn — the same
+    "verdict + fix in one message" contract the blocking hooks already use.
+    """
     if not sha or sha == "N/A":
-        return "UNKNOWN"
+        return ("UNKNOWN — no commit SHA recorded; pass --commit-sha to "
+                "write-result so the TDD check can run.")
 
     # Check files_changed in result for test file patterns
     files = result_data.get("files_changed", "")
     if not files:
-        return "UNKNOWN"
+        return ("UNKNOWN — no files_changed recorded; pass --files-changed "
+                "to write-result so the TDD check can run.")
 
     test_patterns = ("test/", "tests/", "spec/", "_test.", "_spec.", ".test.", ".spec.", "Test", "Spec")
     has_test = any(p in files for p in test_patterns)
 
-    return "PASS" if has_test else "NO_TESTS_FOUND"
+    if has_test:
+        return "PASS"
+    return ("NO_TESTS_FOUND — add a test file matching test*/, tests*/, "
+            "spec*/, or *_test.*/*_spec.*/*.test.*/*.spec.* naming to the "
+            "commit (Step 3 Red), or tag the task [Explore] if TDD-exempt.")
 
 
 def _evaluate_gates(tags, result_data, sha, track_dir=None):
@@ -53,7 +64,14 @@ def _evaluate_gates(tags, result_data, sha, track_dir=None):
     coverage_gate = "PASS"
     if cov_pct is not None and not _tag_exempt_from_coverage(tags):
         if cov_pct < 80:
-            coverage_gate = f"FAILED ({cov_pct}% < 80%)"
+            # Verdict prefix stays stable ("FAILED (...)") for prefix/substring
+            # matching; the appended clause is the remediation that lets the
+            # agent self-correct in one turn.
+            coverage_gate = (
+                f"FAILED ({cov_pct}% < 80%) — add tests for uncovered lines "
+                f"to reach ≥80%, or tag the task [Docs]/[Config]/[Chore]/"
+                f"[Manual] if it is coverage-exempt."
+            )
     tdd_gate = "PASS"
     if not _tag_exempt_from_tdd(tags):
         tdd_gate = _verify_tdd_gate(track_dir, sha, result_data)

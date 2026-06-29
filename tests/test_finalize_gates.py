@@ -96,7 +96,10 @@ class FinalizeCoverageGateTests(TestCase):
         _write_success_result(d, coverage_pct=50)
         result = _out_captured(cmd_dispatch_finalize, d)
         self.assertEqual(result["status"], "success")
-        self.assertEqual(result["coverage_gate"], "FAILED (50% < 80%)")
+        # Verdict prefix is stable; remediation clause is appended so the
+        # agent can self-correct (start with the fix, not just the symptom).
+        self.assertTrue(result["coverage_gate"].startswith("FAILED (50% < 80%)"))
+        self.assertIn("≥80%", result["coverage_gate"])
         self.assertEqual(result["coverage_pct"], 50)
 
     def test_emits_coverage_gate_pass_at_threshold(self):
@@ -170,7 +173,8 @@ class FinalizeSharedHelperParityTests(TestCase):
         # A second call with identical args is deterministic and equal.
         cov2, tdd2, pct2 = _evaluate_gates(tags_pr, r, "abc1234", d)
         self.assertEqual((cov_pr, tdd_pr, pct_pr), (cov2, tdd2, pct2))
-        self.assertEqual(cov_pr, "FAILED (50% < 80%)")
+        self.assertTrue(cov_pr.startswith("FAILED (50% < 80%)"))
+        self.assertIn("≥80%", cov_pr)  # remediation appended
 
 
 class FinalizeACIntegrityGateTests(TestCase):
