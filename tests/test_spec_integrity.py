@@ -13,7 +13,8 @@ from pathlib import Path
 from unittest import TestCase, main
 
 from scripts.track_state.core import save
-from scripts.track_state.spec_integrity import compute_ac_integrity, _ac_integrity_gate
+from scripts.track_state.spec_integrity import (
+    compute_ac_integrity, _ac_integrity_gate, _measured_tcs)
 from scripts.track_state.misc import cmd_spec_integrity
 
 
@@ -226,6 +227,84 @@ class CmdSpecIntegrityTests(TestCase):
             sys.stdout = old
         self.assertEqual(r["ac_integrity_gate"], "PASS")
         self.assertEqual(r["ac_count"], 2)
+
+
+class MeasuredRateTests(TestCase):
+    """The measured Rate-3 twin: AC verification grounded in REAL
+    ``def test_TC_{n}_{m}`` functions (not self-report evidence). Composes with
+    the self-report rate — the gap between the two is the #3 signal."""
+
+    def _track_with_tests(self, spec, plan, *test_files):
+        """Build a track dir and write each (relpath, content) test file."""
+        d = _track(spec, plan, _state([
+            {"name": "a", "status": "completed", "evidence": {"tc_coverage": "TC-1.1 TC-2.1"}},
+            {"name": "[Manual] verify P1", "status": "pending"},
+        ]))
+        for relpath, content in test_files:
+            p = Path(d, relpath)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(content)
+        return d
+
+    def test_measured_tcs_extracts_tc_from_named_function(self):
+        d = self._track_with_tests(_SPEC_2AC, _PLAN_2AC,
+            ("tests/test_basic.py", "def test_TC_2_1_basic():\n    pass\n"))
+        self.assertEqual(_measured_tcs(d), {"TC-2.1"})
+
+    def test_measured_rate_100_when_both_acs_have_named_tests(self):
+        d = self._track_with_tests(_SPEC_2AC, _PLAN_2AC,
+            ("tests/test_a.py", "def test_TC_1_1_happy():\n    pass\n"),
+            ("tests/test_b.py", "def test_TC_2_1_happy():\n    pass\n"))
+        r = compute_ac_integrity(d)
+        self.assertEqual(r["ac_verification_measured_rate"], 100.0)
+
+    def test_measured_rate_50_when_only_one_ac_grounded(self):
+        d = self._track_with_tests(_SPEC_2AC, _PLAN_2AC,
+            ("tests/test_a.py", "def test_TC_1_1_happy():\n    pass\n"))
+        r = compute_ac_integrity(d)
+        self.assertEqual(r["ac_verification_measured_rate"], 50.0)
+
+    def test_measured_rate_none_when_convention_unadopted(self):
+        # No test_TC_* functions anywhere → unmeasured (None), not 0%.
+        d = self._track_with_tests(_SPEC_2AC, _PLAN_2AC,
+            ("tests/test_a.py", "def test_happy():\n    pass\n"))
+        r = compute_ac_integrity(d)
+        self.assertIsNone(r["ac_verification_measured_rate"])
+
+    def test_multi_digit_tc_not_truncated(self):
+        # TC-2.10 must NOT be captured as TC-2.1 (lookahead boundary guard).
+        spec = ("# Specification\n## Acceptance Criteria\n- AC-2: crit\n"
+                "## Test Scenarios\n| ID | AC Ref | S | O |\n| -- | ------ | - | - |\n"
+                "| TC-2.10 | AC-2 | x | y |\n")
+        plan = "# Implementation Plan\n## Phase 1: Build\n- [ ] Task: a <!-- AC-2, TC-2.10 -->\n"
+        d = self._track_with_tests(spec, plan,
+            ("tests/test_a.py", "def test_TC_2_10_many():\n    pass\n"))
+        self.assertIn("TC-2.10", _measured_tcs(d))
+        self.assertNotIn("TC-2.1", _measured_tcs(d))
+        r = compute_ac_integrity(d)
+        self.assertEqual(r["ac_verification_measured_rate"], 100.0)
+
+    def test_commented_out_test_function_not_captured(self):
+        d = self._track_with_tests(_SPEC_2AC, _PLAN_2AC,
+            ("tests/test_a.py", "# def test_TC_2_1_faked():\n#     pass\n"))
+        self.assertEqual(_measured_tcs(d), set())
+
+    def test_measured_diverges_from_self_report(self):
+        # The point of #3: agent CLAIMS both TCs (self-report 100%) but wrote no
+        # named tests (measured None) — self-report inflation caught.
+        d = self._track_with_tests(_SPEC_2AC, _PLAN_2AC,
+            ("tests/test_a.py", "def test_something():\n    assert True\n"))
+        r = compute_ac_integrity(d)
+        self.assertEqual(r["ac_verification_rate"], 100.0)  # self-report: claimed
+        self.assertIsNone(r["ac_verification_measured_rate"])  # measured: ungrounded
+
+    def test_skip_parts_excludes_htmlcov_and_site_packages(self):
+        # Generated/vendored subtrees must not leak def test_TC_… strings.
+        d = self._track_with_tests(_SPEC_2AC, _PLAN_2AC,
+            ("htmlcov/test_TC_2_1_cov.py", "def test_TC_2_1_cov():\n    pass\n"),
+            ("foo/site-packages/pkg/test_TC_1_1_pkg.py",
+             "def test_TC_1_1_pkg():\n    pass\n"))
+        self.assertEqual(_measured_tcs(d), set())
 
 
 if __name__ == "__main__":

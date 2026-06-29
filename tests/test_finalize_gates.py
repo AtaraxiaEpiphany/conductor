@@ -213,13 +213,17 @@ class TCConsistencyGateUnitTests(TestCase):
     _PLAN = ("# Plan\n\n## Phase 1: Build\n"
              "- [ ] Task A <!-- AC-2, TC-2.1, TC-2.2 -->\n")
 
-    def _gate(self, plan_text, result):
+    def _gate(self, plan_text, result, tags=None, test_files=None):
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, ignore_errors=True)
         if plan_text is not None:
             Path(d, "plan.md").write_text(plan_text)
+        for relpath, content in (test_files or []):
+            p = Path(d, relpath)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(content)
         from scripts.track_state.result import _tc_consistency_gate
-        return _tc_consistency_gate(d, result)
+        return _tc_consistency_gate(d, result, tags)
 
     def test_pass_when_claimed_superset_of_declared(self):
         r = {"phase": 1, "task": 1, "tc_coverage": "TC-2.1 TC-2.2"}
@@ -251,6 +255,45 @@ class TCConsistencyGateUnitTests(TestCase):
         r = {"phase": 1, "task": 1, "tc_coverage": "TC-2.1"}
         self.assertEqual(self._gate(None, r), "N/A")
 
+    # --- Third link of the chain: claimed (tc_coverage) ↔ grounded (real tests).
+    # Grounding is a refinement of PASS only, so every case below claims a
+    # superset of the declared TCs (consistency = PASS) and varies the measured
+    # test set. Pass tags=[] to enable grounding (tags=None skips it, back-compat).
+
+    def test_pass_grounded_when_claimed_has_real_tests(self):
+        r = {"phase": 1, "task": 1, "tc_coverage": "TC-2.1 TC-2.2"}
+        tests = [("tests/test_a.py", "def test_TC_2_1_a():\n    pass\n"
+                  "def test_TC_2_2_a():\n    pass\n")]
+        self.assertEqual(self._gate(self._PLAN, r, tags=[], test_files=tests),
+                         "PASS (grounded)")
+
+    def test_pass_partial_grounding_names_ungrounded_tc(self):
+        r = {"phase": 1, "task": 1, "tc_coverage": "TC-2.1 TC-2.2"}
+        tests = [("tests/test_a.py", "def test_TC_2_1_a():\n    pass\n")]
+        g = self._gate(self._PLAN, r, tags=[], test_files=tests)
+        self.assertTrue(g.startswith("PASS (PARTIAL grounding"))
+        self.assertIn("TC-2.2", g)
+
+    def test_pass_unground_when_claimed_disjoint_from_real_tests(self):
+        # measured non-empty (a stray TC-9.9) but disjoint from claimed → UNGROUND.
+        r = {"phase": 1, "task": 1, "tc_coverage": "TC-2.1 TC-2.2"}
+        tests = [("tests/test_other.py", "def test_TC_9_9_other():\n    pass\n")]
+        g = self._gate(self._PLAN, r, tags=[], test_files=tests)
+        self.assertTrue(g.startswith("PASS (UNGROUND"))
+        self.assertIn("TC-2.1", g)
+
+    def test_silent_pass_when_convention_not_adopted(self):
+        # No test_TC_* functions → measured empty → plain PASS (rate carries it).
+        r = {"phase": 1, "task": 1, "tc_coverage": "TC-2.1 TC-2.2"}
+        self.assertEqual(self._gate(self._PLAN, r, tags=[]), "PASS")
+
+    def test_tag_exempt_skips_grounding(self):
+        # [Config] is test-exempt → grounding skipped even with disjoint tests.
+        r = {"phase": 1, "task": 1, "tc_coverage": "TC-2.1 TC-2.2"}
+        tests = [("tests/test_other.py", "def test_TC_9_9_other():\n    pass\n")]
+        self.assertEqual(self._gate(self._PLAN, r, tags=["Config"],
+                                    test_files=tests), "PASS")
+
 
 class FinalizeTCConsistencyGateTests(TestCase):
     """tc_consistency_gate surfaces in the dispatch-finalize envelope and
@@ -278,6 +321,24 @@ class FinalizeTCConsistencyGateTests(TestCase):
         _write_success_result(d, coverage_pct=90, tc_coverage="TC-2.1 TC-2.2")
         result = _out_captured(cmd_dispatch_finalize, d)
         self.assertEqual(result["tc_consistency_gate"], "PASS")
+
+    def test_grounded_annotation_survives_compact(self):
+        # Grounding rides the existing tc_consistency_gate field (folding adds no
+        # new COMPACT_FIELDS entry). When real tests ground the claimed TCs the
+        # verdict refines to "PASS (grounded)" and must survive --compact.
+        d = _make_git_track_dir()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        Path(d, "plan.md").write_text(
+            "# Plan\n\n## Phase 1: Build\n- [ ] Task A <!-- AC-2, TC-2.1, TC-2.2 -->\n")
+        test_dir = Path(d, "tests")
+        test_dir.mkdir()
+        (test_dir / "test_a.py").write_text(
+            "def test_TC_2_1_a():\n    pass\n"
+            "def test_TC_2_2_a():\n    pass\n")
+        _write_success_result(d, coverage_pct=90, tc_coverage="TC-2.1 TC-2.2")
+        result = _out_captured(cmd_dispatch_finalize, d)
+        self.assertIn("tc_consistency_gate", result)  # survived --compact
+        self.assertEqual(result["tc_consistency_gate"], "PASS (grounded)")
 
 
 if __name__ == "__main__":

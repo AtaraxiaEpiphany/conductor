@@ -679,7 +679,7 @@ def cmd_dispatch_finalize(track_dir, compact=True):
                       sync_count=synced, committed=committed,
                       coverage_gate=coverage_gate, tdd_gate=tdd_gate,
                       ac_integrity_gate=_ac_integrity_gate(track_dir),
-                      tc_consistency_gate=_tc_consistency_gate(track_dir, r),
+                      tc_consistency_gate=_tc_consistency_gate(track_dir, r, tags),
                       phase=int(p), task=int(t),
                       subtask=(int(s) if s is not None else None))
         if cov_pct is not None:

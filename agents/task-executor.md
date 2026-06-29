@@ -119,7 +119,7 @@ Check task tag to determine workflow:
 
 **Agent-specific bindings (override / extend the template):**
 
-- **Step 3 (Red)** — derive test cases from your self-extracted ACs/TCs (Layer 2); map each `TC-{n}.{m}` row → one test function covering happy paths, edge cases, and errors. Run tests and **CONFIRM FAILURE** (show output) before proceeding.
+- **Step 3 (Red)** — derive test cases from your self-extracted ACs/TCs (Layer 2); map each `TC-{n}.{m}` row → one test function covering happy paths, edge cases, and errors. **Name each test function `test_TC_{n}_{m}_*`** matching its TC row (see `conductor/design/plan-format-contract.md` §Test ↔ TC Naming Link) so the grounding check can resolve your claimed TCs to real tests. Run tests and **CONFIRM FAILURE** (show output) before proceeding.
 - **Step 7 (Deviations)** — *Tech Stack* divergence → update `tech-stack.md` → resume; *Spec* deviation (AC unmet) → report as `SPEC_DEVIATION` in your result (§6.1); *TC Coverage* → compare implemented vs expected TCs, report gaps.
 - **Step 8 (Commit)** — stage + commit `<type>(<scope>): <description>`. **Git notes are written by `track-state dispatch-finalize` — you do NOT write git notes, modify plan markers, or append SHAs** (orchestrator-owned Steps 9-11).
 

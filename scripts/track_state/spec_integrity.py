@@ -26,6 +26,21 @@ from .plan_parse import parse_plan, collect_ac_refs
 # A tc_coverage evidence string holds TC IDs in any separator (space/comma/newline).
 _TC_ID = re.compile(r"TC-\d+\.\d+")
 
+# A test function that GROUNDS a TC: ``def test_TC_2_1_*(…)`` (see
+# plan-format-contract.md §Test↔TC Naming Link). group(1)/group(2) are the TC
+# numbers, reconstructed as ``TC-{n}.{m}``. The lookahead ``(?=[_(\s])`` is
+# load-bearing — without it ``test_TC_2_1`` would match as a prefix of
+# ``test_TC_2_10`` (yielding TC-2.1 instead of TC-2.10). ``(?:async\s+)?`` so
+# ``async def test_…`` is captured too. Multi-digit-safe, like spec_parse._TC_ROW.
+_TEST_TC_FN = re.compile(r"\b(?:async\s+)?def\s+test_TC_(\d+)_(\d+)(?=[_(\s])")
+
+# Path segments that never hold the track's own tests — skip the whole subtree.
+# Applied to EVERY part so nested leakage is caught: htmlcov / a checked-in venv
+# / site-packages literally contain ``def test_…`` strings that would fake-ground.
+_SKIP_PARTS = {".git", ".conductor", "node_modules", "__pycache__", ".venv",
+               "venv", ".tox", "build", "dist", ".eggs", "htmlcov",
+               ".pytest_cache", "site-packages"}
+
 
 def _covered_tcs(state):
     """Set of TC IDs reported covered by completed tasks' evidence."""
@@ -46,6 +61,60 @@ def _covered_tcs(state):
     return covered
 
 
+def _measured_tcs(track_dir):
+    """Set of TC IDs GROUNDED by real test functions under ``track_dir``.
+
+    The measured twin of ``_covered_tcs`` (self-report): instead of trusting
+    ``evidence.tc_coverage`` it scans ``test_*.py`` / ``*_test.py`` for
+    ``def test_TC_{n}_{m}`` functions (plan-format-contract.md §Test↔TC Naming
+    Link) and reconstructs ``TC-{n}.{m}``. Skips vendored/generated subtrees
+    via ``_SKIP_PARTS`` and strips ``#`` comments so a commented-out test
+    function can't fake grounding. Returns ``set()`` when the convention is
+    unadopted — callers treat empty as "unmeasured" (None rate), not 0%.
+    """
+    measured = set()
+    root = Path(track_dir)
+    for p in root.rglob("*.py"):
+        if _SKIP_PARTS & set(p.parts):
+            continue
+        if not (p.name.startswith("test_") or p.name.endswith("_test.py")):
+            continue
+        try:
+            text = p.read_text(errors="ignore")
+        except OSError:
+            continue
+        # Strip ``#`` comments so ``# def test_TC_2_1()`` can't fake grounding.
+        stripped = "\n".join(re.sub(r"#.*$", "", ln) for ln in text.splitlines())
+        for n, m in _TEST_TC_FN.findall(stripped):
+            measured.add(f"TC-{n}.{m}")
+    return measured
+
+
+def _verified_acs(acs, tc_to_ac, covered):
+    """Partition ``acs`` by whether all their TCs are in ``covered``.
+
+    Returns ``(verified, partial, unverified)``. ACs with no TCs count as
+    unverified (also orphans, counted under Rate 1). Shared by the self-report
+    Rate 3 (``_covered_tcs``) and the measured twin (``_measured_tcs``) so the
+    two twins classify *identically* and differ only in the TC source — the
+    gap between them IS the self-report-vs-measured signal.
+    """
+    verified, partial, unverified = [], [], []
+    for ac in acs:
+        ac_tcs = [tc for tc, a in tc_to_ac.items() if a == ac]
+        if not ac_tcs:
+            unverified.append(ac)
+            continue
+        hit = sum(1 for tc in ac_tcs if tc in covered)
+        if hit == len(ac_tcs):
+            verified.append(ac)
+        elif hit:
+            partial.append(ac)
+        else:
+            unverified.append(ac)
+    return verified, partial, unverified
+
+
 def _empty(fr_count=0, nfr_count=0):
     """Degraded result: no ACs to rate (no spec.md, or spec has no ACs)."""
     return {
@@ -56,6 +125,7 @@ def _empty(fr_count=0, nfr_count=0):
         "ac_tc_coverage_rate": None,
         "ac_traceability_rate": None,
         "ac_verification_rate": None,
+        "ac_verification_measured_rate": None,
         "orphan_acs": [],
         "untraced_acs": [],
         "dangling_ac_refs": [],
@@ -131,22 +201,26 @@ def compute_ac_integrity(track_dir):
             100 * (len(acs) - len(untraced_acs)) / len(acs), 1)
         dangling_ac_refs = sorted(r for r in plan_acs if r not in set(acs))
 
-    # --- Rate 3: AC verification (all its TCs covered by completed-task evidence)
+    # --- Rate 3 (self-report): AC verification (all its TCs in completed-task
+    # evidence.tc_coverage — what the agent CLAIMS). Reported, NOT gated.
     covered = _covered_tcs(load(track_dir))
-    verified, partial, unverified = [], [], []
-    for ac in acs:
-        ac_tcs = [tc for tc, a in tc_to_ac.items() if a == ac]
-        if not ac_tcs:
-            unverified.append(ac)  # also an orphan; counted under Rate 1's gate
-            continue
-        hit = sum(1 for tc in ac_tcs if tc in covered)
-        if hit == len(ac_tcs):
-            verified.append(ac)
-        elif hit:
-            partial.append(ac)
-        else:
-            unverified.append(ac)
+    verified, partial, unverified = _verified_acs(acs, tc_to_ac, covered)
     ac_verification_rate = round(100 * len(verified) / len(acs), 1)
+
+    # --- Rate 3 measured twin: same classification over REAL test functions
+    # (def test_TC_{n}_{m}, scanned by _measured_tcs) — what's actually GROUNDED.
+    # Unlike the self-report twin, this is None (unmeasured) when the convention
+    # is unadopted: the denominators differ — self-report has one (completed-task
+    # evidence is always present), measured has none until tests follow the
+    # naming link. So ac_verification_rate can be a real 0.0 while this is None;
+    # that gap is the "agent claims but didn't write named tests" signal.
+    measured = _measured_tcs(track_dir)
+    if measured:
+        verified_m, _partial_m, _unverified_m = _verified_acs(
+            acs, tc_to_ac, measured)
+        ac_verification_measured_rate = round(100 * len(verified_m) / len(acs), 1)
+    else:
+        ac_verification_measured_rate = None
 
     return {
         "ac_count": len(acs),
@@ -156,6 +230,7 @@ def compute_ac_integrity(track_dir):
         "ac_tc_coverage_rate": ac_tc_coverage_rate,
         "ac_traceability_rate": ac_traceability_rate,
         "ac_verification_rate": ac_verification_rate,
+        "ac_verification_measured_rate": ac_verification_measured_rate,
         "orphan_acs": orphan_acs,
         "untraced_acs": untraced_acs,
         "dangling_ac_refs": dangling_ac_refs,

@@ -5,7 +5,7 @@ from pathlib import Path
 
 from lib.atomic_io import atomic_write_json
 from .core import load
-from .spec_integrity import _ac_integrity_gate, _TC_ID
+from .spec_integrity import _ac_integrity_gate, _TC_ID, _measured_tcs
 from .plan_parse import parse_plan
 from .helpers import (
     out, conductor_dir, _store_evidence, _extract_tags_for_task,
@@ -72,16 +72,62 @@ def _declared_tcs_for_task(track_dir, phase, task):
     return tasks[ti].get("tc_refs", [])
 
 
-def _tc_consistency_gate(track_dir, result_data):
-    """Advisory per-task gate: do the TCs the result *claims* (tc_coverage)
-    match the TCs the task's plan comment *declared* (``<!-- TC-n.m -->``)?
+def _grounding_refinement(track_dir, claimed, tags):
+    """Third link of the self-extraction chain: are the claimed TCs GROUNDED in
+    real ``def test_TC_{n}_{m}`` functions?
 
-    Verifies the self-extraction post-hoc rather than pre-injecting refs for the
-    agent — closes the "agent extracted the wrong AC/TC" gap without touching the
-    minimal-dispatch contract. WARN-only sibling to ``_evaluate_gates``; verdict
-    + remediation in one string. Returns PASS / WRONG_AC / PARTIAL / UNKNOWN /
-    N/A. Structural only — PASS is consistency, not a proof the tests are
-    semantically correct (that needs the test↔TC link).
+    Only called after the declared↔claimed link resolved to PASS — you can't
+    ground TCs you extracted wrong, so grounding is a *refinement* of PASS, not
+    a separate verdict (returns ``PASS`` plus a parenthetical). Plain ``PASS``
+    (no annotation) when: ``tags`` unknown (caller passed None — e.g. legacy
+    2-arg unit calls), the task is test-exempt, or the naming convention is
+    unadopted track-wide (empty measured set — that's a track-level signal
+    carried once by ``ac_verification_measured_rate``, not a per-task nag).
+    Otherwise ``PASS (grounded)`` / ``PASS (PARTIAL grounding: …)`` /
+    ``PASS (UNGROUND: …)``. Advisory only — a grounded TC has a named test, not
+    a proof that test is semantically correct.
+    """
+    if tags is None or _tag_exempt_from_tdd(tags):
+        return "PASS"
+    measured = _measured_tcs(track_dir)
+    if not measured:
+        return "PASS"  # convention unadopted — rate carries the signal, not the gate
+    ungrounded = sorted(claimed - measured)
+    if not ungrounded:
+        return "PASS (grounded)"
+    if claimed & measured:
+        return (f"PASS (PARTIAL grounding: {', '.join(ungrounded)} — add a "
+                f"test_TC_{{n}}_{{m}}_* function for each, per plan-format-"
+                f"contract.md §Test↔TC Naming Link)")
+    return (f"PASS (UNGROUND: claimed {', '.join(sorted(claimed))} have no "
+            f"matching test_TC_* functions — add test_TC_{{n}}_{{m}}_* tests "
+            f"per plan-format-contract.md §Test↔TC Naming Link)")
+
+
+def _tc_consistency_gate(track_dir, result_data, tags=None):
+    """Advisory per-task gate over the self-extraction chain:
+    declared (``<!-- TC-n.m -->``) → claimed (``tc_coverage``) → grounded
+    (real ``def test_TC_{n}_{m}`` functions).
+
+    The first two links (declared↔claimed) yield the verdict prefix —
+    PASS / WRONG_AC / PARTIAL / UNKNOWN / N/A — verifying the agent extracted
+    the right ACs post-hoc rather than by pre-injection (closes the "agent
+    extracted the wrong AC/TC" gap without touching the minimal-dispatch
+    contract). WARN-only sibling to ``_evaluate_gates``; verdict + remediation
+    in one string.
+
+    The third link (claimed↔grounded) is folded in as a refinement of PASS only
+    (see ``_grounding_refinement``): ``PASS (grounded)`` / ``PASS (PARTIAL
+    grounding: …)`` / ``PASS (UNGROUND: …)``, or plain ``PASS`` when the naming
+    convention is unadopted track-wide or the task is test-exempt. Pass
+    ``tags`` from the finalize paths (computed via ``_extract_tags_for_task``)
+    to enable grounding; ``tags=None`` (default) skips it, preserving the
+    legacy 2-arg contract. Subtasks claim a subset of the parent's declared
+    TCs, so an intermediate subtask may report PARTIAL grounding that the final
+    subtask resolves — advisory only, never blocks.
+
+    Structural only: a PASS (grounded) means a named test exists, not that it
+    is semantically correct.
     """
     declared = _declared_tcs_for_task(track_dir, result_data.get("phase"),
                                       result_data.get("task"))
@@ -107,7 +153,7 @@ def _tc_consistency_gate(track_dir, result_data):
         return (f"PARTIAL — claimed {', '.join(sorted(overlap))} but declared "
                 f"also has {', '.join(missing)}; add a test for the missing TC "
                 f"(Step 3 Red) or report it SPEC_DEVIATION (§6.1).")
-    return "PASS"
+    return _grounding_refinement(track_dir, claimed, tags)
 
 
 def _evaluate_gates(tags, result_data, sha, track_dir=None):
@@ -338,7 +384,7 @@ def cmd_process_result(track_dir):
             coverage_gate=coverage_gate,
             tdd_gate=tdd_gate,
             ac_integrity_gate=_ac_integrity_gate(track_dir),
-            tc_consistency_gate=_tc_consistency_gate(track_dir, r),
+            tc_consistency_gate=_tc_consistency_gate(track_dir, r, tags),
         )
         if cov_pct is not None:
             result["coverage_pct"] = cov_pct

@@ -113,6 +113,7 @@ def cmd_quality_snapshot(track_dir):
         ac_tc_coverage_rate=ac["ac_tc_coverage_rate"],
         ac_traceability_rate=ac["ac_traceability_rate"],
         ac_verification_rate=ac["ac_verification_rate"],
+        ac_verification_measured_rate=ac["ac_verification_measured_rate"],
         ac_integrity_gate=ac["ac_integrity_gate"],
     ))
 
