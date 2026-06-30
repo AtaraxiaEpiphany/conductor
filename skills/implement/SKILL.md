@@ -61,7 +61,7 @@ Route by recover `status`:
 | Status | Action |
 |---|---|
 | `in_progress` | `git log` for post-start commit. Found → `complete --sha <sha>`. Not found → re-dispatch. |
-| `pending` + retry_count > 0 | Re-dispatch (retry). Pass `IS_RETRY=true` `ATTEMPT={retry_count+1}` `MAX_RETRIES={m}` to task-executor. |
+| `pending` + retry_count > 0 | Re-dispatch (retry). Pass `ATTEMPT={retry_count+1}` `MAX_RETRIES={m}` to task-executor (it self-detects retry from the handoff — no retry flag needed). |
 | `failed` + retry < max | Re-dispatch. |
 | `failed` + retry >= max | **Interactive**: surface to the user via `AskUserQuestion` — Retry / Skip / Block (see §2.2). **Continuous**: dispatch `conductor:skip-analyst`. |
 | `blocked` | Report → HALT. |
@@ -150,7 +150,7 @@ track-state dispatch-prepare "<track_dir>"
 if commit_msg: git add -A && git diff --cached --quiet || git commit -m "<commit_msg>"
 ```
 
-Dispatch `conductor:task-executor`, prompt (canonical dispatch — retry re-dispatches in §2.2 and §3.6 reuse this with `IS_RETRY=true` and an incremented `ATTEMPT`):
+Dispatch `conductor:task-executor`, prompt (canonical dispatch — retry re-dispatches in §2.2 and §3.6 reuse this with an incremented `ATTEMPT`; retry status is self-detected from the handoff, not a flag):
 
 ```
 TRACK_DIR={td}
@@ -160,7 +160,6 @@ SUBTASK={s}
 NAME={name}
 ATTEMPT={n}
 MAX_RETRIES={m}
-IS_RETRY={bool}
 ```
 
 After return → **Section 3.6**.
@@ -240,7 +239,7 @@ When opted in (after a SUCCESSFUL `dispatch-finalize`, before §3.7), run ONE bo
    ```
 2. **Decide from the `---REVIEW RESULT---` block** (substring-check the severities):
    - **No `Critical`/`High` findings** → loop satisfied → announce `"🔍 Self-review [Review]: clean"` → §3.7.
-   - **`Critical`/`High` present** → re-dispatch `conductor:task-executor` with `IS_RETRY=true ATTEMPT={n+1}` and the findings as remediation context (the agent fixes its own changes), then `dispatch-finalize` again.
+   - **`Critical`/`High` present** → re-dispatch `conductor:task-executor` with `ATTEMPT={n+1}` and the findings as remediation context (the agent fixes its own changes), then `dispatch-finalize` again.
 3. **Bounded to ONE fix iteration** — no runaway loop. After the iteration, announce residual findings: `"🔍 Self-review [Review]: {N} findings → 1 fix iteration → {M} residual"`.
 4. **Escalate on residual judgment only** — if `Critical` findings persist after the iteration, surface them via `AskUserQuestion` (fix-guidance / accept-with-debt / block). Medium/Low residual → note and proceed (do not block the loop on nits).
 

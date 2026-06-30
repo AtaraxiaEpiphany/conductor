@@ -37,7 +37,11 @@ CRITICAL: Validate every tool call. On failure → halt → report FAILURE.
 | `NAME` | Human-readable task name |
 | `ATTEMPT` | Current attempt (1=fresh, 2+=retry) |
 | `MAX_RETRIES` | Maximum retries |
-| `IS_RETRY` | `true` if retry |
+
+> **Retry detection is NOT driven by a prompt flag.** Layer 3.R decides whether
+> you are a retry by inspecting the handoff you load in Layer 0(a) for prior
+> `### Attempt` records — that is system-written ground truth, immune to an
+> orchestrator miscount. `ATTEMPT > 1` is only a hint; the handoff is authoritative.
 
 ---
 
@@ -89,13 +93,22 @@ Read `conductor/workflow/task-workflow.md` — Steps 3-8 section only (skip Step
 Read `conductor/workflow/testing/strategy.md` — test file placement policy and naming conventions.
 Read the relevant style guide from `conductor/workflow/code-styleguides/`.
 
-### Layer 3.R: Retry Context (ONLY if IS_RETRY=true)
+### Layer 3.R: Retry Context (if prior attempts exist)
 
-Run: `track-state get-handoff {TRACK_DIR} {PHASE} {TASK}` to retrieve your task's handoff content.
-If `SUBTASK` is not null, append: `--subtask {SUBTASK}`.
+You already loaded this task's handoff in Layer 0(a). Scan it now for prior
+`### Attempt N/M` records. **No `### Attempt` records** (only Exploration Notes,
+or the handoff was "not found") → this is a fresh attempt → skip this layer.
 
-Read the returned `content` field — it contains ONLY your task/subtask's execution history.
+**Prior `### Attempt` records present** → you are a retry. Read the most recent one:
+- **What Was Done** — work the prior attempt left behind
+- **Failure Reason** — why it stopped
+- **Suggested Next Step** — the recommended next approach
+
 Do NOT repeat the same approach. Focus on "Suggested Next Step" from previous attempts.
+The handoff is the source of truth — if it shows prior attempts, you are a retry
+even if `ATTEMPT` was under-reported. (If the Layer 0(a) content is no longer in
+context, re-fetch: `track-state get-handoff {TRACK_DIR} {PHASE} {TASK}` — add
+`--subtask {SUBTASK}` when `SUBTASK` is not null.)
 
 **Check for salvageable work**: The previous attempt may have left uncommitted files in the working tree. The handoff record will list them under "What Was Done". Run `git status` to see the current state. If partial work exists:
 - Review it — decide if it's usable or should be discarded
@@ -222,7 +235,7 @@ Only write to handoff when execution is interrupted or fails — NOT on every st
 
 An interruption produces **two** artifacts, both mandatory, in this order — the handoff feeds the retry, and `result.json` is the completion signal `process-result` reads (omit it and `on-subagent-stop` forces a recovery turn).
 
-**1. Handoff deviation log** (retry context for `IS_RETRY=true`). Pipe the JSON on stdin — an inline `--content '<json>'` breaks on quotes/`` ` ``/`$` in the detail text (same reason as §6.1). `append-handoff` reads stdin when `--content` is absent:
+**1. Handoff deviation log** (retry context the next attempt reads via Layer 3.R). Pipe the JSON on stdin — an inline `--content '<json>'` breaks on quotes/`` ` ``/`$` in the detail text (same reason as §6.1). `append-handoff` reads stdin when `--content` is absent:
 
 ```bash
 track-state append-handoff "{TRACK_DIR}" {PHASE} {TASK} \
