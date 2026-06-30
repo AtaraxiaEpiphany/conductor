@@ -10,6 +10,7 @@ import io
 import json
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from unittest import TestCase, main
 
@@ -35,10 +36,13 @@ def _subagent_start_agents():
             yield agent.strip()
 
 
-def _run(agent_type: str) -> dict:
+def _run(agent_type: str, cwd: str = None) -> dict:
+    payload = {"agent_type": agent_type}
+    if cwd:
+        payload["cwd"] = cwd
     proc = subprocess.run(
         [sys.executable, str(_HOOK)],
-        input=json.dumps({"agent_type": agent_type}),
+        input=json.dumps(payload),
         capture_output=True, text=True,
     )
     return json.loads(proc.stdout) if proc.stdout.strip() else {}
@@ -166,6 +170,153 @@ class SubagentMatcherCompletenessTests(TestCase):
             f"agents/*.md not in the SubagentStart matcher (no safety floor): "
             f"{sorted(unguarded)}",
         )
+
+
+# --- Retry-context injection --------------------------------------------------
+# on-subagent-start.py appends the locked task's most recent `### Attempt ❌`
+# record to task-executor's context — the deterministic counterpart to the
+# agent's own (skippable) Layer 3.R load. These tests are the load-bearing guard
+# that a retry agent always receives the prior failure reason + suggested step.
+
+def _flat_state():
+    """One phase, one in_progress task at P1T1 (retry_count irrelevant to resolve)."""
+    return {
+        "current_phase_index": 1,
+        "current_task_index": 1,
+        "phases": [{"tasks": [{"name": "demo task", "status": "in_progress"}]}],
+    }
+
+
+def _subtask_state():
+    """P1T1 with subtask 2 locked in_progress."""
+    return {
+        "current_phase_index": 1,
+        "current_task_index": 1,
+        "current_subtask_index": 2,
+        "phases": [{"tasks": [{"name": "demo task", "subtasks": [
+            {"name": "sub one", "status": "completed"},
+            {"name": "sub two", "status": "in_progress"},
+        ]}]}],
+    }
+
+
+@contextlib.contextmanager
+def _track(state, handoff_body, *, phase=1, task=1):
+    """Build an isolated track under a tmp dir and yield its cwd.
+
+    Creates ``conductor/tracks/demo/track-state.json`` (so locked_task.resolve
+    finds it) and, when handoff_body is not None, the matching handoff file.
+    """
+    with tempfile.TemporaryDirectory() as d:
+        track_dir = Path(d) / "conductor" / "tracks" / "demo"
+        (track_dir / ".conductor" / "handoff").mkdir(parents=True)
+        (track_dir / "track-state.json").write_text(json.dumps(state))
+        if handoff_body is not None:
+            (track_dir / ".conductor" / "handoff" / f"P{phase}T{task}.md").write_text(handoff_body)
+        yield d
+
+
+_FAILURE_HANDOFF = """# Handoff: demo
+
+## Execution Record
+
+### Attempt 1/3 | 2026-06-30T00:00:00Z ❌
+
+**What Was Done**: wrote foo.py, left tests red
+**Failure Reason**: test_TC_1_1 timed out at 30s
+**Suggested Next Step**: raise timeout to 120s, re-run
+
+## Exploration Notes
+
+### Summary
+exploration map here
+"""
+
+_FRESH_HANDOFF = """# Handoff: demo
+
+## Exploration Notes
+
+### Summary
+exploration map here
+"""
+
+_SUCCESS_HANDOFF = """# Handoff: demo
+
+## Execution Record
+
+### Attempt 1/3 | 2026-06-30T00:00:00Z ❌
+
+**Failure Reason**: first try failed
+
+### Attempt 2/3 | 2026-06-30T00:01:00Z ✅
+
+**Commit**: abc123
+"""
+
+_SUBTASK_HANDOFF = """# Handoff: demo
+
+## Subtask 1: sub one
+
+### Attempt 1/3 | 2026-06-30T00:00:00Z ✅
+
+## Subtask 2: sub two
+
+### Attempt 1/3 | 2026-06-30T00:00:00Z ❌
+
+**Failure Reason**: subtask two blew up
+**Suggested Next Step**: fix the parser first
+"""
+
+
+def _ctx(agent_type, state, handoff_body):
+    with _track(state, handoff_body) as cwd:
+        return _run(agent_type, cwd=cwd).get("hookSpecificOutput", {}).get("additionalContext", "")
+
+
+class RetryContextInjectionTests(TestCase):
+    def test_retry_agent_receives_prior_failure_record(self):
+        ctx = _ctx("task-executor", _flat_state(), _FAILURE_HANDOFF)
+        self.assertIn("[Conductor Retry]", ctx)
+        self.assertIn("Failure Reason", ctx)
+        self.assertIn("test_TC_1_1 timed out at 30s", ctx)
+        self.assertIn("Suggested Next Step", ctx)
+        self.assertIn("raise timeout to 120s", ctx)
+
+    def test_fresh_task_gets_no_retry_context(self):
+        """No prior Attempt records → no injection, but floor+reminder survive."""
+        ctx = _ctx("task-executor", _flat_state(), _FRESH_HANDOFF)
+        self.assertNotIn("[Conductor Retry]", ctx)
+        self.assertIn("TASK RESULT", ctx)
+
+    def test_no_handoff_file_gets_no_retry_context(self):
+        ctx = _ctx("task-executor", _flat_state(), None)
+        self.assertNotIn("[Conductor Retry]", ctx)
+
+    def test_non_retry_agent_gets_no_retry_context(self):
+        """A retry handoff must not leak into a non-retry agent's context."""
+        ctx = _ctx("code-reviewer", _flat_state(), _FAILURE_HANDOFF)
+        self.assertNotIn("[Conductor Retry]", ctx)
+
+    def test_trailing_success_suppresses_injection(self):
+        """Latest Attempt ✅ → task completed, not a retry → no injection."""
+        ctx = _ctx("task-executor", _flat_state(), _SUCCESS_HANDOFF)
+        self.assertNotIn("[Conductor Retry]", ctx)
+
+    def test_subtask_scoped_retry_context(self):
+        """The locked subtask's failure record is read, not a sibling's."""
+        ctx = _ctx("task-executor", _subtask_state(), _SUBTASK_HANDOFF)
+        self.assertIn("[Conductor Retry]", ctx)
+        self.assertIn("subtask two blew up", ctx)
+        # subtask 1's history must NOT bleed in
+        self.assertNotIn("first try failed", ctx)
+
+    def test_retry_context_follows_reminder(self):
+        ctx = _ctx("task-executor", _flat_state(), _FAILURE_HANDOFF)
+        self.assertLess(ctx.index("TASK RESULT"), ctx.index("[Conductor Retry]"))
+
+    def test_floor_still_precedes_reminder_with_retry_present(self):
+        ctx = _ctx("task-executor", _flat_state(), _FAILURE_HANDOFF)
+        self.assertLess(ctx.index("Validate every tool call"), ctx.index("TASK RESULT"))
 
 
 if __name__ == "__main__":

@@ -387,6 +387,51 @@ def _append_deviation_legacy(track_dir, task_name, dev):
     with open(issues_path, "a") as f:
         f.write(header + entry)
 
+def _extract_subtask_section(content, subtask):
+    """Return the ``## Subtask {n}`` slice of *content*, or ``''`` if absent.
+
+    Shared by ``cmd_get_handoff`` (CLI) and the SubagentStart retry-context
+    probe — both need "just this subtask's history" without re-deriving the
+    slice. Captures from the subtask heading until the next ``## `` section
+    header (mirrors the original inline scan in cmd_get_handoff).
+    """
+    sub_1based = int(subtask)
+    lines = content.split("\n")
+    result = []
+    capturing = False
+    for line in lines:
+        if line.strip().startswith(f"## Subtask {sub_1based}:") or \
+           line.strip().startswith(f"### Subtask {sub_1based}:"):
+            capturing = True
+        if capturing:
+            result.append(line)
+            # Stop at next section
+            if line.startswith("## ") and not \
+               (line.startswith(f"## Subtask {sub_1based}:") or \
+                line.startswith(f"### Subtask {sub_1based}:")):
+                result.pop()  # Remove the next section header
+                break
+    return "\n".join(result)
+
+
+def get_handoff_content(track_dir, phase, task, subtask=None):
+    """Return the handoff text for a task, or one subtask's slice.
+
+    Programmatic counterpart to ``cmd_get_handoff`` — used by the SubagentStart
+    retry-context probe so it can read the prior-attempt record without forking
+    the CLI (which prints JSON to stdout). Returns ``None`` when no handoff file
+    exists; when *subtask* is given, returns just that subtask's ``## Subtask N:``
+    section (possibly ``''`` if the subtask has no recorded section yet).
+    """
+    handoff_file = _get_handoff_file(track_dir, phase, task)
+    if not handoff_file.exists():
+        return None
+    content = handoff_file.read_text()
+    if subtask is not None:
+        content = _extract_subtask_section(content, subtask)
+    return content
+
+
 def cmd_get_handoff(track_dir, phase, task, subtask=None):
     """Get handoff content for a specific task/subtask.
     Returns the relevant section only to minimize context."""
@@ -396,32 +441,12 @@ def cmd_get_handoff(track_dir, phase, task, subtask=None):
         out(dict(error="Handoff file not found", path=str(handoff_file)))
         return
 
-    content = handoff_file.read_text()
+    content = get_handoff_content(track_dir, phase, task, subtask)
 
-    # If subtask specified, extract only that section
-    if subtask is not None:
-        sub_1based = int(subtask)
-        lines = content.split("\n")
-        result = []
-        capturing = False
-        for line in lines:
-            if line.strip().startswith(f"## Subtask {sub_1based}:") or \
-               line.strip().startswith(f"### Subtask {sub_1based}:"):
-                capturing = True
-            if capturing:
-                result.append(line)
-                # Stop at next section
-                if line.startswith("## ") and not \
-                   (line.startswith(f"## Subtask {sub_1based}:") or \
-                    line.startswith(f"### Subtask {sub_1based}:")):
-                    result.pop()  # Remove the next section header
-                    break
-
-        if not result:
-            out(dict(error=f"Subtask {sub_1based} not found in handoff"))
-            return
-
-        content = "\n".join(result)
+    # subtask slice may be '' when that subtask has no section yet
+    if subtask is not None and not content:
+        out(dict(error=f"Subtask {int(subtask)} not found in handoff"))
+        return
 
     out(dict(content=content, path=str(handoff_file)))
 
