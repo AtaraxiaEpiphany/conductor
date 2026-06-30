@@ -12,7 +12,7 @@ from .helpers import (
 )
 from .mutations import _do_complete
 from .sync import _do_sync_plan
-from .git_ops import _git_commit, _git_head_sha, _ensure_note
+from .git_ops import _git_commit, _git_head_sha, _ensure_note, docs_synced_for_track
 from .constants import TERMINAL_FOR_PARENT
 from .quality import _checklist_status
 from .spec_integrity import compute_ac_integrity
@@ -345,6 +345,63 @@ def cmd_shas(track_dir):
         last=last,
         count=len(shas),
         range=f"{first}~1..{last}" if shas else None,
+    ))
+
+
+def cmd_post_loop_status(track_dir):
+    """Read-only post-loop resumability gates (Strategy 1).
+
+    Emits the durable/cheap signals each post-loop phase gates on, so a
+    re-invoked ``/conductor:implement`` can skip phases already completed across
+    a context-budget interruption. No new ``track-state.json`` field; the gates
+    reuse existing markers:
+
+    * ``finalized`` — finalize state (``status == completed`` AND a numeric
+      ``quality_score``).
+    * ``doc_synced`` — the ``docs(conductor): ...[{track_id}]`` commit, via
+      :func:`docs_synced_for_track` (same marker ``cmd_archive`` trusts).
+    * ``review.done`` — the conductor-managed ``.conductor/post-loop.json``
+      sidecar's ``reviewed_range`` equals the current ``{first}~1..{last}``.
+
+    Read-only, calls ``out()`` directly (no ``COMPACT_FIELDS`` entry), mirroring
+    ``cmd_shas``. The review range is the SAME ``{first}~1..{last}`` string
+    ``cmd_shas`` emits, so the equality check preserves first-commit inclusion
+    semantics — resolving a deferred task whose SHA was ``first`` changes the
+    range and correctly forces a re-review.
+    """
+    state = load(track_dir)
+    shas = _get_all_shas(state)
+    first = shas[0] if shas else None
+    last = shas[-1] if shas else None
+    current_range = f"{first}~1..{last}" if shas else None
+
+    # Review-range sidecar (conductor-managed, committed — NOT gitignored).
+    # Written by the orchestrator immediately after code-reviewer returns.
+    reviewed_range = None
+    pl_path = Path(track_dir) / ".conductor" / "post-loop.json"
+    if pl_path.exists():
+        try:
+            data = json.loads(pl_path.read_text())
+            if isinstance(data, dict):
+                reviewed_range = data.get("reviewed_range")
+        except (ValueError, OSError):
+            reviewed_range = None
+
+    review_done = bool(reviewed_range and current_range
+                       and reviewed_range == current_range)
+
+    status = state.get("status")
+    finalized = (status == "completed"
+                 and isinstance(state.get("quality_score"), (int, float)))
+
+    out(dict(
+        track_id=state.get("track_id"),
+        status=status,
+        finalized=finalized,
+        doc_synced=docs_synced_for_track(track_dir),
+        review=dict(done=review_done, range=current_range,
+                    reviewed_range=reviewed_range),
+        shas_count=len(shas),
     ))
 
 

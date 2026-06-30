@@ -23,6 +23,8 @@ After → `track-state sync-plan "<track_dir>"` + commit.
 
 ## 5.5 FINALIZATION
 
+**Resumability gate:** §5.0 may have resolved deferred tasks, so re-derive this gate from the current run, not from the §4.0 envelope alone. If the `post-loop-status` envelope's `finalized` is true **AND** §5.0's `deferred-report` returned `count == 0`, the track is already finalized with a current `quality_score` — skip `finalize`/`sync-plan`/`registry-update` and the "Complete track" commit below, announce `"already finalized"`, and go to §6.0. Otherwise run §5.5 as written: `finalize` is safe to re-run (it recomputes `quality_score` from current statuses). A `failed`/`blocked` track is never `finalized` and correctly re-runs finalize.
+
 ```bash
 track-state finalize "<track_dir>"
 track-state sync-plan "<track_dir>"
@@ -36,6 +38,8 @@ Commit: `chore(conductor): Complete track '<desc>'`.
 ---
 
 ## 6.0 DOC SYNC
+
+**Resumability gate:** if the §4.0 `post-loop-status` envelope's `doc_synced` is true, a `docs(conductor): ...[{track_id}]` commit already exists — skip the doc-syncer dispatch, announce `"doc-sync already ran"`, and go to §6.5. Otherwise dispatch `conductor:doc-syncer` as below.
 
 Dispatch `conductor:doc-syncer`. Prompt: `TRACK_DIR={track_dir} TRACK_ID={track_id}`.
 
@@ -56,8 +60,7 @@ If STATUS: FAILURE (agent error) → announce and continue (non-blocking).
 
 ## 7.0 AUTO-REVIEW
 
-1. Get SHA range: `track-state shas "<track_dir>"`
-   If `count == 0` → skip review. Otherwise use the `range` field (`{first}~1..{last}`) — it includes the first commit's own changes; do NOT rebuild `{first}..{last}` yourself.
+1. From the §4.0 `post-loop-status` envelope: if `shas_count == 0` → skip review (→ §7.5). Elif `review.done` is true (sidecar `reviewed_range` == current `review.range`) → skip re-review, announce `"auto-review already ran for this range"`, → §7.5. Otherwise use `review.range` (`{first}~1..{last}`) — it includes the first commit's own changes; do NOT rebuild the range yourself. (If resuming after a compaction without the envelope, re-run `track-state post-loop-status "<track_dir>"` first.)
 2. Dispatch `conductor:code-reviewer`. Description: `"Auto-review track '<desc>'"`.
    ```
    TRACK_DIR={track_dir}
@@ -72,6 +75,7 @@ If STATUS: FAILURE (agent error) → announce and continue (non-blocking).
    - Medium/Low → **APPROVE WITH COMMENTS** → continue.
    - No issues → **APPROVE**.
    - STATUS: FAILURE (agent error) → announce and continue (non-blocking).
+   On any **non-FAILURE** outcome, **stamp the reviewed range** so the next run's `review.done` gate fires: write `{TRACK_DIR}/.conductor/post-loop.json` = `{"reviewed_range": "<review.range from step 1>", "schema": 1}`. This is a conductor-managed sidecar — committed (NOT gitignored; it must survive a context-budget interruption), and `cmd_gc` leaves it alone. Do NOT stamp on STATUS: FAILURE (no real review ran). The step-4 "Apply Fixes" patches must not modify this file or `track-state.json`, so the reviewed range stays frozen for the resume check.
 4. If "Apply Fixes" → these are **post-review patches, not plan tasks**. Dispatch ONE free-form patch agent (`Agent`, `subagent_type: "general-purpose"`):
    ```
    Apply the review findings in {TRACK_DIR}/.conductor/review-result.json.

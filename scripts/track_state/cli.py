@@ -16,7 +16,7 @@ from .misc import (
     cmd_reset, cmd_indices, cmd_shas, cmd_add_checkpoint,
     cmd_deferred_report, cmd_phase_done, cmd_registry_update,
     cmd_record_summary, cmd_preflight, cmd_quality_snapshot,
-    cmd_spec_integrity, cmd_derive_name,
+    cmd_spec_integrity, cmd_derive_name, cmd_post_loop_status,
 )
 from .handoff import cmd_get_handoff, cmd_sync_handoff, cmd_append_handoff, cmd_harvest_candidates
 from .sync import cmd_sync_plan
@@ -203,6 +203,8 @@ COMMAND_HELP = {
            "Garbage collection: clean orphaned artifacts, detect stale state"),
     "shas": ("shas <track-dir>",
              "List all commit SHAs from completed tasks"),
+    "post-loop-status": ("post-loop-status <track-dir>",
+                         "Read-only post-loop resumability gates: finalized / doc-synced / review-range"),
     "checklist-verify": ("checklist-verify <track-dir>",
                          "Check feature checklist verification status"),
     "deferred-report": ("deferred-report <track-dir>",
@@ -233,9 +235,9 @@ _COMMAND_GROUPS = [
     ("Result Processing", ["write-result", "process-result"]),
     ("Dispatch Composites", ["dispatch-prepare", "dispatch-finalize", "record-summary"]),
     ("Naming", ["derive-name"]),
-    ("Diagnostics", ["validate", "gc", "shas", "checklist-verify", "deferred-report",
-                     "phase-done", "add-checkpoint", "preflight", "quality-snapshot",
-                     "spec-integrity"]),
+    ("Diagnostics", ["validate", "gc", "shas", "post-loop-status", "checklist-verify",
+                     "deferred-report", "phase-done", "add-checkpoint", "preflight",
+                     "quality-snapshot", "spec-integrity"]),
 ]
 
 
@@ -356,6 +358,8 @@ def main():
             cmd_phase_done(track_dir, pos[0])
         elif cmd == "shas":
             cmd_shas(track_dir)
+        elif cmd == "post-loop-status":
+            cmd_post_loop_status(track_dir)
         elif cmd == "quality-snapshot":
             cmd_quality_snapshot(track_dir)
         elif cmd == "spec-integrity":
