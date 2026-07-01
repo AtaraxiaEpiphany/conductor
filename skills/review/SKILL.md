@@ -108,6 +108,6 @@ Parse `---REVIEW RESULT---` block.
    ```
    Do NOT pass `PHASE`/`TASK`, do NOT call `dispatch-finalize`, and do NOT modify `track-state.json` — these are remediation commits, not plan tasks. After return, verify the commits landed (`git log --oneline -<count>`).
 2. Offer cleanup options via `AskUserQuestion`:
-   - **Archive** (recommended): `track-state archive "<track_dir>"` + `registry-update` + commit
+   - **Archive** (recommended): `track-state archive "<track_dir>"` — flips status to `archived` **and relocates `tracks/<id>` → `archive/<id>`**; it returns the new `track_dir`. Then `track-state registry-update "<new track_dir>" "conductor/tracks.md"` (use the returned path — the old one no longer exists) + `git add -A && git commit -m "chore(conductor): Archive track '<desc>'"`
    - **Keep Active**: no action
    - **Delete**: confirm then `rm -rf "<track_dir>"` + remove from tracks.md + commit

@@ -2,13 +2,14 @@
 import json
 import os
 import re
+import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 from .core import load, save
 from .git_ops import docs_synced_for_track
-from .helpers import out, now_iso, conductor_dir, _reset_task
+from .helpers import out, now_iso, conductor_dir, _reset_task, _resolve_conductor_root
 from .constants import EXECUTION_MODES
 from .handoff import _ensure_handoff_index
 from .validate import _parse_plan_structure
@@ -446,14 +447,32 @@ def _compute_quality_score(track_dir, state, statuses, checklist):
     return round(min(score, 100))
 
 def cmd_archive(track_dir, force=False):
-    """Transition a completed track to archived status.
+    """Transition a completed track to archived status AND relocate its directory.
+
+    Flips ``status`` to ``archived`` and moves ``tracks/<id>`` → ``archive/<id>``
+    (sibling of ``tracks/`` at the conductor root), so an archived track leaves
+    the active set rather than merely being relabeled. The result envelope
+    carries the NEW ``track_dir`` (and ``archived_dir``) — callers must use it
+    for any subsequent ``registry-update``/commit, since the old path is gone.
 
     Refuses unless a doc-sync commit exists for this track — evidence the
     post-loop DOC SYNC phase ran and durable findings reached the wiki corpus.
     ``force`` skips the check (the result then carries a ``warning``).
     """
+    track_path = Path(track_dir)
     state = load(track_dir)
     current = state.get("status", "")
+    track_id = state.get("track_id", "") or track_path.name
+
+    # Idempotent re-entry: a prior run already archived + relocated this track
+    # (e.g. interrupted after the move but before the commit). Don't re-move or
+    # error — just report the relocated path so the caller can finish the commit.
+    if current == "archived" and "archive" in {p.name for p in track_path.parents}:
+        dest = track_path.resolve()
+        out(dict(ok=True, status="archived", track_dir=str(dest), archived_dir=str(dest),
+                 note="already archived and relocated"))
+        return
+
     if current != "completed":
         out(dict(ok=False, error=f"Cannot archive track with status '{current}'. Only 'completed' tracks can be archived.",
                  hint="Run track-state finalize first."))
@@ -461,7 +480,6 @@ def cmd_archive(track_dir, force=False):
 
     synced = docs_synced_for_track(track_dir)
     if not synced and not force:
-        track_id = Path(track_dir).name
         out(dict(ok=False,
                  error=(f"Cannot archive track '{track_id}': no doc-sync commit found "
                         f"(docs(conductor): ...[{track_id}]). The post-loop DOC SYNC phase "
@@ -469,11 +487,35 @@ def cmd_archive(track_dir, force=False):
                  hint="Run the post-loop DOC SYNC phase (templates/post-loop.md §6.0), or pass --force to archive without it."))
         return
 
+    # Resolve archive/<id> at the conductor root (sibling of tracks/). Fall back
+    # for a non-standard layout (no tracks.md ancestor): if the track sits in a
+    # dir literally named `tracks`, archive beside it; otherwise archive in place.
+    root = _resolve_conductor_root(track_dir)
+    if root is not None:
+        archive_root = root / "archive"
+    elif track_path.parent.name == "tracks":
+        archive_root = track_path.parent.parent / "archive"
+    else:
+        archive_root = track_path.parent / "archive"
+    dest = archive_root / track_id
+
+    if dest.exists():
+        out(dict(ok=False,
+                 error=(f"Cannot archive track '{track_id}': destination already exists "
+                        f"('{dest}'). Refusing to overwrite an existing archive entry."),
+                 hint="Inspect the destination; rename or remove it, then re-run archive."))
+        return
+
+    # Save archived state in place FIRST so track-state.json travels with the move.
     state["status"] = "archived"
     state["archived_at"] = now_iso()
     state["updated_at"] = now_iso()
     save(track_dir, state)
-    result = dict(ok=True, status="archived")
+
+    archive_root.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(track_path), str(dest))
+
+    result = dict(ok=True, status="archived", track_dir=str(dest), archived_dir=str(dest))
     if not synced:
         result["warning"] = ("Archived without a doc-sync commit (--force); "
                              "durable findings may not be synced to the wiki corpus.")

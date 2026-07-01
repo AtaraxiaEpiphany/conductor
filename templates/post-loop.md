@@ -118,6 +118,6 @@ Present options via `AskUserQuestion`:
 > "Track '<track_id>' is complete. Choose cleanup action:"
 
 Options:
-- **Archive** (recommended): `track-state archive "<track_dir>"` + `registry-update` + commit
+- **Archive** (recommended): `track-state archive "<track_dir>"` — flips status to `archived` **and relocates `tracks/<id>` → `archive/<id>`**; it returns the new `track_dir`. Then `track-state registry-update "<new track_dir>" "conductor/tracks.md"` (use the returned path — the old one no longer exists) + `git add -A && git commit -m "chore(conductor): Archive track '<desc>'"`
 - **Keep Active**: no action
 - **Delete**: confirm then `rm -rf "<track_dir>"` + remove from tracks.md + commit
