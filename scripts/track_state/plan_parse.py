@@ -57,6 +57,17 @@ _HTML_COMMENT = re.compile(r"<!--(.*?)-->", re.DOTALL)
 _AC_REF = re.compile(r"AC-\d+")
 _TC_REF = re.compile(r"TC-\d+\.\d+")
 
+# Inter-task dependency refs live inside a ``<!-- deps: P1.T2, P1.T3 -->``
+# comment on a top-level task line (plan-format-contract.md rule 8). Like
+# ac_refs/tc_refs these are advisory metadata for a future scheduler and are
+# NOT persisted into track-state.json (to_plan_structure drops them, same as
+# ac_refs/tc_refs). validate_deps checks dangling refs, self-deps, and cycles.
+# P{n}.T{n} is the runtime's own positional coordinate (current_phase_index /
+# current_task_index, lint-track-state's "P{pi}.T{ti}" notation) — so a dep
+# names the exact unit the orchestrator addresses internally.
+_DEPS_COMMENT = re.compile(r"^\s*deps\s*:", re.IGNORECASE)
+_DEPS_REF = re.compile(r"P(\d+)\.T(\d+)")
+
 _VALID_MARKERS = set(MARKER_MAP.values())
 
 
@@ -90,6 +101,47 @@ def _extract_refs(rest):
             if ref not in tc_refs:
                 tc_refs.append(ref)
     return ac_refs, tc_refs
+
+
+def _extract_deps(rest):
+    """Pull ``P{n}.T{n}`` dependency refs from a ``<!-- deps: ... -->`` comment.
+
+    Returns ``(deps_refs, has_deps_comment, failures)``:
+    - deps_refs: de-duped canonical ``P{n}.T{n}`` strings (zero-padded ints so
+      ``P1.T02`` normalizes to ``P1.T2``), first-seen order.
+    - has_deps_comment: True iff a ``<!-- deps: ... -->`` comment was present, so
+      a comment that yielded zero valid refs (likely a typo) can be flagged.
+    - failures: tokens inside a deps comment that did not match ``P{n}.T{n}``
+      (e.g. ``P1``, ``T2``, ``P1.T2.S1``), surfaced as parse warnings.
+
+    Only a comment whose body starts with ``deps:`` is treated as a deps
+    comment — a stray ``deps`` inside an AC/TC comment cannot trigger this.
+    """
+    deps_refs, seen = [], set()
+    has_deps_comment = False
+    failures = []
+    for m in _HTML_COMMENT.finditer(rest):
+        body = m.group(1)
+        if not _DEPS_COMMENT.match(body):
+            continue
+        has_deps_comment = True
+        # Drop the leading "deps:" keyword (and its surrounding whitespace),
+        # then tokenize the remainder on commas/whitespace. Anything left is
+        # either a valid P{n}.T{n} ref or an unparsed token (typo) — never the
+        # keyword itself, which sub() removed.
+        payload = _DEPS_COMMENT.sub("", body, count=1)
+        for tok in re.split(r"[,\s]+", payload):
+            if not tok:
+                continue
+            dm = _DEPS_REF.fullmatch(tok)
+            if dm:
+                canon = f"P{int(dm.group(1))}.T{int(dm.group(2))}"
+                if canon not in seen:
+                    seen.add(canon)
+                    deps_refs.append(canon)
+            else:
+                failures.append(tok)
+    return deps_refs, has_deps_comment, failures
 
 
 def parse_plan(plan_path):
@@ -160,8 +212,14 @@ def parse_plan(plan_path):
                 # stored as plain strings, so no ac_refs/tc_refs here.
                 current_task["subtasks"].append(name)
             else:
-                current_task = {"name": name, "subtasks": [], "line": lineno,
-                                "ac_refs": ac_refs, "tc_refs": tc_refs}
+                deps_refs, has_deps_comment, dep_failures = _extract_deps(rest)
+                current_task = {
+                    "name": name, "subtasks": [], "line": lineno,
+                    "ac_refs": ac_refs, "tc_refs": tc_refs,
+                    "deps_refs": deps_refs,
+                    "deps_has_comment": has_deps_comment,
+                    "deps_failures": dep_failures,
+                }
                 current_phase["tasks"].append(current_task)
             continue
 
@@ -208,6 +266,16 @@ def parse_plan(plan_path):
                     f"{label} task '{t['name']}': has 1 subtask "
                     f"(convention is 0 or ≥2)")
 
+    # Dependency-graph validation (plan-format-contract.md rule 8). Advisory in
+    # this substrate — deps are inert metadata for a future scheduler, so issues
+    # surface as warnings and never block init (a cycle cannot break serial
+    # execution under F1). A scheduler wired in later may escalate these to
+    # hard errors at its own enforcement layer.
+    for issue in validate_deps({"phases": phases}):
+        warnings.append(
+            f"{issue['at']}: dependency annotation issue ({issue['kind']}) "
+            f"— {issue['detail']}")
+
     return {"phases": phases, "errors": errors, "warnings": warnings}
 
 
@@ -245,3 +313,127 @@ def collect_ac_refs(parsed):
                     seen.add(ref)
                     refs.append(ref)
     return refs
+
+
+def _dep_coord(ref):
+    """``"P1.T2"`` → ``(1, 2)``; ``None`` if ref isn't a clean P{n}.T{n}."""
+    m = _DEPS_REF.fullmatch(ref)
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def validate_deps(parsed):
+    """Validate ``<!-- deps: ... -->`` references across the whole plan.
+
+    Returns a list of advisory issue dicts. The substrate is inert — nothing
+    executes on deps yet, so these surface as parse warnings, not blockers (a
+    future scheduler may treat them as hard errors at its own layer).
+
+    Issue kinds:
+    - ``empty``:     a ``<!-- deps: -->`` comment yielded no valid P{n}.T{n} ref.
+    - ``unparsed``:  a token inside a deps comment did not match P{n}.T{n}.
+    - ``dangling``:  a dep target does not exist (no such phase/task).
+    - ``self``:      a task depends on itself.
+    - ``cycle``:     a dependency cycle (A→B→A), including transitive.
+
+    Each issue: ``{"kind": str, "at": "P{p}.T{t}", "detail": str}``.
+    """
+    issues = []
+    phases = parsed.get("phases", [])
+
+    # Valid top-level task coordinates (deps target top-level tasks only;
+    # subtasks are sequentially decomposed and never parallel candidates).
+    valid = set()
+    for pi, ph in enumerate(phases, 1):
+        for ti, _t in enumerate(ph.get("tasks", []), 1):
+            valid.add((pi, ti))
+
+    edges = {}  # src (pi,ti) -> [tgt (pi,ti), ...]
+    for pi, ph in enumerate(phases, 1):
+        for ti, t in enumerate(ph.get("tasks", []), 1):
+            at = f"P{pi}.T{ti}"
+            src = (pi, ti)
+            refs = t.get("deps_refs", []) or []
+            if t.get("deps_has_comment") and not refs:
+                issues.append({"kind": "empty", "at": at,
+                               "detail": "<!-- deps: --> comment has no valid "
+                                         "P{n}.T{n} ref"})
+            for tok in t.get("deps_failures", []) or []:
+                issues.append({"kind": "unparsed", "at": at,
+                               "detail": f"unparsed deps token '{tok}' "
+                                         f"(expected P{{n}}.T{{n}})"})
+            for r in refs:
+                tgt = _dep_coord(r)
+                if tgt is None or tgt not in valid:
+                    issues.append({"kind": "dangling", "at": at,
+                                   "detail": f"deps target {r} does not exist"})
+                    continue
+                if tgt == src:
+                    issues.append({"kind": "self", "at": at,
+                                   "detail": f"task depends on itself ({r})"})
+                    continue
+                edges.setdefault(src, []).append(tgt)
+
+    issues.extend(_detect_dep_cycles(edges))
+    return issues
+
+
+def _detect_dep_cycles(edges):
+    """Return one ``cycle`` issue per back-edge found via DFS 3-coloring.
+
+    Recursion depth is bounded by plan depth (tasks per phase × phases), which
+    is small for real plans; an explicit stack is not warranted here.
+    """
+    issues = []
+    WHITE, GRAY, BLACK = 0, 1, 2
+    color = {}
+
+    def fmt(node):
+        return f"P{node[0]}.T{node[1]}"
+
+    def dfs(u, stack):
+        color[u] = GRAY
+        for v in edges.get(u, []):
+            state = color.get(v, WHITE)
+            if state == GRAY:
+                # v is an ancestor on the current path → cycle. Reconstruct it.
+                try:
+                    start = stack.index(v)
+                    cyc = stack[start:] + [v]
+                except ValueError:  # defensive; a GRAY node is on the stack
+                    cyc = [v, u, v]
+                issues.append({
+                    "kind": "cycle", "at": fmt(u),
+                    "detail": "dependency cycle: " + " → ".join(fmt(n) for n in cyc),
+                })
+            elif state == WHITE:
+                dfs(v, stack + [v])
+        color[u] = BLACK
+
+    for node in list(edges):
+        if color.get(node, WHITE) == WHITE:
+            dfs(node, [node])
+    return issues
+
+
+def collect_deps(parsed):
+    """Aggregate every declared dependency as ``(src, tgt)`` coordinate pairs.
+
+    De-duped, first-seen order. A future parallel scheduler consumes this to
+    build the ready-set (tasks whose deps are all terminal) — the same role
+    ``collect_ac_refs`` plays for traceability. Pairs reference top-level tasks
+    only; dangling targets are passed through unchanged (validate_deps flags
+    them separately).
+    """
+    edges, seen = [], set()
+    for pi, ph in enumerate(parsed.get("phases", []), 1):
+        for ti, t in enumerate(ph.get("tasks", []), 1):
+            src = (pi, ti)
+            for r in t.get("deps_refs", []) or []:
+                tgt = _dep_coord(r)
+                if tgt is None:
+                    continue
+                key = (src, tgt)
+                if key not in seen:
+                    seen.add(key)
+                    edges.append(key)
+    return edges

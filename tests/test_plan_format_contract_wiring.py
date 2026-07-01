@@ -48,6 +48,13 @@ class ContractDocTests(TestCase):
         self.assertIn("minimum 2, recommended maximum 5", self.text)
         self.assertIn("When to use subtasks", self.text)
 
+    def test_dependency_annotation_section_present(self):
+        # The optional <!-- deps: P{n}.T{n} --> substrate (parser-validated via
+        # plan_parse.validate_deps, inert in v1) is documented in the contract.
+        self.assertIn("Inter-Task Dependencies", self.text)
+        self.assertIn("deps:", self.text)
+        self.assertIn("P{n}.T{n}", self.text)
+
 
 class SpecPlannerPointerTests(TestCase):
     def test_points_at_contract_doc_via_plugin_root(self):
@@ -66,6 +73,11 @@ class SpecPlannerPointerTests(TestCase):
     def test_inline_rules_block_removed_from_body(self):
         # The <rules> pseudo-block moved out of the agent body.
         self.assertNotIn("**<rules>**", SPEC_PLANNER)
+
+    def test_directs_dependency_declaration(self):
+        # spec-planner nudges declaring <!-- deps: --> when tasks aren't
+        # file-disjoint — the upstream input any future parallelism depends on.
+        self.assertIn("<!-- deps:", SPEC_PLANNER)
 
 
 if __name__ == "__main__":

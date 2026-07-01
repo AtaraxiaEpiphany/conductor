@@ -110,11 +110,13 @@ Structure:
 - [ ] [Manual] Task: Conductor - User Manual Verification 'Phase 1' (Protocol in task-workflow.md)
 
 ## Phase 2: {Phase Name}
-- [ ] Task: {task description} <!-- AC-3, TC-3.1 -->
+- [ ] Task: {task description} <!-- AC-3, TC-3.1 --> <!-- deps: P1.T1 -->
 - [ ] [Manual] Task: Conductor - User Manual Verification 'Phase 2' (Protocol in task-workflow.md)
 ```
 
 **Mandatory format contract:** Read `${CLAUDE_PLUGIN_ROOT}/conductor/design/plan-format-contract.md` and follow it exactly when generating `plan.md`. It defines the status-marker, dispatch-tag, and subtask rules the orchestrator's plan parser and dispatch router depend on — a task line without `[ ]` is silently dropped by the parser, and dispatch tags (`[Explore]`, `[Docs]`, `[Config]`, `[Chore]`, `[Manual]`) drive routing and TDD gating. Violating any rule breaks the orchestrator.
+
+**Declare inter-task dependencies (optional but encouraged):** when a task is *not file-disjoint* from its siblings — it builds on an artifact an earlier task produced (a model, utility, config key) — append a second HTML comment `<!-- deps: P{n}.T{n} -->` naming that predecessor by its positional coordinate (e.g. `P1.T1` = Phase 1, Task 1). The AC/TC comment is still mandatory and separate. Omit `deps` only when tasks in a phase touch genuinely disjoint files/modules. Making coupling explicit keeps the dependency graph machine-checkable (the parser validates dangling refs, self-deps, and cycles at `init-from-plan --check`) rather than implicit in ordering. See `plan-format-contract.md` §Inter-Task Dependencies.
 
 ### 4.3 Write Files
 
