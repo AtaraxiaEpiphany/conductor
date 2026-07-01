@@ -25,6 +25,8 @@ Only ONE unit of work may be active at any time. The allowed `[~]` pattern is:
 
 Before marking `[~]`, verify no more than ONE parent `[~]` and ONE child `[~]` exist in `plan.md`. **No other `[~]` combinations are allowed.**
 
+**Wave-lock relaxation (opt-in).** Under `conductor:parallel`, F1 relaxes to a *wave lock* **only** while a sidecar ledger `.conductor/parallel.json` records in-flight members: those members' `[~]` markers are exempt from the one-parent count (the ledger, not F1, authorizes their parallel `in_progress`). The exemption holds for exactly the ledger's in-flight members and nothing else; the moment the wave drains, strict serial resumes. `validate`, `lint-track-state`, and the serial `dispatch-*` commands all reconcile against the ledger so the two modes never interleave on one track. See [[conductor/design/decision-serial-execution]].
+
 ### 🔴 F2 — TDD Gate
 
 No implementation code before a failing test. **Exempted task types ONLY:** `[Docs]`, `[Config]`, `[Chore]`, `[Explore]`, `[Manual]`. All others: TDD is MANDATORY.

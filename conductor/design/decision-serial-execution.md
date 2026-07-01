@@ -2,13 +2,15 @@
 type: concept
 sources:
   - runtime/core-contract
-last_verified: 2026-06-25
+last_verified: 2026-07-01
 ---
 
 # Decision: Serial Execution Model (single active task)
 
-Status: **Accepted** — serial, globally locked. Recorded so the tradeoff is
-conscious rather than accidental.
+Status: **Accepted** — serial by default, globally locked. An opt-in **within-track
+wave parallelism** escape hatch (worktree-isolated, deps-gated) has been added on
+top of the serial spine; per-track locking remains deferred. Recorded so the
+tradeoff is conscious rather than accidental.
 
 ## Context
 
@@ -26,8 +28,12 @@ That model trades coherence for throughput (the "rung-4" ceiling).
 
 ## Decision
 
-**Keep serial.** The plugin as shipped runs one active task globally; F1 stays a
-global lock. Parallel execution is not added.
+**Keep serial as the default.** The plugin runs one active task globally; F1
+stays a global lock for the serial spine. Parallel execution is **opt-in**:
+`conductor:parallel` (`skills/parallel/SKILL.md`) relaxes F1 to a *wave lock*
+**only** while a sidecar ledger (`.conductor/parallel.json`) records in-flight
+members, and only for tasks the plan author declared file-disjoint via
+`<!-- deps: -->`. Everything else stays strictly serial.
 
 ## Rationale
 
@@ -49,6 +55,40 @@ global lock. Parallel execution is not added.
 
 ## When to revisit (the documented escape hatch)
 
+### Within-track wave parallelism (shipped)
+
+The rung-2 → rung-3 step the deps substrate unlocked: real within-track
+throughput for phases that decompose into genuinely independent tasks, **without**
+abandoning the serial spine or the linear audit trail. Opt-in via
+`conductor:parallel`:
+
+- **Worktree isolation, not shared-state parallelism.** Each wave member runs in
+  its own `git worktree` (its own index, its own `track-state.json` checkout, its
+  own `result.json`). No two agents ever touch the same git index or state file.
+  The orchestrator integrates each member's commit back serially via squash-merge,
+  so the main branch keeps one-conductor-commit-per-task linear history.
+- **F1 relaxes to a wave lock, not removed.** While a ledger records in-flight
+  members, F1's "one `[~]`" count exempts those members (the ledger, not F1,
+  authorizes their parallel `in_progress`). The moment the wave drains, strict
+  serial resumes. Three guard sites (`validate`, `lint-track-state`,
+  `dispatch`) reconcile the two modes; the serial spine refuses to interleave
+  with an active wave.
+- **Conservative ready-set.** Only pending, flat, executor-routed tasks with a
+  `<!-- deps: -->` comment whose every declared dependency is satisfied
+  (completed/skipped/deferred) enter a wave. Tasks with no deps comment are
+  assumed serial-order-dependent and stay on the spine. The author opts each task
+  in by declaring deps.
+- **Serial fallback + reuse.** When no ready-set exists, the skill falls to the
+  serial spine (`dispatch-next`), so serial tasks make progress and may satisfy
+  deps for the next wave. Failed members drain as `failed` and are handled by the
+  serial retry/skip/block path — no separate parallel recovery machinery.
+
+This realizes the scheduler the `collect_deps` substrate was built for, at a
+fraction of the per-track-locking complexity, because each worktree is a full
+isolated checkout rather than a coordinated shared-state writer.
+
+### Per-track locking (still deferred)
+
 Move to per-track locking only if **both** hold: rung-4 throughput becomes a
 goal *and* work decomposes into genuinely independent tracks (disjoint code
 areas, no shared spec coherence). The migration path, building on the #6
@@ -63,10 +103,12 @@ transaction context manager:
   artifact track A produces).
 
 The serial choice is therefore by design, not by oversight: the state model is
-globally locked with a clear (unexercised) path to per-track locking if and when
-throughput justifies the added complexity.
+globally locked, the within-track wave escape hatch ships in worktree-isolated
+form, and per-track locking remains a clear (unexercised) path if and when
+cross-track throughput justifies the added complexity.
 
 ## See Also
 
-- [[runtime/core-contract]] — F1 Global State Lock; the invariant this decision preserves.
+- [[runtime/core-contract]] — F1 Global State Lock; the invariant this decision preserves (relaxed to a wave lock only while `.conductor/parallel.json` is active).
+- [[conductor/design/plan-format-contract]] — the `<!-- deps: -->` annotation the wave ready-set consumes.
 - [[conductor/design/doc-conventions]] — corpus-authoring conventions.

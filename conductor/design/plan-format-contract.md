@@ -2,7 +2,7 @@
 type: concept
 sources:
   - agents/spec-planner
-last_verified: 2026-06-26
+last_verified: 2026-07-01
 ---
 
 # Plan Format Contract
@@ -72,7 +72,10 @@ A top-level task MAY declare which earlier tasks it depends on with a second HTM
 2. **The AC/TC comment (§6) is still mandatory and separate.** Deps is an *additional* comment, never a replacement. A line with only `<!-- deps: -->` and no AC/TC still fails the `check-plan-annotations` hook.
 3. **Top-level tasks only.** Subtasks inherit context and are sequentially decomposed (they ARE one deliverable), so they are never parallel candidates and their `deps` are ignored by the parser.
 4. **Positional refs shift on reorder.** `P1.T2` means "the second top-level task in phase 1." If you insert a task above it, the coordinate moves — a known v1 tradeoff. (A future revision may add stable `<!-- id: name -->` anchors if reordering becomes common.)
-5. **Inert in v1 — validated but not executed on.** The parser (`plan_parse.validate_deps`) checks every `deps` annotation for dangling refs, self-deps, and cycles and surfaces them as **warnings** at `track-state init-from-plan --check`. They do **not** block init, because nothing executes on deps yet — the conductor still runs strictly serial under the F1 Global State Lock. A future scheduler may consume `collect_deps` to build a ready-set (tasks whose deps are all terminal) for parallel execution; until then, declare deps so the dependency graph is **explicit and machine-checkable** rather than implicit in phase/task ordering.
+5. **Opt-in to within-track parallelism — validated AND consumed.** The parser (`plan_parse.validate_deps`) checks every `deps` annotation for dangling refs, self-deps, and cycles and surfaces them as **warnings** at `track-state init-from-plan --check`; they do not block init. A `<!-- deps: -->` comment is now the **opt-in gate** for the wave scheduler (`track_state.wave._ready_set`): a flat, executor-routed, pending task WITH a deps comment whose every declared target is satisfied (completed/skipped/deferred) is eligible to run in a worktree-isolated wave under `conductor:parallel`. A task with **no** deps comment is assumed serial-order-dependent and stays on the serial spine — so the presence of the comment (not its content) is the opt-in: it signals "the author has reasoned about this task's file-surface." See [[conductor/design/decision-serial-execution]] (wave escape hatch).
 
-**When to declare deps:** emit `<!-- deps: ... -->` whenever a task is *not file-disjoint* from its siblings — i.e., it builds on an artifact an earlier task produced (a model, a utility, a config key). Omit it when tasks in a phase touch genuinely disjoint files/modules and could in principle run concurrently. Making coupling explicit here is the upstream input any future within-phase parallelism depends on.
+**When to declare deps:** always emit a `<!-- deps: ... -->` comment on any top-level task you want the wave scheduler to consider.
+- **Coupled task** (builds on an artifact a sibling produced — a model, a utility, a config key): `<!-- deps: P1.T1 -->`. The task stays serial until `P1.T1` lands, then becomes wave-eligible.
+- **Independent task** (touches genuinely disjoint files/modules): `<!-- deps: -->` — an *empty* deps comment is the explicit "I have no dependencies" declaration. This is what makes a task a wave candidate; the scheduler treats it as deps-satisfied immediately.
+- **No comment at all**: the task is assumed serial-order-dependent and never wave-parallelized. It still runs normally on the serial spine; it just forgoes the parallel speedup. Declare deps (even empty) on independent tasks to opt them in.
 

@@ -43,6 +43,26 @@ CRITICAL: Validate every tool call. On failure → halt → report FAILURE.
 > `### Attempt` records — that is system-written ground truth, immune to an
 > orchestrator miscount. `ATTEMPT > 1` is only a hint; the handoff is authoritative.
 
+### Wave (worktree) mode
+
+Under `conductor:parallel` you may be dispatched with an extra parameter:
+
+| Parameter | Description |
+|-----------|-------------|
+| `WORKTREE_DIR` | Absolute path to your own `git worktree` checkout |
+
+When `WORKTREE_DIR` is present, **`cd "{WORKTREE_DIR}"` as your first action** —
+Bash cwd persists across calls, so every subsequent `git`/edit then lands in your
+isolated worktree, not the main checkout. Your `TRACK_DIR` already points into
+the worktree, so `track-state write-result "{TRACK_DIR}" ...` writes your own
+worktree's `result.json` — exactly what `wave-finalize` reads back. Behave
+**identically** to serial mode otherwise: TDD, coverage, commit your work on the
+worktree branch. You do NOT call dispatch-finalize — the orchestrator integrates
+your branch via squash-merge (`wave-finalize`); your job ends at the result
+block. A `wave-agent.marker` under your `.conductor/` tells the SubagentStop hook
+to let you stop normally — wave reliability is enforced at finalize, not by the
+recovery counter.
+
 ---
 
 ## 3.0 LAYERED CONTEXT LOADING
