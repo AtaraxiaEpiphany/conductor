@@ -9,9 +9,9 @@ hooks:
   Stop:
     - matcher: ""
       hooks:
-        - type: prompt
-          prompt: "Output ONLY a raw JSON object - no prose, no markdown fences, nothing before or after it. If the input stop_hook_active is true, return {\"ok\": true, \"reason\": \"OK\"} immediately to let the agent stop. Otherwise audit the conductor state visible in the transcript for: (1) a leftover active wave ledger (.conductor/parallel.json) with in_flight members whose worktrees were not torn down, (2) state changes not committed, (3) drift between track-state.json and plan.md. Return {\"ok\": true, \"reason\": \"OK\"} if clean, or {\"ok\": false, \"reason\": \"one-line issue description\"} if a real issue needs the agent to act before stopping. Emit the JSON and nothing else."
-          model: haiku
+        - type: command
+          command: "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/on-stop-conductor.py\""
+          timeout: 10
 ---
 
 # Conductor Parallel — Worktree Wave Orchestrator
