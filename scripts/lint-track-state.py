@@ -22,6 +22,39 @@ from lib.path_utils import find_track_root, find_tracks_registry, extract_track_
 from lib.git_utils import docs_synced_for_track
 
 
+def _load_wave_ledger(state_file: Path) -> dict:
+    """Read ``.conductor/parallel.json`` next to ``state_file``; ``{}`` if absent.
+
+    Best-effort: a corrupt ledger is treated as no ledger so lint can't be wedged
+    by a half-written file from a crashed wave session.
+    """
+    path = state_file.parent / ".conductor" / "parallel.json"
+    if not path.exists():
+        return {}
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _active_wave_parents(state_file: Path) -> set:
+    """``{"P{pi}.T{ti}", ...}`` for in_flight members of an active wave ledger.
+
+    Empty when there is no ledger or every member is terminal (drained). Wave
+    members are flat top-level tasks, so this only ever contains parent locs —
+    the F1 child-subtask rule is unaffected by waves.
+    """
+    ledger = _load_wave_ledger(state_file)
+    wave = ledger.get("wave") if isinstance(ledger, dict) else None
+    if not wave:
+        return set()
+    if not any(m.get("status") == "in_flight" for m in wave):
+        return set()
+    return {f"P{m['phase']}.T{m['task']}" for m in wave
+            if m.get("status") == "in_flight"}
+
+
 def check_f1_rule(state_file: Path) -> tuple[bool, Optional[str]]:
     """Check F1 rule: only ONE in_progress task allowed
 
@@ -40,6 +73,11 @@ def check_f1_rule(state_file: Path) -> tuple[bool, Optional[str]]:
     if not valid:
         return False, f"Invalid state structure: {error}"
 
+    # F1 is relaxed to a *wave lock* while an active parallel.json ledger exists:
+    # its in_flight members are legitimately in_progress in parallel, so exempt
+    # them from the serial-spine "max ONE parent" count.
+    wave_parents = _active_wave_parents(state_file)
+
     # F1/V8 contract: at most ONE parent task in_progress, and at most ONE
     # child subtask in_progress — and that child must belong to the active
     # parent. Counting parents and children into a single list and thresholding
@@ -55,11 +93,14 @@ def check_f1_rule(state_file: Path) -> tuple[bool, Optional[str]]:
                 if sub.get("status") == "in_progress":
                     active_children.append(f"P{pi}.T{ti}.S{si}")
 
+    # Serial-spine parents = active parents NOT authorized by a wave ledger.
+    serial_parents = [p for p in active_parents if p not in wave_parents]
+
     violations = []
-    if len(active_parents) > 1:
+    if len(serial_parents) > 1:
         violations.append(
-            f"{len(active_parents)} parent tasks in_progress "
-            f"({', '.join(active_parents)})"
+            f"{len(serial_parents)} parent tasks in_progress "
+            f"({', '.join(serial_parents)})"
         )
     if len(active_children) > 1:
         violations.append(
@@ -84,6 +125,20 @@ def check_f1_rule(state_file: Path) -> tuple[bool, Optional[str]]:
         )
 
     return True, None
+
+
+def wave_relaxation_note(state_file: Path) -> Optional[str]:
+    """Human-readable note when F1 is relaxed by an active wave, else ``None``."""
+    ledger = _load_wave_ledger(state_file)
+    wave = ledger.get("wave") if isinstance(ledger, dict) else None
+    if not wave:
+        return None
+    in_flight = [m for m in wave if m.get("status") == "in_flight"]
+    if not in_flight:
+        return None
+    locs = ", ".join(f"P{m['phase']}.T{m['task']}" for m in in_flight)
+    return (f"F1 relaxed: wave ledger active with {len(in_flight)} in_flight "
+            f"member(s) ({locs}) — parallel wave mode, not a serial F1 violation")
 
 
 def check_f4_rule(state_file: Path) -> tuple[bool, Optional[str]]:
@@ -271,6 +326,11 @@ def main():
             errors += 1
         else:
             print(f"[F1 PASS] Track '{track_id}' has ≤1 in_progress parent + ≤1 child subtask")
+        # Advisory: when F1 is relaxed by an active wave ledger, say so explicitly
+        # so the PASS line isn't mistaken for "strictly serial".
+        note = wave_relaxation_note(state_file)
+        if note:
+            print(f"[F1 INFO] Track '{track_id}': {note}")
 
         # F4: SHA Must Exist
         valid, error = check_f4_rule(state_file)

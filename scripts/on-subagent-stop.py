@@ -137,6 +137,28 @@ def _resolve_locked(cwd):
         return None
 
 
+def _wave_agent_track_dir(cwd):
+    """Return the track_dir of a wave member's worktree, or ``None``.
+
+    Walks up from ``cwd`` looking for ``.conductor/wave-agent.marker`` — the
+    sentinel ``dispatch-wave`` drops in each member's worktree track dir. A wave
+    agent runs with the singleton cursor UNSET (the serial spine owns it), so
+    :func:`_resolve_locked` returns ``None`` for it and the hook would otherwise
+    fail-open to a forced recovery turn / block. The marker short-circuits that:
+    ``wave-finalize`` owns result synthesis + retry for wave members, not this
+    hook. Returns the track_dir (the dir holding ``.conductor/``) so the caller
+    can probe the worktree's own result.json, or ``None`` when not a wave agent.
+    """
+    try:
+        p = Path(cwd).resolve()
+    except OSError:
+        return None
+    for cand in (p, *p.parents):
+        if (cand / ".conductor" / "wave-agent.marker").exists():
+            return str(cand)
+    return None
+
+
 def _log_result_event(log_file, session_id: str, agent_type: str,
                       outcome: str, reason: str) -> None:
     """Record a result-file-agent stop outcome to the recovery-rate log.
@@ -170,6 +192,19 @@ def main():
     # orchestrator's retry/skip path reads it). Only a missing file means the
     # agent never reached its result step.
     if agent_type in RESULT_FILE_AGENT_TYPES:
+        # Wave agents first: dispatch-wave drops a wave-agent.marker in each
+        # member's worktree. wave-finalize owns that member's result synthesis +
+        # retry, so this hook must NOT bound it via the singleton-cursor recovery
+        # counter (unset under a wave → would force a spurious fail-open block).
+        # Allow the stop either way — the wave's reliability is enforced at
+        # wave-finalize, not here.
+        wave_track_dir = _wave_agent_track_dir(cwd)
+        if wave_track_dir is not None:
+            _log_result_event(log_file, session_id, agent_type, "wave",
+                              "wave_agent_marker")
+            write_hook_output()
+            return
+
         # Resolve the locked track once — scope the result.json freshness check
         # to IT (avoids a fresh result in another track satisfying this probe)
         # and identify the task whose recovery counter is bounded below.

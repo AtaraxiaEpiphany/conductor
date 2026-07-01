@@ -20,6 +20,9 @@ from .misc import (
 )
 from .handoff import cmd_get_handoff, cmd_sync_handoff, cmd_append_handoff, cmd_harvest_candidates
 from .sync import cmd_sync_plan
+from .wave import (
+    cmd_dispatch_wave, cmd_wave_status, cmd_wave_finalize, cmd_wave_abort,
+)
 
 
 _BOOL_FLAGS = {"--full", "--fix", "--check", "--force"}
@@ -197,6 +200,18 @@ COMMAND_HELP = {
                           "Composite: process-result + conductor commit + sync-plan. --override patches empty result fields"),
     "record-summary": ("record-summary <track-dir>",
                        "Record compact task summary (stdin JSON) for post-compaction recovery"),
+    "dispatch-wave": ("dispatch-wave <track-dir> [--full]",
+                      "Wave parallelism: fan out a ready-set of file-disjoint tasks into git worktrees "
+                      "(opt-in; emits no_ready_tasks / wave_active / dispatch_wave)"),
+    "wave-status": ("wave-status <track-dir> [--full]",
+                    "Read-only view of the active wave ledger + member states"),
+    "wave-finalize": ("wave-finalize <track-dir> <phase> <task> [--full]\n"
+                      "                wave-finalize <track-dir> --phase <n> --task <n> [--full]",
+                      "Integrate one worktree member: squash-merge its commit, run finalize transitions, "
+                      "tear down the worktree (SUCCESS / FAILURE / conflict→fail)"),
+    "wave-abort": ("wave-abort <track-dir>",
+                   "Abort the active wave: reset in-flight members to pending, tear down worktrees, "
+                   "delete the ledger (recovery for a wedged wave)"),
     "validate": ("validate <track-dir> [--fix]",
                  "Validate state; always reports auto-fix analysis, --fix persists repairs"),
     "gc": ("gc <track-dir>",
@@ -234,6 +249,7 @@ _COMMAND_GROUPS = [
     ("Handoff", ["get-handoff", "append-handoff", "harvest-candidates"]),
     ("Result Processing", ["write-result", "process-result"]),
     ("Dispatch Composites", ["dispatch-prepare", "dispatch-finalize", "record-summary"]),
+    ("Wave Parallelism", ["dispatch-wave", "wave-status", "wave-finalize", "wave-abort"]),
     ("Naming", ["derive-name"]),
     ("Diagnostics", ["validate", "gc", "shas", "post-loop-status", "checklist-verify",
                      "deferred-report", "phase-done", "add-checkpoint", "preflight",
@@ -387,6 +403,22 @@ def main():
             cmd_dispatch_finalize(track_dir, compact="--full" not in args)
         elif cmd == "record-summary":
             cmd_record_summary(track_dir)
+        elif cmd == "dispatch-wave":
+            cmd_dispatch_wave(track_dir, compact="--full" not in args)
+        elif cmd == "wave-status":
+            cmd_wave_status(track_dir, compact="--full" not in args)
+        elif cmd == "wave-finalize":
+            # wave-finalize integrates one member at a time, so it takes explicit
+            # --phase/--task indices (no singleton cursor under a wave). Resolve
+            # through the same channel as the index commands so both positional
+            # and named-flag forms work.
+            p, t, _ = resolve_indices(pos, args)
+            if p is None or t is None:
+                out(dict(error="wave-finalize requires --phase and --task"))
+                sys.exit(1)
+            cmd_wave_finalize(track_dir, p, t, compact="--full" not in args)
+        elif cmd == "wave-abort":
+            cmd_wave_abort(track_dir, compact="--full" not in args)
         elif cmd == "init-from-plan":
             cmd_init_from_plan(track_dir,
                                flag(args, "--track-id") or "track",

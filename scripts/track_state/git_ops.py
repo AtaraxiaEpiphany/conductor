@@ -408,3 +408,173 @@ def _finalize_parent(track_dir, p, t, sha, *, ensure_evidence=True):
         save(track_dir, state)
     return final_sha
 
+
+# --- Wave parallelism: worktree + cherry-pick integration --------------------
+#
+# The serial conductor runs every git op with ``cwd=track_dir`` (git walks up to
+# find the repo). Wave parallelism adds a second axis: each wave member executes
+# in its OWN ``git worktree`` (isolated branch + working tree), so N agents never
+# share an index. These helpers manage that lifecycle. Cherry-pick MUST run with
+# ``cwd=repo_root`` (the main worktree, on the track branch) — never ``track_dir``
+# — because the integration target is the track branch, not the worktree's branch.
+
+
+def _git_rev_parse_toplevel(track_dir):
+    """Absolute path to the working-tree top level (the main worktree root).
+
+    ``track_dir`` is a subdir of the repo (``conductor/tracks/<id>/``); git walks
+    up to the worktree root. Wave helpers run cherry-pick / worktree commands with
+    ``cwd=<this path>`` because those operate on the main worktree (the track
+    branch), not on ``track_dir``. Returns ``None`` on failure.
+    """
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, cwd=track_dir, timeout=5
+        )
+        top = result.stdout.strip()
+        return top if result.returncode == 0 and top else None
+    except Exception as e:
+        print(f"WARNING: git rev-parse --show-toplevel error: {e}", file=sys.stderr)
+        return None
+
+
+def _git_worktree_add(repo_root, worktree_path, branch, base_sha):
+    """Create a worktree at ``worktree_path`` on NEW branch ``branch`` at ``base_sha``.
+
+    ``git worktree add -b <branch> <path> <base>`` atomically creates the branch
+    and checks it out in an isolated working tree sharing the repo's object
+    store. The agent runs there; its commits land on ``branch``, leaving the main
+    worktree (track branch) untouched. Returns True/False.
+    """
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["git", "worktree", "add", "-b", branch, worktree_path, base_sha],
+            capture_output=True, text=True, cwd=repo_root, timeout=30
+        )
+        if result.returncode != 0:
+            print(f"WARNING: git worktree add failed: {result.stderr.strip()}",
+                  file=sys.stderr)
+            return False
+        return True
+    except Exception as e:
+        print(f"WARNING: git worktree add error: {e}", file=sys.stderr)
+        return False
+
+
+def _git_branch_tip(repo_root, ref):
+    """7-char short SHA of ``ref`` (a branch or commit-ish). None on failure."""
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["git", "rev-parse", "--short=7", ref],
+            capture_output=True, text=True, cwd=repo_root, timeout=5
+        )
+        sha = result.stdout.strip()
+        return sha if result.returncode == 0 and re.match(r"^[0-9a-f]{7}$", sha) else None
+    except Exception:
+        return None
+
+
+def _git_range_commit_count(repo_root, base_sha, tip_sha):
+    """Number of commits in (base, tip]. 0 means the agent committed nothing."""
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["git", "rev-list", "--count", f"{base_sha}..{tip_sha}"],
+            capture_output=True, text=True, cwd=repo_root, timeout=5
+        )
+        return int(result.stdout.strip()) if result.returncode == 0 else 0
+    except (Exception, ValueError):
+        return 0
+
+
+def _git_merge_squash(repo_root, ref, message):
+    """Squash-merge ``ref`` (a wave member's branch) onto the current branch.
+
+    Runs in the MAIN worktree (``cwd=repo_root``, on the track branch). ``git
+    merge --squash <ref>`` stages all of the member branch's changes since the
+    merge-base (the wave's ``base_sha``) WITHOUT updating HEAD or recording a
+    merge — then we commit them as ONE squashed commit. This preserves the
+    "one conductor commit per task" linear audit trail and drops the agent's
+    intermediate red/green WIP commits that would muddy the F2 story. (``git
+    cherry-pick`` has no ``--squash``; ``merge --squash`` is the canonical tool.)
+
+    The caller MUST guard the empty case first (``_git_range_commit_count == 0``
+    → agent committed nothing → FAILURE); a squash-merge of an up-to-date branch
+    stages nothing and the commit would fail. Returns the new HEAD SHA (str) on
+    success, or ``None`` on conflict/failure (the merge is aborted and the index
+    left clean so the track branch is unchanged — the caller fails the member).
+    """
+    try:
+        import subprocess
+        merge = subprocess.run(
+            ["git", "merge", "--squash", ref],
+            capture_output=True, text=True, cwd=repo_root, timeout=30
+        )
+        if merge.returncode != 0:
+            # Conflict (or dirty tree) — abort and leave the index clean so the
+            # track branch is unchanged. Caller marks the member conflict→fail.
+            subprocess.run(
+                ["git", "merge", "--abort"],
+                capture_output=True, text=True, cwd=repo_root, timeout=10
+            )
+            # Defensive: clear any residual staged squash state.
+            subprocess.run(
+                ["git", "reset", "--hard", "HEAD"],
+                capture_output=True, text=True, cwd=repo_root, timeout=10
+            )
+            print(f"WARNING: merge --squash conflict for '{ref}': "
+                  f"{merge.stderr.strip() or merge.stdout.strip()}", file=sys.stderr)
+            return None
+        commit = subprocess.run(
+            ["git", "commit", "-m", message],
+            capture_output=True, text=True, cwd=repo_root, timeout=10
+        )
+        if commit.returncode != 0:
+            # Nothing staged (empty merge) or commit refused — reset and signal.
+            subprocess.run(
+                ["git", "reset", "--hard", "HEAD"],
+                capture_output=True, text=True, cwd=repo_root, timeout=10
+            )
+            print(f"WARNING: squash commit failed: {commit.stderr.strip()}",
+                  file=sys.stderr)
+            return None
+        return _git_head_sha(repo_root)
+    except Exception as e:
+        print(f"WARNING: merge --squash error: {e}", file=sys.stderr)
+        return None
+
+
+def _git_worktree_remove(repo_root, worktree_path):
+    """Remove a worktree (``git worktree remove --force``). Best-effort."""
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["git", "worktree", "remove", "--force", worktree_path],
+            capture_output=True, text=True, cwd=repo_root, timeout=15
+        )
+        if result.returncode != 0:
+            print(f"WARNING: git worktree remove failed: {result.stderr.strip()}",
+                  file=sys.stderr)
+            return False
+        return True
+    except Exception as e:
+        print(f"WARNING: git worktree remove error: {e}", file=sys.stderr)
+        return False
+
+
+def _git_branch_delete(repo_root, branch):
+    """Delete a branch (``git branch -D``). Best-effort; never raises."""
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["git", "branch", "-D", branch],
+            capture_output=True, text=True, cwd=repo_root, timeout=10
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
