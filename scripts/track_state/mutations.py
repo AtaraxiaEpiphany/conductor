@@ -48,6 +48,40 @@ def _set_current_indices(state, pi, ti, si=None):
         state.pop("current_subtask_index", None)
 
 
+def _lock_inplace(state, pi, ti, si=None):
+    """Mark target ``(pi, ti[, si])`` in_progress with a fresh recovery budget.
+
+    The lock-the-target half of :func:`_do_lock`, operating on an already-loaded
+    ``state`` (caller holds the transaction). Omits the two serial-spine-only
+    concerns so a wave can lock several members in one transaction:
+
+    - **No F1 check** — :func:`_foreign_in_progress` is the serial spine's
+      "exactly one in_progress" gate; a wave's authority to hold multiple
+      in_progress tasks comes from the ``.conductor/parallel.json`` ledger, not
+      F1. The wave guards (``_fix_stale_lock`` / ``check_f1_rule`` / dispatch
+      refusal) honor that ledger instead.
+    - **No cursor / parent propagation** — the singleton ``current_*_index``
+      stays untouched (the serial spine owns it); wave members are flat
+      top-level tasks, so subtask parent-propagation never applies.
+
+    ``_do_lock`` calls this for its serial path; the wave scheduler
+    (``wave._wave_lock``) calls it per member inside one transaction.
+    """
+    tgt = target(state, pi, ti, si)
+    tgt["status"] = "in_progress"
+    # retry_count/last_failure_summary are intrinsic task history, never reset on lock.
+    clean(tgt, {"status", "retry_count", "last_failure_summary"})
+    # Fresh recovery budget — a new (re)lock is a new attempt. The SubagentStop
+    # hook bumps RECOVERY_TURN_FIELD each time a result-file agent stops without
+    # a fresh result.json, bounded by lib.recovery.MAX_RECOVERY_TURNS. Not in
+    # _RESET_FIELDS, so clean() above leaves it; set explicitly every lock so a
+    # resumed/re-locked task starts at zero.
+    tgt[RECOVERY_TURN_FIELD] = 0
+    # Heartbeat for the stale-lock reaper (validate._fix_stale_lock): a task
+    # still in_progress past STALE_LOCK_SECONDS is a killed-session orphan.
+    tgt[LOCKED_AT_FIELD] = time.time()
+
+
 def _do_lock(track_dir, p, t, s=None):
     pi, ti = int(p), int(t)
     si = int(s) if s is not None else None
@@ -65,19 +99,7 @@ def _do_lock(track_dir, p, t, s=None):
                 + ". Run `track-state validate --fix` to clear stale locks."
             )
 
-        tgt = target(state, pi, ti, si)
-        tgt["status"] = "in_progress"
-        # retry_count/last_failure_summary are intrinsic task history, never reset on lock.
-        clean(tgt, {"status", "retry_count", "last_failure_summary"})
-        # Fresh recovery budget — a new (re)lock is a new attempt. The SubagentStop
-        # hook bumps RECOVERY_TURN_FIELD each time a result-file agent stops
-        # without a fresh result.json, bounded by lib.recovery.MAX_RECOVERY_TURNS.
-        # Not in _RESET_FIELDS, so clean() above leaves it; we set it explicitly
-        # every lock so a resumed/re-locked task starts at zero.
-        tgt[RECOVERY_TURN_FIELD] = 0
-        # Heartbeat for the stale-lock reaper (validate._fix_stale_lock): a task
-        # still in_progress past STALE_LOCK_SECONDS is a killed-session orphan.
-        tgt[LOCKED_AT_FIELD] = time.time()
+        _lock_inplace(state, pi, ti, si)
 
         _set_current_indices(state, pi, ti, si)
         if si is not None:
