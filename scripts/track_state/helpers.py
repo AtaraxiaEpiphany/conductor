@@ -13,6 +13,24 @@ from .constants import (
 )
 
 
+def _resolve_conductor_root(track_dir):
+    """Walk up from ``track_dir`` to the conductor root (the dir holding tracks.md).
+
+    Returns the conductor root ``Path``, or ``None`` when no ancestor contains
+    ``tracks.md`` — the fail-open signal that tells ``cmd_preflight`` to skip the
+    workflow-files check rather than guess a location. Standard track layout is
+    ``conductor/tracks/<name>``, so the ancestor two levels up (``conductor/``)
+    is the root; walking is robust to nesting depth and to relative paths.
+    """
+    try:
+        p = Path(track_dir).resolve(strict=False)
+    except OSError:
+        return None
+    for cand in (p, *p.parents):
+        if (cand / "tracks.md").exists():
+            return cand
+    return None
+
 
 def flag(args, name):
     """Parse a --flag value from args list. Supports --flag=val and --flag val."""

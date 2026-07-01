@@ -76,7 +76,12 @@ def _make_project(track_id="office-cli_20260618", status="completed"):
     _git(root, "init", "-q")
     _git(root, "config", "user.email", "t@t")
     _git(root, "config", "user.name", "t")
-    track_dir = Path(root) / "conductor" / "tracks" / track_id
+    cond = Path(root) / "conductor"
+    cond.mkdir(parents=True)
+    # tracks.md at the conductor root lets _resolve_conductor_root locate the
+    # archive/ sibling dir — matches real layout.
+    (cond / "tracks.md").write_text("# Tracks Registry\n")
+    track_dir = cond / "tracks" / track_id
     track_dir.mkdir(parents=True)
     save(str(track_dir), _state(track_id, status))
     _git(root, "add", "-A")
@@ -113,7 +118,11 @@ class ArchiveDocsyncGateTests(TestCase):
         self.assertTrue(res["ok"])
         self.assertEqual(res["status"], "archived")
         self.assertNotIn("warning", res)
-        self.assertEqual(json.loads((track_dir / "track-state.json").read_text())["status"],
+        # Relocated: old dir gone, state now lives under archive/<id>.
+        self.assertFalse(track_dir.exists())
+        archived_dir = Path(res["track_dir"])
+        self.assertEqual(archived_dir, Path(root) / "conductor" / "archive" / track_dir.name)
+        self.assertEqual(json.loads((archived_dir / "track-state.json").read_text())["status"],
                          "archived")
 
     def test_force_archives_without_commit_and_warns(self):
@@ -123,6 +132,10 @@ class ArchiveDocsyncGateTests(TestCase):
         self.assertTrue(res["ok"])
         self.assertEqual(res["status"], "archived")
         self.assertIn("warning", res)
+        # Still relocated even under --force.
+        self.assertFalse(track_dir.exists())
+        self.assertEqual(Path(res["track_dir"]),
+                         Path(root) / "conductor" / "archive" / track_dir.name)
 
     def test_force_synced_emits_no_warning(self):
         root, track_dir = _make_project()
@@ -131,6 +144,9 @@ class ArchiveDocsyncGateTests(TestCase):
         res = _out_captured(cmd_archive, str(track_dir), force=True)
         self.assertTrue(res["ok"])
         self.assertNotIn("warning", res)
+        self.assertFalse(track_dir.exists())
+        self.assertEqual(Path(res["track_dir"]),
+                         Path(root) / "conductor" / "archive" / track_dir.name)
 
     def test_refuses_non_completed_status(self):
         root, track_dir = _make_project(status="in_progress")
@@ -138,6 +154,53 @@ class ArchiveDocsyncGateTests(TestCase):
         res = _out_captured(cmd_archive, str(track_dir))
         self.assertFalse(res["ok"])
         self.assertIn("Cannot archive", res["error"])
+
+    def test_archive_relocates_dir(self):
+        root, track_dir = _make_project()
+        self.addCleanup(__import__("shutil").rmtree, root, True)
+        _docs_commit(root, track_dir.name)
+        res = _out_captured(cmd_archive, str(track_dir))
+        self.assertTrue(res["ok"])
+        # Old tracks/<id> is gone; archive/<id> holds the relocated state.
+        self.assertFalse(track_dir.exists())
+        archived_dir = Path(root) / "conductor" / "archive" / track_dir.name
+        self.assertTrue(archived_dir.is_dir())
+        self.assertEqual(res["track_dir"], str(archived_dir))
+        self.assertEqual(res["archived_dir"], str(archived_dir))
+        self.assertEqual(json.loads((archived_dir / "track-state.json").read_text())["status"],
+                         "archived")
+
+    def test_archive_idempotent_when_already_moved(self):
+        # Simulate re-entry after a move-before-commit interruption: the track
+        # is already archived AND already relocated under archive/. Re-running
+        # archive must be a no-op (ok), not an error or a re-move.
+        root, track_dir = _make_project()
+        self.addCleanup(__import__("shutil").rmtree, root, True)
+        _docs_commit(root, track_dir.name)
+        first = _out_captured(cmd_archive, str(track_dir))
+        self.assertTrue(first["ok"])
+        archived_dir = Path(first["track_dir"])
+        second = _out_captured(cmd_archive, str(archived_dir))
+        self.assertTrue(second["ok"])
+        self.assertEqual(second["status"], "archived")
+        self.assertEqual(Path(second["track_dir"]), archived_dir)
+        self.assertIn("note", second)
+
+    def test_archive_refuses_destination_collision(self):
+        root, track_dir = _make_project()
+        self.addCleanup(__import__("shutil").rmtree, root, True)
+        _docs_commit(root, track_dir.name)
+        # Pre-create the archive destination so the move would clobber it.
+        dest = Path(root) / "conductor" / "archive" / track_dir.name
+        dest.mkdir(parents=True)
+        (dest / "blocker").write_text("pre-existing")
+        res = _out_captured(cmd_archive, str(track_dir))
+        self.assertFalse(res["ok"])
+        self.assertIn("destination already exists", res["error"])
+        # Original track untouched on collision.
+        self.assertTrue(track_dir.exists())
+        self.assertEqual(json.loads((track_dir / "track-state.json").read_text())["status"],
+                         "completed")
 
 
 class DocsSyncedHelperTests(TestCase):

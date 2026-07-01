@@ -9,6 +9,7 @@ from .core import load, save
 from .helpers import (
     out, now_iso, target, extract_tags, _reset_task,
     _any_phase_needs_checkpoint, conductor_dir, _tag_exempt_from_coverage,
+    _resolve_conductor_root,
 )
 from .mutations import _do_complete
 from .sync import _do_sync_plan
@@ -31,25 +32,6 @@ _TRACK_CORE_FILES = ("spec.md", "plan.md", "track-state.json")
 # never HALT setup on a non-standard layout (and the existing preflight tests,
 # which use temp dirs without a project layout, stay green).
 _WORKFLOW_FILES = ("workflow/index.md", "workflow/post-loop.md")
-
-
-def _resolve_conductor_root(track_dir):
-    """Walk up from ``track_dir`` to the conductor root (the dir holding tracks.md).
-
-    Returns the conductor root ``Path``, or ``None`` when no ancestor contains
-    ``tracks.md`` — the fail-open signal that tells ``cmd_preflight`` to skip the
-    workflow-files check rather than guess a location. Standard track layout is
-    ``conductor/tracks/<name>``, so the ancestor two levels up (``conductor/``)
-    is the root; walking is robust to nesting depth and to relative paths.
-    """
-    try:
-        p = Path(track_dir).resolve(strict=False)
-    except OSError:
-        return None
-    for cand in (p, *p.parents):
-        if (cand / "tracks.md").exists():
-            return cand
-    return None
 
 
 def cmd_preflight(track_dir):
