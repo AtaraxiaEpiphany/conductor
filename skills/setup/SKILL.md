@@ -42,7 +42,7 @@ CRITICAL: Validate every tool call. On failure → halt → announce.
    PROJECT_DIR={project root}
    ```
 
-   Parse `---ANALYSIS RESULT---` block.
+   Parse `---ANALYSIS RESULT---` block. **Persist the full detection tree** to `conductor/.conductor/analysis.json` (create `.conductor/` if absent) — this is the durable record for later consumers (e.g. doc-syncer seeding, future `/conductor:wiki` queries about the stack), so the analyzer's one-pass detection is not lost. Subsequent steps (§2.3 Tech Stack pre-fill, §3.2 description) operate on the live fields (`languages`, `frameworks`) from the block.
 3. **Greenfield:** Ask "What do you want to build?"
 4. Init git if needed. Create `conductor/` directory.
 

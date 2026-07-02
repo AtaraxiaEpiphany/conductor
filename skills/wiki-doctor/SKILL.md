@@ -69,7 +69,7 @@ Then HALT.
 
 **Agent dispatch operation.** Delegates to the existing `doc-linter` agent for a full wiki health audit.
 
-### 3.1 Dispatch Doc Linter (loop-until-dry + per-finding refute)
+### 3.1 Dispatch Doc Linter (loop-until-dry + per-field refute fan-out)
 
 A single lint pass both **over-reports** (false positives a deterministic check bakes in) and **under-reports** (findings one read misses). This section runs a convergent loop — lint → dedup → refute the new findings → re-lint, stopping on a dry round (loop-until-dry + adversarial-verification). `wiki-doctor` has `Write` but no `Bash`, so the findings handoff to the refute pass is a JSON file written via `Write` (which creates `.conductor/` if absent); it is transient scratch, not a wiki doc.
 
@@ -87,15 +87,15 @@ Loop — **max 3 rounds**:
 
 2. **Dedup vs `seen`.** `NEW = F − seen` (signatures). Add `NEW` to `seen`. **`NEW` empty** → a dry round (the lint re-found only already-seen findings) → announce `"🔍 Wiki lint: dry (<N> accumulated)"` → §3.2 with the accumulated survivor result.
 
-3. **Per-finding refute** — `Write` `NEW` to `{PROJECT_DIR}/.conductor/wiki-lint-findings.json` as `{"<FIELD>": [<finding>, ...], ...}`, then dispatch `conductor:doc-linter`, prompt:
+3. **Per-field refute fan-out** — refute each category in its own narrow dispatch, in parallel. For each **non-empty field** in `NEW` (up to 6: `ORPHANS`, `STALE_CLAIMS`, `CONTRADICTIONS`, `GAPS`, `LOG_ISSUES`, `MISSING_FRONTMATTER`), `Write` a **single-field** JSON `{PROJECT_DIR}/.conductor/wiki-lint-findings-<FIELD>.json` as `{"<FIELD>": [<finding>, ...]}`. doc-linter's `FINDINGS_JSON` contract accepts a single-field subset of its field→list map — so this needs **no agent change**. Then dispatch **one `conductor:doc-linter` refute per non-empty field, ALL in ONE message** (parallel fan-out), each prompt:
 
    ```
    PROJECT_DIR={PROJECT_DIR}
    MODE=refute
-   FINDINGS_JSON={PROJECT_DIR}/.conductor/wiki-lint-findings.json
+   FINDINGS_JSON={PROJECT_DIR}/.conductor/wiki-lint-findings-<FIELD>.json
    ```
 
-   Parse the returned `---DOC LINT RESULT---` block → **survivors** (the agent re-resolves each finding and **defaults to refuted when uncertain**, suppressing false positives). Merge survivors into the accumulated survivor result (union per field, deduped).
+   Each refute re-resolves only its own field's findings — a narrower, cheaper context than one fat refute context-switching across all six check types — and **defaults to refuted when uncertain**, suppressing false positives. Parse each returned `---DOC LINT RESULT---` block → that field's **survivors**. Merge survivors into the accumulated survivor result (union per field, deduped). A field with no `NEW` findings needs no refute — skip it (fewer dispatches; the all-empty case is the dry-round exit in step 2, not a silent cap here). If a round has `k` non-empty fields, dispatch exactly `k` refutes — no fixed 6 dispatch stubs for empty fields.
 
 4. **Loop back to step 1** — a fresh full lint may surface findings the prior read missed. **After 3 rounds** still producing `NEW` findings → stop: announce `"🔍 Wiki lint: 3 rounds → <M> residual findings"` → §3.2 with the accumulated survivor result.
 
@@ -164,42 +164,53 @@ Based on STATUS:
 1. `SUB_ARGS` present → `SCOPE` = `SUB_ARGS` (a wiki page or topic area, e.g. `architecture` checks only architecture-related claims).
 2. `SUB_ARGS` empty → `SCOPE` = full diff (all wiki documents).
 
-### 4.2 Dispatch Wiki Differ (loop-until-dry)
+### 4.2 Dispatch Wiki Differ (loop-until-dry + per-category refute fan-out)
 
-`wiki-differ` is deterministic, but a single pass can miss drift a closer re-read catches — so wrap the dispatch in a convergent loop (loop-until-dry). Unlike lint (§3.1), `wiki-differ` has no `refute` mode, so this loop is **completeness-only** (re-dispatch until a dry round), not precision.
+A single diff pass both **over-reports** (a Glob miss that was a pattern quirk, not a real stale ref; a coverage count that shifts on a second read) and **under-reports** (drift one read misses). This section runs a convergent loop — diff → dedup → refute the new drift → re-diff, stopping on a dry round (loop-until-dry + adversarial-verification). `wiki-differ` now has a `refute` mode (single-category `FINDINGS_JSON`, mirroring doc-linter §2.5), so this loop is **precision AND completeness** — not completeness-only. `wiki-doctor` has `Write` but no `Bash`, so the findings handoff to the refute pass is a JSON file written via `Write` (which creates `.conductor/` if absent); it is transient scratch, not a wiki doc.
 
-**Resolve project root:** `PROJECT_DIR` = current working directory. Maintain `seen` — drift-item signatures (`<STALE|MOVED|UNCOVERED>:<path>`).
+**Resolve project root:** `PROJECT_DIR` = current working directory. Maintain `seen` — drift-item signatures (`<STALE|MOVED|UNCOVERED>:<item>`) — and an **accumulated survivor result** (starts as an all-zero/all-empty block).
 
 Loop — **max 3 rounds**:
 
-1. Dispatch `conductor:wiki-differ`, prompt:
+1. **Diff pass** — dispatch `conductor:wiki-differ` (default `MODE=full`), prompt:
 
    ```
    PROJECT_DIR={PROJECT_DIR}
    SCOPE={scope, or empty for full diff}
+   REPORT_PATH={PROJECT_DIR}/.conductor/wiki-diff-report.md
    ```
 
-   The agent loads the wiki docs, extracts verifiable claims (file/module/function/directory references; structural claims flagged unverifiable), checks each against the code via Glob/Grep (valid/moved/stale), verifies code→wiki coverage (full diff only), and returns a single `---WIKI DIFF RESULT---` block whose body carries the structured counts **and** the full markdown report inside it (the output filter strips anything outside the block, so wiki-differ emits no separate report).
+   The agent loads the wiki docs, extracts verifiable claims, checks each against the code (valid/moved/stale), verifies coverage (full diff only), **writes the full markdown report to `REPORT_PATH`**, and returns a lean `---WIKI DIFF RESULT---` block (counts + inline `-- list`s + the `REPORT_PATH` pointer — the bulky report lives at REPORT_PATH, not inside the block). Parse the block. `STATUS: FAILURE` → announce `REASON` → HALT. Flatten the round's drift items `F`: the non-empty categories among STALE/MOVED/UNCOVERED contribute their inline semicolon-separated items. **`F` empty (`STALE=MOVED=UNCOVERED=0`)** → a dry round → announce `"🔍 Wiki diff: clean"` → skip to §4.3 with the accumulated survivor result + REPORT_PATH.
 
-2. `STATUS: FAILURE` → announce `REASON` → await instructions. `STATUS: COMPLETED` → collect the round's drift items `F` (the STALE/MOVED/UNCOVERED paths from the counts). **`F` empty (`STALE=MOVED=UNCOVERED=0`)** → a dry round → carry this report to §4.3.
+2. **Dedup vs `seen`.** `NEW = F − seen` (signatures). Add `NEW` to `seen`. **`NEW` empty** → a dry round (the re-dispatch re-found only already-seen drift) → announce `"🔍 Wiki diff: dry (<N> accumulated)"` → §4.3 with the accumulated survivor result + REPORT_PATH.
 
-3. `NEW = F − seen`; add `NEW` to `seen`. **`NEW` empty** → a dry round (the re-dispatch re-found only already-seen drift) → carry this report to §4.3. Otherwise this round's report is the most complete so far.
+3. **Per-category refute fan-out** — refute each refutable category in its own narrow dispatch, in parallel. For each **non-empty category** in `NEW` among `STALE`, `MOVED`, `UNCOVERED` (`THIN` is a coverage gradation and `STRUCTURAL` is by definition unverifiable — neither is refutable), `Write` a **single-category** JSON `{PROJECT_DIR}/.conductor/wiki-diff-findings-<CAT>.json` as `{"<CAT>": [<item>, ...]}`. wiki-differ's `FINDINGS_JSON` contract accepts a single-category subset — so this needs **no agent change** beyond the §2.5 refute mode. Then dispatch **one `conductor:wiki-differ` refute per non-empty category, ALL in ONE message** (parallel fan-out), each prompt:
 
-4. **Loop back to step 1.** **After 3 rounds** still producing `NEW` drift → stop → carry the latest (most complete) report to §4.3.
+   ```
+   PROJECT_DIR={PROJECT_DIR}
+   MODE=refute
+   FINDINGS_JSON={PROJECT_DIR}/.conductor/wiki-diff-findings-<CAT>.json
+   ```
 
-The report carried into §4.3 is the converged (or 3-round-budget-capped) diff.
+   Each refute re-resolves only its own category's items — re-Globs the path, re-Greps the identifier, re-counts coverage — and **defaults to refuted when uncertain**, suppressing false positives. Parse each returned `---WIKI DIFF RESULT---` block → that category's **survivors** (the inline list). Merge survivors into the accumulated survivor result (union per category, deduped). A category with no `NEW` items needs no refute — skip it. If a round has `k` non-empty categories, dispatch exactly `k` refutes — no fixed stubs for empty categories.
+
+4. **Loop back to step 1** — a fresh full diff may surface drift the prior read missed. **After 3 rounds** still producing `NEW` drift → stop: announce `"🔍 Wiki diff: 3 rounds → <M> residual findings"` → §4.3 with the accumulated survivor result + REPORT_PATH.
+
+Carry the **accumulated survivor result** AND **REPORT_PATH** into §4.3 (present) / §4.4 (recommend). The survivor result is the refuted bottom line; REPORT_PATH is the full markdown detail.
 
 ### 4.3 Parse Result
 
-Parse the `---WIKI DIFF RESULT---` block:
-
 1. **`STATUS: FAILURE`** → announce the `REASON` → await instructions.
-2. **`STATUS: COMPLETED`** → the block body below the count fields **is** the markdown diff report; present it to the user, then proceed to §4.4. (The report lives inside the block because the output filter strips anything outside it — wiki-differ emits no separate report.)
+2. **`STATUS: COMPLETED`** → present:
+   - The **survivor counts** from the accumulated survivor result — the post-refute bottom line (`<N> stale · <N> moved · <N> uncovered survived refute`).
+   - The **full markdown report** read from `REPORT_PATH` (default `{PROJECT_DIR}/.conductor/wiki-diff-report.md`) — the rich per-item detail (source doc, what was expected, coverage table). Note: REPORT_PATH is written pre-refute by the diff pass, so it may list items the refute stripped; the survivor counts above are the authoritative bottom line.
+
+   Then proceed to §4.4.
 3. **No block detected** → announce "Wiki-differ completed without structured result. Check the conversation for details."
 
 ### 4.4 Recommendations
 
-Branch on the counts from the block:
+Branch on the **accumulated survivor counts** (post-refute):
 
 - `STALE > 0` → "Stale references found. Run `/conductor:wiki query <topic>` to verify the current state, then update the affected wiki pages."
 - `MOVED > 0` → "Paths have moved. Update wiki references to current locations."
