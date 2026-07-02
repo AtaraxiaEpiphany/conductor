@@ -228,7 +228,9 @@ Skip-analyst result: `can_skip` → `track-state skip` or `block` → `sync-plan
 
 `[Review]` is a **name marker, not a tag** — it does NOT enter the `[Docs]`/`[Config]`/… exemption logic, so a reviewable task still owes TDD (F2) and coverage (F3).
 
-When opted in (after a SUCCESSFUL `dispatch-finalize`, before §3.7), run ONE bounded review iteration (review own changes → request a reviewer pass → fix → escalate only on judgment):
+When opted in (after a SUCCESSFUL `dispatch-finalize`, before §3.7), run a **convergent review loop** — review own changes → fix → re-review — that stops on a *dry* round, not a fixed count (loop-until-dry). A single self-certifying pass is exactly the self-preferential bias this loop exists to cure; convergence drives it to zero NEW Critical/High instead of declaring victory after one pass.
+
+Maintain a `seen` set of finding **signatures** (`severity+title+file+lines`). Dedup **new** findings vs `seen` (NOT vs the set you just fixed) — a finding that re-appears unchanged after a fix is a *residual*, counted separately, not "new".
 
 1. **Reviewer pass** — dispatch `conductor:code-reviewer` (read-only) on the task's own commit range `<task_sha>~1..<task_sha>`, prompt:
 
@@ -237,11 +239,11 @@ When opted in (after a SUCCESSFUL `dispatch-finalize`, before §3.7), run ONE bo
    TRACK_ID={id}
    REVISION_RANGE={sha}~1..{sha}
    ```
-2. **Decide from the `---REVIEW RESULT---` block** (substring-check the severities):
-   - **No `Critical`/`High` findings** → loop satisfied → announce `"🔍 Self-review [Review]: clean"` → §3.7.
-   - **`Critical`/`High` present** → re-dispatch `conductor:task-executor` with `ATTEMPT={n+1}` and the findings as remediation context (the agent fixes its own changes), then `dispatch-finalize` again.
-3. **Bounded to ONE fix iteration** — no runaway loop. After the iteration, announce residual findings: `"🔍 Self-review [Review]: {N} findings → 1 fix iteration → {M} residual"`.
-4. **Escalate on residual judgment only** — if `Critical` findings persist after the iteration, surface them via `AskUserQuestion` (fix-guidance / accept-with-debt / block). Medium/Low residual → note and proceed (do not block the loop on nits).
+2. **Decide from the `---REVIEW RESULT---` block** (substring-check the severities), counting only NEW `Critical`/`High` (signatures not already in `seen`):
+   - **Zero NEW `Critical`/`High`** — a dry round (K=1 empty pass) → loop satisfied → announce `"🔍 Self-review [Review]: clean"` → §3.7.
+   - **NEW `Critical`/`High` present** → add their signatures to `seen`; re-dispatch `conductor:task-executor` with `ATTEMPT={n+1}` and the NEW findings as remediation context (the agent fixes its own changes), `dispatch-finalize` again, then loop back to step 1.
+3. **Budget guard — max 3 fix iterations.** No runaway loop. If still not dry after 3 fix iterations, stop iterating and announce: `"🔍 Self-review [Review]: {N} findings → 3 fix iterations → {M} residual"`.
+4. **Escalate on residual judgment only** — if `Critical` findings persist once the budget is spent (or at any dry stop that still leaves residual Critical), surface them via `AskUserQuestion` (fix-guidance / accept-with-debt / block). Medium/Low residual → note and proceed (do not block the loop on nits).
 
 This loop is orchestration over the existing `code-reviewer` + `task-executor` agents — no new agent, no new hook.
 
@@ -251,7 +253,7 @@ This loop is orchestration over the existing `code-reviewer` + `task-executor` a
 track-state phase-done "<track_dir>" <phase>
 ```
 
-`complete=true` → dispatch `conductor:phase-checker` (§3.2), `PHASE=<phase>`. FAILED → HALT. Otherwise → Section 3.1.
+`complete=true` → dispatch `conductor:phase-checker` (§3.2), `PHASE=<phase>`. FAILED → HALT (surface `FAILURE_REASON`; an AC-trace authoring defect requires editing `spec.md`/`plan.md` then re-running the phase — not a `task-executor` retry). Otherwise → Section 3.1.
 `complete=false` → Section 3.1.
 
 ### 3.8 Action: `finalize`
