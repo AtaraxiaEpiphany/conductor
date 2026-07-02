@@ -78,6 +78,56 @@ This is the **L2** tier of the verification hierarchy: L0 static → L1 unit/int
 
 Carry the recorded L2 outcome into Step 7's verification report.
 
+### Addendum — Step 3.6: AC Evidence Trace (INSERT between Step 3.5 and Step 4)
+
+The **completeness-critic** tier of verification: L1 tests pass and L2 browser E2E
+passes, yet an individual Acceptance Criterion in `spec.md` was never grounded by
+a real named test. This step traces every AC to evidence and refuses to
+checkpoint a phase that silently drops an AC. The substrate is
+`track-state spec-integrity` (`scripts/track_state/spec_integrity.py`); this
+addendum is the binding runtime gate — the env-var override and the §8.0
+`AC_TRACE` line live here, the imperative step in
+`conductor/workflow/phase-checkpoint.md` (Step 3.6) is the inherited base.
+
+**Decide applicability:**
+- Does `{TRACK_DIR}/spec.md` exist and contain an `## Acceptance Criteria`
+  section with at least one `- AC-n:` entry? If **no spec / no ACs** → record
+  `AC_TRACE: skipped (no spec/ACs)` and proceed to Step 4. (The integrity CLI
+  returns `ac_integrity_gate: N/A` here — there is no signal to gate on; tracks
+  without a formal spec are not penalized, matching the CLI's WARN-only posture.)
+
+**If applicable:**
+1. Run `track-state spec-integrity "{TRACK_DIR}"` (the `track-state` CLI — not a
+   raw `python3` invocation) and parse the JSON.
+2. **Gate verdict (binding).** If `ac_integrity_gate` starts with `FAILED` →
+   report **STATUS: FAILED** with the gate string pasted **verbatim** as
+   `FAILURE_REASON`. It self-documents the offending AC IDs and the exact
+   authoring fix — e.g. "add a `TC-{n}.{m} | AC-{n} | ...` row under ##
+   Test Scenarios", "annotate the implementing task in plan.md with a
+   `<!-- AC-n -->`". This is a **spec/plan authoring defect, not a code
+   defect** — do NOT retry `task-executor`; it requires editing `spec.md` /
+   `plan.md` then re-running the phase.
+3. **Evidence grounding (advisory unless strict).** From the `ac_evidence` list,
+   count TCs whose `status` is `claimed` (in a completed task's
+   `evidence.tc_coverage` but no named `def test_TC_*`) or `missing` (neither).
+   Call that count `N_ungrounded`.
+   - **Default (advisory):** `N_ungrounded > 0` → record
+     `AC_TRACE: warn (N_ungrounded ungrounded)` and **proceed**. The measured
+     twin already carries this signal once as `ac_verification_measured_rate`;
+     the gate stays WARN-only by default.
+   - **Strict:** if env `CONDUCTOR_AC_VERIFY_STRICT=1` → `N_ungrounded > 0`
+     → report **STATUS: FAILED** with
+     `FAILURE_REASON: AC evidence ungrounded (N_ungrounded TC(s) claimed/missing
+     a named test_TC_{n}_{m}_*) — write the grounding tests or unset
+     CONDUCTOR_AC_VERIFY_STRICT`. This mirrors the `CONDUCTOR_SELF_REVIEW=1`
+     opt-in discipline: strict AC verification is off by default, on when the
+     operator asks.
+   - `N_ungrounded == 0` → record `AC_TRACE: passed` (every AC's TCs grounded by
+     real named tests).
+
+Carry the `AC_TRACE` outcome and the per-AC `ac_evidence` list into the Step 7
+verification report (the git-notes step), alongside the L2 outcome.
+
 ### Addendum — Step 5: continuous mode
 
 **If `EXECUTION_MODE == "interactive"`:** present the manual verification plan via `AskUserQuestion` and **PAUSE** for confirmation (do not proceed without it), as the template specifies:
@@ -135,6 +185,7 @@ CHECKPOINT_SHA: <7-char-short-hash>
 MISSING_TESTS_CREATED: <count>
 TESTS_PASSED: true
 USER_CONFIRMED: <true|skipped_continuous>
+AC_TRACE: <passed|warn (N ungrounded)|skipped (reason)>
 ---END RESULT---
 ```
 

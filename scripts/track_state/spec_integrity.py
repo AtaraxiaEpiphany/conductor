@@ -28,11 +28,13 @@ _TC_ID = re.compile(r"TC-\d+\.\d+")
 
 # A test function that GROUNDS a TC: ``def test_TC_2_1_*(…)`` (see
 # plan-format-contract.md §Test↔TC Naming Link). group(1)/group(2) are the TC
-# numbers, reconstructed as ``TC-{n}.{m}``. The lookahead ``(?=[_(\s])`` is
+# numbers, reconstructed as ``TC-{n}.{m}``; group(3) is the name suffix (e.g.
+# ``_happy``), so the full function name is ``test_TC_{n}_{m}{suffix}`` (empty
+# suffix for a bare ``test_TC_2_1``). The lookahead ``(?=[_(\s])`` is
 # load-bearing — without it ``test_TC_2_1`` would match as a prefix of
 # ``test_TC_2_10`` (yielding TC-2.1 instead of TC-2.10). ``(?:async\s+)?`` so
 # ``async def test_…`` is captured too. Multi-digit-safe, like spec_parse._TC_ROW.
-_TEST_TC_FN = re.compile(r"\b(?:async\s+)?def\s+test_TC_(\d+)_(\d+)(?=[_(\s])")
+_TEST_TC_FN = re.compile(r"\b(?:async\s+)?def\s+test_TC_(\d+)_(\d+)(\w*)(?=[_(\s])")
 
 # Path segments that never hold the track's own tests — skip the whole subtree.
 # Applied to EVERY part so nested leakage is caught: htmlcov / a checked-in venv
@@ -74,18 +76,22 @@ def _covered_tcs(state):
     return covered
 
 
-def _measured_tcs(track_dir):
-    """Set of TC IDs GROUNDED by real test functions under ``track_dir``.
+def _measured_tcs_with_locations(track_dir):
+    """Map of TC ID → ``{"test", "location"}`` for every grounding test function.
 
-    The measured twin of ``_covered_tcs`` (self-report): instead of trusting
-    ``evidence.tc_coverage`` it scans ``test_*.py`` / ``*_test.py`` for
-    ``def test_TC_{n}_{m}`` functions (plan-format-contract.md §Test↔TC Naming
-    Link) and reconstructs ``TC-{n}.{m}``. Skips vendored/generated subtrees
-    via ``_SKIP_PARTS`` and strips ``#`` comments so a commented-out test
-    function can't fake grounding. Returns ``set()`` when the convention is
-    unadopted — callers treat empty as "unmeasured" (None rate), not 0%.
+    The located twin of ``_measured_tcs``: the SAME scan (same ``_SKIP_PARTS``
+    subtree exclusion, same per-line ``#``-comment strip, same multi-digit-safe
+    ``_TEST_TC_FN`` boundary) but iterated **per line** so each grounding records
+    the function ``test`` name and a ``file:line`` location (path relative to the
+    track root, posix separators). First-wins on duplicate TC IDs (a TC grounded
+    in two files reports the first found — the set view hides the rest, exactly
+    as before).
+
+    Returns ``{}`` when the naming convention is unadopted — callers treat empty
+    as "unmeasured" (None rate), not 0%. ``_measured_tcs`` is a thin set-view
+    wrapper over this; the integrity enrichment (``ac_evidence``) reads the map.
     """
-    measured = set()
+    measured = {}
     root = Path(track_dir)
     for p in root.rglob("*.py"):
         if _SKIP_PARTS & set(p.parts):
@@ -96,11 +102,39 @@ def _measured_tcs(track_dir):
             text = p.read_text(errors="ignore")
         except OSError:
             continue
-        # Strip ``#`` comments so ``# def test_TC_2_1()`` can't fake grounding.
-        stripped = "\n".join(re.sub(r"#.*$", "", ln) for ln in text.splitlines())
-        for n, m in _TEST_TC_FN.findall(stripped):
-            measured.add(f"TC-{n}.{m}")
+        rel = p.relative_to(root).as_posix()
+        # Per-line scan so each grounding carries its ``file:line``; strip ``#``
+        # comments per line so ``# def test_TC_2_1()`` can't fake grounding.
+        for lineno, ln in enumerate(text.splitlines(), 1):
+            stripped = re.sub(r"#.*$", "", ln)
+            mt = _TEST_TC_FN.search(stripped)
+            if not mt:
+                continue
+            n, tc_m, suffix = mt.group(1), mt.group(2), mt.group(3)
+            tc = f"TC-{n}.{tc_m}"
+            if tc in measured:
+                continue  # first-wins
+            measured[tc] = {
+                "test": f"test_TC_{n}_{tc_m}{suffix}",
+                "location": f"{rel}:{lineno}",
+            }
     return measured
+
+
+def _measured_tcs(track_dir):
+    """Set of TC IDs GROUNDED by real test functions under ``track_dir``.
+
+    Thin set-view wrapper over ``_measured_tcs_with_locations`` (same scan,
+    dropping the location detail). The measured twin of ``_covered_tcs``
+    (self-report): instead of trusting ``evidence.tc_coverage`` it scans
+    ``test_*.py`` / ``*_test.py`` for ``def test_TC_{n}_{m}`` functions
+    (plan-format-contract.md §Test↔TC Naming Link) and reconstructs
+    ``TC-{n}.{m}``. Skips vendored/generated subtrees via ``_SKIP_PARTS`` and
+    strips ``#`` comments so a commented-out test function can't fake grounding.
+    Returns ``set()`` when the convention is unadopted — callers treat empty as
+    "unmeasured" (None rate), not 0%.
+    """
+    return set(_measured_tcs_with_locations(track_dir).keys())
 
 
 def _verified_acs(acs, tc_to_ac, covered):
@@ -128,6 +162,43 @@ def _verified_acs(acs, tc_to_ac, covered):
     return verified, partial, unverified
 
 
+def compute_ac_evidence_map(acs, tc_to_ac, covered, measured_map):
+    """Per-AC evidence trace: for each AC, list its TCs with a grounding status.
+
+    Status per TC (measured wins over claimed, so a real test always overrides
+    a self-report):
+
+      * ``measured`` — a real ``def test_TC_{n}_{m}`` grounds it; carries the
+        ``test`` name and ``location`` (``file:line``) from ``measured_map``.
+      * ``claimed`` — present in a completed task's ``evidence.tc_coverage``
+        (``covered``) but NOT grounded by a named test (agent claims, didn't
+        write the named test — the self-report-inflation signal).
+      * ``missing`` — neither measured nor claimed.
+
+    ACs with no TCs (orphans, flagged under Rate 1) carry an empty ``tcs``
+    list. Pure function over its inputs — no FS access — so it is unit-testable
+    without a track dir. Used by ``compute_ac_integrity`` to enrich the result
+    with the additive ``ac_evidence`` key; the integrity gate is unchanged.
+    """
+    out = []
+    for ac in acs:
+        ac_tcs = [tc for tc, a in tc_to_ac.items() if a == ac]
+        entries = []
+        for tc in ac_tcs:
+            if tc in measured_map:
+                entries.append({
+                    "id": tc, "status": "measured",
+                    "test": measured_map[tc]["test"],
+                    "location": measured_map[tc]["location"],
+                })
+            elif tc in covered:
+                entries.append({"id": tc, "status": "claimed"})
+            else:
+                entries.append({"id": tc, "status": "missing"})
+        out.append({"ac": ac, "tcs": entries})
+    return out
+
+
 def _empty(fr_count=0, nfr_count=0):
     """Degraded result: no ACs to rate (no spec.md, or spec has no ACs)."""
     return {
@@ -146,6 +217,7 @@ def _empty(fr_count=0, nfr_count=0):
         "partial_acs": [],
         "spec_errors": [],
         "ac_integrity_gate": "N/A",
+        "ac_evidence": [],
         "ears_warnings": [],
         "ears_gate": "N/A",
     }
@@ -262,7 +334,15 @@ def compute_ac_integrity(track_dir):
 
     # --- Rate 3 (self-report): AC verification (all its TCs in completed-task
     # evidence.tc_coverage — what the agent CLAIMS). Reported, NOT gated.
-    covered = _covered_tcs(load(track_dir))
+    # track-state.json may not exist yet at planning time (new-track §2.3 runs
+    # this BEFORE §2.6 creates state). No state ⇒ no completed-task evidence ⇒
+    # an empty covered set (Rate 3 self-report is 0%, which is correct — the
+    # gate uses only Rate 1/2, so a fresh track is gated on AC→TC + AC→plan
+    # traceability, not on verification it hasn't had a chance to do yet).
+    try:
+        covered = _covered_tcs(load(track_dir))
+    except FileNotFoundError:
+        covered = set()
     verified, partial, unverified = _verified_acs(acs, tc_to_ac, covered)
     ac_verification_rate = round(100 * len(verified) / len(acs), 1)
 
@@ -273,13 +353,20 @@ def compute_ac_integrity(track_dir):
     # evidence is always present), measured has none until tests follow the
     # naming link. So ac_verification_rate can be a real 0.0 while this is None;
     # that gap is the "agent claims but didn't write named tests" signal.
-    measured = _measured_tcs(track_dir)
+    measured_map = _measured_tcs_with_locations(track_dir)
+    measured = set(measured_map)
     if measured:
         verified_m, _partial_m, _unverified_m = _verified_acs(
             acs, tc_to_ac, measured)
         ac_verification_measured_rate = round(100 * len(verified_m) / len(acs), 1)
     else:
         ac_verification_measured_rate = None
+
+    # Per-AC evidence trace (completeness-critic substrate): each AC's TCs with a
+    # measured/claimed/missing grounding status. Additive — the integrity gate is
+    # unchanged; phase-checker / new-track surface this to close the "phase passes
+    # L1/L2 while an AC is never grounded" hole.
+    ac_evidence = compute_ac_evidence_map(acs, tc_to_ac, covered, measured_map)
 
     return {
         "ac_count": len(acs),
@@ -299,6 +386,7 @@ def compute_ac_integrity(track_dir):
         "ac_integrity_gate": _gate(
             ac_tc_coverage_rate, orphan_acs, ac_traceability_rate,
             untraced_acs, dangling_ac_refs),
+        "ac_evidence": ac_evidence,
         "ears_warnings": ears_warn,
         "ears_gate": _ears_gate_str(ears_warn),
     }

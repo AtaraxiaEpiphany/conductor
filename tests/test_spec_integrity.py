@@ -14,7 +14,8 @@ from unittest import TestCase, main
 
 from scripts.track_state.core import save
 from scripts.track_state.spec_integrity import (
-    compute_ac_integrity, _ac_integrity_gate, _measured_tcs)
+    compute_ac_integrity, _ac_integrity_gate, _measured_tcs,
+    _measured_tcs_with_locations, compute_ac_evidence_map)
 from scripts.track_state.misc import cmd_spec_integrity
 
 
@@ -212,6 +213,19 @@ class DegradationTests(TestCase):
         d = _track()  # completely empty dir
         self.assertEqual(_ac_integrity_gate(d), "N/A")
 
+    def test_missing_state_does_not_crash(self):
+        # new-track §2.3 runs spec-integrity BEFORE §2.6 creates track-state.json.
+        # A pre-execution track has no completed tasks ⇒ empty covered set ⇒
+        # Rate 3 self-report is 0.0; the gate (Rate 1/2 only) still reflects
+        # authoring quality. Must not raise FileNotFoundError.
+        d = _track(_SPEC_2AC, _PLAN_2AC)  # NO state=
+        r = compute_ac_integrity(d)
+        self.assertEqual(r["ac_integrity_gate"], "PASS")  # both ACs traced + covered
+        self.assertEqual(r["ac_tc_coverage_rate"], 100.0)
+        self.assertEqual(r["ac_traceability_rate"], 100.0)
+        self.assertEqual(r["ac_verification_rate"], 0.0)  # no completed tasks yet
+        self.assertIn("ac_evidence", r)  # enrichment still emits
+
 
 class CmdSpecIntegrityTests(TestCase):
     def test_emits_single_json_with_gate(self):
@@ -229,6 +243,8 @@ class CmdSpecIntegrityTests(TestCase):
             sys.stdout = old
         self.assertEqual(r["ac_integrity_gate"], "PASS")
         self.assertEqual(r["ac_count"], 2)
+        # The additive per-AC evidence trace rides the CLI forwarding unchanged.
+        self.assertIn("ac_evidence", r)
 
 
 class MeasuredRateTests(TestCase):
@@ -307,6 +323,117 @@ class MeasuredRateTests(TestCase):
             ("foo/site-packages/pkg/test_TC_1_1_pkg.py",
              "def test_TC_1_1_pkg():\n    pass\n"))
         self.assertEqual(_measured_tcs(d), set())
+
+    # --- located map view (the ac_evidence substrate) ------------------------
+
+    def test_measured_with_locations_records_test_and_fileline(self):
+        d = self._track_with_tests(_SPEC_2AC, _PLAN_2AC,
+            ("tests/test_basic.py", "def test_TC_2_1_basic():\n    pass\n"))
+        loc = _measured_tcs_with_locations(d)
+        self.assertEqual(loc["TC-2.1"]["test"], "test_TC_2_1_basic")
+        self.assertEqual(loc["TC-2.1"]["location"], "tests/test_basic.py:1")
+
+    def test_locations_distinct_lines_in_multifn_file(self):
+        # Two grounding fns in one file must each report their own line number.
+        content = ("def test_TC_1_1_a():\n    pass\n\n"
+                   "def test_TC_2_1_b():\n    pass\n")
+        d = self._track_with_tests(_SPEC_2AC, _PLAN_2AC,
+            ("tests/test_a.py", content))
+        loc = _measured_tcs_with_locations(d)
+        self.assertEqual(loc["TC-1.1"]["location"], "tests/test_a.py:1")
+        self.assertEqual(loc["TC-2.1"]["location"], "tests/test_a.py:4")
+        self.assertEqual(loc["TC-1.1"]["test"], "test_TC_1_1_a")
+
+    def test_bare_test_name_has_empty_suffix(self):
+        # ``def test_TC_2_1()`` (no descriptor) still records the bare name.
+        d = self._track_with_tests(_SPEC_2AC, _PLAN_2AC,
+            ("tests/test_a.py", "def test_TC_2_1():\n    pass\n"))
+        loc = _measured_tcs_with_locations(d)
+        self.assertEqual(loc["TC-2.1"]["test"], "test_TC_2_1")
+
+    def test_map_view_strips_comments_and_skips_parts(self):
+        d = self._track_with_tests(_SPEC_2AC, _PLAN_2AC,
+            ("tests/test_a.py", "# def test_TC_2_1_faked():\n"),
+            ("htmlcov/test_TC_1_1_cov.py", "def test_TC_1_1_cov():\n    pass\n"))
+        self.assertEqual(_measured_tcs_with_locations(d), {})
+
+    def test_measured_tcs_set_equals_locations_keys(self):
+        # The wrapper must preserve the exact set[str] contract (regression net).
+        d = self._track_with_tests(_SPEC_2AC, _PLAN_2AC,
+            ("tests/test_a.py", "def test_TC_1_1_happy():\n    pass\n"),
+            ("tests/test_b.py", "def test_TC_2_1_happy():\n    pass\n"))
+        self.assertEqual(_measured_tcs(d), set(_measured_tcs_with_locations(d)))
+
+
+class AcEvidenceMapTests(TestCase):
+    """The per-AC evidence trace (completeness-critic substrate): each AC's TCs
+    classified measured / claimed / missing. ``compute_ac_evidence_map`` is a pure
+    function over its inputs (no FS); the integration path (``ac_evidence`` key)
+    is covered here too."""
+
+    def test_evidence_map_classifies_all_three_statuses(self):
+        acs = ["AC-1", "AC-2"]
+        tc_to_ac = {"TC-1.1": "AC-1", "TC-1.2": "AC-1", "TC-2.1": "AC-2"}
+        covered = {"TC-1.1"}                       # claimed only
+        measured_map = {"TC-1.2": {                # grounded by a real test
+            "test": "test_TC_1_2_x", "location": "t.py:3"}}
+        emap = compute_ac_evidence_map(acs, tc_to_ac, covered, measured_map)
+        by_ac = {e["ac"]: {t["id"]: t for t in e["tcs"]} for e in emap}
+        # TC-1.2 measured (wins over nothing), TC-1.1 claimed, TC-2.1 missing.
+        self.assertEqual(by_ac["AC-1"]["TC-1.2"]["status"], "measured")
+        self.assertEqual(by_ac["AC-1"]["TC-1.1"]["status"], "claimed")
+        self.assertEqual(by_ac["AC-2"]["TC-2.1"]["status"], "missing")
+        # measured carries test + location; claimed/missing carry neither.
+        self.assertEqual(by_ac["AC-1"]["TC-1.2"]["test"], "test_TC_1_2_x")
+        self.assertEqual(by_ac["AC-1"]["TC-1.2"]["location"], "t.py:3")
+        self.assertNotIn("test", by_ac["AC-1"]["TC-1.1"])
+        self.assertNotIn("location", by_ac["AC-2"]["TC-2.1"])
+
+    def test_evidence_map_measured_wins_over_claimed(self):
+        # A TC both claimed (covered) AND measured reports measured.
+        acs = ["AC-1"]
+        tc_to_ac = {"TC-1.1": "AC-1"}
+        covered = {"TC-1.1"}
+        measured_map = {"TC-1.1": {"test": "test_TC_1_1_a", "location": "t.py:1"}}
+        emap = compute_ac_evidence_map(acs, tc_to_ac, covered, measured_map)
+        self.assertEqual(emap[0]["tcs"][0]["status"], "measured")
+
+    def test_evidence_map_orphan_ac_has_empty_tcs(self):
+        # An AC with no TCs (orphan) carries an empty tcs list, not a missing entry.
+        acs = ["AC-1", "AC-2"]
+        tc_to_ac = {"TC-1.1": "AC-1"}              # AC-2 has no TC
+        emap = compute_ac_evidence_map(acs, tc_to_ac, set(), {})
+        by_ac = {e["ac"]: e["tcs"] for e in emap}
+        self.assertEqual(by_ac["AC-2"], [])
+
+    def test_ac_integrity_includes_ac_evidence_enrichment(self):
+        d = self._track_with_tests(_SPEC_2AC, _PLAN_2AC,
+            ("tests/test_a.py", "def test_TC_1_1_happy():\n    pass\n"))
+        r = compute_ac_integrity(d)
+        self.assertIn("ac_evidence", r)
+        self.assertEqual({e["ac"] for e in r["ac_evidence"]}, {"AC-1", "AC-2"})
+        by_ac = {e["ac"]: {t["id"]: t["status"] for t in e["tcs"]}
+                 for e in r["ac_evidence"]}
+        # State fixture claims TC-1.1 + TC-2.1; only TC-1.1 is grounded by a test.
+        self.assertEqual(by_ac["AC-1"]["TC-1.1"], "measured")
+        self.assertEqual(by_ac["AC-2"]["TC-2.1"], "claimed")
+
+    def test_ac_evidence_empty_when_no_spec(self):
+        d = _track()  # empty dir → degraded _empty() result
+        r = compute_ac_integrity(d)
+        self.assertEqual(r["ac_evidence"], [])
+
+    def _track_with_tests(self, spec, plan, *test_files):
+        """Shared fixture builder (mirrors MeasuredRateTests._track_with_tests)."""
+        d = _track(spec, plan, _state([
+            {"name": "a", "status": "completed", "evidence": {"tc_coverage": "TC-1.1 TC-2.1"}},
+            {"name": "[Manual] verify P1", "status": "pending"},
+        ]))
+        for relpath, content in test_files:
+            p = Path(d, relpath)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(content)
+        return d
 
 
 class EarsLintTests(TestCase):
