@@ -118,6 +118,12 @@ After ALL members return → **§4.0** (integrate each, in any order).
 
 No deps-declared file-disjoint pending task is ready in the current phase. Make serial progress — a serial task may satisfy a dep that unlocks the next wave.
 
+**Read the `ineligible` list first.** It carries one `{phase, task, name, reason}` per pending task that was rejected, with `reason` ∈ `subtasked` | `non_executor` | `no_deps_comment` | `deps_unsatisfied`. Announce the blocker — do NOT silently fall to serial when the author clearly intended parallelism:
+
+- `subtasked` → the dominant case. A task with subtasks is **flat-only-excluded in v1** — it can never be a wave member. If the author wants it parallel, they must **flatten** it (drop the subtasks, inline the work) and add `<!-- deps: -->`. Announce: `"⚠️ P{p}.T{t} '{name}' has subtasks — v1 waves are flat-only. Flatten + add <!-- deps: --> to parallelize."` See plan-format-contract.md §8.
+- `no_deps_comment` → the opt-in comment is missing or malformed (e.g. `<deps m.n>` instead of `<!-- deps: -->`). Announce the offending task so the author can fix the syntax.
+- `deps_unsatisfied` / `non_executor` → expected (a dep not yet met, or a `[Manual]`/`[Explore]` task). No announcement needed unless every candidate is blocked.
+
 ```bash
 track-state dispatch-next "<track_dir>"
 ```

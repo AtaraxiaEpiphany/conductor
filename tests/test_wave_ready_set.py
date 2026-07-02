@@ -14,7 +14,7 @@ from scripts.track_state.core import save
 from scripts.track_state.plan_parse import parse_plan
 from scripts.track_state.wave import (
     _ready_set, _eligible_members, _current_phase, _dep_satisfied,
-    DEFAULT_WAVE_SIZE,
+    _pending_ineligibility, DEFAULT_WAVE_SIZE,
 )
 
 
@@ -240,6 +240,91 @@ class TestReadySet(unittest.TestCase):
         st = _state([{"name": "P1", "tasks": [
             {"name": "Task A: x", "status": "pending"}]}])
         self.assertEqual(_ready_set(st, parsed, 5), [])
+
+
+class TestPendingIneligibility(unittest.TestCase):
+    """_pending_ineligibility classifies WHY each pending task was rejected.
+
+    Mirror of _eligible_members: each pending task that failed a gate gets a
+    {phase, task, name, reason} dict, reason = the FIRST failing gate in the
+    same check order (subtasked → non_executor → no_deps_comment →
+    deps_unsatisfied). cmd_dispatch_wave surfaces this on a no_ready_tasks so
+    the orchestrator tells the author which gate killed each candidate.
+    """
+    def _plan(self, body):
+        parsed, d = _parsed_with(body)
+        self.addCleanup(shutil.rmtree, d)
+        return parsed
+
+    def _reasons(self, st, parsed, phase):
+        return {m["task"]: m["reason"] for m in
+                _pending_ineligibility(st, parsed, phase)}
+
+    def test_empty_when_all_eligible(self):
+        body = "# Plan\n\n## Phase 1: Build\n- [ ] Task A: x <!-- deps: -->\n"
+        parsed = self._plan(body)
+        st = _state([{"name": "P1", "tasks": [
+            {"name": "Task A: x", "status": "pending"}]}])
+        self.assertEqual(_pending_ineligibility(st, parsed, 1), [])
+
+    def test_each_gate_reported(self):
+        # One task per reason code + one eligible task.
+        body = ("# Plan\n\n## Phase 1: Build\n"
+                "- [ ] Task: indep <!-- deps: -->\n"            # eligible
+                "- [ ] Task: nooptin\n"                          # no_deps_comment
+                "- [ ] Task: big <!-- deps: -->\n"              # subtasked
+                "  - [ ] Subtask: one\n"
+                "- [ ] [Manual] Task: m <!-- deps: -->\n"        # non_executor
+                "- [ ] Task: waits <!-- deps: P1.T1 -->\n")      # deps_unsatisfied (T1 pending)
+        parsed = self._plan(body)
+        st = _state([{"name": "P1", "tasks": [
+            {"name": "Task: indep", "status": "pending"},
+            {"name": "Task: nooptin", "status": "pending"},
+            {"name": "Task: big", "status": "pending",
+             "subtasks": [{"name": "Subtask: one", "status": "pending"}]},
+            {"name": "[Manual] Task: m", "status": "pending"},
+            {"name": "Task: waits", "status": "pending"}]}])
+        self.assertEqual(self._reasons(st, parsed, 1), {
+            2: "no_deps_comment", 3: "subtasked",
+            4: "non_executor", 5: "deps_unsatisfied"})
+
+    def test_first_failing_gate_wins(self):
+        # A subtasked task that ALSO lacks a deps comment reports "subtasked"
+        # (the flat check precedes the opt-in check), matching _eligible_members.
+        body = ("# Plan\n\n## Phase 1: Build\n"
+                "- [ ] Task: big-nooptin\n"
+                "  - [ ] Subtask: one\n")
+        parsed = self._plan(body)
+        st = _state([{"name": "P1", "tasks": [
+            {"name": "Task: big-nooptin", "status": "pending",
+             "subtasks": [{"name": "Subtask: one", "status": "pending"}]}]}])
+        self.assertEqual(self._reasons(st, parsed, 1), {1: "subtasked"})
+
+    def test_non_pending_not_reported(self):
+        # in_progress / terminal tasks are not candidates — never classified.
+        body = "# Plan\n\n## Phase 1: Build\n- [ ] Task: a\n- [ ] Task: b <!-- deps: -->\n"
+        parsed = self._plan(body)
+        st = _state([{"name": "P1", "tasks": [
+            {"name": "Task: a", "status": "completed"},      # terminal, skipped
+            {"name": "Task: b", "status": "in_progress"}]}])  # not pending, skipped
+        self.assertEqual(_pending_ineligibility(st, parsed, 1), [])
+
+    def test_entry_shape(self):
+        body = "# Plan\n\n## Phase 1: Build\n- [ ] Task: a\n"
+        parsed = self._plan(body)
+        st = _state([{"name": "P1", "tasks": [
+            {"name": "Task: a", "status": "pending"}]}])
+        out = _pending_ineligibility(st, parsed, 1)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0], {"phase": 1, "task": 1,
+                                  "name": "Task: a", "reason": "no_deps_comment"})
+
+    def test_invalid_phase_returns_empty(self):
+        body = "# Plan\n\n## Phase 1: Build\n- [ ] Task: a <!-- deps: -->\n"
+        parsed = self._plan(body)
+        st = _state([{"name": "P1", "tasks": [
+            {"name": "Task: a", "status": "pending"}]}])
+        self.assertEqual(_pending_ineligibility(st, parsed, 9), [])
 
 
 if __name__ == "__main__":

@@ -157,6 +157,30 @@ def _dep_satisfied(state, p, t):
     return tgt.get("status") in _DEP_SATISFIED
 
 
+def _plan_deps_index(parsed):
+    """Derive the per-task deps opt-in flag + declared-deps map from a plan.
+
+    Returns ``(has_comment, deps_of)``:
+    - ``has_comment``: ``{(phase, task): bool}`` — whether the task line carried a
+      ``<!-- deps: -->`` comment (the wave opt-in gate; presence, not content).
+    - ``deps_of``: ``{(phase, task): [(p, t), ...]}`` — declared dependency
+      targets for that task (empty list when none declared). Covers ALL phases —
+      a dep may target an earlier phase's task.
+
+    Shared by ``_eligible_members`` (the gate) and ``_pending_ineligibility``
+    (the per-task "why rejected" classifier) so the two never diverge on what
+    counts as a deps comment or a declared edge.
+    """
+    has_comment = {}
+    for pi, ph in enumerate(parsed.get("phases", []), 1):
+        for ti, tk in enumerate(ph.get("tasks", []), 1):
+            has_comment[(pi, ti)] = bool(tk.get("deps_has_comment"))
+    deps_of = {}
+    for src, tgt in collect_deps(parsed):
+        deps_of.setdefault(src, []).append(tgt)
+    return has_comment, deps_of
+
+
 def _eligible_members(state, parsed, phase):
     """File-disjoint, deps-resolved pending tasks in ``phase`` eligible for a wave.
 
@@ -183,15 +207,9 @@ def _eligible_members(state, parsed, phase):
         return []
 
     # Per-task declared deps + opt-in flag, drawn from plan.md (the source of
-    # truth for deps annotations). deps_of covers ALL phases — a dep may target
-    # an earlier phase's task.
-    deps_of = {}
-    has_comment = {}
-    for pi, ph in enumerate(parsed.get("phases", []), 1):
-        for ti, tk in enumerate(ph.get("tasks", []), 1):
-            has_comment[(pi, ti)] = bool(tk.get("deps_has_comment"))
-    for src, tgt in collect_deps(parsed):
-        deps_of.setdefault(src, []).append(tgt)
+    # truth for deps annotations). Shared with _pending_ineligibility so the
+    # eligibility filter and the ineligibility classifier reason about one index.
+    has_comment, deps_of = _plan_deps_index(parsed)
 
     eligible = []
     for ti, task in enumerate(state["phases"][phase - 1]["tasks"], 1):
@@ -220,6 +238,56 @@ def _ready_set(state, parsed, phase):
     historical capped-list contract (``tests/test_wave_ready_set.py`` imports it).
     """
     return _eligible_members(state, parsed, phase)[:DEFAULT_WAVE_SIZE]
+
+
+def _pending_ineligibility(state, parsed, phase):
+    """Classify WHY each pending task in ``phase`` is NOT wave-eligible.
+
+    The mirror of ``_eligible_members``: instead of the eligible list, returns
+    one ``{"phase", "task", "name", "reason"}`` dict per pending task that failed
+    at least one gate, with ``reason`` set to the FIRST gate that rejected it —
+    in the SAME check order as ``_eligible_members`` (flat → executor → opt-in →
+    deps-satisfied), so the reported cause is exactly the gate that excluded it.
+
+    Reason codes:
+    - ``"subtasked"``        — has subtasks (flat-only, v1; subtasks are
+                              sequentially decomposed, never parallel candidates);
+    - ``"non_executor"``     — routed ``[Manual]``/``[Explore]`` (no parallelizable
+                              body);
+    - ``"no_deps_comment"``  — missing the ``<!-- deps: -->`` opt-in comment
+                              (the author did not declare the task independent);
+    - ``"deps_unsatisfied"`` — has a deps comment but a declared target is not yet
+                              completed/skipped/deferred.
+
+    Non-pending tasks (in_progress / terminal) are NOT reported — they are not
+    candidates. An empty list means every pending task in the phase is eligible.
+    Consumed by ``cmd_dispatch_wave`` so a ``no_ready_tasks`` envelope tells the
+    orchestrator *which* gate killed each candidate, not just that none qualified
+    (no-silent-X: a generic "no eligible tasks" hides the common case where every
+    task is subtasked or missing the opt-in comment).
+    """
+    if phase < 1 or phase > len(state.get("phases", [])):
+        return []
+    has_comment, deps_of = _plan_deps_index(parsed)
+    out = []
+    for ti, task in enumerate(state["phases"][phase - 1]["tasks"], 1):
+        if task.get("status") != "pending":
+            continue
+        name = task.get("name", "")
+        if task.get("subtasks"):
+            reason = "subtasked"
+        elif _classify_task(extract_tags(name)) != "executor":
+            reason = "non_executor"
+        elif not has_comment.get((phase, ti)):
+            reason = "no_deps_comment"
+        else:
+            deps = deps_of.get((phase, ti), [])
+            if not all(_dep_satisfied(state, dp, dt) for dp, dt in deps):
+                reason = "deps_unsatisfied"
+            else:
+                continue  # eligible — nothing to report
+        out.append({"phase": phase, "task": ti, "name": name, "reason": reason})
+    return out
 
 
 # --- worktree plumbing ------------------------------------------------------
@@ -358,7 +426,8 @@ def cmd_dispatch_wave(track_dir, compact=True):
     eligible = _eligible_members(state, parsed, phase)
     if not eligible:
         emit(dict(action="no_ready_tasks", phase=phase,
-                  reason="no deps-declared file-disjoint pending tasks in phase"),
+                  reason="no deps-declared file-disjoint pending tasks in phase",
+                  ineligible=_pending_ineligibility(state, parsed, phase)),
              "dispatch-wave", compact)
         return
     # Split into the capped ready-set and the deferred overflow. The deferred
