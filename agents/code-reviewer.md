@@ -39,6 +39,23 @@ The orchestrator supplies these parameters:
 | `PRODUCT_GUIDELINES` | Path to product-guidelines.md                |
 | `TECH_STACK`         | Path to tech-stack.md                        |
 | `STYLEGUIDES_DIR`    | Path to code style guides directory          |
+| `MODE`               | Optional. `full` (default) / `refute` / `critique` — see §2.5. Omitting it is identical to `full` (backward-compatible). |
+| `FINDINGS_JSON`      | Optional. Path to a producer pass's findings JSON; consumed only by `refute` mode. |
+| `RESULT_PATH`        | Optional. Output JSON path. Defaults to `{TRACK_DIR}/.conductor/review-result.json`; distinct paths let a multi-pass caller keep passes separate. |
+
+---
+
+## 2.5 MODE ROUTING
+
+Three modes share this agent's analysis core; the orchestrator selects one via `MODE` (default `full`). All modes write JSON to `RESULT_PATH` (§4.1) and emit the same terse `---REVIEW RESULT---` stdout block (§4.2).
+
+- **`full` (default)** — the standard holistic review: §3.1–§3.4, all seven checklist items. Produces the full findings list. This is the historical behavior; omitting `MODE` is identical.
+
+- **`refute`** — adversarial. Read the producer's findings from `FINDINGS_JSON`. For EACH finding, attempt to **refute it against the actual code** — re-open the file/lines, check the claim still holds, check the suggested fix is valid. **Default to refuted when uncertain**: a finding that cannot be positively re-confirmed does not survive (this is the cure for producer self-certification / self-preferential bias). Return survivors only, each re-grounded with the confirming line. The checklist re-derivation (§3.4) does not run — the question is narrower and cheaper: "does finding X actually hold?" Set `status`/counts to reflect the survivor set.
+
+- **`critique`** — completeness-critic. Run the analysis core (§3.1–§3.4) but report ONLY defect classes the producer pass plausibly missed — a class the producer's findings already cover is NOT re-reported (the orchestrator dedups, but you should not re-emit duplicates either). The goal is to surface what a single holistic pass missed, not to relitigate what it caught. If the producer missed nothing material, return an empty findings list (that is a valid, honest critic outcome).
+
+`refute` requires `FINDINGS_JSON`; if it is missing/unreadable → emit STATUS: FAILURE (`REASON: refute mode requires a readable FINDINGS_JSON`). `critique` and `full` ignore `FINDINGS_JSON`.
 
 ---
 
@@ -125,14 +142,15 @@ Dual output: result file + terse stdout.
 
 ### 4.1 Result File
 
-Write full review to `{TRACK_DIR}/.conductor/review-result.json` via Bash:
+Write full review to `{RESULT_PATH}` (defaults to `{TRACK_DIR}/.conductor/review-result.json`) via Bash:
 
 ```bash
-mkdir -p "{TRACK_DIR}/.conductor"
-cat > "{TRACK_DIR}/.conductor/review-result.json" << 'EOF'
+mkdir -p "$(dirname "{RESULT_PATH}")"
+cat > "{RESULT_PATH}" << 'EOF'
 {
   "status": "SUCCESS",
   "summary": "<single sentence>",
+  "mode": "full|refute|critique",
   "checks": {
     "plan_compliance": "Yes|No|Partial",
     "state_consistency": "Consistent|Inconsistent",
@@ -151,6 +169,8 @@ cat > "{TRACK_DIR}/.conductor/review-result.json" << 'EOF'
 }
 EOF
 ```
+
+For `refute` mode, `findings` holds the **survivors** (producer findings that held up under re-examination) and `stats` reflects the survivor counts; include a `"refuted": <count>` field for transparency. For `critique` mode, `findings` holds **only newly-discovered** defect classes (may be empty — an honest "nothing missed"). In both cases the `checks` block is optional (the narrower modes may not exercise every checklist item); emit `"mode"` so the orchestrator's synthesis step knows which pass wrote the file.
 
 ### 4.2 Stdout (terse — parsed by orchestrator)
 

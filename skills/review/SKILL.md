@@ -49,9 +49,11 @@ Parse output: use the `range` field (`{first}~1..{last}`) — it includes the fi
    - `tech-stack.md`
    - code style guides directory
 
-### 2.3 Dispatch Code Reviewer
+### 2.3 Dispatch Code Review (adversarial 3-pass)
 
-Dispatch `conductor:code-reviewer`, prompt:
+A single holistic review self-certifies — the same agent that produced a finding is inclined to confirm it, so false positives survive and whole defect classes go unasked. This skill runs a **serial producer → refuter → critic** sequence (adversarial-verification + completeness-critic) over `code-reviewer`'s shared analysis core, then synthesizes one authoritative findings list. Serial, not concurrent: the refuter consumes the producer's findings as input, and the three passes write distinct result files.
+
+**Pass 1 — Producer.** Dispatch `conductor:code-reviewer` (default `MODE=full`), prompt:
 
 ```
 TRACK_DIR={track_dir}
@@ -62,7 +64,27 @@ TECH_STACK={path}
 STYLEGUIDES_DIR={path}
 ```
 
-Parse `---REVIEW RESULT---` block.
+Findings **A** land in `{track_dir}/.conductor/review-result.json` (the default `RESULT_PATH`). Parse the `---REVIEW RESULT---` block. `STATUS: FAILURE` → announce, skip passes 2–3, and treat it as a failed single-pass review (non-blocking) per §2.4.
+
+**Pass 2 — Adversarial refuter.** Run **only if A has `Critical`/`High` findings** (Medium/Low aren't worth a refute pass). Dispatch `conductor:code-reviewer` with the same range + context paths:
+
+```
+TRACK_DIR={track_dir}
+TRACK_ID={track_id}
+REVISION_RANGE={range}
+PRODUCT_GUIDELINES={path}
+TECH_STACK={path}
+STYLEGUIDES_DIR={path}
+MODE=refute
+FINDINGS_JSON={track_dir}/.conductor/review-result.json
+RESULT_PATH={track_dir}/.conductor/review-refute.json
+```
+
+The refuter re-opens each finding against the code and **defaults to refuted when uncertain** → survivors **B** (false positives dropped) land in `review-refute.json`. If A had no Critical/High, skip — set B = A.
+
+**Pass 3 — Completeness critic.** Dispatch `conductor:code-reviewer` with `MODE=critique RESULT_PATH={track_dir}/.conductor/review-critique.json` (same range + context). The critic reports **only defect classes the producer missed** → new findings **C** in `review-critique.json` (may be empty — "nothing missed" is a valid outcome).
+
+**Synthesize.** Read all three result files. Merged findings = **B ∪ C** (refute survivors + the critic's newly-discovered classes), deduped by signature (`severity+title+file+lines`). Overwrite `{track_dir}/.conductor/review-result.json` with the merged set and recompute `stats`, so the §3.0 "Apply Fixes" path consumes one authoritative list. Carry the merged counts into §2.4.
 
 ### 2.4 Process Result
 
