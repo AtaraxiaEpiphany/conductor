@@ -69,14 +69,37 @@ Then HALT.
 
 **Agent dispatch operation.** Delegates to the existing `doc-linter` agent for a full wiki health audit.
 
-### 3.1 Dispatch Doc Linter
+### 3.1 Dispatch Doc Linter (loop-until-dry + per-finding refute)
 
-1. **Resolve project root:** Set `PROJECT_DIR` to the current working directory (project root).
-2. Dispatch `conductor:doc-linter`, prompt:
+A single lint pass both **over-reports** (false positives a deterministic check bakes in) and **under-reports** (findings one read misses). This section runs a convergent loop — lint → dedup → refute the new findings → re-lint, stopping on a dry round (loop-until-dry + adversarial-verification). `wiki-doctor` has `Write` but no `Bash`, so the findings handoff to the refute pass is a JSON file written via `Write` (which creates `.conductor/` if absent); it is transient scratch, not a wiki doc.
 
-```
-PROJECT_DIR={PROJECT_DIR}
-```
+**Resolve project root:** `PROJECT_DIR` = current working directory. Maintain `seen` — a set of finding signatures (`<FIELD>:<finding>`) — and an **accumulated survivor result** (starts as an all-zero/all-empty block).
+
+Loop — **max 3 rounds**:
+
+1. **Lint pass** — dispatch `conductor:doc-linter` (default `MODE=full`), prompt:
+
+   ```
+   PROJECT_DIR={PROJECT_DIR}
+   ```
+
+   Parse the `---DOC LINT RESULT---` block (§3.2 format). `STATUS: FAILURE` → announce `REASON` → HALT. Flatten the round's findings `F`: every non-empty field among ORPHANS/STALE_CLAIMS/CONTRADICTIONS/GAPS/LOG_ISSUES/MISSING_FRONTMATTER contributes its semicolon-separated entries. **`F` empty (or `STATUS: PASS`)** → a dry round → announce `"🔍 Wiki lint: clean"` → skip to §3.2 with the accumulated survivor result.
+
+2. **Dedup vs `seen`.** `NEW = F − seen` (signatures). Add `NEW` to `seen`. **`NEW` empty** → a dry round (the lint re-found only already-seen findings) → announce `"🔍 Wiki lint: dry (<N> accumulated)"` → §3.2 with the accumulated survivor result.
+
+3. **Per-finding refute** — `Write` `NEW` to `{PROJECT_DIR}/.conductor/wiki-lint-findings.json` as `{"<FIELD>": [<finding>, ...], ...}`, then dispatch `conductor:doc-linter`, prompt:
+
+   ```
+   PROJECT_DIR={PROJECT_DIR}
+   MODE=refute
+   FINDINGS_JSON={PROJECT_DIR}/.conductor/wiki-lint-findings.json
+   ```
+
+   Parse the returned `---DOC LINT RESULT---` block → **survivors** (the agent re-resolves each finding and **defaults to refuted when uncertain**, suppressing false positives). Merge survivors into the accumulated survivor result (union per field, deduped).
+
+4. **Loop back to step 1** — a fresh full lint may surface findings the prior read missed. **After 3 rounds** still producing `NEW` findings → stop: announce `"🔍 Wiki lint: 3 rounds → <M> residual findings"` → §3.2 with the accumulated survivor result.
+
+Carry the **accumulated survivor result** into §3.2 (parse) / §3.3 (present) — that merged, deduped, false-positive-stripped block is the report.
 
 ### 3.2 Parse Result
 
@@ -141,17 +164,30 @@ Based on STATUS:
 1. `SUB_ARGS` present → `SCOPE` = `SUB_ARGS` (a wiki page or topic area, e.g. `architecture` checks only architecture-related claims).
 2. `SUB_ARGS` empty → `SCOPE` = full diff (all wiki documents).
 
-### 4.2 Dispatch Wiki Differ
+### 4.2 Dispatch Wiki Differ (loop-until-dry)
 
-1. **Resolve project root:** `PROJECT_DIR` = current working directory.
-2. Dispatch `conductor:wiki-differ`, prompt:
+`wiki-differ` is deterministic, but a single pass can miss drift a closer re-read catches — so wrap the dispatch in a convergent loop (loop-until-dry). Unlike lint (§3.1), `wiki-differ` has no `refute` mode, so this loop is **completeness-only** (re-dispatch until a dry round), not precision.
 
-```
-PROJECT_DIR={PROJECT_DIR}
-SCOPE={scope, or empty for full diff}
-```
+**Resolve project root:** `PROJECT_DIR` = current working directory. Maintain `seen` — drift-item signatures (`<STALE|MOVED|UNCOVERED>:<path>`).
 
-The agent loads the wiki docs, extracts verifiable claims (file/module/function/directory references; structural claims flagged unverifiable), checks each against the code via Glob/Grep (valid/moved/stale), verifies code→wiki coverage (full diff only), and returns a single `---WIKI DIFF RESULT---` block whose body carries the structured counts **and** the full markdown report inside it (the output filter strips anything outside the block, so wiki-differ emits no separate report).
+Loop — **max 3 rounds**:
+
+1. Dispatch `conductor:wiki-differ`, prompt:
+
+   ```
+   PROJECT_DIR={PROJECT_DIR}
+   SCOPE={scope, or empty for full diff}
+   ```
+
+   The agent loads the wiki docs, extracts verifiable claims (file/module/function/directory references; structural claims flagged unverifiable), checks each against the code via Glob/Grep (valid/moved/stale), verifies code→wiki coverage (full diff only), and returns a single `---WIKI DIFF RESULT---` block whose body carries the structured counts **and** the full markdown report inside it (the output filter strips anything outside the block, so wiki-differ emits no separate report).
+
+2. `STATUS: FAILURE` → announce `REASON` → await instructions. `STATUS: COMPLETED` → collect the round's drift items `F` (the STALE/MOVED/UNCOVERED paths from the counts). **`F` empty (`STALE=MOVED=UNCOVERED=0`)** → a dry round → carry this report to §4.3.
+
+3. `NEW = F − seen`; add `NEW` to `seen`. **`NEW` empty** → a dry round (the re-dispatch re-found only already-seen drift) → carry this report to §4.3. Otherwise this round's report is the most complete so far.
+
+4. **Loop back to step 1.** **After 3 rounds** still producing `NEW` drift → stop → carry the latest (most complete) report to §4.3.
+
+The report carried into §4.3 is the converged (or 3-round-budget-capped) diff.
 
 ### 4.3 Parse Result
 
