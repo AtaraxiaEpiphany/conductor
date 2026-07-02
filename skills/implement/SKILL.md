@@ -109,13 +109,27 @@ Returns `action` enum — switch on it:
 
 ### 3.2 Action: `dispatch_phase_checker`
 
-Dispatch `conductor:phase-checker`, prompt (canonical dispatch — §2.1, §3.5b, §3.7 reuse this; only the `PHASE` value source differs):
+The phase checkpoint is a **fan-out-and-synthesize**: two read-only verifier tiers run in parallel, then `conductor:phase-checker` (the synthesizer) consumes their verdicts and owns the L1 fix-and-retry + L2 + L4 + commit.
+
+**Step 1 — Fan out the verifiers.** Dispatch BOTH in ONE message (parallel):
+
+- `conductor:ac-tracer` — prompt: `TRACK_DIR={td} TRACK_ID={id}`
+- `conductor:test-runner` — prompt: `TRACK_DIR={td} TRACK_ID={id} PHASE_INDEX={phase}`
+
+**Step 2 — Parse the fleet's result blocks.** From `ac-tracer`'s `---AC TRACE RESULT---`: `VERDICT` (passed/warn/skipped/FAILED/ERROR), `GATE` (when FAILED), `N_UNGROUNDED` (when warn). From `test-runner`'s `---L1 VERIFY RESULT---`: `STATUS` (passed/failed/error), `COMMAND`.
+
+**Step 3 — Dispatch the synthesizer** `conductor:phase-checker` (canonical dispatch — §2.1, §3.5b, §3.7 reuse this fan-out+synthesize; only the `PHASE` value source differs), passing the fleet's verdicts through:
 
 ```
 TRACK_DIR={td}
 TRACK_ID={id}
-PHASE={phase from output}
+PHASE_INDEX={phase from output}
 EXECUTION_MODE={interactive|continuous}
+AC_TRACE_VERDICT=<ac-tracer VERDICT>
+AC_TRACE_GATE=<ac-tracer GATE — include only when VERDICT is FAILED>
+AC_TRACE_N_UNGROUNDED=<ac-tracer N_UNGROUNDED — include only when VERDICT is warn>
+L1_VERIFY_STATUS=<test-runner STATUS>
+L1_VERIFY_COMMAND=<test-runner COMMAND>
 ```
 
 After return → **Section 3.6** (Phase Boundary).

@@ -65,6 +65,8 @@ AGENT_REMINDERS = {
     "code-reviewer": "[Conductor] Result format: ---REVIEW RESULT--- ... ---END REVIEW RESULT---",
     "explorer": "[Conductor] Result format: ---TASK RESULT--- ... ---END RESULT---",
     "phase-checker": "[Conductor] Result format: ---CHECKPOINT RESULT--- ... ---END RESULT---",
+    "ac-tracer": "[Conductor] Result format: ---AC TRACE RESULT--- ... ---END RESULT---",
+    "test-runner": "[Conductor] Result format: ---L1 VERIFY RESULT--- ... ---END RESULT---",
     "corpus-writer": "[Conductor] Result format: ---DOC SYNC RESULT--- ... ---END RESULT---",
     "wiki-synthesizer": "[Conductor] Result format: ---DOC SYNC RESULT--- ... ---END RESULT---",
     "doc-linter": "[Conductor] Result format: ---DOC LINT RESULT--- ... ---END RESULT---",

@@ -88,6 +88,15 @@ STDOUT_BLOCK_AGENTS = {
         "IMMEDIATELY print the ---DOC SYNC RESULT--- block (Section 6.0). Report "
         "STATUS: FAILURE with a one-line REASON if Phase 2 of the doc sync could not complete."
     ),
+    "ac-tracer": (
+        "IMMEDIATELY print the ---AC TRACE RESULT--- block (Section 5.0). Report "
+        "VERDICT: ERROR with a one-line REASON if the integrity check could not complete."
+    ),
+    "test-runner": (
+        "IMMEDIATELY print the ---L1 VERIFY RESULT--- block (Section 5.0). Report "
+        "STATUS: error with a one-line REASON if the test command could not run at all "
+        "(a failing suite is STATUS: failed, NOT error)."
+    ),
     "spec-planner": (
         "IMMEDIATELY print the ---SPEC PLAN RESULT--- block (Section 5.0). Report "
         "STATUS: FAILURE with a one-line SUMMARY if generation could not complete."

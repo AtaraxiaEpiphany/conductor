@@ -2,6 +2,8 @@
 
 **Trigger:** This protocol is executed immediately after a task is completed that also concludes a phase in `plan.md`.
 
+> **Realization (plugin):** the L1 verify (Step 3) and the AC-evidence-trace (Step 3.6) tiers are executed by two read-only subagents fanned out **in parallel before** `conductor:phase-checker` — `conductor:test-runner` (runs the test command once, no fix) and `conductor:ac-tracer` (runs `track-state spec-integrity`). `conductor:phase-checker` is the **synthesizer**: it consumes those two verdicts, owns the Step 3 fix-and-retry (only when `test-runner` reports failure), then runs Steps 3.5 (L2) / 4–10. The `phase-checker` addenda are binding where they extend this template.
+
 1.  **Announce Protocol Start:** Inform the user that the phase is complete and the verification and checkpointing protocol has begun.
 
 2.  **Ensure Test Coverage for Phase Changes:**
