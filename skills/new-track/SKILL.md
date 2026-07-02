@@ -140,7 +140,31 @@ Loop — max **2 re-dispatches (3 total attempts)**, counting from the first dis
 
 5. Still failing after the final attempt → **halt**: `"Spec-planner produced a plan/spec that still fails validation after 3 attempts — errors: <combined defects>. Inspect <track_dir>/plan.md / spec.md."` Do NOT proceed to §2.6 (it would fail identically).
 
-> **Resume:** append `"spec_planned"` to `steps_done` in `<track_dir>/.conductor/new-track-progress.json` **only after BOTH the `--check` and `spec-integrity` checks pass** — a plan/spec that has not yet validated is not "planned".
+### 2.3b Adversarial Plan Refuter (semantic gate)
+
+The §2.3 loop catches **format** and **AC-integrity** defects deterministically — but a plan can conform to every deterministic check and still be semantically weak: a Test Scenario that does not actually exercise its AC, an AC that drifts from the user's stated intent, or a task that maps to an AC in name only. These are judgment calls a deterministic gate cannot make. Run ONE adversarial refuter pass to challenge the plan's soundness before §2.4 review.
+
+**Niche guard (do not duplicate §2.3).** The refuter must NOT re-derive what §2.3 already checked — AC→TC existence, dangling references, EARS well-formedness, and the TC/plan/verification coverage rates are §2.3's deterministic lane. Its value is the semantic layer above those: does a TC actually exercise its AC; does an AC match stated intent; does a task genuinely realize its AC.
+
+Dispatch `conductor:refuter`, prompt:
+
+```
+PROJECT_DIR={project_root}
+DOMAIN=plan
+CLAIM=The spec.md + plan.md are semantically sound — every acceptance criterion reflects the user's stated intent, every AC is genuinely exercised by a Test Scenario (not merely name-matched), and no task is semantically orphaned from the AC it claims to realize.
+CONTEXT_PATHS={track_dir}/spec.md {track_dir}/plan.md {USER_ANSWERS path or N/A}
+AC_EVIDENCE={the ac_evidence list from the §2.3 spec-integrity JSON — each AC's measured/claimed/missing TCs}
+```
+
+> The CLAIM is framed as "the plan is sound" deliberately. The refuter defaults to `SUSTAINED` when it cannot pin a specific grounded defect, so `SUSTAINED` = proceed-when-uncertain and `REFUTED` = grounded evidence of unsoundness. A consequential plan gate must not hard-block the track on a hunch — only a cited, re-confirmable semantic defect justifies a regen. (The skip gate in `implement` §3.6 frames its CLAIM the opposite way, because skipping is the riskier action there.)
+
+Parse the `---REFUTATION RESULT---` block:
+
+- **STATUS: SUSTAINED** (default — no grounded semantic defect found) → proceed to §2.4.
+- **STATUS: REFUTED** (positive, grounded defect, with `file:line` citations in EVIDENCE) → re-dispatch `conductor:spec-planner` ONCE with the refuter's challenges appended to `PREVIOUS_ERRORS` (reuse the §2.3 regen envelope; `REGEN_FOCUS` = the refuter's EVIDENCE + REASONING). Re-run this refuter once on the regenerated plan. If still `REFUTED`, announce the sustained challenges and proceed to §2.4 **non-blocking** — the spec-reviewer and user assess them there. A semantic disagreement the deterministic pipeline cannot close is a human-judgment call, not a hard halt.
+- **STATUS: FAILURE** → treat as SUSTAINED (the refuter could not complete; the plan stands) and proceed to §2.4.
+
+> **Resume:** append `"spec_planned"` to `steps_done` in `<track_dir>/.conductor/new-track-progress.json` **only after BOTH the `--check` and `spec-integrity` checks pass AND the §2.3b refute completes** — a plan/spec that has not yet validated and been semantically vetted is not "planned".
 
 ### 2.4 Dispatch Spec-Reviewer
 

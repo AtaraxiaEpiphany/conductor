@@ -218,7 +218,28 @@ TASK_INDEX={t}
 TASK_NAME={name}
 ```
 
-Skip-analyst result: `can_skip` → `track-state skip` or `block` → `sync-plan` → commit → Section 3.1 or HALT.
+Skip-analyst result — parse the `---SKIP ANALYSIS---` JSON and act by `recommendation`:
+
+- **`recommendation: skip`** (`can_skip: true`) → **run the skip refute first** (below). If the refute lets the skip stand → `track-state skip "<track_dir>" <phase> <task>` → Section 3.1. If the refute overrides → handle as `pause_and_escalate`.
+- **`recommendation: pause_and_escalate`** (or skip-refute override) → `track-state sync-plan "<track_dir>"` → commit → **HALT**: surface `impact` + `reasoning` (and the refuter's `EVIDENCE`/`REASONING` if it overrode). An unattended continuous track stops for human judgment rather than silently skipping or blocking.
+- **`recommendation: retry_with_modification`** → `track-state sync-plan` → commit → HALT with the reasoning as the modification guidance for the next attempt.
+
+**Skip refute (continuous mode only).** `§2.2`'s interactive path already has a human gate; this refute runs only on the unattended continuous path, where a wrong skip silently cascades a hole into downstream work. When `recommendation == skip`, dispatch `conductor:refuter` to challenge it before acting:
+
+```
+PROJECT_DIR={project_root}
+DOMAIN=skip
+CLAIM=Skip-analyst recommended skipping task P{p}T{t} ("{name}"), reasoning: "{skip-analyst reasoning}". Challenge framing: this skip is UNSAFE — a dependency marked completed is only superficially done (its own ACs not actually met), or the failure handoff describes a fix cheap relative to the cost of skipping.
+CONTEXT_PATHS={td}/plan.md {td}/track-state.json {td}/.conductor/handoff/P{p}T{t}.md
+```
+
+> The CLAIM is framed as "the skip is unsafe" deliberately. The refuter defaults to `SUSTAINED` when uncertain, so `SUSTAINED` = block-when-uncertain — the conservative direction for a skip, because skipping is the riskier action and uncertainty must fall toward *not* skipping. (`new-track` §2.3b frames its CLAIM the opposite way — "the plan is sound" — because a plan gate should proceed-when-uncertain, not block.) `REFUTED` = grounded evidence the skip IS safe.
+
+Parse the `---REFUTATION RESULT---` block:
+
+- **`STATUS: SUSTAINED`** (skip unsafe — default when uncertain) → **override to block**: handle as `pause_and_escalate` (sync-plan → commit → HALT with the refuter's evidence). The refute found grounded evidence the skip breaks something; do not skip.
+- **`STATUS: REFUTED`** (grounded evidence the skip is safe) → let the skip stand → `track-state skip` → Section 3.1.
+- **`STATUS: FAILURE`** → defer to skip-analyst's primary verdict: announce `"⚠️ skip refute could not complete — proceeding on skip-analyst's recommendation"` and let the skip stand. A backup-agent crash is not new evidence the skip is safe; the announce keeps it visible without halting the track on a backup failure.
 
 ### 3.6b Self-Review Loop (opt-in — "Ralph Wiggum")
 

@@ -177,9 +177,24 @@ SCOPE=cross-member interaction defects at deps boundaries only
 `SCOPE` narrows the pass to defects a member *could not* have seen alone — shape/contract mismatch at a `<!-- deps: -->` boundary, shared-file clobbering, conflicting type/config edits across members. Decide from the returned `---REVIEW RESULT---` block (substring-check the severities):
 
 - **Zero `Critical`/`High`** → announce `"🔍 Seam review: clean"` → **§4.2**.
-- **`Critical`/`High` present** → these are integration defects the wave *created*, not rework on any one member's isolated work. Surface via `AskUserQuestion`: **fix-now** (dispatch `conductor:task-executor` against the offending member's seam on the main branch) / **accept-with-debt** (note in the wave summary, proceed) / **block** (HALT). Resolve per the user's choice, then → **§4.2**.
+- **`Critical`/`High` present** → these are integration defects the wave *created*, not rework on any one member's isolated work. **Refute first** (below) to strip single-reviewer misreads, then surface the survivors via the human gate.
 
-This is orchestration over the existing `code-reviewer` + `task-executor` agents — no new agent, no new hook. It runs once per drained multi-member wave, not once per member.
+**Seam refute (before the human gate).** A single cross-member pass can misread an interaction — a "defect" that is correct behavior once both members are read together, or a `file:line` citation gone stale against the merge. Write the Critical/High findings to `{td}/.conductor/seam-findings.json` (a list of `{severity,title,file,lines,suggestion}`), then dispatch `conductor:refuter` to re-examine each against the integrated working tree:
+
+```
+PROJECT_DIR={project_root}
+DOMAIN=seam
+CLAIM=The findings in {td}/.conductor/seam-findings.json are real cross-member integration defects. Re-open each against the integrated code and drop any that does not hold up.
+CONTEXT_PATHS={td}/.conductor/seam-findings.json {the member source files cited in the findings}
+```
+
+The CLAIM is framed as "the findings are real" so the refuter's default `SUSTAINED` = keep-when-uncertain — a possible integration defect is surfaced to the human rather than silently dropped. `REFUTED` = grounded evidence a finding is a misread (the reviewer misread the cross-member interaction once both members are read together, or the citation is stale against the merged code). Dedup survivors by signature (`severity+title+file+lines`). Then:
+
+- **Survivors remain** → surface the survivors via `AskUserQuestion`: **fix-now** (dispatch `conductor:task-executor` against the offending member's seam on the main branch) / **accept-with-debt** (note in the wave summary, proceed) / **block** (HALT). Resolve per the user's choice, then → **§4.2**.
+- **No survivors (all findings refuted)** → announce `"🔍 Seam review: <N> findings → all refuted on re-examination"` → **§4.2**. The refuted count is announced, not hidden (no silent caps).
+- **STATUS: FAILURE** → the refuter could not complete; keep all original findings and route to `AskUserQuestion` as-is (conservative — don't drop findings a crashed backup did not vet).
+
+This is orchestration over the existing `code-reviewer` + `task-executor` + `refuter` agents — no new agent, no new hook. It runs once per drained multi-member wave, not once per member.
 
 ### 4.2 Phase boundary
 
