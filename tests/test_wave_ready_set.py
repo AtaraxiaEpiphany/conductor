@@ -13,7 +13,8 @@ from pathlib import Path
 from scripts.track_state.core import save
 from scripts.track_state.plan_parse import parse_plan
 from scripts.track_state.wave import (
-    _ready_set, _current_phase, _dep_satisfied, DEFAULT_WAVE_SIZE,
+    _ready_set, _eligible_members, _current_phase, _dep_satisfied,
+    DEFAULT_WAVE_SIZE,
 )
 
 
@@ -188,6 +189,50 @@ class TestReadySet(unittest.TestCase):
             for i in range(DEFAULT_WAVE_SIZE + 3)]}])
         ready = _ready_set(st, parsed, 1)
         self.assertEqual(len(ready), DEFAULT_WAVE_SIZE)
+
+    def test_eligible_members_is_uncapped(self):
+        # _eligible_members returns EVERY eligible task — the cap lives in the
+        # _ready_set wrapper, so the deferred overflow can be surfaced.
+        n = DEFAULT_WAVE_SIZE + 3
+        lines = ["# Plan", "", "## Phase 1: Build"]
+        for i in range(n):
+            lines.append(f"- [ ] Task {i}: t{i} <!-- deps: -->")
+        parsed = self._plan("\n".join(lines) + "\n")
+        st = _state([{"name": "P1", "tasks": [
+            {"name": f"Task {i}: t{i}", "status": "pending"} for i in range(n)]}])
+        eligible = _eligible_members(st, parsed, 1)
+        self.assertEqual(len(eligible), n)
+
+    def test_ready_set_is_capped_slice_of_eligible(self):
+        # The cap is separable: ready = eligible[:cap], deferred = eligible[cap:].
+        n = DEFAULT_WAVE_SIZE + 3
+        lines = ["# Plan", "", "## Phase 1: Build"]
+        for i in range(n):
+            lines.append(f"- [ ] Task {i}: t{i} <!-- deps: -->")
+        parsed = self._plan("\n".join(lines) + "\n")
+        st = _state([{"name": "P1", "tasks": [
+            {"name": f"Task {i}: t{i}", "status": "pending"} for i in range(n)]}])
+        eligible = _eligible_members(st, parsed, 1)
+        ready = _ready_set(st, parsed, 1)
+        deferred = eligible[DEFAULT_WAVE_SIZE:]
+        self.assertEqual(ready, eligible[:DEFAULT_WAVE_SIZE])
+        self.assertEqual(len(deferred), 3)  # the overflow beyond the cap
+        # Deferred carries the same {phase, task, name} shape as ready members.
+        self.assertEqual(deferred[0]["phase"], 1)
+        self.assertIn("name", deferred[0])
+        # No overlap: every deferred task is beyond the capped ready-set.
+        ready_tasks = {m["task"] for m in ready}
+        deferred_tasks = {m["task"] for m in deferred}
+        self.assertTrue(ready_tasks.isdisjoint(deferred_tasks))
+
+    def test_no_deferred_when_under_cap(self):
+        # Fewer eligible than the cap → empty deferred, no false announcement.
+        body = "# Plan\n\n## Phase 1: Build\n- [ ] Task A: x <!-- deps: -->\n"
+        parsed = self._plan(body)
+        st = _state([{"name": "P1", "tasks": [
+            {"name": "Task A: x", "status": "pending"}]}])
+        eligible = _eligible_members(st, parsed, 1)
+        self.assertEqual(eligible[DEFAULT_WAVE_SIZE:], [])
 
     def test_invalid_phase_returns_empty(self):
         body = "# Plan\n\n## Phase 1: Build\n- [ ] Task A: x <!-- deps: -->\n"

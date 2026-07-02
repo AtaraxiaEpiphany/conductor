@@ -95,6 +95,8 @@ Switch on `action`:
 
 The `wave` array has one member per ready task, each carrying `worktree`, `branch`, `worktree_track_dir`, `phase`, `task`, `name`. **Dispatch ALL members in ONE message** (concurrent `Agent` calls) so they run in parallel — that is the entire point of this skill.
 
+If the envelope also carries a non-empty `deferred` list, those are eligible members the `DEFAULT_WAVE_SIZE=4` cap pushed past this wave — announce them before fanning out: `⚠️ Wave capped at 4; deferring <P{p}.T{t} …> to the next wave`. They stay `pending`; the next `dispatch-wave` (after this one drains) picks them up automatically. **The cap is never silent** — an eligible task deferred by the cap is always surfaced, never dropped (no-silent-caps).
+
 Per member, dispatch `conductor:task-executor` with the canonical minimal prompt **plus the worktree pinning**:
 
 ```
@@ -149,7 +151,29 @@ After each `wave-finalize`, check `drained`:
 
 ### 4.1 Wave drained
 
-All members of this wave have settled. Announce the wave summary (`N completed / M failed`). If any members FAILED → the serial spine handles them next: → **§3.1** (next `dispatch-wave`); when the phase has no more parallel OR serial work, `dispatch-next`'s recover path surfaces the failed members with full Retry/Skip/Block logic exactly as `implement` §2.2 (interactive) or routes to `skip-analyst` (continuous). Otherwise → **§3.1** (re-check for the next wave).
+All members of this wave have settled. Announce the wave summary (`N completed / M failed`). If any members FAILED → the serial spine handles them next: when the phase has no more parallel OR serial work, `dispatch-next`'s recover path surfaces the failed members with full Retry/Skip/Block logic exactly as `implement` §2.2 (interactive) or routes to `skip-analyst` (continuous). Then → **§4.15** (cross-member seam check) before re-checking for the next wave.
+
+### 4.15 Cross-Member Integration Review (completeness-critic)
+
+Wave isolation gives each member a blind spot it cannot cure alone: the **seams** where its output meets another member's — a consumer read a producer's shape that the producer changed, two members touched a shared type/config, a declared `<!-- deps: -->` boundary drifted. No individual member can see these; only the integrated whole can. After the wave drains, review the seams once (completeness-critic over the integration the wave just performed).
+
+**Decide applicability:** skip (announce nothing) when **fewer than 2** members reached `member_status: finalized` this wave — a single-member wave has no cross-member seams, and a review there is pure latency. Otherwise:
+
+Dispatch `conductor:code-reviewer` (read-only) over the integrated range, prompt:
+
+```
+TRACK_DIR={td}
+TRACK_ID={id}
+REVISION_RANGE={base_sha}..HEAD
+SCOPE=cross-member interaction defects at deps boundaries only
+```
+
+`SCOPE` narrows the pass to defects a member *could not* have seen alone — shape/contract mismatch at a `<!-- deps: -->` boundary, shared-file clobbering, conflicting type/config edits across members. Decide from the returned `---REVIEW RESULT---` block (substring-check the severities):
+
+- **Zero `Critical`/`High`** → announce `"🔍 Seam review: clean"` → **§4.2**.
+- **`Critical`/`High` present** → these are integration defects the wave *created*, not rework on any one member's isolated work. Surface via `AskUserQuestion`: **fix-now** (dispatch `conductor:task-executor` against the offending member's seam on the main branch) / **accept-with-debt** (note in the wave summary, proceed) / **block** (HALT). Resolve per the user's choice, then → **§4.2**.
+
+This is orchestration over the existing `code-reviewer` + `task-executor` agents — no new agent, no new hook. It runs once per drained multi-member wave, not once per member.
 
 ### 4.2 Phase boundary
 

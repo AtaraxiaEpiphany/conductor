@@ -100,8 +100,10 @@ COMPACT_FIELDS = {
                           "ac_integrity_gate", "ears_gate", "tc_consistency_gate"),
     # Wave parallelism (skills/parallel/SKILL.md). dispatch-wave carries the
     # member list (worktree/branch/worktree_track_dir) so the orchestrator can
-    # fan out pinned task-executor agents; wave-active refusal reuses `wave`.
-    "dispatch-wave": ("action", "phase", "base_sha", "wave", "reason"),
+    # fan out pinned task-executor agents; `deferred` surfaces the eligible-but-
+    # capped members the skill must announce (no-silent-caps); wave-active
+    # refusal reuses `wave`.
+    "dispatch-wave": ("action", "phase", "base_sha", "wave", "deferred", "reason"),
     "wave-status": ("active", "phase", "base_sha", "members"),
     # wave-finalize emits the _finalize_task result envelope PLUS its own keys;
     # subset of dispatch-finalize's since the transition is shared.

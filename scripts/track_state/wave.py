@@ -157,7 +157,7 @@ def _dep_satisfied(state, p, t):
     return tgt.get("status") in _DEP_SATISFIED
 
 
-def _ready_set(state, parsed, phase):
+def _eligible_members(state, parsed, phase):
     """File-disjoint, deps-resolved pending tasks in ``phase`` eligible for a wave.
 
     A top-level task qualifies when ALL of:
@@ -173,7 +173,11 @@ def _ready_set(state, parsed, phase):
         parallelize);
       - **every declared dep target is satisfied** (completed/skipped/deferred).
 
-    Capped at ``DEFAULT_WAVE_SIZE``. Returns a list of ``{phase, task, name}``.
+    **Uncapped** — returns EVERY eligible member in plan order. The caller splits
+    this into the capped ready-set (``DEFAULT_WAVE_SIZE``) and the deferred
+    overflow (eligible-but-capped), which is surfaced in the dispatch-wave
+    envelope so the skill can announce it (no-silent-caps). Returns a list of
+    ``{phase, task, name}``.
     """
     if phase < 1 or phase > len(state.get("phases", [])):
         return []
@@ -189,7 +193,7 @@ def _ready_set(state, parsed, phase):
     for src, tgt in collect_deps(parsed):
         deps_of.setdefault(src, []).append(tgt)
 
-    ready = []
+    eligible = []
     for ti, task in enumerate(state["phases"][phase - 1]["tasks"], 1):
         if task.get("status") != "pending":
             continue
@@ -202,10 +206,20 @@ def _ready_set(state, parsed, phase):
         deps = deps_of.get((phase, ti), [])
         if not all(_dep_satisfied(state, dp, dt) for dp, dt in deps):
             continue
-        ready.append({"phase": phase, "task": ti, "name": task.get("name", "")})
-        if len(ready) >= DEFAULT_WAVE_SIZE:
-            break
-    return ready
+        eligible.append({"phase": phase, "task": ti, "name": task.get("name", "")})
+    return eligible
+
+
+def _ready_set(state, parsed, phase):
+    """The capped wave ready-set: first ``DEFAULT_WAVE_SIZE`` eligible members.
+
+    Thin cap over ``_eligible_members`` — eligibility is separable from the cap
+    so the deferred overflow (eligible-but-capped members) can be surfaced to the
+    orchestrator rather than silently dropped (no-silent-caps). ``cmd_dispatch_wave``
+    calls ``_eligible_members`` directly and splits; this wrapper keeps the
+    historical capped-list contract (``tests/test_wave_ready_set.py`` imports it).
+    """
+    return _eligible_members(state, parsed, phase)[:DEFAULT_WAVE_SIZE]
 
 
 # --- worktree plumbing ------------------------------------------------------
@@ -294,7 +308,9 @@ def cmd_dispatch_wave(track_dir, compact=True):
     Emits ``action``:
       - ``dispatch_wave``  — ready-set formed; ``wave`` lists members (with
         ``worktree``/``branch``/``worktree_track_dir`` for the orchestrator to
-        dispatch N pinned task-executor agents).
+        dispatch N pinned task-executor agents). ``deferred`` lists any
+        eligible-but-capped members (beyond ``DEFAULT_WAVE_SIZE``) for the skill
+        to announce — they are NOT locked this wave and run in the next one.
       - ``wave_active``    — a non-terminal ledger already exists; refuse.
       - ``no_ready_tasks`` — phase has no eligible deps-declared file-disjoint
         pending tasks (orchestrator falls back to the serial spine).
@@ -339,12 +355,18 @@ def cmd_dispatch_wave(track_dir, compact=True):
         return
     parsed = parse_plan(plan_path)
 
-    ready = _ready_set(state, parsed, phase)
-    if not ready:
+    eligible = _eligible_members(state, parsed, phase)
+    if not eligible:
         emit(dict(action="no_ready_tasks", phase=phase,
                   reason="no deps-declared file-disjoint pending tasks in phase"),
              "dispatch-wave", compact)
         return
+    # Split into the capped ready-set and the deferred overflow. The deferred
+    # members are NOT locked/worktreed this wave — they stay pending and surface
+    # in the envelope so the skill announces them (no-silent-caps); the next
+    # dispatch-wave (after this one drains) picks them up automatically.
+    ready = eligible[:DEFAULT_WAVE_SIZE]
+    deferred = eligible[DEFAULT_WAVE_SIZE:]
 
     # Create worktrees BEFORE mutating state: a failure here tears down the
     # partial wave_root and leaves track-state.json untouched (no half-locks).
@@ -387,7 +409,7 @@ def cmd_dispatch_wave(track_dir, compact=True):
     })
 
     emit(dict(action="dispatch_wave", phase=phase, base_sha=base_sha,
-              wave=members), "dispatch-wave", compact)
+              wave=members, deferred=deferred), "dispatch-wave", compact)
 
 
 def cmd_wave_status(track_dir, compact=True):
