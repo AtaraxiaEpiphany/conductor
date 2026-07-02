@@ -1,15 +1,21 @@
 #!/usr/bin/env python3
-"""PreToolUse hook: enforce ``[ ]`` checkboxes on plan.md task/subtask lines.
+"""PreToolUse hook: enforce well-formed ``[ ]`` checkboxes on plan.md task/subtask lines.
 
-spec-planner (sonnet) occasionally emits ``- Subtask: x`` without the ``[ ]``
-status marker. plan_parse._TASK_LINE requires the marker, so a bracket-less
-line is silently dropped and the subtask vanishes from track-state.json — a
-silent data-loss defect.
+Two classes of defect are blocked, both of which plan_parse would otherwise
+silently drop (the line vanishes from track-state.json — a data-loss defect):
 
-This hook blocks the Write/Edit (on a path whose basename is ``plan.md``) before
-it lands, and tells the model the corrected form so it self-corrects and retries.
+  * MISSING checkbox — spec-planner emits ``- Subtask: x`` with no bracket, or
+    ``- [Explore] Task: x`` (a dispatch tag is NOT a checkbox).
+  * MALFORMED checkbox — the bracket is present but wrong: ``- [] x`` (empty —
+    the modal LLM typo for ``- [ ]``), ``- [  ] x`` (whitespace), ``- [xy] x``
+    (wrong width). These sit in the gap between plan_parse._TASK_LINE (one
+    valid char) and _BAD_MARKER_LINE (exactly one char): zero/2+ chars match
+    neither, so the line is silently dropped.
 
-Defense in depth: ``plan_parse.parse_plan`` also errors on the same pattern, so a
+This hook blocks the Write/Edit (basename ``plan.md``) before it lands and tells
+the model the corrected form so it self-corrects and retries.
+
+Defense in depth: ``plan_parse.parse_plan`` errors on the same patterns, so a
 direct edit the hook cannot see (e.g. an Edit whose ``new_string`` is only the
 fixed fragment, or an external editor) is still caught at ``init-from-plan``.
 """
@@ -23,6 +29,10 @@ from lib.hook_io import read_hook_input, write_hook_output
 
 # Valid plan.md checkbox marker chars (constants.MARKER_MAP values).
 _VALID_MARKER_CLASS = r"[ x~!>#\-d]"
+
+# A complete, well-formed checkbox: exactly one valid marker char inside [].
+# Used to exclude valid ``[ ]``/``[x]`` lines from the malformed-bracket check.
+_VALID_CHECKBOX = re.compile(rf"^\[{_VALID_MARKER_CLASS}\]$")
 
 # A task/subtask bullet that does NOT start with a valid checkbox.
 #   ^(\s*)-             — optional indent + bullet dash
@@ -39,6 +49,21 @@ _MISSING_CHECKBOX = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 
+# A dash-bullet whose first token is a bracket group [...] of ANY width — used
+# to catch the bracket-MALFORMED case: a writer who intended a task but botched
+# the checkbox. group(1)=indent, group(2)=the bracket token incl. brackets.
+# Mirrors plan_parse._BRACKET_TOKEN so the hook and parser agree on detection.
+_BRACKET_TOKEN = re.compile(r"^(\s*)-\s+(\[[^\]]*\])")
+
+# Bracket tokens that are NOT checkboxes but are legitimate first tokens of a
+# dash-bullet (dispatch tags + trailing status markers). These route through the
+# _MISSING_CHECKBOX path (tag-but-no-checkbox) below for a more accurate message
+# rather than being flagged as malformed. Mirrors plan_parse._KNOWN_BRACKET_TOKEN.
+_KNOWN_BRACKET_TOKEN = re.compile(
+    r"^\[(?:Manual|Explore|Docs|Config|Chore|N/A|verified|[0-9a-fA-F]{7,})\]$",
+    re.IGNORECASE,
+)
+
 
 def _suggest(raw_line: str) -> str:
     """Insert ``[ ] `` right after the leading ``<indent>- `` of a bullet."""
@@ -48,16 +73,40 @@ def _suggest(raw_line: str) -> str:
     return f"{m.group(1)}[ ] {m.group(2)}"
 
 
+def _suggest_malformed(raw_line: str) -> str:
+    """Replace the first bracket token ``[...]`` with a pending ``[ ]``.
+
+    For a malformed checkbox (empty ``[]``, whitespace ``[  ]``, wrong-width
+    ``[xy]``) the bracket is present but wrong, so the fix is to rewrite its
+    content — NOT to insert a second ``[ ]`` (which ``_suggest`` would do).
+    """
+    return re.sub(r"\[[^\]]*\]", "[ ]", raw_line, count=1)
+
+
 def _scan(text: str, max_hits: int = 8):
-    """Return up to ``max_hits`` (lineno, raw_line, suggested) tuples."""
+    """Return up to ``max_hits`` (lineno, raw_line, suggested) tuples.
+
+    Catches both classes of silent-drop defect on a task/subtask bullet:
+      * missing checkbox  — ``- Subtask: x`` / ``- [Explore] Task: x``
+      * malformed bracket — ``- [] x`` / ``- [  ] x`` / ``- [xy] x`` (a bracket
+        IS present but is not a valid single-marker checkbox)
+    A line is flagged at most once; malformed takes priority (the bracket is
+    the closer-to-correct form, so its fix is more specific). Valid checkboxes
+    (``[ ]``/``[x]``/…) and known non-checkbox tags (``[Manual]``, ``[N/A]``…)
+    are never flagged.
+    """
     hits = []
-    lines = text.splitlines()
-    for m in _MISSING_CHECKBOX.finditer(text):
-        lineno = text.count("\n", 0, m.start()) + 1
-        raw = lines[lineno - 1] if 0 < lineno <= len(lines) else m.group(0)
-        hits.append((lineno, raw, _suggest(raw)))
+    for idx, raw in enumerate(text.splitlines()):
         if len(hits) >= max_hits:
             break
+        mb = _BRACKET_TOKEN.match(raw)
+        if mb:
+            bracket = mb.group(2)
+            if not _VALID_CHECKBOX.match(bracket) and not _KNOWN_BRACKET_TOKEN.match(bracket):
+                hits.append((idx + 1, raw, _suggest_malformed(raw)))
+                continue
+        if _MISSING_CHECKBOX.search(raw):
+            hits.append((idx + 1, raw, _suggest(raw)))
     return hits
 
 
@@ -97,8 +146,8 @@ def main():
         write_hook_output(hook_event_name="PreToolUse")
         return
 
-    lines = ["plan.md task/subtask lines are missing their [ ] checkbox — "
-             "the subtask would be silently dropped from track-state.json:"]
+    lines = ["plan.md task/subtask lines have a missing or malformed [ ] checkbox — "
+             "the line would be silently dropped from track-state.json:"]
     for lineno, raw, suggested in all_hits:
         lines.append(f"  line {lineno}:  {raw.strip()}")
         lines.append(f"    → fix: {suggested.strip()}")

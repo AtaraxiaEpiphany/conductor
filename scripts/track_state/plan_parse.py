@@ -46,6 +46,22 @@ _MISSING_CHECKBOX_LINE = re.compile(
     re.IGNORECASE,
 )
 
+# A dash-bullet whose first token is a bracket group [...] of ANY width. Used to
+# catch the bracket-MALFORMED case (below): a writer who intended a task but
+# botched the checkbox. group(1)=indent, group(2)=the bracket token incl. brackets.
+_BRACKET_TOKEN = re.compile(r"^(\s*)-\s+(\[[^\]]*\])")
+
+# Bracket tokens that are NOT checkboxes but are legitimate first tokens of a
+# dash-bullet: dispatch tags ([Manual], [Explore], ...) and the trailing status
+# markers ([N/A], [verified], [sha]). These route through _MISSING_CHECKBOX_LINE
+# (tag-but-no-checkbox) or are prose — they must NOT be flagged as malformed, so
+# the malformed guard below skips them. Dispatch tags mirror plan-format-
+# contract.md §"Task Type Tags"; trailing markers mirror _RE_TRAILING_MARKER.
+_KNOWN_BRACKET_TOKEN = re.compile(
+    r"^\[(?:Manual|Explore|Docs|Config|Chore|N/A|verified|[0-9a-fA-F]{7,})\]$",
+    re.IGNORECASE,
+)
+
 # Trailing checkpoint marker on a phase heading: [checkpoint:abcdef1]
 _CHECKPOINT = re.compile(r"\[checkpoint:\s*[0-9a-f]+\]", re.IGNORECASE)
 
@@ -233,6 +249,26 @@ def parse_plan(plan_path):
             errors.append(
                 f"line {lineno}: invalid {kind} marker '[{marker}]' ({where}) "
                 f"— valid: [ ] [x] [~] [!] [>] [#] [-] [d]")
+            continue
+        # A bracket that IS present but malformed — empty ("[]", the modal LLM
+        # typo for "- [ ]"), whitespace-only ("[  ]"), or wrong-width ("[xy]").
+        # Width-1 cases were handled above (_TASK_LINE valid / _BAD_MARKER_LINE
+        # invalid); known tags ([Manual], [N/A], ...) skip to _MISSING_CHECKBOX
+        # below for the more accurate "missing checkbox" message. Without this
+        # guard these lines fall through to the ignored branch and vanish from
+        # track-state.json — the same silent-data-loss class the other guards
+        # prevent, for the bracket-malformed case they all miss (0 / 2+ chars
+        # sit in the gap between _TASK_LINE's one-valid-char and
+        # _BAD_MARKER_LINE's exactly-one-char).
+        malformed = _BRACKET_TOKEN.match(line)
+        if malformed and not _KNOWN_BRACKET_TOKEN.match(malformed.group(2)):
+            indent, bracket = malformed.group(1), malformed.group(2)
+            where = (f"Phase {current_phase['number']}" if current_phase
+                     else "before any phase")
+            kind = "subtask" if indent else "task"
+            errors.append(
+                f"line {lineno}: malformed {kind} checkbox '{bracket}' ({where}) "
+                f"— use exactly one marker char: [ ] [x] [~] [!] [>] [#] [-] [d]")
             continue
         missing = _MISSING_CHECKBOX_LINE.match(line)
         if missing:
