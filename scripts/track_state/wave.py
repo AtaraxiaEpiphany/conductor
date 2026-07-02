@@ -535,6 +535,23 @@ def cmd_wave_finalize(track_dir, p, t, compact=True):
     n_commits = _git_range_commit_count(repo_root, base, tip) if tip else 0
     conflict = False
 
+    # ── INTEGRATION RACE — why §4.0's "serialized" finalize is load-bearing ──
+    # The block below mutates the SHARED main-worktree git index + the track
+    # branch HEAD: `_git_merge_squash(repo_root, ...)` writes a squash commit
+    # onto the track branch (cwd=repo_root, the single shared worktree), and
+    # `_finalize_task` then stacks a conductor audit commit on top. Neither runs
+    # inside `transaction()` — that flock guards ONLY track-state.json (the one
+    # flock in this file lives in cmd_wave_abort). So two concurrent
+    # cmd_wave_finalize calls would race the same git index/HEAD: lost squash
+    # commits, a corrupt index, or one member's audit commit landing on another's
+    # half-written HEAD. The skills/parallel §4.0 prose loop finalizes members
+    # SERIALLY for exactly this reason — do not naïvely parallelize it.
+    #
+    # Safe parallelization would need either per-member integration branches
+    # (conductor/integrate/<slug>/P{p}.T{t}) squash-merged then serially
+    # fast-forwarded, or a process-level integration lock serializing just this
+    # block (little speedup, since the git work is the expensive part). Both are
+    # non-trivial wave.py + git_ops.py rewrites — deferred.
     if status == "SUCCESS" and n_commits > 0 and tip:
         # Integrate the agent's squashed work as one code commit on the track
         # branch. None ⇒ the member's files overlapped another member's despite
