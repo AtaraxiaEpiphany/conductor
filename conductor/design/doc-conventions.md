@@ -63,3 +63,4 @@ The frontmatter `type` (above) tells checkers *what* a doc is; this table tells 
 - [[runtime/core-contract]] — behavioral invariants; resident in every session.
 - [[conductor/design/decision-serial-execution]] — why the state model is globally locked (serial execution).
 - [[conductor/design/decision-loop-heartbeat]] — why housekeeping rides deterministic hooks, not a cron.
+- [[conductor/design/decision-pattern-realization]] — which multi-agent patterns run on prose skills vs the Workflow tool.
