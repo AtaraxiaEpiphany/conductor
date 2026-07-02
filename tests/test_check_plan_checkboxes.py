@@ -79,6 +79,92 @@ class ScanTests(TestCase):
         self.assertEqual(_mod._scan("- [ ] Task: ok\n- [ ] Subtask: ok\n"), [])
 
 
+class MalformedBracketRegexTests(TestCase):
+    """``- [] x`` (empty) / ``- [  ] x`` (whitespace) / ``- [xy] x`` (wrong
+    width) sit in the gap between _TASK_LINE (one valid char) and _BAD_MARKER_LINE
+    (one char) — zero/2+ chars match neither, so plan_parse would silently drop
+    them. The hook's malformed-bracket guard must catch all three."""
+
+    def _malformed(self, line):
+        mb = _mod._BRACKET_TOKEN.match(line)
+        if not mb:
+            return False
+        bracket = mb.group(2)
+        return (not _mod._VALID_CHECKBOX.match(bracket)
+                and not _mod._KNOWN_BRACKET_TOKEN.match(bracket))
+
+    def test_empty_bracket_flagged(self):
+        self.assertTrue(self._malformed("- [] Task: foo"))
+
+    def test_whitespace_bracket_flagged(self):
+        self.assertTrue(self._malformed("- [  ] Task: foo"))
+
+    def test_two_char_bracket_flagged(self):
+        self.assertTrue(self._malformed("- [xy] Task: foo"))
+
+    def test_valid_checkbox_not_malformed(self):
+        # Regression: a real checkbox must never be flagged as malformed.
+        for marker in (" ", "x", "~", "!", ">", "#", "-", "d"):
+            with self.subTest(marker=marker):
+                self.assertFalse(self._malformed(f"- [{marker}] Task: foo"))
+
+    def test_known_tag_not_malformed(self):
+        # [Manual]/[Explore]/[N/A] are legitimate non-checkbox first tokens —
+        # they route to the missing-checkbox path, not malformed. Guards the
+        # _KNOWN_BRACKET_TOKEN allow-list against a malformed false positive.
+        for tag in ("[Manual]", "[Explore]", "[Docs]", "[Config]", "[Chore]",
+                    "[N/A]", "[verified]"):
+            with self.subTest(tag=tag):
+                self.assertFalse(self._malformed(f"- {tag} Task: foo"))
+
+
+class SuggestMalformedTests(TestCase):
+    def test_empty_bracket_replaced(self):
+        self.assertEqual(_mod._suggest_malformed("- [] Task: foo"),
+                         "- [ ] Task: foo")
+
+    def test_wrong_width_replaced(self):
+        self.assertEqual(_mod._suggest_malformed("- [xy] Task: foo"),
+                         "- [ ] Task: foo")
+
+    def test_preserves_indent(self):
+        self.assertEqual(_mod._suggest_malformed("\t- [] subtask"),
+                         "\t- [ ] subtask")
+
+    def test_only_first_bracket_replaced(self):
+        # A <!-- ... --> comment may contain its own brackets; only the checkbox
+        # token (first bracket) should be rewritten.
+        self.assertEqual(_mod._suggest_malformed("- [] Task <!-- keep [x] -->"),
+                         "- [ ] Task <!-- keep [x] -->")
+
+
+class MalformedScanTests(TestCase):
+    def test_scan_finds_empty_bracket_and_suggests_fix(self):
+        text = "## Phase 1: P\n- [] Task: foo\n- [ ] [Manual] Task: v\n"
+        hits = _mod._scan(text)
+        self.assertEqual(len(hits), 1)
+        lineno, raw, suggested = hits[0]
+        self.assertEqual(lineno, 2)
+        self.assertEqual(suggested, "- [ ] Task: foo")
+
+    def test_scan_flags_both_missing_and_malformed(self):
+        # Both defect classes in one plan, each flagged once with its own fix.
+        text = ("- [] Task: malformed\n"
+                "- Subtask: missing\n"
+                "- [ ] Task: ok\n")
+        hits = _mod._scan(text)
+        self.assertEqual(len(hits), 2)
+        self.assertEqual(hits[0][2], "- [ ] Task: malformed")
+        self.assertEqual(hits[1][2], "- [ ] Subtask: missing")
+
+    def test_scan_valid_plan_returns_nothing(self):
+        # No false positives on a clean plan (valid checkboxes + tagged Manual).
+        text = ("- [ ] Task: ok <!-- AC-1, TC-1.1 -->\n"
+                "  - [ ] Subtask: x\n"
+                "- [ ] [Manual] Task: verify\n")
+        self.assertEqual(_mod._scan(text), [])
+
+
 class TextToScanTests(TestCase):
     def test_write_yields_content(self):
         chunks = list(_mod._text_to_scan({"content": "- Subtask: x"}))

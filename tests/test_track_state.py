@@ -822,6 +822,61 @@ class TestInitFromPlan(TestCase):
         parsed = parse_plan(Path(d, "plan.md"))
         self.assertTrue(any("no tasks" in e for e in parsed["errors"]))
 
+    def test_error_empty_bracket_task(self):
+        # "- [] Task" (empty brackets — the modal LLM typo for "- [ ]") sits in
+        # the gap between _TASK_LINE (one valid char) and _BAD_MARKER_LINE (one
+        # char): zero chars match neither, so without the malformed guard the
+        # line is silently dropped from track-state.json.
+        d = self._plan("## Phase 1: P\n- [] Task: foo\n- [ ] [Manual] Task: v\n")
+        parsed = parse_plan(Path(d, "plan.md"))
+        self.assertTrue(any("malformed" in e and "[]" in e for e in parsed["errors"]))
+
+    def test_error_empty_bracket_subtask(self):
+        # Indented empty bracket — the subtask variant from the user's report
+        # (a tab indent is also \s, matching _BRACKET_TOKEN's leading (\s*)).
+        d = self._plan("## Phase 1: P\n- [ ] Task: parent\n"
+                       "\t- [] subtask missing\n- [ ] [Manual] Task: v\n")
+        parsed = parse_plan(Path(d, "plan.md"))
+        self.assertTrue(any("malformed" in e and "subtask" in e and "[]" in e
+                            for e in parsed["errors"]))
+
+    def test_error_wrong_width_bracket(self):
+        # Two-space and two-char brackets also fall in the gap (width != 1).
+        for bad in ("- [  ] Task: a", "- [xy] Task: b"):
+            with self.subTest(bad=bad):
+                d = self._plan(f"## Phase 1: P\n{bad}\n- [ ] [Manual] Task: v\n")
+                parsed = parse_plan(Path(d, "plan.md"))
+                self.assertTrue(any("malformed" in e for e in parsed["errors"]))
+
+    def test_known_tag_routes_to_missing_checkbox(self):
+        # A dispatch tag as the first token is NOT a malformed bracket — it is a
+        # tag-without-checkbox and must keep the more accurate "missing checkbox"
+        # message (not the malformed one). Guards the _KNOWN_BRACKET_TOKEN allow-list.
+        d = self._plan("## Phase 1: P\n- [Manual] Task: foo\n- [ ] [Manual] Task: v\n")
+        parsed = parse_plan(Path(d, "plan.md"))
+        self.assertTrue(any("missing" in e and "[ ]" in e for e in parsed["errors"]))
+        self.assertFalse(any("malformed" in e for e in parsed["errors"]))
+
+    def test_valid_plan_not_flagged_by_malformed_guard(self):
+        # Regression: the malformed guard must not false-positive on real
+        # checkboxes, multi-char dispatch tags on valid lines, or [N/A] prose.
+        d = self._plan(self.GOOD)
+        parsed = parse_plan(Path(d, "plan.md"))
+        self.assertEqual(parsed["errors"], [])
+        self.assertFalse(any("malformed" in e for e in parsed["warnings"]))
+
+    def test_init_check_rejects_empty_bracket(self):
+        # The viewer surface: init-from-plan --check must report ok:false (not a
+        # lying ok:true) when a bracket is malformed, so the defect is visible
+        # before any state is written.
+        d = self._plan("## Phase 1: P\n- [] Task: foo\n- [ ] [Manual] Task: v\n")
+        result, _ = _out_captured(
+            cmd_init_from_plan, d, "demo_20260702", "feature", "desc",
+            check=True)
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("malformed" in e and "[]" in e
+                            for e in result.get("errors", [])))
+
     def test_warn_missing_manual(self):
         d = self._plan("## Phase 1: P\n- [ ] Task: real work\n")
         parsed = parse_plan(Path(d, "plan.md"))
