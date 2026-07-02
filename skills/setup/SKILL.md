@@ -42,7 +42,7 @@ CRITICAL: Validate every tool call. On failure → halt → announce.
    PROJECT_DIR={project root}
    ```
 
-   Parse `---ANALYSIS RESULT---` block. **Persist the full detection tree** to `conductor/.conductor/analysis.json` (create `.conductor/` if absent) — this is the durable record for later consumers (e.g. doc-syncer seeding, future `/conductor:wiki` queries about the stack), so the analyzer's one-pass detection is not lost. Subsequent steps (§2.3 Tech Stack pre-fill, §3.2 description) operate on the live fields (`languages`, `frameworks`) from the block.
+   Parse `---ANALYSIS RESULT---` block. **Persist the full detection tree** to `conductor/.conductor/analysis.json` (create `.conductor/` if absent) — this is the durable record for later consumers (e.g. corpus-writer seeding, future `/conductor:wiki` queries about the stack), so the analyzer's one-pass detection is not lost. Subsequent steps (§2.3 Tech Stack pre-fill, §3.2 description) operate on the live fields (`languages`, `frameworks`) from the block.
 3. **Greenfield:** Ask "What do you want to build?"
 4. Init git if needed. Create `conductor/` directory.
 
@@ -87,7 +87,7 @@ Save state: `2.3_tech_stack_styleguides`.
 5. Generate `conductor/workflow/index.md` listing all created files.
 6. Verify all referenced files exist.
 7. **Wiki Overview:** Read `${CLAUDE_PLUGIN_ROOT}/templates/wiki-overview.md`, write to `conductor/overview.md`. Replace `{TIMESTAMP}` with current ISO-8601 timestamp.
-8. **Wiki Purpose:** Read `${CLAUDE_PLUGIN_ROOT}/templates/wiki-purpose.md`, write to `conductor/purpose.md`. Replace `{TIMESTAMP}`. Seed the **Goals** section from the product guide (§2.1) — the other sections (Key Questions, Thesis, Decisions) start as placeholders and are co-evolved by the user (`/conductor:wiki purpose`) and doc-syncer (Phase 2) over time. This is the wiki's directional intent — *why* the project exists, distinct from the structural overview.
+8. **Wiki Purpose:** Read `${CLAUDE_PLUGIN_ROOT}/templates/wiki-purpose.md`, write to `conductor/purpose.md`. Replace `{TIMESTAMP}`. Seed the **Goals** section from the product guide (§2.1) — the other sections (Key Questions, Thesis, Decisions) start as placeholders and are co-evolved by the user (`/conductor:wiki purpose`) and wiki-synthesizer (Phase 2 of the doc-sync split) over time. This is the wiki's directional intent — *why* the project exists, distinct from the structural overview.
 9. **Wiki Log:** Read `${CLAUDE_PLUGIN_ROOT}/templates/wiki-log.md`, write to `conductor/log.md`.
 Save state: `2.4_workflow`.
 

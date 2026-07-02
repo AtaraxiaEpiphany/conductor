@@ -112,7 +112,7 @@ def get_wiki_drift_warnings(project_root: Path) -> str:
 
     warnings = []
 
-    # 1. overview.md staleness (regenerated each track via doc-syncer Phase 2).
+    # 1. overview.md staleness (regenerated each track via wiki-synthesizer Phase 2).
     overview = conductor / "overview.md"
     age_h = get_file_age_hours(overview)
     if age_h is not None and age_h > 30 * 24:

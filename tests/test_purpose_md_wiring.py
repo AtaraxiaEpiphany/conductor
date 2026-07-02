@@ -3,8 +3,8 @@
 purpose.md is the wiki's directional intent (goals, thesis, decisions) — distinct
 from the structural overview.md. These tests guard the *wiring*: the template
 exists with the co-evolved sections, setup seeds it, the index lists it, the
-wiki skill routes a `purpose` subcommand, doc-syncer regenerates its LLM-owned
-sections in Phase 2, and spec-planner reads it for direction.
+wiki skill routes a `purpose` subcommand, wiki-synthesizer regenerates its LLM-owned
+sections in Phase 2 (the doc-sync split), and spec-planner reads it for direction.
 """
 from pathlib import Path
 from unittest import TestCase, main
@@ -18,7 +18,7 @@ class PurposeTemplateTests(TestCase):
         self.assertTrue(tpl.exists(), "templates/wiki-purpose.md must exist")
         text = tpl.read_text(encoding="utf-8")
         # Co-evolved sections: Goals/Scope are user-authored; Thesis/Decisions/
-        # Key Questions are LLM-maintained by doc-syncer Phase 2.
+        # Key Questions are LLM-maintained by wiki-synthesizer (Phase 2 of the doc-sync split).
         for section in (
             "## Goals",
             "## Key Questions",
@@ -67,17 +67,20 @@ class WikiSkillRoutingTests(TestCase):
         self.assertIn("## 3.5 PURPOSE", self.skill)
 
 
-class DocSyncerPhase2Tests(TestCase):
+class WikiSynthesizerPhase2Tests(TestCase):
+    """Phase 2 of the doc-sync split (wiki-synthesizer) owns purpose.md regen."""
+
     def setUp(self):
-        self.agent = (ROOT / "agents" / "doc-syncer.md").read_text(encoding="utf-8")
+        self.agent = (ROOT / "agents" / "wiki-synthesizer.md").read_text(encoding="utf-8")
 
     def test_loads_purpose_in_infrastructure(self):
         self.assertIn("conductor/purpose.md", self.agent)
         self.assertIn("Wiki Purpose", self.agent)
 
     def test_phase2_updates_purpose_preserving_user_sections(self):
-        # The LLM-maintained update step, distinct from the wholesale overview rewrite.
-        self.assertIn("### 7.1b Update", self.agent)
+        # The LLM-maintained update step (§4.2 after the split), distinct from the
+        # wholesale overview rewrite.
+        self.assertIn("### 4.2 Update", self.agent)
         self.assertIn("Evolving Thesis", self.agent)
         # Must NOT wholesale-replace purpose.md (co-evolved, unlike overview.md).
         self.assertIn("never", self.agent.lower())

@@ -39,9 +39,71 @@ Commit: `chore(conductor): Complete track '<desc>'`.
 
 ## 6.0 DOC SYNC
 
-**Resumability gate:** if the §4.0 `post-loop-status` envelope's `doc_synced` is true, a `docs(conductor): ...[{track_id}]` commit already exists — skip the doc-syncer dispatch, announce `"doc-sync already ran"`, and go to §6.5. Otherwise dispatch `conductor:doc-syncer` as below.
+The doc-sync pipeline is split into two sequenced agents plus an advisory drift
+verify of the regenerated overview:
 
-Dispatch `conductor:doc-syncer`. Prompt: `TRACK_DIR={track_dir} TRACK_ID={track_id}`.
+- **Phase 1 — `conductor:corpus-writer`:** cures spec-vs-doc divergence with
+  user-confirmed corpus edits + graduates harvested findings. Makes the
+  `docs(conductor): Synchronize docs …[{track_id}]` commit (satisfies the
+  archive gate on its own).
+- **Phase 2 — `conductor:wiki-synthesizer`:** regenerates `overview.md`,
+  co-edits `purpose.md`, appends the log, runs the inline drift gate. Makes the
+  `docs(conductor): Wiki sync …[{track_id}]` commit.
+- **Advisory verify — `conductor:wiki-differ`:** post-commit drift check of the
+  regenerated overview (code-grounding the inline gate can't see). Non-blocking.
+
+**Resumability gate (two-tier — the split adds a clean interruption point between
+Phase 1 and Phase 2, so the gate must distinguish "Phase 1 done" from "all done"):**
+
+1. If the §4.0 `post-loop-status` envelope's `doc_synced` is **false** → nothing
+   ran. Run Phase 1, Phase 2, then the advisory verify (below).
+2. If `doc_synced` is **true**, grep `git log` for the Phase 2 commit
+   specifically: `git log --oneline | grep "Wiki sync for track.*\[{track_id}\]"`.
+   - **Present** → both phases ran. Announce `"doc-sync already ran"`, skip the
+     whole pipeline, go to §6.5.
+   - **Absent** (a `[{track_id}]` commit exists but it is only Phase 1's
+     "Synchronize docs" commit) → Phase 1 ran but Phase 2 was interrupted out.
+     Announce `"resuming doc-sync at Phase 2"`, skip Phase 1, run Phase 2 + the
+     advisory verify.
+
+**Phase 1 — Dispatch `conductor:corpus-writer`.** Description:
+`"Doc-sync Phase 1 — corpus edits for '<desc>'"`. Prompt:
+
+```
+TRACK_DIR={track_dir}
+TRACK_ID={track_id}
+TRACK_DESCRIPTION={desc}
+```
+
+Parse `---DOC SYNC RESULT---` (`PHASE: 1`). `STATUS: SKIPPED` → announce "No
+corpus updates required" (Phase 2 still runs). `STATUS: COMPLETED` → note the
+updated files / graduated findings. `STATUS: FAILURE` → announce and **HALT**:
+Phase 1 produces the archive-gate commit, so a Phase 1 failure means archive will
+refuse — surface it rather than continuing to Phase 2.
+
+**Phase 2 — Dispatch `conductor:wiki-synthesizer`.** Description:
+`"Doc-sync Phase 2 — wiki synthesis for '<desc>'"`. Prompt:
+
+```
+TRACK_DIR={track_dir}
+TRACK_ID={track_id}
+TRACK_DESCRIPTION={desc}
+```
+
+Parse `---DOC SYNC RESULT---` (`PHASE: 2`). Note `OVERVIEW_REGENERATED` /
+`PURPOSE_UPDATED` / `LOG_ENTRIES_ADDED` / `DRIFT_REPORTED`. `STATUS: FAILURE` →
+announce, continue (non-blocking; Phase 1's commit already satisfies the archive
+gate).
+
+**Advisory verify — Dispatch `conductor:wiki-differ`** scoped to the regenerated
+overview. Description: `"Verify overview regen for '<desc>'"`. Prompt:
+`PROJECT_DIR={project_root}` (scoped target: `conductor/overview.md`).
+
+Parse `---WIKI DIFF RESULT---`. Non-zero `STALE` / `MOVED` / `UNCOVERED` →
+surface the counts and recommend `/conductor:wiki-doctor diff` for the repair
+loop. **Advisory and non-blocking** — consistent with §7.3's "verification never
+blocks the commit" (the commit already landed); §6.5 doc-linter runs next
+regardless. `STATUS: FAILURE` → announce, continue.
 
 ---
 

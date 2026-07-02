@@ -2,7 +2,7 @@
 
 > The wiki's directional intent — *why* this project exists and where it is heading.
 > Distinct from the schema (how the wiki is structured) and the overview (what it is today):
-> purpose is the evolving thesis. Maintained by doc-syncer Phase 2 from track specs + decisions.
+> purpose is the evolving thesis. Maintained by wiki-synthesizer Phase 2 from track specs + decisions.
 > Last updated: {TIMESTAMP}
 
 ## Goals
@@ -15,7 +15,7 @@
 
 ## Evolving Thesis
 
-{The current synthesized understanding of the project's direction, accumulated from completed tracks and technical decisions. Updated each time doc-syncer runs; contradictions between tracks are surfaced here, not hidden.}
+{The current synthesized understanding of the project's direction, accumulated from completed tracks and technical decisions. Updated each time wiki-synthesizer runs; contradictions between tracks are surfaced here, not hidden.}
 
 ## In Scope
 
@@ -27,4 +27,4 @@
 
 ## Active Decisions
 
-{Architecture/design decisions that shaped direction, accumulated from track specs and the `## Technical Decision:` blocks harvested by doc-syncer. Each entry: decision + one-line rationale + `[[wikilink]]` to the source.}
+{Architecture/design decisions that shaped direction, accumulated from track specs and the `## Technical Decision:` blocks harvested by wiki-synthesizer. Each entry: decision + one-line rationale + `[[wikilink]]` to the source.}

@@ -6,7 +6,7 @@ no §4 check behind it (it silently always returned 0) and branded itself a
 "5-check" audit while §4 actually defined six checks. These tests make a
 field-with-no-check (and a check-with-no-field) fail the suite.
 
-Mirrors the idiom of test_doc_syncer_wiring.py / test_toc_completeness.py:
+Mirrors the idiom of test_doc_sync_split_wiring.py / test_toc_completeness.py:
 plain Path.read_text() + structural asserts, no fixtures.
 """
 import re

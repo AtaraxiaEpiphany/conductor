@@ -5,7 +5,7 @@ sources:
   - agents/explorer
   - agents/code-reviewer
   - agents/wiki-researcher
-  - agents/doc-syncer
+  - agents/corpus-writer
 last_verified: 2026-06-26
 ---
 
@@ -13,7 +13,7 @@ last_verified: 2026-06-26
 
 Canonical map from **task/topic scope** → the scoped wiki doc to read. Shared by
 the five agents that load scoped corpus context (`task-executor`, `explorer`,
-`code-reviewer`, `wiki-researcher`, `doc-syncer`). Each agent still consults
+`code-reviewer`, `wiki-researcher`, `corpus-writer`). Each agent still consults
 `conductor/index.md` (the **Scoped Docs** table with its Match Strategy) as the
 authoritative index; this page is the quick-reference routing those agents
 previously restated independently — and which had drifted (e.g.
@@ -32,8 +32,8 @@ previously restated independently — and which had drifted (e.g.
 
 ## Rules
 
-- Read **only** matching docs — never the whole corpus. Skip any scoped doc that does not exist or whose Match Strategy doesn't apply. (Retrieval is scoped on purpose: the durable architecture lives in the corpus and compounds across tracks via `doc-syncer`.)
-- **Exception — `doc-syncer` reads every row**, not just the matching one: its job is to detect divergence across the whole corpus, so it loads all scoped docs listed here.
+- Read **only** matching docs — never the whole corpus. Skip any scoped doc that does not exist or whose Match Strategy doesn't apply. (Retrieval is scoped on purpose: the durable architecture lives in the corpus and compounds across tracks via `corpus-writer`.)
+- **Exception — `corpus-writer` reads every row**, not just the matching one: its job is to detect divergence across the whole corpus, so it loads all scoped docs listed here.
 - `explorer`, `task-executor`, and `code-reviewer` share the same routing intentionally — the explorer's findings feed the same scoped docs the executor later reads.
 - Greenfield / no match → record `consulted_docs: []` (a graduation signal: findings will *seed* the corpus).
 

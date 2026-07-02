@@ -185,7 +185,7 @@ COMMAND_HELP = {
                        "                  --content '<json>' (or stdin) [--subtask <n>]",
                        "Append notes to a task's handoff file"),
     "harvest-candidates": ("harvest-candidates <track-dir>",
-                           "Extract durable findings (graduation candidates + decisions) from handoffs for doc-syncer"),
+                           "Extract durable findings (graduation candidates + decisions) from handoffs for corpus-writer"),
     "registry-update": ("registry-update <track-dir> <tracks-md-path>",
                         "Update track entry in Tracks Registry (tracks.md)"),
     "write-result": ("write-result <track-dir> --status success|failure --commit-sha <sha>\n"

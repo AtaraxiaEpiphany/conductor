@@ -32,7 +32,7 @@ from lib.recovery import (
 # Agents whose followup is `dispatch-finalize` (== RESULT_FILE_AGENT_TYPES)
 # synthesize a missing result from result.json / locked task state — for these a
 # missing result block is recoverable. Other agents (phase-checker, code-reviewer,
-# skip-analyst, doc-syncer, ...) have no dispatch-finalize step — a missing block
+# skip-analyst, corpus-writer, wiki-synthesizer, ...) have no dispatch-finalize step — a missing block
 # means lost status the orchestrator must inspect manually.
 
 NO_RESULT_MESSAGE = (

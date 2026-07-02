@@ -130,4 +130,4 @@ If any answer is **"no"** or **"unsure"** → STOP and re-evaluate.
 
 ## Documentation Conventions
 
-Corpus-authoring conventions — wikilink `[[...]]` format and page-provenance frontmatter (`type`/`sources`/`last_verified`) — live in `conductor/design/doc-conventions.md`. These are loaded on demand by `doc-syncer` / `doc-linter` / `wiki`, not resident here. The deterministic checker is `lib/frontmatter.py`.
+Corpus-authoring conventions — wikilink `[[...]]` format and page-provenance frontmatter (`type`/`sources`/`last_verified`) — live in `conductor/design/doc-conventions.md`. These are loaded on demand by `corpus-writer` / `wiki-synthesizer` / `doc-linter` / `wiki`, not resident here. The deterministic checker is `lib/frontmatter.py`.

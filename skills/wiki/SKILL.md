@@ -130,12 +130,12 @@ Append based on the metrics:
 ### 3.5.1 Read
 
 1. **Locate** `conductor/purpose.md` via Glob.
-2. **Missing** → halt: "`purpose.md` not found. It is created by `/conductor:setup` (and maintained by doc-syncer Phase 2). Run `/conductor:setup`, or I can seed it from the template now." Offer via `AskUserQuestion`: "Seed `purpose.md` from template?" → **Yes** → Read `${CLAUDE_PLUGIN_ROOT}/templates/wiki-purpose.md`, replace `{TIMESTAMP}`, Write to `conductor/purpose.md`, then continue. **No** → HALT.
+2. **Missing** → halt: "`purpose.md` not found. It is created by `/conductor:setup` (and maintained by wiki-synthesizer Phase 2). Run `/conductor:setup`, or I can seed it from the template now." Offer via `AskUserQuestion`: "Seed `purpose.md` from template?" → **Yes** → Read `${CLAUDE_PLUGIN_ROOT}/templates/wiki-purpose.md`, replace `{TIMESTAMP}`, Write to `conductor/purpose.md`, then continue. **No** → HALT.
 3. **Present** the full `purpose.md` content to the user verbatim (it is short by design).
 
 ### 3.5.2 Offer Co-Edit
 
-`purpose.md` is **co-evolved** — the human owns the Goals and In/Out-of-Scope sections; doc-syncer maintains Thesis/Decisions/Key-Questions. Ask via `AskUserQuestion`:
+`purpose.md` is **co-evolved** — the human owns the Goals and In/Out-of-Scope sections; wiki-synthesizer maintains Thesis/Decisions/Key-Questions. Ask via `AskUserQuestion`:
 
 > "Edit `purpose.md`? You own the Goals and Scope sections; the Thesis/Decisions/Questions are auto-maintained."
 
@@ -144,7 +144,7 @@ Options:
 - **Refine a key question** → prompt, Edit the Key Questions section.
 - **Done (read-only)** → HALT.
 
-On any edit: announce the section changed and note "doc-syncer will reconcile Thesis/Decisions on the next track — your Goals/Scope edits are preserved."
+On any edit: announce the section changed and note "wiki-synthesizer will reconcile Thesis/Decisions on the next track — your Goals/Scope edits are preserved."
 
 ---
 
@@ -229,13 +229,13 @@ On user confirmation, persist the answer presented in §4.3 using the `SOURCES` 
 
 ## 5.0 ERROR HANDLING
 
-Fetch and execute `conductor/design/agent-error-handling.md`. Substitute the relevant agent + result-block delimiter for the current path: query (§4) → `conductor:wiki-researcher` / `---WIKI RESEARCH RESULT---`; ingest (§6) → `conductor:doc-syncer` / `---DOC SYNC RESULT---`. (The `wiki` skill never dispatches doc-linter.)
+Fetch and execute `conductor/design/agent-error-handling.md`. Substitute the relevant agent + result-block delimiter for the current path: query (§4) → `conductor:wiki-researcher` / `---WIKI RESEARCH RESULT---`; ingest (§6) → `conductor:corpus-writer` then `conductor:wiki-synthesizer` (then advisory `conductor:wiki-differ`) / `---DOC SYNC RESULT---`. (The `wiki` skill never dispatches doc-linter.)
 
 ---
 
 ## 6.0 INGEST
 
-**Build the wiki from an arbitrary source — uncoupled from the track lifecycle.** This is the missing "drop a source → build the wiki" path: it routes the source through the *same* canonical writer (doc-syncer) that post-track ingest uses, preserving the merge-not-append / idempotent / drift-gated discipline. The wiki skill stays a thin router; doc-syncer remains the single corpus writer.
+**Build the wiki from an arbitrary source — uncoupled from the track lifecycle.** This is the missing "drop a source → build the wiki" path: it routes the source through the *same* canonical doc-sync pipeline (corpus-writer + wiki-synthesizer) that post-track ingest uses, preserving the merge-not-append / idempotent / drift-gated discipline. The wiki skill stays a thin router; corpus-writer remains the single corpus writer, wiki-synthesizer the single wiki synthesizer.
 
 ### 6.1 Resolve & Normalize the Source
 
@@ -243,7 +243,7 @@ Fetch and execute `conductor/design/agent-error-handling.md`. Substitute the rel
 
 | Source form | How to normalize |
 |---|---|
-| Existing file path | `Read` it. If not markdown, read anyway (doc-syncer treats prose as the source). |
+| Existing file path | `Read` it. If not markdown, read anyway (corpus-writer treats prose as the source). |
 | URL (`http://`/`https://`) | `WebFetch` it as markdown. |
 | Pasted block / bare text | Use `SUB_ARGS` verbatim. |
 
@@ -255,9 +255,11 @@ Fetch and execute `conductor/design/agent-error-handling.md`. Substitute the rel
    ```
 3. **Verify** the file is non-empty. If empty/failed → HALT: "Could not normalize source `<source>`."
 
-### 6.2 Dispatch Doc-Syncer (ad-hoc mode)
+### 6.2 Dispatch the Doc-Sync Pipeline (ad-hoc mode)
 
-Dispatch `conductor:doc-syncer` in ad-hoc mode (synthetic assignment — no `TRACK_DIR` / `TRACK_ID`), prompt:
+The pipeline is the same two sequenced agents post-track ingest uses, plus an advisory drift verify — all run in ad-hoc mode (synthetic assignment with no `TRACK_DIR` / `TRACK_ID`). Dispatch them in order:
+
+**Phase 1 — `conductor:corpus-writer`**, prompt:
 
 ```
 SOURCE_TYPE=ad-hoc
@@ -265,18 +267,20 @@ SOURCE_PATH={absolute path to "$SRC"}
 SOURCE_NAME={slug}
 ```
 
-doc-syncer runs its canonical pipeline in ad-hoc mode: the source IS the "spec" (§3.1 reads `SOURCE_PATH`), there are no handoffs to harvest, and commits are tagged `[wiki-ingest]` instead of `[{TRACK_ID}]` (no `track-state archive` gate applies — ad-hoc ingest never touches `track-state.json`).
+corpus-writer runs Phase 1 in ad-hoc mode: the source IS the "spec" (§3.1 reads `SOURCE_PATH`), there are no handoffs to harvest, and commits are tagged `[wiki-ingest]` instead of `[{TRACK_ID}]` (no `track-state archive` gate applies — ad-hoc ingest never touches `track-state.json`). Parse `---DOC SYNC RESULT---` (`PHASE: 1`). `STATUS: FAILURE` → announce the reason, clean up `$SRC`, HALT.
+
+**Phase 2 — `conductor:wiki-synthesizer`**, same ad-hoc prompt (`SOURCE_TYPE=ad-hoc SOURCE_PATH={absolute path to "$SRC"} SOURCE_NAME={slug}`). It regenerates overview, updates purpose, appends the log, and commits (`[wiki-ingest]`). Parse `---DOC SYNC RESULT---` (`PHASE: 2`). `STATUS: FAILURE` → announce, continue (non-blocking; Phase 1's commit already landed).
+
+**Advisory verify — `conductor:wiki-differ`** scoped to the regenerated overview (`PROJECT_DIR={project root}`, target `conductor/overview.md`). Parse `---WIKI DIFF RESULT---`; non-zero STALE/MOVED/UNCOVERED → surface counts, recommend `/conductor:wiki-doctor diff` for the repair loop. Advisory and non-blocking — ad-hoc ingest has no other wiki-health check, so this verify is the one drift gate. `STATUS: FAILURE` → announce, continue.
 
 ### 6.3 Parse Result & Clean Up
 
-1. Wait for completion. Parse the `---DOC SYNC RESULT---` block.
-2. `STATUS: FAILURE` → announce the reason; clean up `$SRC`; HALT.
-3. `STATUS: COMPLETED|SKIPPED` → clean up the transient source:
+1. After the pipeline completes, clean up the transient source:
    ```bash
    rm -f "$SRC"
    ```
-4. Summarize: which wiki pages were merged/seeded (`UPDATED_FILES`), whether overview/purpose were regenerated (`WIKI_UPDATED` / `PURPOSE_UPDATED`), and the graduated-finding count. The tracked artifacts are the corpus pages doc-syncer committed — the raw source is gone by design.
+2. Summarize: which wiki pages were merged/seeded (Phase 1 `UPDATED_FILES` / `GRADUATED_FINDINGS`), whether overview/purpose were regenerated (Phase 2 `OVERVIEW_REGENERATED` / `PURPOSE_UPDATED` / `LOG_ENTRIES_ADDED`), and any advisory drift (the `---WIKI DIFF RESULT---` STALE/MOVED/UNCOVERED counts). The tracked artifacts are the corpus + wiki pages the agents committed — the raw source is gone by design.
 
 ### 6.4 No-Op Path
 
-If doc-syncer reports `SKIPPED` (the source added nothing the corpus didn't already contain — idempotent ingest), announce "Source `<slug>` already reflected in the wiki; no changes." Clean up `$SRC`. This is correct behavior, not an error.
+If corpus-writer reports `STATUS: SKIPPED` (the source added nothing the corpus didn't already contain — idempotent ingest), Phase 2 (wiki-synthesizer) still runs — it regenerates overview from the current corpus (a no-op if nothing changed) and reports its own status. Announce "Source `<slug>` already reflected in the wiki; no changes." if both phases report no work. Clean up `$SRC`. This is correct behavior, not an error.

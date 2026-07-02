@@ -97,7 +97,8 @@ conductor-plugin/
 | `code-reviewer` | sonnet | Deep code review against spec/plan |
 | `spec-planner` | sonnet | Generate spec.md + plan.md |
 | `spec-reviewer` | haiku | Interactive spec/plan review |
-| `doc-syncer` | sonnet | Documentation synchronisation |
+| `corpus-writer` | sonnet | Doc-sync Phase 1 — corpus edits + graduation |
+| `wiki-synthesizer` | sonnet | Doc-sync Phase 2 — overview/purpose/log synthesis |
 | `doc-linter` | sonnet | Docs wiki health-check (broken refs, stale claims, gaps) |
 | `wiki-researcher` | sonnet | Wiki topic query — cited answer synthesis (read-only) |
 | `wiki-differ` | sonnet | Wiki-vs-codebase drift detection (read-only) |

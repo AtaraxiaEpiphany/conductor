@@ -123,7 +123,7 @@ Return **exactly** this JSON block (raw JSON, no code fences):
 ---END ANALYSIS RESULT---
 ```
 
-The orchestrator (`setup` §2.0) persists this full detection tree to `conductor/.conductor/analysis.json` for later consumers (e.g. doc-syncer seeding), then operates on the live fields (`languages`, `frameworks`) for the Tech Stack pre-fill. (`maturity` is omitted — this agent runs only on brownfield projects, so it is always `brownfield`; `suggested_styleguides`/`suggested_workflow` are omitted — `setup` derives styleguides from `languages` via its own mapping table and uses a fixed workflow.)
+The orchestrator (`setup` §2.0) persists this full detection tree to `conductor/.conductor/analysis.json` for later consumers (e.g. corpus-writer seeding), then operates on the live fields (`languages`, `frameworks`) for the Tech Stack pre-fill. (`maturity` is omitted — this agent runs only on brownfield projects, so it is always `brownfield`; `suggested_styleguides`/`suggested_workflow` are omitted — `setup` derives styleguides from `languages` via its own mapping table and uses a fixed workflow.)
 
 ### On Failure
 
