@@ -73,6 +73,7 @@ AGENT_REMINDERS = {
     "project-analyzer": "[Conductor] Result format: ---ANALYSIS RESULT--- ... ---END ANALYSIS RESULT---",
     "wiki-differ": "[Conductor] Result format: ---WIKI DIFF RESULT--- ... ---END RESULT---",
     "wiki-researcher": "[Conductor] Result format: ---WIKI RESEARCH RESULT--- ... ---END RESULT---",
+    "refuter": "[Conductor] Result format: ---REFUTATION RESULT--- ... ---END RESULT---",
 }
 
 
