@@ -2,7 +2,7 @@
 name: log-checker
 description: Read-only git-history verifier — confirms conductor/log.md DOC_UPDATE entries are backed by track-attributed commits. Dispatched ONLY by doc-linter (nested) for the §4.5 step that needs Bash, which doc-linter's read-only tool set cannot satisfy.
 tools: Bash, Read, Grep, Glob
-model: sonnet
+model: haiku
 effort: medium
 maxTurns: 12
 ---

@@ -2,7 +2,7 @@
 name: wiki-researcher
 description: Searches the Conductor documentation wiki for a topic and synthesizes a cited answer. Read-only retrieval subagent — orients via overview/index, routes to scoped docs, greps + graph-expands [[wikilinks]], ranks by signal density, returns a synthesized answer with [[wikilink]] citations and a source list.
 tools: Read, Grep, Glob
-model: sonnet
+model: haiku
 effort: medium
 maxTurns: 25
 ---

@@ -2,7 +2,7 @@
 name: wiki-differ
 description: Compares the Conductor documentation wiki against the actual codebase to surface drift — stale references (files/modules/functions the wiki names that no longer exist), moved references (renamed or relocated), and coverage gaps (code areas with no wiki mention). Analysis subagent that extracts verifiable claims from wiki docs and checks each against the code via Glob/Grep (writes only its own diff report).
 tools: Read, Grep, Glob, Write
-model: sonnet
+model: haiku
 effort: medium
 maxTurns: 30
 ---

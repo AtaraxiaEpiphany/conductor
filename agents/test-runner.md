@@ -2,7 +2,7 @@
 name: test-runner
 description: The L1 verify-only tier of phase verification (read-only). Resolves the project's test command and runs it ONCE — no fix, no edit. Fanned out in parallel with conductor:ac-tracer before conductor:phase-checker (the synthesizer) consumes the fleet. phase-checker owns the fix-and-retry pass if this agent reports failure.
 tools: Bash, Read, Grep, Glob
-model: sonnet
+model: haiku
 effort: medium
 maxTurns: 10
 ---
