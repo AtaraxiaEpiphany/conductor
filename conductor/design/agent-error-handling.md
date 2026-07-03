@@ -43,10 +43,10 @@ If the agent completes but no `<RESULT-BLOCK>` delimiter is detected:
 | Caller | Agent | Result-block delimiter |
 |---|---|---|
 | `wiki` query (§4) | `conductor:wiki-researcher` | `---WIKI RESEARCH RESULT---` |
-| `wiki` ingest (§6) | `conductor:doc-syncer` | `---DOC SYNC RESULT---` |
+| `wiki` ingest (§6) | `conductor:corpus-writer` → `conductor:wiki-synthesizer` | `---DOC SYNC RESULT---` |
 | `wiki-doctor` lint (§3) | `conductor:doc-linter` | `---DOC LINT RESULT---` |
 | `wiki-doctor` diff (§4) | `conductor:wiki-differ` | `---WIKI DIFF RESULT---` |
 
 ## See Also
 
-- [[conductor/design/doc-conventions]] — corpus authoring conventions.
+- [[runtime/contracts/doc-conventions]] — corpus authoring conventions.

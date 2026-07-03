@@ -12,7 +12,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 # Add lib directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent / "lib"))
@@ -32,7 +32,7 @@ from lib.recovery import (
 # Agents whose followup is `dispatch-finalize` (== RESULT_FILE_AGENT_TYPES)
 # synthesize a missing result from result.json / locked task state — for these a
 # missing result block is recoverable. Other agents (phase-checker, code-reviewer,
-# skip-analyst, doc-syncer, ...) have no dispatch-finalize step — a missing block
+# skip-analyst, corpus-writer, wiki-synthesizer, ...) have no dispatch-finalize step — a missing block
 # means lost status the orchestrator must inspect manually.
 
 NO_RESULT_MESSAGE = (
@@ -101,6 +101,26 @@ def _extract_agent_text(tool_response) -> str:
     return json.dumps(tool_response, ensure_ascii=False)
 
 
+def _agent_result_object(tool_response: Any, trimmed_text: str) -> dict:
+    """Wrap trimmed text as a schema-valid Agent ``updatedToolOutput`` object.
+
+    Claude Code validates ``updatedToolOutput`` against the Agent tool's output
+    shape and REJECTS a bare string — Zod reports ``invalid_type: expected
+    object, received string`` and discards the replacement, so the verbose
+    original reaches the caller's context (confirmed 1:1 against live
+    PostToolUse fires in session debug logs; the prior bare-string emission was
+    silently non-functional). The runtime's own ``tool_response`` is already a
+    valid instance of the Agent output shape (it produced it), so echoing it
+    and swapping only ``content`` for the trimmed block preserves ``agentId`` /
+    ``status`` / ``usage`` / telemetry while satisfying the schema — whatever
+    the exact (status-discriminated union) shape, every non-content field came
+    from a known-valid instance.
+    """
+    base = dict(tool_response) if isinstance(tool_response, dict) else {}
+    base["content"] = [{"type": "text", "text": trimmed_text}]
+    return base
+
+
 def detect_recovery_context(response: str) -> Optional[str]:
     """Check for recovery success after a prior failure."""
     if RECOVERY_MARKER not in response:
@@ -124,11 +144,15 @@ def main():
         write_hook_output()
         return
 
-    response = input_data.get("tool_response", "")
-    if isinstance(response, dict):
-        response = _extract_agent_text(response)
-    elif not isinstance(response, str):
-        response = str(response) if response else ""
+    # Keep the raw tool_response (a valid Agent-output instance) so the
+    # replacement object below can echo its agentId/status/usage fields.
+    raw_response = input_data.get("tool_response", "")
+    if isinstance(raw_response, dict):
+        response = _extract_agent_text(raw_response)
+    elif isinstance(raw_response, str):
+        response = raw_response
+    else:
+        response = str(raw_response) if raw_response else ""
     if not response:
         write_hook_output()
         return
@@ -173,7 +197,7 @@ def main():
             extra_context = NO_RESULT_WARN_GENERIC
 
     write_hook_output(
-        updated_tool_output=updated_output,
+        updated_tool_output=_agent_result_object(raw_response, updated_output),
         additional_context=extra_context,
     )
 

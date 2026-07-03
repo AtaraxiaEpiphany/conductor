@@ -6,8 +6,8 @@ A subagent signals completion through ONE deterministic channel:
 - **result-file agents** (task-executor, explorer) write a fresh
   ``.conductor/result.json`` via ``track-state write-result``. A missing fresh
   file means the agent exhausted turns or crashed before its result step.
-- **stdout-block agents** (phase-checker, code-reviewer, doc-syncer,
-  spec-planner) emit a ``---END RESULT---`` close tag (no result file). A
+- **stdout-block agents** (phase-checker, code-reviewer, corpus-writer,
+  wiki-synthesizer, spec-planner) emit a ``---END RESULT---`` close tag (no result file). A
   missing close tag means it stopped mid-protocol.
 
 In either case the hook returns ``decision: "block"`` with a `reason` that is
@@ -80,9 +80,22 @@ STDOUT_BLOCK_AGENTS = {
         "{TRACK_DIR}/.conductor/review-result.json. Report STATUS: FAILURE with "
         "a one-line REASON if the review could not complete."
     ),
-    "doc-syncer": (
-        "IMMEDIATELY print the ---DOC SYNC RESULT--- block (Section 8.0). Report "
-        "STATUS: FAILURE with a one-line REASON if the doc sync could not complete."
+    "corpus-writer": (
+        "IMMEDIATELY print the ---DOC SYNC RESULT--- block (Section 7.0). Report "
+        "STATUS: FAILURE with a one-line REASON if Phase 1 of the doc sync could not complete."
+    ),
+    "wiki-synthesizer": (
+        "IMMEDIATELY print the ---DOC SYNC RESULT--- block (Section 6.0). Report "
+        "STATUS: FAILURE with a one-line REASON if Phase 2 of the doc sync could not complete."
+    ),
+    "ac-tracer": (
+        "IMMEDIATELY print the ---AC TRACE RESULT--- block (Section 5.0). Report "
+        "VERDICT: ERROR with a one-line REASON if the integrity check could not complete."
+    ),
+    "test-runner": (
+        "IMMEDIATELY print the ---L1 VERIFY RESULT--- block (Section 5.0). Report "
+        "STATUS: error with a one-line REASON if the test command could not run at all "
+        "(a failing suite is STATUS: failed, NOT error)."
     ),
     "spec-planner": (
         "IMMEDIATELY print the ---SPEC PLAN RESULT--- block (Section 5.0). Report "
@@ -137,6 +150,28 @@ def _resolve_locked(cwd):
         return None
 
 
+def _wave_agent_track_dir(cwd):
+    """Return the track_dir of a wave member's worktree, or ``None``.
+
+    Walks up from ``cwd`` looking for ``.conductor/wave-agent.marker`` — the
+    sentinel ``dispatch-wave`` drops in each member's worktree track dir. A wave
+    agent runs with the singleton cursor UNSET (the serial spine owns it), so
+    :func:`_resolve_locked` returns ``None`` for it and the hook would otherwise
+    fail-open to a forced recovery turn / block. The marker short-circuits that:
+    ``wave-finalize`` owns result synthesis + retry for wave members, not this
+    hook. Returns the track_dir (the dir holding ``.conductor/``) so the caller
+    can probe the worktree's own result.json, or ``None`` when not a wave agent.
+    """
+    try:
+        p = Path(cwd).resolve()
+    except OSError:
+        return None
+    for cand in (p, *p.parents):
+        if (cand / ".conductor" / "wave-agent.marker").exists():
+            return str(cand)
+    return None
+
+
 def _log_result_event(log_file, session_id: str, agent_type: str,
                       outcome: str, reason: str) -> None:
     """Record a result-file-agent stop outcome to the recovery-rate log.
@@ -170,6 +205,19 @@ def main():
     # orchestrator's retry/skip path reads it). Only a missing file means the
     # agent never reached its result step.
     if agent_type in RESULT_FILE_AGENT_TYPES:
+        # Wave agents first: dispatch-wave drops a wave-agent.marker in each
+        # member's worktree. wave-finalize owns that member's result synthesis +
+        # retry, so this hook must NOT bound it via the singleton-cursor recovery
+        # counter (unset under a wave → would force a spurious fail-open block).
+        # Allow the stop either way — the wave's reliability is enforced at
+        # wave-finalize, not here.
+        wave_track_dir = _wave_agent_track_dir(cwd)
+        if wave_track_dir is not None:
+            _log_result_event(log_file, session_id, agent_type, "wave",
+                              "wave_agent_marker")
+            write_hook_output()
+            return
+
         # Resolve the locked track once — scope the result.json freshness check
         # to IT (avoids a fresh result in another track satisfying this probe)
         # and identify the task whose recovery counter is bounded below.

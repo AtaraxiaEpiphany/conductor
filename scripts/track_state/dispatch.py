@@ -42,6 +42,23 @@ def _classify_task(tags):
     return "executor"
 
 
+def _active_wave(track_dir):
+    """Return the active wave ledger, or ``None``.
+
+    Lazy-imports :mod:`wave` (which imports this module) to avoid a load-time
+    dispatch↔wave cycle. Mutual-exclusion gate: while a wave is in flight, the
+    serial spine (dispatch-next/prepare/recover) must not interleave on the same
+    track — the wave owns those members' lifecycle. Returns the ledger dict when
+    active, else ``None``.
+    """
+    try:
+        from .wave import _load_ledger, _is_active
+    except Exception:
+        return None
+    ledger = _load_ledger(track_dir)
+    return ledger if _is_active(ledger) else None
+
+
 def _find_next_task(state):
     """Find the next task to execute. Returns result dict or None."""
     result = None
@@ -131,6 +148,13 @@ def cmd_next(track_dir, compact=True):
 def cmd_dispatch_next(track_dir, compact=True):
     """One-call dispatch decision: next + parent-complete resolution + tag routing.
     Returns action enum for orchestrator to switch on."""
+    # Mutual exclusion: a wave in flight owns this track — refuse the serial spine.
+    wave = _active_wave(track_dir)
+    if wave:
+        emit(dict(action="wave_active", phase=wave.get("phase")),
+             "dispatch-next", compact)
+        return
+
     # Auto-fix state before dispatching
     _, fixes, _ = ensure_healthy(track_dir)
     if fixes:
@@ -252,6 +276,13 @@ def cmd_recover(track_dir, compact=True):
     2. If current indices point to a terminal task, advances to next pending.
     3. Includes fixes_applied in output for caller visibility.
     """
+    # Mutual exclusion: a wave in flight owns this track — wave-abort/wave-finalize
+    # are its recovery paths, not the serial recover spine.
+    wave = _active_wave(track_dir)
+    if wave:
+        emit(dict(status="wave_active", phase=wave.get("phase")), "recover", compact)
+        return
+
     state, fixes, verrors = ensure_healthy(track_dir)
     if state is None:
         result = dict(status="error", errors=verrors)
@@ -341,6 +372,13 @@ def _clear_stale_result(track_dir):
 
 def cmd_dispatch_prepare(track_dir, compact=True):
     """Lock + sync-plan + return commit message template. Reduces CLI round trips."""
+    # Mutual exclusion: a wave in flight owns this track — refuse the serial spine.
+    wave = _active_wave(track_dir)
+    if wave:
+        emit(dict(action="wave_active", phase=wave.get("phase")),
+             "dispatch-prepare", compact)
+        return
+
     # Auto-fix state (includes plan reconciliation + all other fixes)
     state, fixes, _ = ensure_healthy(track_dir)
     if state is None:
@@ -590,36 +628,30 @@ def _resolve_finalize_target(track_dir, result_path):
     return r, p, t, s, task_name, status
 
 
-def cmd_dispatch_finalize(track_dir, compact=True):
-    """Process result + create conductor commit + sync-plan.
-    Creates the conductor commit internally so each task/subtask gets a unique SHA.
-    Accepts --override key=value to patch result fields before processing.
-    When result.json is missing, synthesizes result from the locked task in state."""
-    result_path = conductor_dir(track_dir) / "result.json"
+def _finalize_task(track_dir, p, t, s, r, task_name, status):
+    """Run the SUCCESS/FAILURE state transition + conductor commit + git note.
 
-    resolved = _resolve_finalize_target(track_dir, result_path)
-    if resolved is None:
-        emit(dict(error="No result file at .conductor/result.json and no locked task in state"),
-             "dispatch-finalize", compact)
-        return
-    if not result_path.exists():
-        print("NOTE: result.json missing — synthesized from locked task state",
-              file=sys.stderr)
-    r, p, t, s, task_name, status = resolved
+    Returns ``(result_dict, clear_result_json)``. The dict is the envelope the
+    caller emits under its own command name; ``clear_result_json`` tells the
+    caller whether to delete the source ``result.json`` (True on a committed
+    transition or a stale-index error; False to preserve for manual recovery).
 
+    Factored out of :func:`cmd_dispatch_finalize` so :func:`cmd_wave_finalize`
+    can reuse the EXACT transition with explicit ``(p, t, s)`` — the serial
+    resolver (:func:`_resolve_finalize_target`) routes by the singleton cursor,
+    which is unset under a wave. The caller owns ``result.json`` cleanup (and,
+    for waves, worktree teardown) so this function stays pure transition logic.
+    """
     if status == "SUCCESS":
         code_sha = _normalize_sha(r.get("commit_sha", ""))
         try:
             parent_completed, state = _do_complete(track_dir, p, t, s, code_sha)
         except ValueError as e:
             # Parent has non-terminal subtasks — retryable, keep result.json
-            emit(dict(error=str(e), status="error"), "dispatch-finalize", compact)
-            return
+            return dict(error=str(e), status="error"), False
         except IndexError as e:
             # Stale indices — unrecoverable, clean up result.json
-            result_path.unlink(missing_ok=True)
-            emit(dict(error=str(e), status="error"), "dispatch-finalize", compact)
-            return
+            return dict(error=str(e), status="error"), True
 
         _store_evidence(state, track_dir, p, t, s, r)
 
@@ -649,13 +681,6 @@ def cmd_dispatch_finalize(track_dir, compact=True):
             if dedup_sha and dedup_sha != final_sha:
                 final_sha = dedup_sha
                 state = _update_task_sha(track_dir, p, t, s, final_sha)
-
-        # Delete result.json after all commits succeed
-        # If commit failed, result.json is preserved for manual recovery
-        if committed:
-            result_path.unlink(missing_ok=True)
-        else:
-            print(f"WARNING: result.json preserved due to commit failure", file=sys.stderr)
 
         # Write git note using the SHA stored in track-state.json (not the conductor commit SHA).
         # This ensures `git notes show <plan_sha>` works since plan.md shows the same SHA.
@@ -691,9 +716,11 @@ def cmd_dispatch_finalize(track_dir, compact=True):
         if checkpoint_pending is not None:
             result["phase_checkpoint_pending"] = checkpoint_pending
 
-        emit(result, "dispatch-finalize", compact)
+        # clear_result_json mirrors the original inline behavior: delete on a
+        # committed transition, preserve for manual recovery on commit failure.
+        return result, bool(committed)
 
-    elif status == "FAILURE":
+    if status == "FAILURE":
         summary = r.get("summary", "")
         retry_count, state = _do_fail(track_dir, p, t, s, summary)
         synced = _do_sync_plan(track_dir, state)
@@ -708,15 +735,40 @@ def cmd_dispatch_finalize(track_dir, compact=True):
         # complaint on the next Stop hook. Ensured commit unlinks it reliably; the
         # genuine-git-breakage case still preserves it (both attempts return False).
         committed = _git_commit_ensured(track_dir, commit_msg)
-        if committed:
-            result_path.unlink(missing_ok=True)
-        else:
-            print(f"WARNING: result.json preserved due to commit failure", file=sys.stderr)
-        emit(dict(status="failure", retry_count=retry_count, summary=summary,
-                  sync_count=synced, committed=committed,
-                  phase=int(p), task=int(t),
-                  subtask=(int(s) if s is not None else None)),
-             "dispatch-finalize", compact)
+        return (dict(status="failure", retry_count=retry_count, summary=summary,
+                     sync_count=synced, committed=committed,
+                     phase=int(p), task=int(t),
+                     subtask=(int(s) if s is not None else None)),
+                bool(committed))
 
-    else:
-        emit(dict(error=f"Unknown status: {status}"), "dispatch-finalize", compact)
+    return dict(error=f"Unknown status: {status}"), False
+
+
+def cmd_dispatch_finalize(track_dir, compact=True):
+    """Process result + create conductor commit + sync-plan.
+    Creates the conductor commit internally so each task/subtask gets a unique SHA.
+    Accepts --override key=value to patch result fields before processing.
+    When result.json is missing, synthesizes result from the locked task in state."""
+    result_path = conductor_dir(track_dir) / "result.json"
+
+    resolved = _resolve_finalize_target(track_dir, result_path)
+    if resolved is None:
+        emit(dict(error="No result file at .conductor/result.json and no locked task in state"),
+             "dispatch-finalize", compact)
+        return
+    if not result_path.exists():
+        print("NOTE: result.json missing — synthesized from locked task state",
+              file=sys.stderr)
+    r, p, t, s, task_name, status = resolved
+
+    result, clear_result = _finalize_task(track_dir, p, t, s, r, task_name, status)
+
+    # result.json cleanup is the serial caller's job (wave-finalize manages its
+    # own worktree result.json during teardown). _finalize_task signals whether
+    # the source result.json should be deleted vs preserved for manual recovery.
+    if clear_result:
+        result_path.unlink(missing_ok=True)
+    elif result.get("status") != "error":
+        print("WARNING: result.json preserved due to commit failure", file=sys.stderr)
+
+    emit(result, "dispatch-finalize", compact)

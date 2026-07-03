@@ -66,6 +66,15 @@ class SubagentStartReminderTests(TestCase):
         ctx = out.get("hookSpecificOutput", {}).get("additionalContext", "")
         self.assertIn("TASK RESULT", ctx)
 
+    def test_refuter_gets_its_reminder(self):
+        """The shared refuter agent (dispatched by new-track / implement / parallel)
+        must receive its REFUTATION RESULT reminder — filter-subagent-output depends
+        on the delimiter reaching the agent's emitted output."""
+        out = _run("refuter")
+        ctx = out.get("hookSpecificOutput", {}).get("additionalContext", "")
+        self.assertIn("REFUTATION RESULT", ctx)
+        self.assertIn("Validate every tool call", ctx)  # floor prepended
+
     def test_unknown_agent_gets_no_context(self):
         out = _run("mystery-agent")
         self.assertNotIn("hookSpecificOutput", out)

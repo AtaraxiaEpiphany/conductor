@@ -2,6 +2,8 @@
 
 **Trigger:** This protocol is executed immediately after a task is completed that also concludes a phase in `plan.md`.
 
+> **Realization (plugin):** the L1 verify (Step 3) and the AC-evidence-trace (Step 3.6) tiers are executed by two read-only subagents fanned out **in parallel before** `conductor:phase-checker` — `conductor:test-runner` (runs the test command once, no fix) and `conductor:ac-tracer` (runs `track-state spec-integrity`). `conductor:phase-checker` is the **synthesizer**: it consumes those two verdicts, owns the Step 3 fix-and-retry (only when `test-runner` reports failure), then runs Steps 3.5 (L2) / 4–10. The `phase-checker` addenda are binding where they extend this template.
+
 1.  **Announce Protocol Start:** Inform the user that the phase is complete and the verification and checkpointing protocol has begun.
 
 2.  **Ensure Test Coverage for Phase Changes:**
@@ -17,6 +19,12 @@
     -   **Example Announcement:** "I will now run the automated test suite to verify the phase. **Command:** `CI=true npm test`"
     -   Execute the announced command.
     -   If tests fail, you **must** inform the user and begin debugging. You may attempt to propose a fix a **maximum of two times**. If the tests still fail after your second proposed fix, you **must stop**, report the persistent failure, and ask the user for guidance.
+
+3.6.  **AC Evidence Trace (spec-bearing tracks):**
+    -   **Decide applicability:** if `{TRACK_DIR}/spec.md` does not exist, or has no `## Acceptance Criteria` section, skip this step (record `AC_TRACE: skipped (no spec/ACs)`) and proceed to Step 4 — tracks without a formal spec are not penalized.
+    -   Run `track-state spec-integrity "{TRACK_DIR}"` (the `track-state` CLI — not a raw `python3` invocation) and parse the JSON.
+    -   **Gate verdict:** if `ac_integrity_gate` is `FAILED` → **STOP**. Paste the gate string verbatim as the failure reason — it names the offending AC IDs and the exact authoring fix (e.g. "add a `TC-{n}.{m} | AC-{n}` row under ## Test Scenarios", "annotate the implementing task in plan.md with a `<!-- AC-n -->`"). This is a **spec/plan authoring defect, not a code defect** — fix `spec.md` / `plan.md`, then re-run the phase; do not retry the implementing task.
+    -   **Evidence grounding:** from the `ac_evidence` list, record the per-AC grounding summary into the Step 7 verification report — TCs `measured` (grounded by a real `def test_TC_{n}_{m}_*`) vs `claimed` (in `evidence.tc_coverage` but no named test) vs `missing`. By default ungrounded TCs are advisory (`AC_TRACE: warn (N ungrounded)`); under `CONDUCTOR_AC_VERIFY_STRICT=1`, any ungrounded TC fails the checkpoint. `AC_TRACE: passed` when every AC's TCs are grounded.
 
 4. Propose a Detailed, Actionable Manual Verification Plan:
     -   **CRITICAL:** To generate the plan, first analyze `product.md`, `product-guidelines.md`, and `plan.md` to determine the user-facing goals of the completed phase.

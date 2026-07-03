@@ -78,3 +78,4 @@ generic, invoke-driven plugin.
 
 - [[runtime/core-contract]] — the invoke-driven model this decision preserves.
 - [[conductor/design/decision-serial-execution]] — single-active-task model; the loop pulses one task at a time.
+- [[conductor/design/decision-pattern-realization]] — the opt-in discipline this decision sets is inherited by every new analysis-side pattern.

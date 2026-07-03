@@ -43,6 +43,26 @@ CRITICAL: Validate every tool call. On failure → halt → report FAILURE.
 > `### Attempt` records — that is system-written ground truth, immune to an
 > orchestrator miscount. `ATTEMPT > 1` is only a hint; the handoff is authoritative.
 
+### Wave (worktree) mode
+
+Under `conductor:parallel` you may be dispatched with an extra parameter:
+
+| Parameter | Description |
+|-----------|-------------|
+| `WORKTREE_DIR` | Absolute path to your own `git worktree` checkout |
+
+When `WORKTREE_DIR` is present, **`cd "{WORKTREE_DIR}"` as your first action** —
+Bash cwd persists across calls, so every subsequent `git`/edit then lands in your
+isolated worktree, not the main checkout. Your `TRACK_DIR` already points into
+the worktree, so `track-state write-result "{TRACK_DIR}" ...` writes your own
+worktree's `result.json` — exactly what `wave-finalize` reads back. Behave
+**identically** to serial mode otherwise: TDD, coverage, commit your work on the
+worktree branch. You do NOT call dispatch-finalize — the orchestrator integrates
+your branch via squash-merge (`wave-finalize`); your job ends at the result
+block. A `wave-agent.marker` under your `.conductor/` tells the SubagentStop hook
+to let you stop normally — wave reliability is enforced at finalize, not by the
+recovery counter.
+
 ---
 
 ## 3.0 LAYERED CONTEXT LOADING
@@ -63,7 +83,7 @@ Read the returned `content` and extract the `## Exploration Notes` section (Summ
 
 **(b) Scoped design docs from the corpus:**
 
-Read `conductor/index.md` → the **Scoped Docs** table. For each entry whose **Match Strategy** matches this task's scope (areas/components named in the task description or spec ACs), open the matching doc. Routing: `conductor/design/doc-routing.md`. Read only matching docs — never the whole corpus.
+Read `conductor/index.md` → the **Scoped Docs** table. For each entry whose **Match Strategy** matches this task's scope (areas/components named in the task description or spec ACs), open the matching doc. Routing: `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/doc-routing.md`. Read only matching docs — never the whole corpus.
 
 ### Layer 1: Task Identity (READ FIRST)
 
@@ -132,7 +152,7 @@ Check task tag to determine workflow:
 
 **Agent-specific bindings (override / extend the template):**
 
-- **Step 3 (Red)** — derive test cases from your self-extracted ACs/TCs (Layer 2); map each `TC-{n}.{m}` row → one test function covering happy paths, edge cases, and errors. **Name each test function `test_TC_{n}_{m}_*`** matching its TC row (see `conductor/design/plan-format-contract.md` §Test ↔ TC Naming Link) so the grounding check can resolve your claimed TCs to real tests. Run tests and **CONFIRM FAILURE** (show output) before proceeding.
+- **Step 3 (Red)** — derive test cases from your self-extracted ACs/TCs (Layer 2); map each `TC-{n}.{m}` row → one test function covering happy paths, edge cases, and errors. **Name each test function `test_TC_{n}_{m}_*`** matching its TC row (see `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/plan-format-contract.md` §Test ↔ TC Naming Link) so the grounding check can resolve your claimed TCs to real tests. Run tests and **CONFIRM FAILURE** (show output) before proceeding.
 - **Step 7 (Deviations)** — *Tech Stack* divergence → update `tech-stack.md` → resume; *Spec* deviation (AC unmet) → report as `SPEC_DEVIATION` in your result (§6.1); *TC Coverage* → compare implemented vs expected TCs, report gaps.
 - **Step 8 (Commit)** — stage + commit `<type>(<scope>): <description>`. **Git notes are written by `track-state dispatch-finalize` — you do NOT write git notes, modify plan markers, or append SHAs** (orchestrator-owned Steps 9-11).
 

@@ -105,15 +105,25 @@ RELATED_DOCS={paths or N/A}
 
 Parse `---SPEC PLAN RESULT---` block. Confirm `STATUS: SUCCESS` (halt on FAILURE and announce `SUMMARY`). `plan.md` and `spec.md` are now on disk — `PLAN_STRUCTURE` is **no longer required**: Section 2.6 derives the full task/subtask structure mechanically from `plan.md`, eliminating manual transcription.
 
-**Validate the generated plan (catch format defects now, not at §2.6).** `plan.md` is sometimes written with a format defect the LLM does not self-catch — a task/subtask line missing its `- [ ]` checkbox or `Task:`/`Subtask:` marker, or a missing `## Phase N:` heading. Such a plan reads fine to a human but fails `init-from-plan` at §2.6, halting the whole track. Validate it *now* with `--check` (writes nothing — same `parse_plan` parser §2.6 uses) and re-dispatch spec-planner with the exact errors if it fails, instead of halting.
+**Validate the generated plan + spec (catch format AND acceptance-criteria defects now, not at §2.6).** `plan.md` is sometimes written with a format defect the LLM does not self-catch — a task/subtask line missing its `- [ ]` checkbox or `Task:`/`Subtask:` marker, or a missing `## Phase N:` heading. Such a plan reads fine to a human but fails `init-from-plan` at §2.6, halting the whole track. And a plan can conform syntactically while an Acceptance Criterion in `spec.md` is never traced to a task or lacks a Test Scenario — a completeness hole the format check cannot see (completeness-critic). Validate **both** now and re-dispatch spec-planner with the exact defects if either fails.
 
 Loop — max **2 re-dispatches (3 total attempts)**, counting from the first dispatch above:
 
-1. ```bash
+1. **Format check** (writes nothing — same `parse_plan` parser §2.6 uses):
+   ```bash
    track-state init-from-plan "<track_dir>" --check
    ```
-2. `ok: true` → plan conforms (note the reported `phases`/`tasks` counts) → break out of the loop, proceed to the resume marker below.
-3. `ok: false` → the emitted `errors` describe the defect(s). If a re-dispatch remains, dispatch `conductor:spec-planner` again with the errors appended so it can fix the format:
+   `ok: false` → collect the emitted `errors` (the defect(s)). `ok: true` → note the reported `phases`/`tasks` counts, continue to step 2.
+
+2. **AC-integrity check** (run only if the format check passed; writes nothing):
+   ```bash
+   track-state spec-integrity "<track_dir>"
+   ```
+   Parse `ac_integrity_gate`. This runs at planning time — no `track-state.json` exists yet (§2.6 creates it); the command degrades gracefully. `N/A` (no `spec.md` / no `## Acceptance Criteria`) → a track without a formal spec is not penalized; treat as clean. `FAILED` → collect the gate string **verbatim** — it names the offending AC IDs and the authoring fix (e.g. "annotate the implementing task in plan.md with a `<!-- AC-n -->`", "add a `TC-{n}.{m} | AC-{n}` row under ## Test Scenarios"). Any other verdict (`PASS` / `WARN`) → clean (WARN is advisory; carry it into §2.4).
+
+3. **Both clean** → break out of the loop; proceed to the resume marker below.
+
+4. **Either failed** → if a re-dispatch remains, dispatch `conductor:spec-planner` again with the combined defects appended so it can fix both:
 
    ```
    TRACK_DIR={track_dir}
@@ -122,15 +132,39 @@ Loop — max **2 re-dispatches (3 total attempts)**, counting from the first dis
    USER_ANSWERS={answers or N/A}
    RELATED_DOCS={paths or N/A}
    PREVIOUS_ERRORS:
-   {the errors[] list, verbatim}
-   REGEN_FOCUS: The prior plan.md failed the format contract. Every task AND subtask line MUST begin with `- [ ]`; every phase MUST begin with `## Phase N: Name`; subtasks are indented 2 spaces under their parent and never replace the `[ ]` with a tag. Re-read conductor/design/plan-format-contract.md, then regenerate a conforming plan.md (keep the existing spec.md if it is adequate).
+   {the format errors[] and/or the AC-integrity gate string, verbatim}
+   REGEN_FOCUS: The prior plan.md/spec.md failed validation. For FORMAT defects: every task AND subtask line MUST begin with `- [ ]`; every phase MUST begin with `## Phase N: Name`; subtasks are indented 2 spaces under their parent and never replace the `[ ]` with a tag. For AC-INTEGRITY defects: address the gate string — every AC-n must appear in some task's `<!-- AC-n -->` annotation AND map to a `TC-{n}.{m} | AC-n` row under ## Test Scenarios. Re-read `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/plan-format-contract.md`, then regenerate a conforming plan.md/spec.md.
    ```
 
-   Re-parse the returned `---SPEC PLAN RESULT---` block (halt on FAILURE), then re-run step 1.
+   Re-parse the returned `---SPEC PLAN RESULT---` block (halt on FAILURE), then loop back to step 1.
 
-4. Still `ok: false` after the final attempt → **halt**: `"Spec-planner produced a malformed plan.md after 3 attempts — errors: <errors>. Inspect <track_dir>/plan.md."` Do NOT proceed to §2.6 (it would fail identically).
+5. Still failing after the final attempt → **halt**: `"Spec-planner produced a plan/spec that still fails validation after 3 attempts — errors: <combined defects>. Inspect <track_dir>/plan.md / spec.md."` Do NOT proceed to §2.6 (it would fail identically).
 
-> **Resume:** append `"spec_planned"` to `steps_done` in `<track_dir>/.conductor/new-track-progress.json` **only after the `--check` loop returns `ok: true`** — a plan that has not yet validated is not "planned".
+### 2.3b Adversarial Plan Refuter (semantic gate)
+
+The §2.3 loop catches **format** and **AC-integrity** defects deterministically — but a plan can conform to every deterministic check and still be semantically weak: a Test Scenario that does not actually exercise its AC, an AC that drifts from the user's stated intent, or a task that maps to an AC in name only. These are judgment calls a deterministic gate cannot make. Run ONE adversarial refuter pass to challenge the plan's soundness before §2.4 review.
+
+**Niche guard (do not duplicate §2.3).** The refuter must NOT re-derive what §2.3 already checked — AC→TC existence, dangling references, EARS well-formedness, and the TC/plan/verification coverage rates are §2.3's deterministic lane. Its value is the semantic layer above those: does a TC actually exercise its AC; does an AC match stated intent; does a task genuinely realize its AC.
+
+Dispatch `conductor:refuter`, prompt:
+
+```
+PROJECT_DIR={project_root}
+DOMAIN=plan
+CLAIM=The spec.md + plan.md are semantically sound — every acceptance criterion reflects the user's stated intent, every AC is genuinely exercised by a Test Scenario (not merely name-matched), and no task is semantically orphaned from the AC it claims to realize.
+CONTEXT_PATHS={track_dir}/spec.md {track_dir}/plan.md {USER_ANSWERS path or N/A}
+AC_EVIDENCE={the ac_evidence list from the §2.3 spec-integrity JSON — each AC's measured/claimed/missing TCs}
+```
+
+> The CLAIM is framed as "the plan is sound" deliberately. The refuter defaults to `SUSTAINED` when it cannot pin a specific grounded defect, so `SUSTAINED` = proceed-when-uncertain and `REFUTED` = grounded evidence of unsoundness. A consequential plan gate must not hard-block the track on a hunch — only a cited, re-confirmable semantic defect justifies a regen. (The skip gate in `implement` §3.6 frames its CLAIM the opposite way, because skipping is the riskier action there.)
+
+Parse the `---REFUTATION RESULT---` block:
+
+- **STATUS: SUSTAINED** (default — no grounded semantic defect found) → proceed to §2.4.
+- **STATUS: REFUTED** (positive, grounded defect, with `file:line` citations in EVIDENCE) → re-dispatch `conductor:spec-planner` ONCE with the refuter's challenges appended to `PREVIOUS_ERRORS` (reuse the §2.3 regen envelope; `REGEN_FOCUS` = the refuter's EVIDENCE + REASONING). Re-run this refuter once on the regenerated plan. If still `REFUTED`, announce the sustained challenges and proceed to §2.4 **non-blocking** — the spec-reviewer and user assess them there. A semantic disagreement the deterministic pipeline cannot close is a human-judgment call, not a hard halt.
+- **STATUS: FAILURE** → treat as SUSTAINED (the refuter could not complete; the plan stands) and proceed to §2.4.
+
+> **Resume:** append `"spec_planned"` to `steps_done` in `<track_dir>/.conductor/new-track-progress.json` **only after BOTH the `--check` and `spec-integrity` checks pass AND the §2.3b refute completes** — a plan/spec that has not yet validated and been semantically vetted is not "planned".
 
 ### 2.4 Dispatch Spec-Reviewer
 
@@ -141,6 +175,8 @@ TRACK_DIR={track_dir}
 ```
 
 Parse `---REVIEW RESULT---` block. If `STATUS: CANCELLED` → halt. If `STRUCTURE_CHANGED: true` → note for init.
+
+**Carry forward the §2.3 `ac_integrity_gate` verdict.** It is `PASS`/`N/A` → nothing to surface. If `WARN`, announce the advisory before the review: `"⚠️ AC-integrity WARN: <gate string> — these ACs are traced but not fully grounded; review with this in mind."` so the user + spec-reviewer assess the spec informed by AC traceability (the `ac_evidence` list from the §2.3 JSON shows each AC's measured/claimed/missing TCs). A `FAILED` gate cannot reach here — §2.3 loops until it passes or halts.
 
 > Full file review happens in the subagent. The orchestrator only sees the compact result.
 

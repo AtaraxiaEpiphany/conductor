@@ -260,7 +260,7 @@ def get_file_commits(
 def docs_synced_for_track(track_dir) -> bool:
     """Return True if a doc-sync commit exists for this track.
 
-    Evidence that the post-loop DOC SYNC phase ran: doc-syncer commits
+    Evidence that the post-loop DOC SYNC phase ran: the doc-sync agents commit
     ``docs(conductor): ... [{TRACK_ID}]``. The single source for "is this track
     synced" — consumed by cmd_archive's archive gate (via the
     ``track_state.git_ops`` re-export) AND by lint-track-state's

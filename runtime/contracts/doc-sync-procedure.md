@@ -1,15 +1,17 @@
 ---
 type: concept
 sources:
-  - agents/doc-syncer
+  - agents/corpus-writer
+  - agents/wiki-synthesizer
 last_verified: 2026-06-26
 ---
 
 # Doc Sync Procedure Reference
 
 Per-document analysis criteria, proposal templates, and Phase 2 wiki-synthesis
-specs factored out of `agents/doc-syncer.md`. Loaded on demand by `doc-syncer`
-during Phase 1 (analysis + proposals) and Phase 2 (overview/purpose synthesis).
+specs factored out of the doc-sync agents (`agents/corpus-writer.md` runs Phase 1,
+`agents/wiki-synthesizer.md` runs Phase 2). Loaded on demand by both during
+Phase 1 (analysis + proposals) and Phase 2 (overview/purpose synthesis).
 
 The agent body holds the **procedure** — two-step CoT ordering, control flow,
 gates, the execute/commit/log steps, and the Execution Firewall. This page
@@ -83,5 +85,5 @@ If this run had **no** decisions, no spec-level direction change, and resolved/r
 
 ## See Also
 
-- [[conductor/design/doc-conventions]] — provenance frontmatter + wikilink format used by the execute step.
-- [[conductor/design/doc-routing]] — scope→doc routing shared with task-executor, explorer, code-reviewer.
+- [[runtime/contracts/doc-conventions]] — provenance frontmatter + wikilink format used by the execute step.
+- [[runtime/contracts/doc-routing]] — scope→doc routing shared with task-executor, explorer, code-reviewer.

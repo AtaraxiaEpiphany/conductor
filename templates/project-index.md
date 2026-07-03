@@ -6,7 +6,7 @@
 
 Always read in full. Provide baseline context for all tasks.
 
-<!-- WIKI: Summaries in the Purpose column are maintained by doc-syncer Phase 2.
+<!-- WIKI: Summaries in the Purpose column are maintained by wiki-synthesizer (doc-sync Phase 2).
      Do not edit manually — they are regenerated during wiki synthesis. -->
 
 | Doc | Path | Purpose |

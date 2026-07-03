@@ -41,7 +41,7 @@ The wiki is navigable through its index and overview. Read them first to route t
    - `conductor/overview.md` — high-level context. Its **Knowledge Base** table maps concepts to source `[[wikilinks]]`; any topic hit there is a highest-confidence seed. This read also satisfies the high-level-context requirement — do not re-read it in §5.
    - `conductor/index.md` — the **Scoped Docs** table is a routing index with an explicit Match Strategy per category.
 
-2. **Route the topic** through the Scoped Docs Match Strategy (routing: `conductor/design/doc-routing.md`) to identify the most relevant scoped doc(s). Collect routed path(s) into a `ROUTED` list (read first in §5).
+2. **Route the topic** through the Scoped Docs Match Strategy (routing: `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/doc-routing.md`) to identify the most relevant scoped doc(s). Collect routed path(s) into a `ROUTED` list (read first in §5).
 
 3. **Nothing routes?** Leave `ROUTED` empty — §4 grep + graph expansion carry the query.
 

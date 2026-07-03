@@ -16,8 +16,29 @@ from .sync import _do_sync_plan
 from .git_ops import _find_conductor_shas
 
 
-def _validate_state_consistency(state, errors, warnings):
+def _wave_inflight_locs(track_dir):
+    """Set of ``(phase, task)`` locked by an active wave ledger (else empty).
+
+    Lazy-imports :mod:`wave` to avoid a load-time validate↔wave↔dispatch import
+    cycle (wave imports dispatch, dispatch imports validate). The F1 guards
+    exempt these locs: a wave holds multiple in_progress tasks via its ledger,
+    not F1, so they must not be reaped as stale locks or flagged as a serial
+    F1 violation. Returns ``set()`` on any resolution failure (fail-open keeps
+    the serial backstops working when the wave layer is unavailable).
+    """
+    if not track_dir:
+        return set()
+    try:
+        from .wave import active_wave_member_locs
+    except Exception:
+        return set()
+    return active_wave_member_locs(track_dir)
+
+
+def _validate_state_consistency(state, errors, warnings, track_dir=None):
     """Check semantic consistency within track-state.json."""
+
+    exempt = _wave_inflight_locs(track_dir)
 
     for pi, phase in enumerate(state.get("phases", []), 1):
         pname = phase.get("name", f"Phase {pi}")
@@ -33,8 +54,12 @@ def _validate_state_consistency(state, errors, warnings):
         if phase["status"] in TERMINAL_FOR_PARENT and not all_terminal:
             warnings.append(f"{pname}: phase terminal but tasks still in progress")
 
+        # F1 serial-spine rule: at most one in_progress task per phase. Wave
+        # members are exempt (their parallelism is ledger-authorized, not an F1
+        # violation) — only count NON-wave in_progress toward the warning.
         in_progress = [t.get("name", f"P{pi}.T{ti}")
-                       for ti, t in enumerate(tasks, 1) if t["status"] == "in_progress"]
+                       for ti, t in enumerate(tasks, 1)
+                       if t["status"] == "in_progress" and (pi, ti) not in exempt]
         if len(in_progress) > 1:
             warnings.append(f"{pname}: multiple in_progress tasks ({', '.join(in_progress)})")
 
@@ -208,7 +233,7 @@ def _fix_indices(state):
     return fixes
 
 
-def _fix_stale_lock(state, threshold_seconds=STALE_LOCK_SECONDS):
+def _fix_stale_lock(state, threshold_seconds=STALE_LOCK_SECONDS, track_dir=None):
     """Reset ``in_progress`` tasks whose ``locked_at`` heartbeat is past threshold.
 
     A finer-grained complement to :func:`_fix_stale_in_progress`: that one reaps
@@ -220,14 +245,22 @@ def _fix_stale_lock(state, threshold_seconds=STALE_LOCK_SECONDS):
     (pre-change state, or locked via a path that didn't stamp it) are left alone
     — the 24h reaper still governs them via ``updated_at``.
 
+    Wave members (``track_dir`` resolves an active ``parallel.json`` ledger) are
+    EXEMPT: a wave older than the threshold is a stuck parallel run, and
+    ``wave-abort`` owns its teardown — reaping members one-by-one to pending
+    would corrupt the wave (the ledger would still reference torn-down worktrees).
+
     Reset clears ``retry_count`` (it's in ``_RESET_FIELDS``) — acceptable, since a
     stuck lock means the attempt is dead and the retry budget should restart.
     Returns the list of fixes applied.
     """
+    exempt = _wave_inflight_locs(track_dir)
     fixes = []
     now = time.time()
     for pi, phase in enumerate(state.get("phases", []), 1):
         for ti, task in enumerate(phase.get("tasks", []), 1):
+            if (pi, ti) in exempt:
+                continue  # wave member — wave-abort owns its lifecycle
             if task.get("status") == "in_progress":
                 locked_at = task.get(LOCKED_AT_FIELD)
                 if isinstance(locked_at, (int, float)) and (now - locked_at) > threshold_seconds:
@@ -404,7 +437,9 @@ def _auto_fix(state, track_dir=None, errors=None, stale_threshold_hours=24):
     # Reset stale-locked tasks (short per-task threshold via locked_at heartbeat);
     # runs before the 24h reaper so a killed session unblocks in minutes. Tasks
     # without a numeric locked_at fall through to the 24h updated_at reaper below.
-    fixes.extend(_fix_stale_lock(state))
+    # Wave members are exempt (track_dir resolves the active ledger) — wave-abort
+    # owns their teardown; member-by-member reaping would corrupt the wave.
+    fixes.extend(_fix_stale_lock(state, track_dir=track_dir))
 
     # Reset stale in_progress tasks (24h fallback, governs legacy state without locked_at)
     fixes.extend(_fix_stale_in_progress(state, threshold_hours=stale_threshold_hours))
@@ -516,7 +551,7 @@ def _run_all_checks(track_dir, state, errors, warnings):
                 errors.append(f"{tname}: commit_sha must be empty or 1-7 hex chars")
 
     # Semantic consistency checks
-    _validate_state_consistency(state, errors, warnings)
+    _validate_state_consistency(state, errors, warnings, track_dir=track_dir)
     _validate_plan_consistency(track_dir, state, errors, warnings)
 
 

@@ -40,9 +40,12 @@ class SelfReviewLoopWiringTests(TestCase):
         self.assertIn("conductor:code-reviewer", self.skill)
         self.assertIn("REVISION_RANGE", self.skill)
 
-    def test_bounded_to_one_iteration(self):
-        # No runaway loop — exactly one fix iteration, then proceed.
-        self.assertIn("ONE fix iteration", self.skill)
+    def test_bounded_by_convergence_and_budget(self):
+        # No runaway loop — convergence (loop-until-dry) capped by a 3-iteration
+        # budget, deduping vs a `seen` set. Replaces the old "ONE fix iteration".
+        self.assertIn("loop-until-dry", self.skill)
+        self.assertIn("max 3 fix iterations", self.skill)
+        self.assertIn("`seen`", self.skill)
 
     def test_escalates_only_on_residual_judgment(self):
         # Human (AskUserQuestion) is pulled in only for residual Critical, per

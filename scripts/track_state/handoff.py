@@ -550,7 +550,7 @@ def cmd_append_handoff(track_dir, phase, task, entry_type, content_json, subtask
 ### Out-of-Scope Notes
 {chr(10).join(f'- {o}' for o in out_of_scope) if out_of_scope else '_None_'}
 
-### Graduation Candidates (durable → corpus; for doc-syncer harvest)
+### Graduation Candidates (durable → corpus; for corpus-writer harvest)
 {chr(10).join(f'- {g}' for g in graduation) if graduation else '_None_'}
 """
 
@@ -683,12 +683,12 @@ def _extract_candidates(handoff_dir):
 
 
 def cmd_harvest_candidates(track_dir):
-    """Extract durable findings from this track's handoffs for doc-syncer to
+    """Extract durable findings from this track's handoffs for corpus-writer to
     graduate into the wiki corpus (``conductor/design/`` + ``conductor/resource/``).
 
     Reads ONLY the sanctioned ``.conductor/handoff/`` channel — not
     ``.conductor/notes/`` (off-contract; flagged separately by check_misplaced_docs).
-    doc-syncer calls this in Phase 1 (agents/doc-syncer.md §3.1b) to load the
+    corpus-writer calls this in Phase 1 (agents/corpus-writer.md §3.1b) to load the
     harvest queue alongside spec.md. Output JSON:
     ``{"graduation": [...], "decisions": [...], "count": N}``.
     """

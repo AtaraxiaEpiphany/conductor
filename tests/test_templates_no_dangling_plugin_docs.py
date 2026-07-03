@@ -5,10 +5,13 @@ by a project-relative path.
 scaffolded project (e.g. ``post-loop.md`` → ``conductor/workflow/post-loop.md``).
 A ``[[wikilink]]`` or bare ``conductor/design/...`` path written in a template
 resolves **project-relative** once copied, but the plugin-internal design docs
-(``decision-*``, ``doc-conventions``, ``doc-routing``, ``plan-format-contract``,
-``wiki-setup-check``, ``agent-error-handling`` …) are never copied into the
-project — so such a reference dangles, and ``doc-linter`` §4.1 (Orphan
-References) reports it as a broken wikilink on every wiki-lint pass.
+that remain under ``conductor/design/`` (``decision-*``, ``agent-error-handling``)
+are never copied into the project — so such a reference dangles, and
+``doc-linter`` §4.1 (Orphan References) reports it as a broken wikilink on every
+wiki-lint pass. (The behavioral contracts — ``doc-conventions``, ``doc-routing``,
+``plan-format-contract``, ``wiki-setup-check``, ``doc-sync-procedure`` — moved to
+``runtime/contracts/``; refs to those from plugin files are guarded by
+``test_no_dangling_runtime_contracts.py``.)
 
 Discriminator — filesystem existence in the plugin's OWN ``conductor/design/``:
 

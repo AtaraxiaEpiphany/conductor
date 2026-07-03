@@ -36,13 +36,13 @@ CRITICAL: Validate every tool call. On failure → halt → announce.
 ### 2.0 Project Inception
 
 1. **Detect maturity:** Brownfield (`.git`, `package.json`, `go.mod`, etc.) vs Greenfield.
-2. **Brownfield:** Dispatch `conductor:project-analyzer`, prompt:
+2. **Brownfield:** **Resumability guard** — if `conductor/.conductor/analysis.json` already exists (a prior setup pass already ran the analyzer), **Read it to recover the detection fields** (`languages`, `frameworks`, etc.) and skip the dispatch: the analyzer's one-pass detection is durable and must not be re-run on resume. Otherwise dispatch `conductor:project-analyzer`, prompt:
 
    ```
    PROJECT_DIR={project root}
    ```
 
-   Parse `---ANALYSIS RESULT---` block.
+   Parse `---ANALYSIS RESULT---` block. **Persist the full detection tree** to `conductor/.conductor/analysis.json` (create `.conductor/` if absent) — this is the durable record for later consumers (e.g. corpus-writer seeding, future `/conductor:wiki` queries about the stack), so the analyzer's one-pass detection is not lost. Subsequent steps (§2.3 Tech Stack pre-fill, §3.2 description) operate on the live fields (`languages`, `frameworks`) — recovered from `analysis.json` on resume, or from the result block on first run.
 3. **Greenfield:** Ask "What do you want to build?"
 4. Init git if needed. Create `conductor/` directory.
 
@@ -87,13 +87,13 @@ Save state: `2.3_tech_stack_styleguides`.
 5. Generate `conductor/workflow/index.md` listing all created files.
 6. Verify all referenced files exist.
 7. **Wiki Overview:** Read `${CLAUDE_PLUGIN_ROOT}/templates/wiki-overview.md`, write to `conductor/overview.md`. Replace `{TIMESTAMP}` with current ISO-8601 timestamp.
-8. **Wiki Purpose:** Read `${CLAUDE_PLUGIN_ROOT}/templates/wiki-purpose.md`, write to `conductor/purpose.md`. Replace `{TIMESTAMP}`. Seed the **Goals** section from the product guide (§2.1) — the other sections (Key Questions, Thesis, Decisions) start as placeholders and are co-evolved by the user (`/conductor:wiki purpose`) and doc-syncer (Phase 2) over time. This is the wiki's directional intent — *why* the project exists, distinct from the structural overview.
+8. **Wiki Purpose:** Read `${CLAUDE_PLUGIN_ROOT}/templates/wiki-purpose.md`, write to `conductor/purpose.md`. Replace `{TIMESTAMP}`. Seed the **Goals** section from the product guide (§2.1) — the other sections (Key Questions, Thesis, Decisions) start as placeholders and are co-evolved by the user (`/conductor:wiki purpose`) and wiki-synthesizer (Phase 2 of the doc-sync split) over time. This is the wiki's directional intent — *why* the project exists, distinct from the structural overview.
 9. **Wiki Log:** Read `${CLAUDE_PLUGIN_ROOT}/templates/wiki-log.md`, write to `conductor/log.md`.
 Save state: `2.4_workflow`.
 
 ### 2.5 Finalization
 
-1. **CLAUDE.md TOC:** Read `${CLAUDE_PLUGIN_ROOT}/templates/claude-md-toc.md`, append to project's `CLAUDE.md` (create if missing).
+1. **CLAUDE.md TOC (idempotent):** Read `${CLAUDE_PLUGIN_ROOT}/templates/claude-md-toc.md`. If the project's `CLAUDE.md` already contains the `<!-- conductor:toc begin -->` sentinel, skip the append — a setup re-run must never duplicate the block. Otherwise append the template (it carries the `<!-- conductor:toc begin -->` … `<!-- conductor:toc end -->` sentinels bracketing the block); create `CLAUDE.md` if missing.
 2. **Project index:** Read `${CLAUDE_PLUGIN_ROOT}/templates/project-index.md`, write to `conductor/index.md`.
 3. **Tracks Registry:** Create `conductor/tracks.md` if missing (empty registry with header `# Tracks Registry`).
 4. Save state: `2.5_finalization`.
@@ -138,13 +138,18 @@ Interactive (up to 5 questions).
 
 1. **Save the terminal resume key BEFORE committing** (issue #1: the old order
    committed first, then saved `setup_state.json`, leaving it dirty on the
-   working tree). Saving first means `git add -A` stages the completed marker:
+   working tree). Saving first means the scoped stage below includes the
+   completed marker:
    Save state: `3.6_setup_complete`.
-2. Commit all setup artifacts. The `git diff --cached --quiet ||` guard makes the
-   commit a no-op **only** when the artifacts are already committed (a defensive
-   re-run) — it does NOT skip this step:
+2. Commit setup artifacts — **scoped, never `git add -A`**. A brownfield project
+   may carry unrelated WIP that must not be swept into the scaffold commit, so
+   stage only what setup owns: the `conductor/` tree (incl. `setup_state.json`
+   and `.conductor/analysis.json`) plus the `CLAUDE.md` TOC append. The
+   `git diff --cached --quiet ||` guard makes the commit a no-op **only** when
+   those artifacts are already committed (a defensive re-run) — it does NOT skip
+   this step:
    ```bash
-   git add -A
+   git add conductor/ CLAUDE.md
    git diff --cached --quiet || git commit -m "chore(conductor): Scaffold conductor setup"
    ```
 3. Announce: `"Setup complete. Run /conductor:implement to begin."`

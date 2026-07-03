@@ -130,21 +130,24 @@ class RecoveryGuardTests(TestCase):
             self.assertEqual(out["decision"], "block")
             self.assertIn("REVIEW RESULT", out["reason"])
 
-    # --- stdout-block agents: doc-syncer + spec-planner gated on close tag ---
+    # --- stdout-block agents: corpus-writer + spec-planner gated on close tag ---
+    # (doc-syncer was split into corpus-writer [Phase 1] + wiki-synthesizer
+    # [Phase 2]; both are STDOUT_BLOCK agents sharing the ---DOC SYNC RESULT---
+    # delimiter. corpus-writer is tested here as the representative.)
 
-    def test_doc_syncer_without_close_tag_blocks(self):
-        """doc-syncer now runs sync + STDOUT_BLOCK_AGENTS — a stop without its
-        ---END RESULT--- close tag earns a recovery turn (was async / advisory)."""
+    def test_corpus_writer_without_close_tag_blocks(self):
+        """corpus-writer (Phase 1 of the doc-sync split) runs STDOUT_BLOCK_AGENTS
+        — a stop without its ---END RESULT--- close tag earns a recovery turn."""
         with tempfile.TemporaryDirectory() as d:
-            rc, out = self._run("doc-syncer", d, last_message="stopped mid-sync")
+            rc, out = self._run("corpus-writer", d, last_message="stopped mid-sync")
             self.assertEqual(rc, 2)
             self.assertEqual(out["decision"], "block")
             self.assertIn("DOC SYNC RESULT", out["reason"])
 
-    def test_doc_syncer_with_close_tag_allows(self):
+    def test_corpus_writer_with_close_tag_allows(self):
         with tempfile.TemporaryDirectory() as d:
-            msg = "Sync done.\n---DOC SYNC RESULT---\nSTATUS: COMPLETED\n---END RESULT---"
-            rc, out = self._run("doc-syncer", d, last_message=msg)
+            msg = "Sync done.\n---DOC SYNC RESULT---\nPHASE: 1\nSTATUS: COMPLETED\n---END RESULT---"
+            rc, out = self._run("corpus-writer", d, last_message=msg)
             self.assertEqual(rc, 0)
             self.assertNotIn("decision", out)
 

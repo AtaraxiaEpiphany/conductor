@@ -9,9 +9,9 @@ hooks:
   Stop:
     - matcher: ""
       hooks:
-        - type: prompt
-          prompt: "Output ONLY a raw JSON object - no prose, no markdown fences, nothing before or after it. If the input stop_hook_active is true, return {\"ok\": true, \"reason\": \"OK\"} immediately to let the agent stop. Otherwise audit the conductor state visible in the transcript for: (1) stale in_progress tasks left behind, (2) state changes not committed, (3) drift between track-state.json and plan.md. Return {\"ok\": true, \"reason\": \"OK\"} if clean, or {\"ok\": false, \"reason\": \"one-line issue description\"} if a real issue needs the agent to act before stopping. Emit the JSON and nothing else."
-          model: haiku
+        - type: command
+          command: "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/on-stop-conductor.py\""
+          timeout: 10
 ---
 
 # Conductor Implement — Thin Orchestrator
@@ -109,13 +109,27 @@ Returns `action` enum — switch on it:
 
 ### 3.2 Action: `dispatch_phase_checker`
 
-Dispatch `conductor:phase-checker`, prompt (canonical dispatch — §2.1, §3.5b, §3.7 reuse this; only the `PHASE` value source differs):
+The phase checkpoint is a **fan-out-and-synthesize**: two read-only verifier tiers run in parallel, then `conductor:phase-checker` (the synthesizer) consumes their verdicts and owns the L1 fix-and-retry + L2 + L4 + commit.
+
+**Step 1 — Fan out the verifiers.** Dispatch BOTH in ONE message (parallel):
+
+- `conductor:ac-tracer` — prompt: `TRACK_DIR={td} TRACK_ID={id}`
+- `conductor:test-runner` — prompt: `TRACK_DIR={td} TRACK_ID={id} PHASE_INDEX={phase}`
+
+**Step 2 — Parse the fleet's result blocks.** From `ac-tracer`'s `---AC TRACE RESULT---`: `VERDICT` (passed/warn/skipped/FAILED/ERROR), `GATE` (when FAILED), `N_UNGROUNDED` (when warn). From `test-runner`'s `---L1 VERIFY RESULT---`: `STATUS` (passed/failed/error), `COMMAND`.
+
+**Step 3 — Dispatch the synthesizer** `conductor:phase-checker` (canonical dispatch — §2.1, §3.5b, §3.7 reuse this fan-out+synthesize; only the `PHASE` value source differs), passing the fleet's verdicts through:
 
 ```
 TRACK_DIR={td}
 TRACK_ID={id}
-PHASE={phase from output}
+PHASE_INDEX={phase from output}
 EXECUTION_MODE={interactive|continuous}
+AC_TRACE_VERDICT=<ac-tracer VERDICT>
+AC_TRACE_GATE=<ac-tracer GATE — include only when VERDICT is FAILED>
+AC_TRACE_N_UNGROUNDED=<ac-tracer N_UNGROUNDED — include only when VERDICT is warn>
+L1_VERIFY_STATUS=<test-runner STATUS>
+L1_VERIFY_COMMAND=<test-runner COMMAND>
 ```
 
 After return → **Section 3.6** (Phase Boundary).
@@ -218,7 +232,28 @@ TASK_INDEX={t}
 TASK_NAME={name}
 ```
 
-Skip-analyst result: `can_skip` → `track-state skip` or `block` → `sync-plan` → commit → Section 3.1 or HALT.
+Skip-analyst result — parse the `---SKIP ANALYSIS---` JSON and act by `recommendation`:
+
+- **`recommendation: skip`** (`can_skip: true`) → **run the skip refute first** (below). If the refute lets the skip stand → `track-state skip "<track_dir>" <phase> <task>` → Section 3.1. If the refute overrides → handle as `pause_and_escalate`.
+- **`recommendation: pause_and_escalate`** (or skip-refute override) → `track-state sync-plan "<track_dir>"` → commit → **HALT**: surface `impact` + `reasoning` (and the refuter's `EVIDENCE`/`REASONING` if it overrode). An unattended continuous track stops for human judgment rather than silently skipping or blocking.
+- **`recommendation: retry_with_modification`** → `track-state sync-plan` → commit → HALT with the reasoning as the modification guidance for the next attempt.
+
+**Skip refute (continuous mode only).** `§2.2`'s interactive path already has a human gate; this refute runs only on the unattended continuous path, where a wrong skip silently cascades a hole into downstream work. When `recommendation == skip`, dispatch `conductor:refuter` to challenge it before acting:
+
+```
+PROJECT_DIR={project_root}
+DOMAIN=skip
+CLAIM=Skip-analyst recommended skipping task P{p}T{t} ("{name}"), reasoning: "{skip-analyst reasoning}". Challenge framing: this skip is UNSAFE — a dependency marked completed is only superficially done (its own ACs not actually met), or the failure handoff describes a fix cheap relative to the cost of skipping.
+CONTEXT_PATHS={td}/plan.md {td}/track-state.json {td}/.conductor/handoff/P{p}T{t}.md
+```
+
+> The CLAIM is framed as "the skip is unsafe" deliberately. The refuter defaults to `SUSTAINED` when uncertain, so `SUSTAINED` = block-when-uncertain — the conservative direction for a skip, because skipping is the riskier action and uncertainty must fall toward *not* skipping. (`new-track` §2.3b frames its CLAIM the opposite way — "the plan is sound" — because a plan gate should proceed-when-uncertain, not block.) `REFUTED` = grounded evidence the skip IS safe.
+
+Parse the `---REFUTATION RESULT---` block:
+
+- **`STATUS: SUSTAINED`** (skip unsafe — default when uncertain) → **override to block**: handle as `pause_and_escalate` (sync-plan → commit → HALT with the refuter's evidence). The refute found grounded evidence the skip breaks something; do not skip.
+- **`STATUS: REFUTED`** (grounded evidence the skip is safe) → let the skip stand → `track-state skip` → Section 3.1.
+- **`STATUS: FAILURE`** → defer to skip-analyst's primary verdict: announce `"⚠️ skip refute could not complete — proceeding on skip-analyst's recommendation"` and let the skip stand. A backup-agent crash is not new evidence the skip is safe; the announce keeps it visible without halting the track on a backup failure.
 
 ### 3.6b Self-Review Loop (opt-in — "Ralph Wiggum")
 
@@ -228,7 +263,9 @@ Skip-analyst result: `can_skip` → `track-state skip` or `block` → `sync-plan
 
 `[Review]` is a **name marker, not a tag** — it does NOT enter the `[Docs]`/`[Config]`/… exemption logic, so a reviewable task still owes TDD (F2) and coverage (F3).
 
-When opted in (after a SUCCESSFUL `dispatch-finalize`, before §3.7), run ONE bounded review iteration (review own changes → request a reviewer pass → fix → escalate only on judgment):
+When opted in (after a SUCCESSFUL `dispatch-finalize`, before §3.7), run a **convergent review loop** — review own changes → fix → re-review — that stops on a *dry* round, not a fixed count (loop-until-dry). A single self-certifying pass is exactly the self-preferential bias this loop exists to cure; convergence drives it to zero NEW Critical/High instead of declaring victory after one pass.
+
+Maintain a `seen` set of finding **signatures** (`severity+title+file+lines`). Dedup **new** findings vs `seen` (NOT vs the set you just fixed) — a finding that re-appears unchanged after a fix is a *residual*, counted separately, not "new".
 
 1. **Reviewer pass** — dispatch `conductor:code-reviewer` (read-only) on the task's own commit range `<task_sha>~1..<task_sha>`, prompt:
 
@@ -237,11 +274,11 @@ When opted in (after a SUCCESSFUL `dispatch-finalize`, before §3.7), run ONE bo
    TRACK_ID={id}
    REVISION_RANGE={sha}~1..{sha}
    ```
-2. **Decide from the `---REVIEW RESULT---` block** (substring-check the severities):
-   - **No `Critical`/`High` findings** → loop satisfied → announce `"🔍 Self-review [Review]: clean"` → §3.7.
-   - **`Critical`/`High` present** → re-dispatch `conductor:task-executor` with `ATTEMPT={n+1}` and the findings as remediation context (the agent fixes its own changes), then `dispatch-finalize` again.
-3. **Bounded to ONE fix iteration** — no runaway loop. After the iteration, announce residual findings: `"🔍 Self-review [Review]: {N} findings → 1 fix iteration → {M} residual"`.
-4. **Escalate on residual judgment only** — if `Critical` findings persist after the iteration, surface them via `AskUserQuestion` (fix-guidance / accept-with-debt / block). Medium/Low residual → note and proceed (do not block the loop on nits).
+2. **Decide from the `---REVIEW RESULT---` block** (substring-check the severities), counting only NEW `Critical`/`High` (signatures not already in `seen`):
+   - **Zero NEW `Critical`/`High`** — a dry round (K=1 empty pass) → loop satisfied → announce `"🔍 Self-review [Review]: clean"` → §3.7.
+   - **NEW `Critical`/`High` present** → add their signatures to `seen`; re-dispatch `conductor:task-executor` with `ATTEMPT={n+1}` and the NEW findings as remediation context (the agent fixes its own changes), `dispatch-finalize` again, then loop back to step 1.
+3. **Budget guard — max 3 fix iterations.** No runaway loop. If still not dry after 3 fix iterations, stop iterating and announce: `"🔍 Self-review [Review]: {N} findings → 3 fix iterations → {M} residual"`.
+4. **Escalate on residual judgment only** — if `Critical` findings persist once the budget is spent (or at any dry stop that still leaves residual Critical), surface them via `AskUserQuestion` (fix-guidance / accept-with-debt / block). Medium/Low residual → note and proceed (do not block the loop on nits).
 
 This loop is orchestration over the existing `code-reviewer` + `task-executor` agents — no new agent, no new hook.
 
@@ -251,7 +288,7 @@ This loop is orchestration over the existing `code-reviewer` + `task-executor` a
 track-state phase-done "<track_dir>" <phase>
 ```
 
-`complete=true` → dispatch `conductor:phase-checker` (§3.2), `PHASE=<phase>`. FAILED → HALT. Otherwise → Section 3.1.
+`complete=true` → dispatch `conductor:phase-checker` (§3.2), `PHASE=<phase>`. FAILED → HALT (surface `FAILURE_REASON`; an AC-trace authoring defect requires editing `spec.md`/`plan.md` then re-running the phase — not a `task-executor` retry). Otherwise → Section 3.1.
 `complete=false` → Section 3.1.
 
 ### 3.8 Action: `finalize`
