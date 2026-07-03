@@ -68,13 +68,7 @@ Three modes share this agent's analysis core; the orchestrator selects one via `
 
 `LENS` intersects with `MODE`: a lensed `refute` re-confirms only findings whose dimension matches the lens; a lensed `critique` hunts missed classes only within the lens dimension.
 
-| LENS              | §3.4 items run                                              | §3.1 sources loaded (the gate)                                      |
-| ----------------- | ---------------------------------------------------------- | ------------------------------------------------------------------- |
-| `bugs`            | 4 — correctness side (bugs, races, null-pointer, error handling) | plan.md, spec.md, track-state.json, tech-stack.md                   |
-| `security`        | 4 — security side (injection, XSS, auth, OWASP top 10)     | plan.md, spec.md, tech-stack.md                                     |
-| `spec-compliance` | 1 (Plan Compliance) + 7 (Design Doc Consistency)           | plan.md, spec.md, track-state.json, handoff.md, scoped design docs  |
-| `tests`           | 5 (Testing)                                                | plan.md, spec.md, track-state.json                                  |
-| (omitted)         | all 7 (§3.4.1–§3.4.7)                                      | all §3.1 sources (full context)                                     |
+**Lens → {§3.4 items run, §3.1 sources loaded} matrix:** `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/code-reviewer-lens-matrix.md`. Each lens's row is the load-bearing context gate — without it an N-lens fan-out costs N× the full-context budget; with it each lensed pass loads only its 2–4 relevant sources.
 
 When a LENS is set, skip any §3.1 source not in its row. **Documented scope limit, not a silent gap:** items 2 (State Consistency), 3 (Style Compliance), and 6 (Skipped/Blocked) are not mapped to any lens, so a lensed pass does not run them — the conductor enforces state-consistency and skipped-task justification deterministically (track-state lint, phase-checker), and style is obtainable via a no-lens `full` review. Emit `"lens": "<lens>"` (or `"lens": null` when omitted) in the §4.1 JSON so the orchestrator's synthesis can group per-lens result files.
 
@@ -163,36 +157,9 @@ Dual output: result file + terse stdout.
 
 ### 4.1 Result File
 
-Write full review to `{RESULT_PATH}` (defaults to `{TRACK_DIR}/.conductor/review-result.json`) via Bash:
+Write the full review JSON to `{RESULT_PATH}` (defaults to `{TRACK_DIR}/.conductor/review-result.json`) via a Bash heredoc (`mkdir -p "$(dirname "{RESULT_PATH}")"` then `cat > "{RESULT_PATH}" << 'EOF'`).
 
-```bash
-mkdir -p "$(dirname "{RESULT_PATH}")"
-cat > "{RESULT_PATH}" << 'EOF'
-{
-  "status": "SUCCESS",
-  "summary": "<single sentence>",
-  "mode": "full|refute|critique",
-  "lens": "bugs|security|spec-compliance|tests|null",
-  "checks": {
-    "plan_compliance": "Yes|No|Partial",
-    "state_consistency": "Consistent|Inconsistent",
-    "style_compliance": "Pass|Fail",
-    "design_doc_consistency": "Yes|No|N/A",
-    "new_tests": "Yes|No",
-    "test_coverage": "Yes|No|Partial",
-    "test_results": "Passed|Failed|Not_Run",
-    "skipped_tasks": "None|N_skipped"
-  },
-  "findings": [
-    {"severity": "Critical|High|Medium|Low", "title": "...", "file": "path", "lines": "L1-L2", "context": "why", "suggestion": "fix"}
-  ],
-  "state_issues": "None|<description>",
-  "stats": {"critical": 0, "high": 0, "medium": 0, "low": 0}
-}
-EOF
-```
-
-For `refute` mode, `findings` holds the **survivors** (producer findings that held up under re-examination) and `stats` reflects the survivor counts; include a `"refuted": <count>` field for transparency. For `critique` mode, `findings` holds **only newly-discovered** defect classes (may be empty — an honest "nothing missed"). In both cases the `checks` block is optional (the narrower modes may not exercise every checklist item); emit `"mode"` so the orchestrator's synthesis step knows which pass wrote the file.
+**Canonical schema + field/mode semantics:** `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/review-result-schema.md` — reproduce its JSON structure verbatim. Carry `"lens"` (the pass's lens, or `null`) and `"mode"` so the orchestrator's synthesis can group per-lens result files and know which pass wrote each. The schema doc holds the `mode`-specific `findings` semantics: `refute` → survivors + a `"refuted": <count>` (default to refuted when uncertain); `critique` → only newly-discovered defect classes the producer missed (may be empty).
 
 ### 4.2 Stdout (terse — parsed by orchestrator)
 
