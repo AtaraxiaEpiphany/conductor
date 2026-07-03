@@ -25,6 +25,8 @@ from lib.hook_io import read_hook_input, write_simple_output
 from lib.logging import init_logging, log_entry
 from lib.json_utils import load_json_safe
 from lib.path_utils import find_tracks_registry, extract_track_dirs
+from lib.env import get_data_dir
+from lib.atomic_io import atomic_write_json
 
 
 # Coverage detection patterns for common tools
@@ -398,6 +400,86 @@ def verify_phase_checkpoint(cwd: Path) -> Optional[str]:
     return None
 
 
+# ---------------------------------------------------------------------------
+# Context-budget yield (#3). dispatch-finalize is the per-cycle accounting
+# seat (decision-loop-heartbeat.md); each fire ≈ one task completed. Counting
+# them per session gives a deterministic budget signal that replaces the
+# orchestrator's fuzzy "~6+ dispatches, or you sense compaction" heuristic —
+# a weak model cannot reliably self-assess its own budget, so the hook does it.
+# The counter lives under the data dir (session-scoped, gitignored) — never
+# under a track's .conductor/, which would race the orchestrator's commit and
+# violate single-writer (decision-serial-execution.md).
+BUDGET_YIELD_FILE = "budget-yield.json"
+DEFAULT_BUDGET_YIELD_N = 8
+
+
+def _detect_dispatch_finalize(tool_calls: list[dict]) -> bool:
+    """True if the batch contains a ``track-state dispatch-finalize`` Bash call."""
+    for tc in tool_calls:
+        if tc.get("tool_name") == "Bash":
+            cmd = tc.get("tool_input", {}).get("command", "")
+            if cmd and "track-state" in cmd and "dispatch-finalize" in cmd:
+                return True
+    return False
+
+
+def _budget_threshold() -> int:
+    """dispatch-finalize count at which to recommend a yield. Env-overridable."""
+    raw = os.environ.get("CONDUCTOR_BUDGET_YIELD_N", "")
+    try:
+        n = int(raw)
+        return n if n > 0 else DEFAULT_BUDGET_YIELD_N
+    except (TypeError, ValueError):
+        return DEFAULT_BUDGET_YIELD_N
+
+
+def bump_budget_counter(data_dir: Path, session_id: str,
+                        tool_calls: list[dict]) -> int:
+    """Increment the per-session dispatch-finalize counter; return the new count.
+
+    Returns 0 when the batch is not a dispatch-finalize or there is no session
+    id to attribute the count to — in either case the budget gate stays idle.
+    Persistence is best-effort: the in-memory count still gates this turn even
+    if the write fails.
+    """
+    if not session_id or not _detect_dispatch_finalize(tool_calls):
+        return 0
+
+    counter_path = data_dir / BUDGET_YIELD_FILE
+    counts: dict = {}
+    if counter_path.exists():
+        loaded = load_json_safe(counter_path)
+        if isinstance(loaded, dict):
+            counts = loaded
+
+    n = int(counts.get(session_id, 0)) + 1
+    counts[session_id] = n
+    try:
+        atomic_write_json(counter_path, counts)
+    except OSError:
+        pass  # best-effort; the in-memory n still gates this turn
+
+    return n
+
+
+def budget_yield_message(count: int) -> Optional[str]:
+    """The yield instruction when the count crosses threshold, else None."""
+    if count <= 0:
+        return None
+    threshold = _budget_threshold()
+    if count < threshold:
+        return None
+    return (
+        "[Conductor] Context-budget threshold reached: " + str(count) +
+        " dispatch-finalize cycles this session (limit " + str(threshold) +
+        "). Yield now — finish any in-flight task to a terminal committed "
+        "state, then emit the §5 checkpoint string (`⏸️ Conductor checkpoint "
+        "at P{phase}.T{task} — state committed. Re-invoke /conductor:implement "
+        "to resume.`) and stop. `track-state recover` picks up here; do NOT "
+        "stop mid-task."
+    )
+
+
 def main():
     """Main hook function"""
     # Read hook input
@@ -418,6 +500,12 @@ def main():
     # Log batch metrics
     log_file = init_logging("on-batch-complete")
     log_batch_metrics(log_file, session_id, git_count, track_state_count)
+
+    # Bump the per-session dispatch-finalize counter FIRST (always, before any
+    # early-return gate) so a task that completes under a failing state gate
+    # still counts toward the budget. The yield message itself is emitted as the
+    # last gate below — correctness gates take precedence within a single turn.
+    budget_count = bump_budget_counter(get_data_dir(), session_id, tool_calls)
 
     # Issue-based context injection
     if issues:
@@ -446,6 +534,15 @@ def main():
         if coverage_msg:
             write_simple_output(additional_context=coverage_msg)
             return
+
+    # Context-budget yield gate (pacing, not correctness). Fires only when the
+    # state gates above are clean; on a dispatch-finalize batch those gates
+    # don't match (no `git commit`/`complete`/`skip` substring in the command),
+    # so the yield surfaces reliably once the threshold is crossed.
+    yield_msg = budget_yield_message(budget_count)
+    if yield_msg:
+        write_simple_output(additional_context=yield_msg)
+        return
 
     # Default output
     write_simple_output()
