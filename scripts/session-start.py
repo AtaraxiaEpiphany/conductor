@@ -22,6 +22,8 @@ from lib.atomic_io import atomic_write_text
 
 COMPACT_CONTENT = """## Conductor Core (compact)
 
+Post-compaction step 1: run `track-state recover <td>`, switch on status; never rely on memory.
+
 Task State: | [ ] pending | [~] in_progress | [x] completed [sha] | [!] failed [sha] | [>] skipped [sha] | [d] deferred [sha] | [#] blocked [sha] | [-] cancelled [sha] |
 
 Commit: <type>(<scope>): <description>
