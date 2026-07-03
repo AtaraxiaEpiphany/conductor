@@ -1,3 +1,4 @@
+<!-- conductor:toc begin -->
 # Conductor
 
 ## File Index
@@ -34,3 +35,4 @@ the two list the same first-class docs but group them differently.
 |                 | Graduated Findings      | `./conductor/resource/<topic>.md`                          | Seeded by corpus-writer (inventory/gotcha/facts).                                |
 | **Management**  | Tracks Registry         | `./conductor/tracks.md`                                    | Create if missing.                                                            |
 |                 | Track Spec/Plan/Meta    | `./conductor/tracks/<track_id>/`                           | Read/Update based on context.                                                 |
+<!-- conductor:toc end -->
