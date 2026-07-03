@@ -35,11 +35,12 @@ from pathlib import Path
 
 from .core import load, transaction
 from .helpers import emit, now_iso, conductor_dir, target, extract_tags, clean
-from .constants import TERMINAL_FOR_PARENT
+from .constants import TERMINAL_FOR_PARENT, MAX_RETRIES
 from .mutations import _lock_inplace
 from lib.atomic_io import atomic_write_json
 from lib.json_utils import load_json_safe
-from .dispatch import _classify_task, _finalize_task
+from .dispatch import _classify_task, _finalize_task, _emit_quiescent_leaf
+from .validate import ensure_healthy
 from .plan_parse import parse_plan, collect_deps
 from .git_ops import (
     _git_rev_parse_toplevel, _git_head_sha, _git_branch_tip,
@@ -399,10 +400,15 @@ def _slim_member(m):
 
 # --- commands ---------------------------------------------------------------
 
-def cmd_dispatch_wave(track_dir, compact=True):
-    """Compute the ready-set, fan out worktree-isolated members, write the ledger.
+def prepare_wave(track_dir):
+    """Compute-only half of ``cmd_dispatch_wave`` — returns the envelope dict, no emit.
 
-    Emits ``action``:
+    Extracted so ``cmd_wave_step`` (Rail B) can compose the wave-prep step (compute
+    ready-set, create worktrees, lock members, write ledger) and route on its
+    outcome in the same call. The CLI wrapper ``cmd_dispatch_wave`` is now a thin
+    ``emit()`` over this.
+
+    Returns ``action``:
       - ``dispatch_wave``  — ready-set formed; ``wave`` lists members (with
         ``worktree``/``branch``/``worktree_track_dir`` for the orchestrator to
         dispatch N pinned task-executor agents). ``deferred`` lists any
@@ -417,17 +423,13 @@ def cmd_dispatch_wave(track_dir, compact=True):
     """
     repo_root = _git_rev_parse_toplevel(track_dir)
     if not repo_root:
-        emit(dict(error="cannot resolve git repo root "
-                        "(git rev-parse --show-toplevel failed)", status="error"),
-             "dispatch-wave", compact)
-        return
+        return dict(error="cannot resolve git repo root "
+                          "(git rev-parse --show-toplevel failed)", status="error")
 
     ledger = _load_ledger(track_dir)
     if _is_active(ledger):
-        emit(dict(action="wave_active", phase=ledger.get("phase"),
-                  wave=[_slim_member(m) for m in ledger.get("wave", [])]),
-             "dispatch-wave", compact)
-        return
+        return dict(action="wave_active", phase=ledger.get("phase"),
+                    wave=[_slim_member(m) for m in ledger.get("wave", [])])
     # Recycle a drained prior ledger: its members' worktrees were torn down by
     # wave-finalize, so only the empty temp root remains to reap.
     if ledger:
@@ -435,31 +437,23 @@ def cmd_dispatch_wave(track_dir, compact=True):
 
     base_sha = _git_head_sha(track_dir)
     if not base_sha:
-        emit(dict(error="cannot resolve HEAD SHA", status="error"),
-             "dispatch-wave", compact)
-        return
+        return dict(error="cannot resolve HEAD SHA", status="error")
 
     state = load(track_dir)
     phase = _current_phase(state)
     if phase < 1:
-        emit(dict(action="no_ready_tasks", phase=0,
-                  reason="all phases terminal"), "dispatch-wave", compact)
-        return
+        return dict(action="no_ready_tasks", phase=0, reason="all phases terminal")
 
     plan_path = Path(track_dir) / "plan.md"
     if not plan_path.exists():
-        emit(dict(error="plan.md missing — cannot compute ready-set",
-                  status="error"), "dispatch-wave", compact)
-        return
+        return dict(error="plan.md missing — cannot compute ready-set", status="error")
     parsed = parse_plan(plan_path)
 
     eligible = _eligible_members(state, parsed, phase)
     if not eligible:
-        emit(dict(action="no_ready_tasks", phase=phase,
-                  reason="no deps-declared file-disjoint pending tasks in phase",
-                  ineligible=_pending_ineligibility(state, parsed, phase)),
-             "dispatch-wave", compact)
-        return
+        return dict(action="no_ready_tasks", phase=phase,
+                    reason="no deps-declared file-disjoint pending tasks in phase",
+                    ineligible=_pending_ineligibility(state, parsed, phase))
     # Split into the capped ready-set and the deferred overflow. The deferred
     # members are NOT locked/worktreed this wave — they stay pending and surface
     # in the envelope so the skill announces them (no-silent-caps); the next
@@ -480,9 +474,7 @@ def cmd_dispatch_wave(track_dir, compact=True):
             for created in members:  # roll back the partial wave
                 _teardown_member(repo_root, created)
             Path(wave_root).rmdir()  # mkdtemp dir; empty after teardown
-            emit(dict(error=f"git worktree add failed for P{p}.T{t}",
-                      status="error"), "dispatch-wave", compact)
-            return
+            return dict(error=f"git worktree add failed for P{p}.T{t}", status="error")
         wt_td = _wt_track_dir(worktree, track_dir, repo_root)
         _write_marker(wt_td, {**m, "track_id": slug}, branch)
         members.append({
@@ -507,9 +499,17 @@ def cmd_dispatch_wave(track_dir, compact=True):
         "wave": members,
     })
 
-    emit(dict(action="dispatch_wave", phase=phase, base_sha=base_sha,
-              wave=[_slim_member(m) for m in members], deferred=deferred),
-         "dispatch-wave", compact)
+    return dict(action="dispatch_wave", phase=phase, base_sha=base_sha,
+                wave=[_slim_member(m) for m in members], deferred=deferred)
+
+
+def cmd_dispatch_wave(track_dir, compact=True):
+    """Compute the ready-set, fan out worktree-isolated members, write the ledger.
+
+    Thin ``emit()`` wrapper over :func:`prepare_wave` (extracted so ``cmd_wave_step``
+    can compose the wave-prep step). See ``prepare_wave`` for the envelope contract.
+    """
+    emit(prepare_wave(track_dir), "dispatch-wave", compact)
 
 
 def cmd_wave_status(track_dir, compact=True):
@@ -528,30 +528,30 @@ def cmd_wave_status(track_dir, compact=True):
          "wave-status", compact)
 
 
-def cmd_wave_finalize(track_dir, p, t, compact=True):
-    """Integrate one member's work: squash-merge → transition → teardown.
+def finalize_wave_member(track_dir, p, t):
+    """Compute-only half of ``cmd_wave_finalize`` — returns the result dict, no emit.
+
+    Extracted so ``cmd_wave_step`` (Rail B) can integrate one member inline and
+    route on its outcome (drained → seam review / next wave) in the same call.
+    The CLI wrapper ``cmd_wave_finalize`` is now a thin ``emit()`` over this.
 
     SUCCESS path: squash-merge the member's branch onto the track branch (one
     code commit), then run the SUCCESS transition (``_finalize_task`` makes the
     conductor audit commit on top). FAILURE / no-commits path: no integration.
     Conflict (merge aborts) → FAILURE with a SPEC_DEVIATION note. The member's
-    worktree + branch are torn down regardless. Emits ``drained=True`` when the
-    last in-flight member settles (orchestrator may then start the next wave).
+    worktree + branch are torn down regardless. The returned dict carries
+    ``drained=True`` when the last in-flight member settles.
     """
     ledger = _load_ledger(track_dir)
     if not ledger:
-        emit(dict(error="no wave ledger to finalize", status="error"),
-             "wave-finalize", compact)
-        return
+        return dict(error="no wave ledger to finalize", status="error")
     member = _member_by_loc(ledger, int(p), int(t))
     if member is None:
-        emit(dict(error=f"P{p}.T{t} is not a member of the current wave",
-                  status="error"), "wave-finalize", compact)
-        return
+        return dict(error=f"P{p}.T{t} is not a member of the current wave",
+                    status="error")
     if member.get("status") != MEMBER_IN_FLIGHT:
-        emit(dict(error=f"P{p}.T{t} already finalized as {member['status']}",
-                  status="error"), "wave-finalize", compact)
-        return
+        return dict(error=f"P{p}.T{t} already finalized as {member['status']}",
+                    status="error")
 
     repo_root = ledger.get("repo_root") or _git_rev_parse_toplevel(track_dir)
     branch = member["branch"]
@@ -572,11 +572,11 @@ def cmd_wave_finalize(track_dir, p, t, compact=True):
     # onto the track branch (cwd=repo_root, the single shared worktree), and
     # `_finalize_task` then stacks a conductor audit commit on top. Neither runs
     # inside `transaction()` — that flock guards ONLY track-state.json (the one
-    # flock in this file lives in cmd_wave_abort). So two concurrent
-    # cmd_wave_finalize calls would race the same git index/HEAD: lost squash
-    # commits, a corrupt index, or one member's audit commit landing on another's
-    # half-written HEAD. The skills/parallel §4.0 prose loop finalizes members
-    # SERIALLY for exactly this reason — do not naïvely parallelize it.
+    # flock in this file lives in cmd_wave_abort). So two concurrent finalize
+    # calls would race the same git index/HEAD: lost squash commits, a corrupt
+    # index, or one member's audit commit landing on another's half-written HEAD.
+    # ``cmd_wave_step`` emits ONE ``wave_integrate`` per call for exactly this
+    # reason — do not naïvely parallelize it.
     #
     # Safe parallelization would need either per-member integration branches
     # (conductor/integrate/<slug>/P{p}.T{t}) squash-merged then serially
@@ -626,9 +626,18 @@ def cmd_wave_finalize(track_dir, p, t, compact=True):
     _save_ledger(track_dir, ledger)
 
     drained = all(m.get("status") in _TERMINAL_MEMBER for m in ledger["wave"])
-    emit({**result, "action": "wave_finalized", "phase": int(p), "task": int(t),
-          "member_status": member["status"], "drained": drained},
-         "wave-finalize", compact)
+    return {**result, "action": "wave_finalized", "phase": int(p), "task": int(t),
+            "member_status": member["status"], "drained": drained}
+
+
+def cmd_wave_finalize(track_dir, p, t, compact=True):
+    """Integrate one member's work: squash-merge → transition → teardown.
+
+    Thin ``emit()`` wrapper over :func:`finalize_wave_member` (extracted so
+    ``cmd_wave_step`` can compose integration). See ``finalize_wave_member`` for
+    the envelope contract.
+    """
+    emit(finalize_wave_member(track_dir, p, t), "wave-finalize", compact)
 
 
 def cmd_wave_abort(track_dir, compact=True):
@@ -670,3 +679,251 @@ def cmd_wave_abort(track_dir, compact=True):
     _cleanup_wave_root(ledger)
     _wave_ledger_path(track_dir).unlink(missing_ok=True)
     emit(dict(action="wave_aborted", aborted=aborted), "wave-abort", compact)
+
+
+# ---------------------------------------------------------------------------
+# Rail B-min: `wave-step` — a state-driven wave spine that collapses the
+# dispatch-wave + wave-finalize loop into ONE leaf action per call. The
+# orchestrator becomes a teleoperator: read `action`, do exactly that, call
+# `wave-step` again. See conductor/design/rail-b-wave-step.md and
+# skills/parallel-step/SKILL.md. Sibling of dispatch.cmd_step.
+# ---------------------------------------------------------------------------
+
+# Sidecar marker recording that a drained wave's post-drain decisions (seam
+# review applicability) have been made. A sidecar FILE (not a ledger field)
+# because finalize_wave_member re-loads + full-overwrites the ledger each call —
+# a field would be lost on concurrent re-entry and re-fire seam_review. Keyed on
+# (track_id, base_sha) so a new wave self-invalidates it. Gitignored (quality.py).
+WAVE_DRAIN_MARKER_NAME = ".wave-drain-processed"
+
+
+def _drain_marker_path(track_dir):
+    """Path to the drain-processed sidecar (``.conductor/.wave-drain-processed``)."""
+    return conductor_dir(track_dir) / WAVE_DRAIN_MARKER_NAME
+
+
+def _drain_processed(track_dir, ledger):
+    """True iff the drain of THIS wave (track_id + base_sha) was already processed.
+
+    Missing/malformed marker → not processed. Keyed on the wave's
+    (track_id, base_sha) so a new wave (new base_sha) does not inherit a prior
+    wave's marker — the self-invalidation that makes the marker safe across waves.
+    """
+    marker = load_json_safe(_drain_marker_path(track_dir))
+    if not isinstance(marker, dict):
+        return False
+    return (marker.get("track_id") == ledger.get("track_id")
+            and marker.get("base_sha") == ledger.get("base_sha"))
+
+
+def _mark_drain_processed(track_dir, ledger):
+    """Stamp the drain-processed marker for this wave BEFORE emitting the drain
+    decision, so a re-entry (concurrent or after a resume) doesn't re-fire it."""
+    atomic_write_json(_drain_marker_path(track_dir),
+                      {"track_id": ledger.get("track_id"),
+                       "base_sha": ledger.get("base_sha")})
+
+
+def _wave_assemble_member_prompt(member, attempt=1):
+    """Pre-assemble one member's task-executor prompt (worktree-pinned).
+
+    Port of dispatch._step_assemble_prompt + the parallel §3.2 fan-out template.
+    Built in code so the orchestrator pastes it verbatim — no per-member field
+    interpolation (the N× weak-model failure surface this spine removes). SUBTASK
+    is omitted (wave members are flat-only); ATTEMPT defaults to 1 (v1 does not
+    retry in-wave). The leading ``cd "{worktree}"`` lands the agent's first Bash
+    call in the worktree so every later git/edit targets it.
+    """
+    wt = member["worktree"]
+    lines = [
+        f'cd "{wt}"',
+        f"WORKTREE_DIR={wt}",
+        f"TRACK_DIR={member['worktree_track_dir']}",
+        f"PHASE={member['phase']}",
+        f"TASK={member['task']}",
+        f"NAME={member.get('name', '?')}",
+        f"ATTEMPT={attempt}",
+        f"MAX_RETRIES={MAX_RETRIES}",
+    ]
+    return "\n".join(lines)
+
+
+def _wave_member_unstarted(track_dir, ledger, member):
+    """No-retry-burn discriminator: was this member's dispatch interrupted before
+    the agent ran? True iff the worktree still exists, no result.json was written,
+    AND the member's branch has zero commits past base_sha.
+
+    Mirrors dispatch._is_start_commit's role for the serial spine — but wave
+    members have NO start-commit (only the serial spine makes one), so the
+    discriminator is ``n_commits == 0`` (the same primitive finalize_wave_member
+    computes), not a commit-message pattern. Returns False when the worktree is
+    gone (a partial abort tore it down) or the branch is missing — finalize
+    synthesizes FAILURE correctly in both cases.
+    """
+    if not Path(member.get("worktree", "")).exists():
+        return False
+    repo_root = ledger.get("repo_root") or _git_rev_parse_toplevel(track_dir)
+    wt_td = (member.get("worktree_track_dir")
+             or _wt_track_dir(member["worktree"], track_dir, repo_root))
+    if (conductor_dir(wt_td) / "result.json").exists():
+        return False
+    tip = _git_branch_tip(repo_root, member["branch"])
+    if not tip:
+        return False
+    return _git_range_commit_count(repo_root, member["base_sha"], tip) == 0
+
+
+def _wave_member_retry_count(state, member):
+    """A wave member's retry_count (read from track-state.json, not the ledger)."""
+    try:
+        return target(state, member["phase"], member["task"]).get("retry_count", 0)
+    except (IndexError, KeyError):
+        return 0
+
+
+def _serial_in_progress(state, wave_locs):
+    """True iff an ``in_progress`` task is NOT a wave member.
+
+    When the model re-invokes ``wave-step`` mid-serial-task (a non-wave task left
+    in_progress after a ``serial`` leaf), the serial spine owns its finalize — a
+    new wave must not start concurrent with it (matches parallel §3.3: complete
+    the serial task, then re-check for waves). ``wave_locs`` is the active wave's
+    member locs (empty when no wave is active, which is the only state from which
+    ``cmd_wave_step`` reaches this check).
+    """
+    for pi, phase in enumerate(state.get("phases", []), 1):
+        for ti, task in enumerate(phase.get("tasks", []), 1):
+            if task.get("status") == "in_progress" and (pi, ti) not in wave_locs:
+                return True
+    return False
+
+
+def _wave_step_emit_batch(track_dir, pre, compact):
+    """Fresh wave: emit ``dispatch_batch`` with one pre-assembled ``prompt`` per
+    member. The orchestrator fires ALL members in ONE message (concurrent Agent
+    calls) — that parallelism is the entire point of the wave spine."""
+    members = [_slim_member(m) for m in pre.get("wave", [])]
+    for m in members:
+        m["prompt"] = _wave_assemble_member_prompt(m, attempt=1)
+    emit(dict(action="dispatch_batch", phase=pre.get("phase"),
+              base_sha=pre.get("base_sha"), wave=members,
+              deferred=pre.get("deferred", [])),
+         "wave-step", compact)
+
+
+def _wave_step_emit_redispatch(track_dir, ledger, member, retry_count, compact):
+    """Interrupted member (no-retry-burn): emit a single-member ``dispatch_batch``
+    to re-run it WITHOUT finalizing. Reuses the member's existing worktree/branch;
+    ``is_resume`` signals the orchestrator this is a re-dispatch."""
+    m = _slim_member(member)
+    m["prompt"] = _wave_assemble_member_prompt(m, attempt=retry_count + 1)
+    emit(dict(action="dispatch_batch", phase=ledger.get("phase"),
+              base_sha=ledger.get("base_sha"), wave=[m],
+              deferred=[], is_resume=True, attempt=retry_count + 1),
+         "wave-step", compact)
+
+
+def _wave_step_emit_integrate(track_dir, member, compact):
+    """Emit ``wave_integrate`` for one in_flight member — the orchestrator runs
+    ``wave-finalize`` verbatim. Members integrate SERIALLY (one per wave-step
+    call) because the squash-merge block mutates the shared main-worktree index
+    (see finalize_wave_member's INTEGRATION RACE note)."""
+    emit(dict(action="wave_integrate", phase=member["phase"],
+              task=member["task"], name=member.get("name", "?")),
+         "wave-step", compact)
+
+
+def _wave_step_route_quiescent(track_dir, state, compact, ineligible=None):
+    """No wave work and no active wave → surface a failed-member decision, a phase
+    checkpoint, delegate ONE leaf to the serial step spine, or done. The shared
+    terminal/quiescent router (dispatch._emit_quiescent_leaf) owns the first three;
+    only dispatchable serial work is wave-specific (→ ``serial``)."""
+    nxt = _emit_quiescent_leaf(track_dir, state, compact, "wave-step")
+    if nxt is None:
+        return
+    # Dispatchable serial work → one step leaf, then re-invoke wave-step (the
+    # serial task may satisfy a dep that unlocks the next wave, §3.3).
+    emit(dict(action="serial", ineligible=ineligible or [],
+              execution_mode=state.get("execution_mode", "interactive")),
+         "wave-step", compact)
+
+
+def cmd_wave_step(track_dir, compact=True):
+    """State-driven wave-loop step — the Rail B-min wave spine entry point.
+
+    Composes dispatch-wave + wave-finalize into ONE leaf action per call, then
+    returns. The orchestrator reads ``action`` and does exactly that — fire the
+    batch, run wave-finalize for one member, hand off to the seam review / serial
+    / phase-checkpoint branch, or stop — then calls ``wave-step`` again.
+
+    Action set:
+      - ``dispatch_batch``   : fire N pinned task-executor agents (one message),
+                               each prompt verbatim. [spine]
+      - ``wave_integrate``   : run ``wave-finalize <td> --phase <p> --task <t>``. [spine]
+      - ``seam_review``      : ≥2 finalized this wave → hand to parallel §4.15. [non-spine]
+      - ``serial``           : run ``track-state step`` once, then re-invoke. [non-spine]
+      - ``phase_checkpoint`` : hand to phase-checker fan-out. [non-spine]
+      - ``ask``/``skip_analyze`` : failed member Retry/Skip/Block. [spine]
+      - ``done``/``error``   : terminal.
+
+    Internal-only transitions (drain-marker bookkeeping, interrupted-member
+    re-dispatch) are fully resolved before emitting, so the model never sees them.
+    """
+    # Open with ensure_healthy (like cmd_step), NOT cmd_recover — its wave-active
+    # guard would refuse, and wave-step IS the wave spine.
+    state, fixes, verrors = ensure_healthy(track_dir)
+    if state is None:
+        emit(dict(action="error", errors=verrors), "wave-step", compact)
+        return
+
+    ledger = _load_ledger(track_dir)
+
+    # STATE A — active wave with in_flight members: integrate one (or re-dispatch
+    # an interrupted member without burning its retry).
+    in_flight = _in_flight_members(ledger)
+    if in_flight:
+        m = in_flight[0]  # lowest (phase,task); deterministic for tests
+        if _wave_member_unstarted(track_dir, ledger, m):
+            return _wave_step_emit_redispatch(
+                track_dir, ledger, m, _wave_member_retry_count(state, m), compact)
+        return _wave_step_emit_integrate(track_dir, m, compact)
+
+    # STATE B — a drained ledger not yet processed: decide seam-review
+    # applicability once (idempotent via the sidecar marker).
+    if ledger and ledger.get("wave") and not _is_active(ledger) \
+            and not _drain_processed(track_dir, ledger):
+        _mark_drain_processed(track_dir, ledger)  # before emit — re-entry-safe
+        finalized = [m for m in ledger.get("wave", [])
+                     if m.get("status") == "finalized"]
+        if len(finalized) >= 2:
+            emit(dict(action="seam_review", phase=ledger.get("phase"),
+                      finalized_count=len(finalized),
+                      revision_range=f"{ledger.get('base_sha', '')}..HEAD"),
+                 "wave-step", compact)
+            return
+        # <2 finalized: no seam review; fall through to next-wave / serial / done.
+
+    # STATE C — no active wave: compute the next wave (or route quiescent).
+    # If a serial task is in_progress (not a wave member), the serial spine owns
+    # its finalize — delegate before starting a new wave (parallel §3.3: complete
+    # the serial task, then re-check for waves).
+    if _serial_in_progress(state, active_wave_member_locs(track_dir)):
+        return _wave_step_route_quiescent(track_dir, state, compact, None)
+
+    pre = prepare_wave(track_dir)
+    act = pre.get("action")
+    if act == "dispatch_wave":
+        return _wave_step_emit_batch(track_dir, pre, compact)
+    if act == "wave_active":
+        # Became active between the in_flight check and prepare_wave (rare);
+        # prepare_wave refused with the active ledger — integrate a member.
+        reflown = _in_flight_members(_load_ledger(track_dir))
+        if reflown:
+            return _wave_step_emit_integrate(track_dir, reflown[0], compact)
+    if pre.get("error") or pre.get("status") == "error":
+        emit(dict(action="error", error=pre.get("error", "wave prepare failed")),
+             "wave-step", compact)
+        return
+
+    # no_ready_tasks → serial / phase_checkpoint / failed-exhausted / done.
+    return _wave_step_route_quiescent(track_dir, state, compact, pre.get("ineligible"))

@@ -25,6 +25,7 @@ from .handoff import cmd_get_handoff, cmd_sync_handoff, cmd_append_handoff, cmd_
 from .sync import cmd_sync_plan
 from .wave import (
     cmd_dispatch_wave, cmd_wave_status, cmd_wave_finalize, cmd_wave_abort,
+    cmd_wave_step,
 )
 
 
@@ -219,6 +220,11 @@ COMMAND_HELP = {
     "wave-abort": ("wave-abort <track-dir>",
                    "Abort the active wave: reset in-flight members to pending, tear down worktrees, "
                    "delete the ledger (recovery for a wedged wave)"),
+    "wave-step": ("wave-step <track-dir> [--full]",
+                  "Rail B-min wave spine: composes dispatch-wave + wave-finalize into ONE leaf action "
+                  "(dispatch_batch / wave_integrate / seam_review / serial / phase_checkpoint / "
+                  "ask / skip_analyze / done / error). Driven by skills/parallel-step/SKILL.md; "
+                  "see conductor/design/rail-b-wave-step.md."),
     "validate": ("validate <track-dir> [--fix]",
                  "Validate state; always reports auto-fix analysis, --fix persists repairs"),
     "gc": ("gc <track-dir>",
@@ -256,7 +262,7 @@ _COMMAND_GROUPS = [
     ("Handoff", ["get-handoff", "append-handoff", "harvest-candidates"]),
     ("Result Processing", ["write-result", "process-result"]),
     ("Dispatch Composites", ["dispatch-prepare", "dispatch-finalize", "record-summary"]),
-    ("Wave Parallelism", ["dispatch-wave", "wave-status", "wave-finalize", "wave-abort"]),
+    ("Wave Parallelism", ["dispatch-wave", "wave-status", "wave-finalize", "wave-abort", "wave-step"]),
     ("Naming", ["derive-name"]),
     ("Diagnostics", ["validate", "gc", "shas", "post-loop-status", "checklist-verify",
                      "deferred-report", "phase-done", "add-checkpoint", "preflight",
@@ -428,6 +434,8 @@ def main():
             cmd_wave_finalize(track_dir, p, t, compact="--full" not in args)
         elif cmd == "wave-abort":
             cmd_wave_abort(track_dir, compact="--full" not in args)
+        elif cmd == "wave-step":
+            cmd_wave_step(track_dir, compact="--full" not in args)
         elif cmd == "init-from-plan":
             cmd_init_from_plan(track_dir,
                                flag(args, "--track-id") or "track",

@@ -123,6 +123,18 @@ COMPACT_FIELDS = {
                       "phase", "task", "subtask", "summary", "deviations",
                       "member_status", "drained", "phase_checkpoint_pending"),
     "wave-abort": ("action", "aborted", "ok"),
+    # Rail B-min wave spine (skills/parallel-step/SKILL.md). `wave-step` collapses
+    # the dispatch-wave + wave-finalize loop into one leaf action; the union of
+    # keys across its action variants: dispatch_batch (wave/deferred/base_sha +
+    # is_resume/attempt on a single-member re-dispatch), wave_integrate
+    # (phase/task/name), seam_review (finalized_count/revision_range), serial
+    # (ineligible/execution_mode), phase_checkpoint (phase), ask (decision),
+    # skip_analyze. Each `wave` member carries its own pre-assembled `prompt`.
+    # Error envelopes bypass the allowlist (emit's error carve-out).
+    "wave-step": ("action", "phase", "task", "subtask", "name", "execution_mode",
+                  "base_sha", "wave", "deferred", "ineligible",
+                  "finalized_count", "revision_range", "decision",
+                  "is_resume", "attempt"),
 }
 
 

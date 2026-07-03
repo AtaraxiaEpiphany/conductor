@@ -82,12 +82,17 @@ def _validate_plan_structure(plan):
 # and the marker short-circuits the SubagentStop hook for wave agents. Both are
 # per-run and must never be committed — staging them would churn history and leak
 # absolute worktree paths into the repo.
+# .wave-drain-processed is the wave-step drain marker (scripts/track_state/wave.py
+# cmd_wave_step): records that a drained wave's post-drain decisions (seam-review
+# applicability) were made, keyed on (track_id, base_sha). Per-run bookkeeping —
+# committing it would leak state across tracks and survive past the wave it marks.
 _CONDUCTOR_GITIGNORE = """# Conductor runtime artifacts — transient, never commit.
 result.json
 .result.tmp.*
 new-track-progress.json
 parallel.json
 wave-agent.marker
+.wave-drain-processed
 """
 
 

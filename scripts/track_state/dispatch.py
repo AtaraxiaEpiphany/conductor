@@ -1043,22 +1043,26 @@ def _step_route_after_finalize(track_dir, outcome, compact):
     _step_emit_exhausted(track_dir, outcome, execution_mode, outcome.get("retry_count", 0), compact)
 
 
-def _step_emit_next_leaf(track_dir, state, compact):
-    """Resolve the next leaf from a quiescent state (no in_progress task awaiting
-    finalize). Resolves parent-complete / parent-stuck / continuous-[Manual]-defer
-    internally before emitting; surfaces explore / execute / manual / phase_checkpoint
-    / done / ask / skip_analyze."""
-    execution_mode = state.get("execution_mode", "interactive")
+def _emit_quiescent_leaf(track_dir, state, compact, command):
+    """Shared terminal/quiescent routing for ``step`` and ``wave-step``.
 
+    Resolves, in order: failed+exhausted → ``ask``/``skip_analyze``; pending phase
+    checkpoint → ``phase_checkpoint``; no dispatchable work → ``done``. Returns the
+    resolved next-task dict (with ``execution_mode`` set) when the caller should
+    proceed with its own command-specific dispatchable-work branch (``step``:
+    parent-complete/stuck/manual/dispatch; ``wave-step``: ``serial``); returns
+    ``None`` once it has emitted a terminal/quiescent leaf.
+
+    A failed+exhausted task surfaces its decision BEFORE a phase checkpoint —
+    matching recover→dispatch-next ordering (Rail A §2.0 runs before §3.0), and
+    only when no dispatchable work remains (pending work elsewhere proceeds
+    first). ``command`` selects the emit allowlist (``"step"`` / ``"wave-step"``).
+    """
+    execution_mode = state.get("execution_mode", "interactive")
     nxt = _find_next_task(state)
     nxt["execution_mode"] = execution_mode
     has_dispatchable = nxt.get("phase", 0) >= 1
 
-    # A failed+exhausted task surfaces its decision BEFORE a phase checkpoint —
-    # matching recover→dispatch-next ordering (Rail A §2.0 runs before §3.0), so
-    # the user decides retry/skip/block before a phase-checker re-verifies a phase
-    # with a known-failed task. Surfaced only when no dispatchable work remains
-    # (pending work elsewhere proceeds first, as in Rail A).
     if not has_dispatchable:
         found = _find_failed_exhausted(state)
         if found is not None:
@@ -1067,25 +1071,37 @@ def _step_emit_next_leaf(track_dir, state, compact):
             if execution_mode == "interactive":
                 decision = _failed_task_decision(track_dir, fpi, fti, fsi, fname, frc)
                 emit(dict(action="ask", phase=fpi, task=fti, subtask=fsi, name=fname,
-                          decision=decision, execution_mode=execution_mode), "step", compact)
+                          decision=decision, execution_mode=execution_mode),
+                     command, compact)
             else:
                 emit(dict(action="skip_analyze", phase=fpi, task=fti, subtask=fsi,
-                          name=fname, execution_mode=execution_mode), "step", compact)
-            return
+                          name=fname, execution_mode=execution_mode),
+                     command, compact)
+            return None
 
-    # Phase checkpoint gates an earlier completed phase before any new dispatch
-    # (dispatch-next §3.0 checks this first). Reached when there is dispatchable
-    # work in a later phase, or as the final checkpoint before `done`.
     cp = _any_phase_needs_checkpoint(track_dir, state)
     if cp is not None:
         emit(dict(action="phase_checkpoint", phase=cp, execution_mode=execution_mode),
-             "step", compact)
-        return
+             command, compact)
+        return None
 
     if not has_dispatchable:
-        emit(dict(action="done"), "step", compact)
+        emit(dict(action="done"), command, compact)
+        return None
+
+    return nxt
+
+
+def _step_emit_next_leaf(track_dir, state, compact):
+    """Resolve the next leaf from a quiescent state (no in_progress task awaiting
+    finalize). Resolves parent-complete / parent-stuck / continuous-[Manual]-defer
+    internally before emitting; surfaces explore / execute / manual / phase_checkpoint
+    / done / ask / skip_analyze."""
+    nxt = _emit_quiescent_leaf(track_dir, state, compact, "step")
+    if nxt is None:
         return
 
+    execution_mode = nxt.get("execution_mode", "interactive")
     ntype = nxt["type"]
     pi, ti = nxt["phase"], nxt["task"]
     si = nxt.get("subtask")
