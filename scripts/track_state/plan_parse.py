@@ -46,6 +46,19 @@ _MISSING_CHECKBOX_LINE = re.compile(
     re.IGNORECASE,
 )
 
+# A non-checkbox dash bullet carrying an HTML comment (``<!-- AC/TC/deps -->``)
+# but NO Task:/Subtask: keyword — an author who dropped the keyword yet kept the
+# annotation. Prose bullets don't carry AC/TC/deps comments, so a comment is a
+# strong "this was meant to be a task" signal; without this catch the line is
+# silently dropped from track-state.json (data loss). Keyword-independent safety
+# net so softening the Task:/Subtask: convention does not widen the silent-drop
+# hole. Mirrors scripts/check-plan-checkboxes.py. The negative lookahead keeps
+# well-formed ``- [ ] …`` lines out; the malformed-bracket guard above handles
+# ``- [] …``-style botched brackets before this runs.
+_MISSING_CHECKBOX_ANNOTATED = re.compile(
+    r"^(\s*)-\s+(?!\[[ x~!>#\-d]\])(?:\[[A-Za-z]+\]\s*)?.*<!--"
+)
+
 # A dash-bullet whose first token is a bracket group [...] of ANY width. Used to
 # catch the bracket-MALFORMED case (below): a writer who intended a task but
 # botched the checkbox. group(1)=indent, group(2)=the bracket token incl. brackets.
@@ -279,6 +292,17 @@ def parse_plan(plan_path):
             errors.append(
                 f"line {lineno}: {kind} '{kw}' line is missing its '[ ]' checkbox "
                 f"({where}) — write '- [ ] {kw.capitalize()}: ...' so it is not "
+                f"silently dropped from track-state.json")
+            continue
+        annotated = _MISSING_CHECKBOX_ANNOTATED.match(line)
+        if annotated:
+            indent = annotated.group(1)
+            where = (f"Phase {current_phase['number']}" if current_phase
+                     else "before any phase")
+            kind = "subtask" if indent else "task"
+            errors.append(
+                f"line {lineno}: {kind} line carries an annotation but is missing "
+                f"its '[ ]' checkbox ({where}) — write '- [ ] ...' so it is not "
                 f"silently dropped from track-state.json")
             continue
         # Everything else (title, prose, blank lines, non-checkbox bullets) ignored.

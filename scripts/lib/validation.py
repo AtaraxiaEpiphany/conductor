@@ -198,6 +198,44 @@ _HEREDOC_OPENER = re.compile(r'<<-?\s*[\'"]?(\w+)[\'"]?')
 # command substitution $(…) or `…`, and variable expansion $NAME / ${…}.
 _DYNAMIC_PATTERN = re.compile(r'\$\(|`|\$\{|\$\w')
 
+# Unquoted shell metacharacters that turn a bare ``-m`` value into a bash syntax
+# error rather than a message: ``()`` is empty-function syntax, ``<>`` are
+# redirections (and the ``<commit_msg>`` placeholder footprint), ``{}`` a brace
+# group, ``;|&`` command separators. Any competent caller QUOTES the commit
+# message, so an unquoted -m value is suspect; one carrying these chars is a
+# definitively broken command (the class of bug where the orchestrator emitted
+# ``git commit -m ()`` and bash died with "syntax error near unexpected token").
+_BARE_M_BREAKER = re.compile(r'[()<>{};|&]')
+
+
+def commit_arg_shell_broken_reason(command: str) -> Optional[str]:
+    """Return a deny-reason if a ``git commit -m`` argument is shell-broken.
+
+    Catches the orchestrator-placeholder / mis-substitution bug class: a bare
+    UNQUOTED ``-m`` token (group 3 of ``_M_ARG_PATTERN``'s ``"…"|'…'|\\S+``
+    alternation) that carries a shell-breaking metacharacter — e.g.
+    ``git commit -m ()`` (empty-function syntax error) or
+    ``git commit -m <commit_msg>`` (unfilled placeholder / redirection).
+
+    Quoted values (groups 1/2) are shell-safe by construction and never flagged
+    here; dynamic substitutions (``$(…)``, ``$VAR``) are handled by the
+    allow-through policy in ``_extract_commit_message``. Returns None when the
+    argument is acceptable. This is a hard-deny signal (the command cannot run
+    as written), distinct from V10's soft ask for non-conventional *style*.
+    """
+    m = _M_ARG_PATTERN.search(command)
+    if not m:
+        return None
+    # group(1)=double-quoted, group(2)=single-quoted, group(3)=bare \S+ token.
+    bare = m.group(3)
+    if bare is not None and _BARE_M_BREAKER.search(bare):
+        return (
+            f"git commit -m argument {bare!r} is an unquoted token carrying shell "
+            f"metacharacters — bash will raise a syntax error. Quote the message, "
+            f'e.g. git commit -m "type(scope): description".'
+        )
+    return None
+
 
 def _extract_heredoc_body(text: str) -> Optional[str]:
     """Return the body of a shell heredoc embedded in ``text``, else None.

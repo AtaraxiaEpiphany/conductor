@@ -78,6 +78,22 @@ class ScanTests(TestCase):
     def test_scan_clean_text_returns_nothing(self):
         self.assertEqual(_mod._scan("- [ ] Task: ok\n- [ ] Subtask: ok\n"), [])
 
+    def test_scan_annotated_bullet_without_keyword_is_flagged(self):
+        # Keyword-independent net: an HTML-comment-annotated bullet missing its
+        # checkbox is flagged even without the Task:/Subtask: keyword.
+        hits = _mod._scan("- implement login <!-- AC-1 -->\n")
+        self.assertEqual(len(hits), 1)
+        lineno, raw, suggested = hits[0]
+        self.assertEqual(lineno, 1)
+        self.assertIn("[ ]", suggested)
+
+    def test_scan_well_formed_annotated_bullet_not_flagged(self):
+        # ``- [ ] implement login <!-- AC-1 -->`` is valid (keyword optional).
+        self.assertEqual(_mod._scan("- [ ] implement login <!-- AC-1 -->\n"), [])
+
+    def test_scan_plain_prose_bullet_without_annotation_not_flagged(self):
+        self.assertEqual(_mod._scan("- a plain markdown bullet\n"), [])
+
 
 class MalformedBracketRegexTests(TestCase):
     """``- [] x`` (empty) / ``- [  ] x`` (whitespace) / ``- [xy] x`` (wrong

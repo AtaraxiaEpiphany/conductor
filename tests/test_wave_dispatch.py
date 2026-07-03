@@ -112,6 +112,38 @@ class TestDispatchWave(unittest.TestCase):
         self.assertEqual(len(out["members"]), 3)
         self.assertTrue(all(m["status"] == "in_flight" for m in out["members"]))
 
+    def test_dispatch_wave_emits_slim_consumer_member_shape(self):
+        # The wave envelope ships straight to the orchestrator as Bash stdout
+        # (unfiltered), so each member must carry ONLY the 6 keys the parallel
+        # skill consumes. Ledger-only keys (track_id, base_sha, locked_at,
+        # status) bloat the main session context for nothing — regression-guard
+        # the slimming so future re-bloat fails CI.
+        out, _ = _capture(cmd_dispatch_wave, self.d)
+        self.assertEqual(out["action"], "dispatch_wave")
+        expected = {"phase", "task", "name",
+                    "worktree", "branch", "worktree_track_dir"}
+        for m in out["wave"]:
+            self.assertEqual(set(m.keys()), expected, m)
+
+    def test_wave_active_refusal_also_emits_slim_members(self):
+        _capture(cmd_dispatch_wave, self.d)  # start the first wave
+        out, _ = _capture(cmd_dispatch_wave, self.d)  # refused
+        self.assertEqual(out["action"], "wave_active")
+        expected = {"phase", "task", "name",
+                    "worktree", "branch", "worktree_track_dir"}
+        for m in out["wave"]:
+            self.assertEqual(set(m.keys()), expected, m)
+
+    def test_ledger_still_carries_full_member_dict(self):
+        # The slimming is emit-only: the on-disk ledger keeps the full member
+        # dict (wave-finalize/wave-abort read base_sha/status/worktree back).
+        _capture(cmd_dispatch_wave, self.d)
+        ledger = json.loads(_wave_ledger_path(self.d).read_text())
+        keys = set(ledger["wave"][0].keys())
+        for must in ("track_id", "base_sha", "locked_at", "status",
+                     "worktree", "branch", "worktree_track_dir"):
+            self.assertIn(must, keys, f"ledger lost {must}: {keys}")
+
     def test_status_no_ledger(self):
         out, _ = _capture(cmd_wave_status, self.d)
         self.assertFalse(out["active"])

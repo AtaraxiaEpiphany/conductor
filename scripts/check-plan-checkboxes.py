@@ -49,6 +49,18 @@ _MISSING_CHECKBOX = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 
+# A non-checkbox dash bullet carrying an HTML comment (``<!-- AC/TC/deps -->``)
+# but NO Task:/Subtask: keyword — an author who dropped the keyword yet kept the
+# annotation. Prose bullets don't carry AC/TC/deps comments, so a comment is a
+# strong "this was meant to be a task" signal; without this catch the line is
+# silently dropped by plan_parse (data loss). Keyword-independent safety net so
+# that softening the Task:/Subtask: *convention* does not widen the silent-drop
+# hole. Mirrors plan_parse._MISSING_CHECKBOX_ANNOTATED.
+_MISSING_CHECKBOX_ANNOTATED = re.compile(
+    rf'^(\s*)-\s+(?!\[{_VALID_MARKER_CLASS}\])(?:\[[A-Za-z]+\]\s*)?.*<!--',
+    re.MULTILINE,
+)
+
 # A dash-bullet whose first token is a bracket group [...] of ANY width — used
 # to catch the bracket-MALFORMED case: a writer who intended a task but botched
 # the checkbox. group(1)=indent, group(2)=the bracket token incl. brackets.
@@ -106,6 +118,9 @@ def _scan(text: str, max_hits: int = 8):
                 hits.append((idx + 1, raw, _suggest_malformed(raw)))
                 continue
         if _MISSING_CHECKBOX.search(raw):
+            hits.append((idx + 1, raw, _suggest(raw)))
+            continue
+        if _MISSING_CHECKBOX_ANNOTATED.search(raw):
             hits.append((idx + 1, raw, _suggest(raw)))
     return hits
 

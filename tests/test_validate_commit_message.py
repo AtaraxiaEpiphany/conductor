@@ -18,6 +18,7 @@ if str(_scripts) not in sys.path:
     sys.path.insert(0, str(_scripts))
 
 from lib.validation import validate_commit_message  # noqa: E402
+from lib.validation import commit_arg_shell_broken_reason  # noqa: E402
 
 
 # The exact command shape that triggered the original false positive.
@@ -166,6 +167,49 @@ class ValidateCommitMessageTests(TestCase):
         # No real -m here → nothing to validate statically → allowed.
         self.assertEqual((True, None),
                          validate_commit_message('git commit file-m.txt'))
+
+
+# --- Shell-broken -m arguments: hard-deny signal (not V10's soft ask) -------
+# Regression: an orchestrator mis-substitution emitted `git commit -m ()`,
+# which bash rejects with "syntax error near unexpected token `('". V10 alone
+# only *asks*, so the broken command could still reach the shell. The detector
+# returns a deny-reason for an UNQUOTED bare -m token carrying shell-breaking
+# metacharacters; quoted values (shell-safe) and dynamic substitutions (handled
+# by the allow-through policy) return None.
+class CommitArgShellBrokenTests(TestCase):
+    def _broken(self, command):
+        return commit_arg_shell_broken_reason(command) is not None
+
+    def test_empty_parens_broken(self):
+        self.assertTrue(self._broken("git commit -m ()"))
+
+    def test_placeholder_angle_brackets_broken(self):
+        self.assertTrue(self._broken("git commit -m <commit_msg>"))
+
+    def test_unquoted_paren_message_broken(self):
+        # Unquoted `feat(auth): …` — parens make it a bash syntax error.
+        self.assertTrue(self._broken("git commit -m feat(auth): login"))
+
+    def test_quoted_parens_safe(self):
+        self.assertFalse(self._broken('git commit -m "feat(auth): add login"'))
+
+    def test_single_quoted_safe(self):
+        self.assertFalse(self._broken("git commit -m 'feat(auth): x'"))
+
+    def test_quoted_dynamic_substitution_safe(self):
+        # Quoted $(…) is allow-through policy, not a shell-broken deny.
+        self.assertFalse(self._broken('git commit -m "$(somecmd)"'))
+
+    def test_bare_word_no_metachar_safe(self):
+        # No metacharacter → leaves it to V10 (non-conventional → ask).
+        self.assertFalse(self._broken("git commit -mrandom_junk_message"))
+
+    def test_empty_quoted_safe(self):
+        self.assertFalse(self._broken('git commit -m ""'))
+
+    def test_no_m_flag_safe(self):
+        self.assertFalse(self._broken("git commit file-m.txt"))
+        self.assertFalse(self._broken("git commit"))
 
 
 if __name__ == "__main__":

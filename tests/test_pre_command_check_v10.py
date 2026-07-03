@@ -59,6 +59,29 @@ class PreCommandCheckV10GateTests(TestCase):
         out = _run("git commit file-m.txt")
         self.assertIsNone(self._decision(out))
 
+    def test_shell_broken_empty_parens_is_denied(self):
+        # The orchestrator-placeholder bug: `git commit -m ()` is a bash syntax
+        # error ("syntax error near unexpected token `('"). V10 would only ask;
+        # the hard-deny blocks it outright and tells the model to quote the msg.
+        out = _run("git commit -m ()")
+        self.assertEqual("deny", self._decision(out))
+
+    def test_shell_broken_placeholder_is_denied(self):
+        # Unfilled `<commit_msg>` placeholder, unquoted → redirection / broken.
+        out = _run("git commit -m <commit_msg>")
+        self.assertEqual("deny", self._decision(out))
+
+    def test_unquoted_paren_message_is_denied_not_just_asked(self):
+        # Unquoted `feat(auth): …` carries parens → shell-broken. Deny (must be
+        # quoted), not the V10 soft-ask.
+        out = _run('git commit -m feat(auth): login')
+        self.assertEqual("deny", self._decision(out))
+
+    def test_quoted_message_not_denied_as_broken(self):
+        # Quoted parens are shell-safe — must reach V10 (valid → allowed).
+        out = _run('git commit -m "feat(auth): add login"')
+        self.assertIsNone(self._decision(out))
+
 
 if __name__ == "__main__":
     main()

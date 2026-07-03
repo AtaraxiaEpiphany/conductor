@@ -176,7 +176,10 @@ class TestCompactDefault(TestCase):
     def test_dispatch_prepare_drops_next_echo_and_sync_count(self):
         result = _out_captured(cmd_dispatch_prepare, self.d)
         self.assertEqual(result["action"], "execute")
-        self.assertIn("commit_msg", result)
+        # The "Start task" commit is now made internally by dispatch-prepare
+        # (mirroring dispatch-finalize), so commit_msg no longer ships in the
+        # envelope — the orchestrator never constructs a `git commit` for it.
+        self.assertNotIn("commit_msg", result)
         self.assertIn("retry_count", result)
         self.assertIn("max_retries", result)
         # The three biggest wins: the redundant next echo, sync_count, and the

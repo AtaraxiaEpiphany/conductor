@@ -22,7 +22,9 @@ from lib.hook_io import (
     get_cwd
 )
 from lib.json_utils import load_json_safe
-from lib.validation import validate_commit_message, _extract_commit_message
+from lib.validation import (
+    validate_commit_message, _extract_commit_message, commit_arg_shell_broken_reason,
+)
 from lib.path_utils import find_tracks_registry, extract_track_dirs
 from lib.logging import log_entry
 from lib.env import get_logs_dir
@@ -471,6 +473,21 @@ def main():
     # -m flag in any shell form (-m "x", -m"x", -m'x', -mx); the lookbehind
     # avoids matching -m inside a word/flag like file-m.txt or --message=.
     if re.search(r'git\s+commit\s+.*(?<![\w-])-m', command, re.IGNORECASE):
+        # Hard-deny a shell-broken -m argument (e.g. `git commit -m ()` or
+        # `git commit -m <commit_msg>`) BEFORE the V10 style check. V10 only asks
+        # (so the broken command could still reach bash and die); this denies
+        # outright and tells the model to quote the message. Catches the
+        # orchestrator-placeholder mis-substitution class at the hook layer.
+        broken = commit_arg_shell_broken_reason(command)
+        if broken:
+            _audit_ask("commit_shell_broken", command)
+            write_hook_output(
+                hook_event_name="PreToolUse",
+                additional_context=f"[Conductor] {broken}",
+                permission_decision="deny",
+                permission_decision_reason=broken,
+            )
+            return
         is_valid, suggested_fix = validate_commit_message(command)
         if not is_valid:
             additional_context = (

@@ -156,5 +156,68 @@ class PlanParseMissingCheckboxTests(TestCase):
         self.assertEqual(missing, [])
 
 
+# ── Keyword-independent safety net: annotated bullet missing its checkbox ──
+# An author who drops the Task:/Subtask: keyword but keeps the AC/TC/deps
+# annotation (``- implement login <!-- AC-1 -->``) would have the line silently
+# dropped. The HTML comment is the "this was meant to be a task" signal that
+# catches it without needing the keyword.
+
+class PlanParseAnnotatedMissingCheckboxTests(TestCase):
+    def _parse(self, plan_text):
+        f = tempfile.NamedTemporaryFile("w", suffix="plan.md", delete=False)
+        f.write(plan_text)
+        f.close()
+        try:
+            return parse_plan(f.name)
+        finally:
+            Path(f.name).unlink()
+
+    def test_annotated_bullet_without_keyword_or_checkbox_is_error(self):
+        r = self._parse(
+            "## Phase 1: Build\n- implement login <!-- AC-1 -->\n"
+            "- [ ] [Manual] Task: verify Phase 1\n")
+        self.assertTrue(
+            any("annotation but is missing its '[ ]' checkbox" in e and "line 2" in e
+                for e in r["errors"]), r["errors"])
+
+    def test_annotated_indented_bullet_treated_as_subtask(self):
+        r = self._parse(
+            "## Phase 1: Build\n- [ ] Task: a\n"
+            "  - nested step <!-- AC-1, TC-1.1 -->\n"
+            "- [ ] [Manual] Task: verify Phase 1\n")
+        # Indented → reported as a subtask.
+        self.assertTrue(
+            any("subtask line carries an annotation" in e for e in r["errors"]),
+            r["errors"])
+
+    def test_tagged_annotated_bullet_without_keyword_is_error(self):
+        # [Explore] tag + annotation but no checkbox and no keyword.
+        r = self._parse(
+            "## Phase 1: Build\n- [Explore] map the module <!-- AC-1 -->\n"
+            "- [ ] [Manual] Task: verify Phase 1\n")
+        self.assertTrue(
+            any("annotation but is missing its '[ ]' checkbox" in e for e in r["errors"]),
+            r["errors"])
+
+    def test_well_formed_annotated_task_not_flagged(self):
+        # ``- [ ] implement login <!-- AC-1 -->`` is well-formed (keyword optional).
+        r = self._parse(
+            "## Phase 1: Build\n- [ ] implement login <!-- AC-1 -->\n"
+            "- [ ] [Manual] Task: verify Phase 1\n")
+        annotated = [e for e in r["errors"]
+                     if "annotation but is missing" in e]
+        self.assertEqual(annotated, [], r["errors"])
+
+    def test_plain_prose_bullet_without_annotation_not_flagged(self):
+        # No keyword, no checkbox, no annotation → still ignored prose (the
+        # irreducible ambiguity; the net only catches the annotated case).
+        r = self._parse(
+            "## Phase 1: Build\n- [ ] Task: a\n- a plain prose note\n"
+            "- [ ] [Manual] Task: verify Phase 1\n")
+        annotated = [e for e in r["errors"]
+                     if "annotation but is missing" in e]
+        self.assertEqual(annotated, [], r["errors"])
+
+
 if __name__ == "__main__":
     main()

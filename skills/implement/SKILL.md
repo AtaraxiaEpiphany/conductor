@@ -138,8 +138,8 @@ After return → **Section 3.6** (Phase Boundary).
 
 ```bash
 track-state dispatch-prepare "<track_dir>"
-# Only commit start if commit_msg is present (null on resume — avoids duplicate start commits)
-if commit_msg: git add -A && git diff --cached --quiet || git commit -m "<commit_msg>"
+# dispatch-prepare makes the "Start task" commit internally (skipped on resume),
+# so there is no separate `git commit` step here.
 ```
 
 Dispatch `conductor:explorer`, prompt:
@@ -160,8 +160,8 @@ The explorer records findings via `track-state append-handoff` (→ `.conductor/
 
 ```bash
 track-state dispatch-prepare "<track_dir>"
-# Only commit start if commit_msg is present (null on resume — avoids duplicate start commits)
-if commit_msg: git add -A && git diff --cached --quiet || git commit -m "<commit_msg>"
+# dispatch-prepare makes the "Start task" commit internally (skipped on resume),
+# so there is no separate `git commit` step here.
 ```
 
 Dispatch `conductor:task-executor`, prompt (canonical dispatch — retry re-dispatches in §2.2 and §3.6 reuse this with an incremented `ATTEMPT`; retry status is self-detected from the handoff, not a flag):

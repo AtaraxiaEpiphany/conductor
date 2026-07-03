@@ -452,12 +452,21 @@ def cmd_dispatch_prepare(track_dir, compact=True):
     synced = _do_sync_plan(track_dir)
 
     if is_resume:
-        commit_msg = None  # Already started — skip the start commit
+        pass  # Already started — skip the start commit (recovery re-entry)
     else:
-        commit_msg = f"chore(conductor): Start task '{name}' [P{pi}.T{ti}]"
+        # Start-task commit is performed HERE (deterministic), not by the
+        # orchestrator. Previously a <commit_msg> placeholder was emitted for
+        # the orchestrator to paste into a shell `git commit -m "…"` line, and
+        # a mis-substitution could turn it into a bash syntax error
+        # (e.g. `git commit -m ()`). Mirroring dispatch-finalize's internal
+        # completion commit keeps both lifecycle ends in code. _git_commit
+        # stages only conductor-managed files and commits only if something is
+        # staged (no --allow-empty: the start commit is a sentinel detected by
+        # message pattern at recovery time, not a SHA the machinery requires).
+        _git_commit(track_dir, f"chore(conductor): Start task '{name}' [P{pi}.T{ti}]")
 
     emit(dict(action=action, phase=pi, task=ti, subtask=si, name=name,
-              tags=tags, sync_count=synced, commit_msg=commit_msg,
+              tags=tags, sync_count=synced,
               is_resume=is_resume,
               retry_count=tgt.get("retry_count", 0),
               max_retries=MAX_RETRIES,

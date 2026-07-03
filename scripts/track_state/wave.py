@@ -381,6 +381,22 @@ def _failure_result(member, summary, tip=None):
             "task_name": member.get("name", "unknown")}
 
 
+# Orchestrator-facing member projection. skills/parallel/SKILL.md §3.2 consumes
+# only these 6 keys to fan out pinned task-executor agents; the rest (track_id,
+# base_sha, locked_at, status) are ledger-only and bloat the main session context
+# for nothing when emitted (the wave envelope ships straight to the orchestrator
+# as Bash stdout, unfiltered — no track-state PostToolUse trimmer exists). Project
+# at emit; the full member dict is still what _save_ledger persists and what
+# wave-status/wave-finalize/wave-abort read back from disk.
+_ORCH_MEMBER_KEYS = ("phase", "task", "name",
+                     "worktree", "branch", "worktree_track_dir")
+
+
+def _slim_member(m):
+    """Project a ledger member dict to the orchestrator-facing 6-key shape."""
+    return {k: m[k] for k in _ORCH_MEMBER_KEYS if k in m}
+
+
 # --- commands ---------------------------------------------------------------
 
 def cmd_dispatch_wave(track_dir, compact=True):
@@ -409,7 +425,8 @@ def cmd_dispatch_wave(track_dir, compact=True):
     ledger = _load_ledger(track_dir)
     if _is_active(ledger):
         emit(dict(action="wave_active", phase=ledger.get("phase"),
-                  wave=ledger.get("wave", [])), "dispatch-wave", compact)
+                  wave=[_slim_member(m) for m in ledger.get("wave", [])]),
+             "dispatch-wave", compact)
         return
     # Recycle a drained prior ledger: its members' worktrees were torn down by
     # wave-finalize, so only the empty temp root remains to reap.
@@ -491,7 +508,8 @@ def cmd_dispatch_wave(track_dir, compact=True):
     })
 
     emit(dict(action="dispatch_wave", phase=phase, base_sha=base_sha,
-              wave=members, deferred=deferred), "dispatch-wave", compact)
+              wave=[_slim_member(m) for m in members], deferred=deferred),
+         "dispatch-wave", compact)
 
 
 def cmd_wave_status(track_dir, compact=True):

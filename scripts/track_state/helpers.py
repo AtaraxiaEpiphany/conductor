@@ -91,7 +91,7 @@ COMPACT_FIELDS = {
     "dispatch-next": ("action", "phase", "task", "subtask", "name",
                       "execution_mode"),
     "dispatch-prepare": ("action", "phase", "task", "subtask", "name",
-                         "sha", "commit_msg", "is_resume", "retry_count",
+                         "sha", "is_resume", "retry_count",
                          "max_retries", "execution_mode"),
     "dispatch-finalize": ("status", "sha", "deviations", "committed",
                           "phase_checkpoint_pending", "retry_count",
