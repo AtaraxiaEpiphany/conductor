@@ -1,5 +1,6 @@
 """Task dispatch orchestration: find next, prepare, finalize."""
 import json
+import shlex
 import sys
 from pathlib import Path
 
@@ -268,6 +269,122 @@ def _emit_no_active_task(track_dir, state, fixes, compact):
     emit(result, "recover", compact)
 
 
+def _find_failed_exhausted(state):
+    """First failed task whose retries are exhausted, scanning subtasks first
+    (most specific). Returns ``(pi, ti, si, tgt, name)`` or ``None``.
+
+    The bridge that makes the §2.0 failed+max decision actually reachable:
+    ``ensure_healthy`` → ``_fix_terminal_current_indices`` treats ``failed`` as
+    terminal-for-advance (it is in ``TERMINAL_FOR_PARENT``), so once a failed
+    task's indices are advanced/cleared past, ``cmd_recover``'s main resolution
+    path never sees it. When no active task remains, this scan recovers the
+    failed+exhausted task so the retry/skip/block ``decision`` can surface
+    instead of a bare ``no_active_task`` (matching the intent recorded in
+    ``_do_fail_parent``'s docstring and the §2.0 routing table).
+    """
+    for pi, phase in enumerate(state.get("phases", []), 1):
+        for ti, task in enumerate(phase.get("tasks", []), 1):
+            for si, sub in enumerate(task.get("subtasks", []), 1):
+                if (sub.get("status") == "failed"
+                        and sub.get("retry_count", 0) >= MAX_RETRIES):
+                    return pi, ti, si, sub, sub.get("name", "...")
+            if (task.get("status") == "failed"
+                    and task.get("retry_count", 0) >= MAX_RETRIES):
+                return pi, ti, None, task, task.get("name", "...")
+    return None
+
+
+def _emit_no_active_or_decision(track_dir, state, fixes, compact):
+    """No active (pending/in_progress) task remains. If a failed+exhausted task
+    exists on an interactive track, surface it for the §2.0 retry/skip/block
+    decision; otherwise emit ``no_active_task``.
+
+    Continuous mode never surfaces a decision — skip-analyst (§3.6) owns the
+    failed-task path there.
+    """
+    if state.get("execution_mode", "interactive") == "interactive":
+        found = _find_failed_exhausted(state)
+        if found is not None:
+            fpi, fti, fsi, tgt, name = found
+            result = dict(
+                status="failed",
+                phase=fpi, task=fti, subtask=fsi,
+                name=name,
+                retry_count=tgt.get("retry_count", 0),
+                max_retries=MAX_RETRIES,
+                execution_mode="interactive",
+            )
+            if fixes:
+                result["fixes_applied"] = fixes
+            checkpoint_pending = _any_phase_needs_checkpoint(track_dir, state)
+            if checkpoint_pending is not None:
+                result["phase_checkpoint_pending"] = checkpoint_pending
+            result["decision"] = _failed_task_decision(
+                track_dir, fpi, fti, fsi, name, result["retry_count"])
+            emit(result, "recover", compact)
+            return
+    _emit_no_active_task(track_dir, state, fixes, compact)
+
+
+def _failed_task_decision(track_dir, pi, ti, si, name, retry_count):
+    """Build the pre-computed Retry/Skip/Block ``decision`` blob for an
+    interactive failed+exhausted task (the #1 transducer win).
+
+    Today the skill (implement/SKILL.md §2.2) asks the orchestrator to (a)
+    judge retry-exhaustion and (b) construct three multi-line bash blocks,
+    pasting the free-text task name into ``git commit -m "..."`` lines. A weak
+    model fumbles both. This blob moves that construction into code: the
+    orchestrator does ``AskUserQuestion(decision.question, decision.header,
+    decision.options)`` → map the chosen label → run
+    ``decision.commands[label]`` verbatim → ``decision.next[label]``. No
+    judgment, no bash authoring.
+
+    Shell-safety: the free-text task name is embedded ONLY inside
+    :func:`shlex.quote`-wrapped ``git commit -m`` / ``--reason`` arguments, so
+    a name containing quotes/backticks/``$`` can't break the shell line the
+    orchestrator runs verbatim. The whole blob is then JSON-escaped by
+    :func:`emit` → :func:`out` (``json.dumps``), so the same name round-trips
+    the JSON transport too. Track-dir paths are trusted (conductor-owned) and
+    kept in the readable double-quoted form the skill already uses.
+    """
+    td = str(track_dir)
+    loc = f"P{pi}.T{ti}" + (f".S{si}" if si else "")
+
+    reset_cmd = f'track-state reset "{td}" task --phase {pi} --task {ti}'
+    sync_cmd = f'track-state sync-plan "{td}"'
+    skip_cmd = (
+        f'track-state skip "{td}" --phase {pi} --task {ti} '
+        f'--reason {shlex.quote("Skipped: failed task not required")}'
+    )
+    block_cmd = (
+        f'track-state block "{td}" --phase {pi} --task {ti} '
+        f'--reason {shlex.quote("Blocked: failed task needs human intervention")}'
+    )
+
+    commit_retry = "git commit -m " + shlex.quote(
+        f"chore(conductor): Reset failed task '{name}' for retry [{loc}]")
+    commit_skip = "git commit -m " + shlex.quote(
+        f"chore(conductor): Skip failed task '{name}' [{loc}]")
+    commit_block = "git commit -m " + shlex.quote(
+        f"chore(conductor): Block failed task '{name}' [{loc}]")
+
+    return dict(
+        question=f"Task '{name}' ({loc}) failed after {retry_count} attempt(s). What next?",
+        header="Failed task",
+        options=[
+            {"label": "Retry", "description": "Reset and re-dispatch from scratch"},
+            {"label": "Skip", "description": "Mark skipped — not required"},
+            {"label": "Block", "description": "Block — needs human intervention (HALT)"},
+        ],
+        commands={
+            "Retry": [reset_cmd, sync_cmd, commit_retry],
+            "Skip": [skip_cmd, sync_cmd, commit_skip],
+            "Block": [block_cmd, sync_cmd, commit_block],
+        },
+        next={"Retry": "3.1", "Skip": "3.1", "Block": "HALT"},
+    )
+
+
 def cmd_recover(track_dir, compact=True):
     """Recover current task after interruption, with auto-fix and smart advancement.
 
@@ -300,14 +417,14 @@ def cmd_recover(track_dir, compact=True):
         # finalize. Reap it so the next dispatch-finalize can't misread a stale
         # file as this run's result.
         _clear_stale_result(track_dir)
-        _emit_no_active_task(track_dir, state, fixes, compact)
+        _emit_no_active_or_decision(track_dir, state, fixes, compact)
         return
 
     try:
         task = state["phases"][pi - 1]["tasks"][ti - 1]
     except IndexError:
         _clear_stale_result(track_dir)
-        _emit_no_active_task(track_dir, state, fixes, compact)
+        _emit_no_active_or_decision(track_dir, state, fixes, compact)
         return
 
     # Resolve subtask or flat task
@@ -353,6 +470,17 @@ def cmd_recover(track_dir, compact=True):
     checkpoint_pending = _any_phase_needs_checkpoint(track_dir, state)
     if checkpoint_pending is not None:
         result["phase_checkpoint_pending"] = checkpoint_pending
+
+    # Interactive failed+exhausted → attach a pre-computed Retry/Skip/Block
+    # decision blob (the #1 transducer: the orchestrator stops judging
+    # retry-exhaustion and constructing bash — it AskUserQuestion → run
+    # decision.commands[choice] verbatim). Continuous mode is left to
+    # skip-analyst (§3.6), so no blob there.
+    if (result.get("status") == "failed"
+            and result.get("retry_count", 0) >= result.get("max_retries", 0)
+            and result.get("execution_mode") == "interactive"):
+        result["decision"] = _failed_task_decision(
+            track_dir, pi, ti, si, name, result["retry_count"])
 
     emit(result, "recover", compact)
 

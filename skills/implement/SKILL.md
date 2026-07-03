@@ -78,22 +78,15 @@ If recover output contains `phase_checkpoint_pending: <phase_index>`:
 
 ### 2.2 Failed Task Decision (interactive only)
 
-When recover surfaces a `failed` task whose retries are exhausted, do NOT silently skip it. Use `AskUserQuestion`:
+When `recover` surfaces a `failed` task whose retries are exhausted AND `execution_mode == "interactive"`, the recover envelope carries a pre-computed `decision` blob. Do NOT judge retry-exhaustion or construct commands yourself — act as a pure transducer:
 
-> "Task '<name>' (P<phase>.T<task>) failed after <retry_count> attempts. What next?"
+1. `AskUserQuestion(decision.question, decision.header, decision.options)` → user picks Retry / Skip / Block.
+2. Run `decision.commands[<chosen label>]` **verbatim** — each entry is one shell-safe command line (the task name is already `shlex`-quoted inside the `git commit -m` / `--reason` args; do not edit or re-quote).
+3. Go to `decision.next[<chosen label>]` (`3.1` for Retry/Skip, `HALT` for Block).
 
-Options:
-- **Retry** → reset and re-dispatch from scratch:
-  ```bash
-  track-state reset "<track_dir>" task --phase <p> --task <t>
-  track-state sync-plan "<track_dir>"
-  git commit -m "chore(conductor): Reset failed task '<name>' for retry"
-  ```
-  → **Section 3.1**.
-- **Skip** → `track-state skip "<track_dir>" --phase <p> --task <t> --reason 'Skipped: failed task not required'` → `sync-plan` → commit `chore(conductor): Skip failed task '<name>'` → **Section 3.1**.
-- **Block** → `track-state block "<track_dir>" --phase <p> --task <t> --reason 'Blocked: failed task needs human intervention'` → `sync-plan` → commit → announce → HALT.
+When `execution_mode == "continuous"` (no `decision` blob): dispatch `conductor:skip-analyst` (§3.6).
 
-A parent failed via the parent-stuck path (P<phase>.T<task> rendered `[!]` because its subtasks exhausted retries) is surfaced the same way — `reset task` clears the parent **and** its subtasks for a full retry.
+A parent failed via the parent-stuck path (P<phase>.T<task> rendered `[!]` because its subtasks exhausted retries) surfaces the same blob — `reset task` clears the parent **and** its subtasks for a full retry.
 
 ---
 

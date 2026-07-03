@@ -87,7 +87,7 @@ COMPACT_FIELDS = {
     "next": ("phase", "task", "subtask", "name", "execution_mode"),
     "recover": ("status", "phase", "task", "subtask", "name",
                 "retry_count", "max_retries", "phase_checkpoint_pending",
-                "execution_mode", "fixes_applied"),
+                "execution_mode", "fixes_applied", "decision"),
     "dispatch-next": ("action", "phase", "task", "subtask", "name",
                       "execution_mode"),
     "dispatch-prepare": ("action", "phase", "task", "subtask", "name",
