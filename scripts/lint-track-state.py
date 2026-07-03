@@ -38,21 +38,43 @@ def _load_wave_ledger(state_file: Path) -> dict:
         return {}
 
 
+def _in_flight_members(wave) -> list:
+    """Well-formed ``in_flight`` member dicts from a wave list, or ``[]``.
+
+    Best-effort filter shared by ``_active_wave_parents`` and
+    ``wave_relaxation_note``: skips anything that isn't a dict, isn't
+    ``in_flight``, or lacks ``phase``/``task``. A corrupt ledger — a partial
+    member left by a crashed wave session, or a non-dict entry — must not crash
+    lint; this extends ``_load_wave_ledger``'s "treated as no ledger" contract
+    member-by-member, so the two consumers can never drift back into the
+    ``m['phase']`` KeyError / non-dict ``m.get`` AttributeError crash they
+    previously shared.
+    """
+    if not wave:
+        return []
+    out = []
+    for m in wave:
+        if not isinstance(m, dict):
+            continue
+        if m.get("status") != "in_flight":
+            continue
+        if m.get("phase") is None or m.get("task") is None:
+            continue
+        out.append(m)
+    return out
+
+
 def _active_wave_parents(state_file: Path) -> set:
     """``{"P{pi}.T{ti}", ...}`` for in_flight members of an active wave ledger.
 
     Empty when there is no ledger or every member is terminal (drained). Wave
     members are flat top-level tasks, so this only ever contains parent locs —
-    the F1 child-subtask rule is unaffected by waves.
+    the F1 child-subtask rule is unaffected by waves. Corrupt/partial members
+    are skipped (see ``_in_flight_members``), never raised on.
     """
     ledger = _load_wave_ledger(state_file)
     wave = ledger.get("wave") if isinstance(ledger, dict) else None
-    if not wave:
-        return set()
-    if not any(m.get("status") == "in_flight" for m in wave):
-        return set()
-    return {f"P{m['phase']}.T{m['task']}" for m in wave
-            if m.get("status") == "in_flight"}
+    return {f"P{m['phase']}.T{m['task']}" for m in _in_flight_members(wave)}
 
 
 def check_f1_rule(state_file: Path) -> tuple[bool, Optional[str]]:
@@ -131,9 +153,7 @@ def wave_relaxation_note(state_file: Path) -> Optional[str]:
     """Human-readable note when F1 is relaxed by an active wave, else ``None``."""
     ledger = _load_wave_ledger(state_file)
     wave = ledger.get("wave") if isinstance(ledger, dict) else None
-    if not wave:
-        return None
-    in_flight = [m for m in wave if m.get("status") == "in_flight"]
+    in_flight = _in_flight_members(wave)
     if not in_flight:
         return None
     locs = ", ".join(f"P{m['phase']}.T{m['task']}" for m in in_flight)

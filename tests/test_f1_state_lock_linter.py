@@ -117,5 +117,60 @@ class F1StateLockTests(TestCase):
         self.assertIn("P1.T2", err)
 
 
+def _ledger_state_file(state, ledger):
+    """A track-state.json with a ``.conductor/parallel.json`` ledger in a
+    private temp dir (each test gets its own dir so ledgers never collide)."""
+    d = tempfile.mkdtemp()
+    sf = Path(d) / "track-state.json"
+    sf.write_text(json.dumps(state), encoding="utf-8")
+    cond = Path(d) / ".conductor"
+    cond.mkdir(exist_ok=True)
+    (cond / "parallel.json").write_text(json.dumps(ledger), encoding="utf-8")
+    return sf
+
+
+class CorruptLedgerTests(TestCase):
+    """Regression: ``_active_wave_parents`` and ``wave_relaxation_note`` crashed
+    on a corrupt ledger member — ``KeyError`` on a missing ``phase``/``task`` and
+    ``AttributeError`` on a non-dict member. The crash propagated through
+    ``check_f1_rule``, disabling the F1 backstop on the exact half-written-ledger
+    condition ``_load_wave_ledger``'s docstring promises to tolerate."""
+
+    def test_member_missing_phase_task_does_not_crash(self):
+        sf = _ledger_state_file(_state([]), {"wave": [{"status": "in_flight"}]})
+        self.assertEqual(_lint._active_wave_parents(sf), set())  # partial → skipped
+
+    def test_member_missing_task_does_not_crash(self):
+        sf = _ledger_state_file(_state([]),
+                                {"wave": [{"status": "in_flight", "phase": 1}]})
+        self.assertEqual(_lint._active_wave_parents(sf), set())
+
+    def test_non_dict_member_does_not_crash(self):
+        sf = _ledger_state_file(_state([]),
+                                {"wave": ["P1.T1", {"status": "in_flight"}]})
+        self.assertEqual(_lint._active_wave_parents(sf), set())
+
+    def test_well_formed_in_flight_member_yields_loc(self):
+        sf = _ledger_state_file(
+            _state([]),
+            {"wave": [{"status": "in_flight", "phase": 2, "task": 3}]})
+        self.assertEqual(_lint._active_wave_parents(sf), {"P2.T3"})
+
+    def test_wave_relaxation_note_survives_corrupt_ledger(self):
+        sf = _ledger_state_file(_state([]), {"wave": [{"status": "in_flight"}]})
+        # Returns None (no well-formed in_flight member) rather than raising.
+        self.assertIsNone(_lint.wave_relaxation_note(sf))
+
+    def test_check_f1_rule_survives_corrupt_ledger(self):
+        # End-to-end: the crash previously propagated through check_f1_rule,
+        # disabling F1. One in_progress task + a corrupt in_flight member (no
+        # phase/task) must lint cleanly, not traceback.
+        sf = _ledger_state_file(
+            _state([{"name": "A", "status": "in_progress"}]),
+            {"wave": [{"status": "in_flight"}]})
+        ok, _ = check_f1_rule(sf)
+        self.assertTrue(ok)
+
+
 if __name__ == "__main__":
     main()
