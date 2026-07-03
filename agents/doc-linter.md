@@ -1,7 +1,7 @@
 ---
 name: doc-linter
 description: Health-checks the Conductor documentation wiki for broken cross-references, stale claims, coverage gaps, and consistency issues. Read-only analysis agent.
-tools: Read, Grep, Glob
+tools: Read, Grep, Glob, Agent
 model: sonnet
 effort: medium
 maxTurns: 30
@@ -111,13 +111,32 @@ Find documents in `conductor/index.md` that have no inbound `[[wikilinks]]` from
 
 ### 4.5 Log Consistency
 
-Verify `conductor/log.md` entries match actual git history.
+Verify `conductor/log.md` entries match actual git history. This check splits
+across two tool sets: the existence/track-ID checks (steps 1–2) are read-only and
+done directly; the git-history attribution (step 3) needs `Bash`, which this agent
+does **not** have — delegate that step to a `log-checker` subagent (the only
+`Agent` dispatch this agent performs; see §7.0).
 
 **Method:**
 1. Read all log entries.
-2. For each entry, verify the track ID exists in `conductor/tracks.md`.
-3. For entries with `DOC_UPDATE` operation, verify the referenced files have git commits from the same track (via `git log --oneline -- <file>`).
-4. Report mismatches as WARN.
+2. For each entry, verify the track ID exists in `conductor/tracks.md` (Read/Grep).
+3. For entries with `DOC_UPDATE` operation, collect `(track_id, referenced_file)`
+   pairs and delegate them **once** (batched) to a `log-checker` subagent, which
+   runs the git-history attribution via git notes and returns mismatches. If there
+   are no `DOC_UPDATE` entries, skip the dispatch. Dispatch `log-checker`, prompt:
+   ```
+   PROJECT_DIR: <project root>
+   Verify the git-history attribution for these conductor/log.md DOC_UPDATE
+   entries — for each, confirm some commit touching the referenced file
+   carries a conductor git note with conductor.track_id == the entry's track.
+   ENTRIES:
+   - track=<TID> file=<conductor/path/to/file>
+   - track=<TID> file=<...>
+   ```
+4. Fold the mismatches `log-checker` returns into `LOG_ISSUES` (WARN). If
+   `log-checker` reports `STATUS: FAILURE` (the git step could not run), surface
+   that as a single `LOG_ISSUES` WARN ("log attribution unverifiable") rather than
+   fabricating a clean PASS.
 
 ### 4.6 Missing Provenance Frontmatter
 
@@ -192,6 +211,10 @@ REASON: <one-line description of what failed>
 - Modifying any file (this is a read-only agent).
 - Writing to `conductor/overview.md`, `conductor/log.md`, or any project doc.
 - Running destructive git commands (`reset`, `checkout`, `clean`, `rebase`).
-- Executing arbitrary code or build commands.
+- Executing arbitrary code or build commands (this agent has no `Bash` tool — the
+  §4.5 git step is delegated to `log-checker`, never run here).
+- Using the `Agent` tool for anything other than a single §4.5 `log-checker`
+  dispatch. No other nested subagent, and never widen `log-checker` beyond the
+  §4.5 DOC_UPDATE attribution task.
 
 **Violation Recovery:** STOP → announce `DOC LINT VIOLATION: <description>` → report as FAILURE.
