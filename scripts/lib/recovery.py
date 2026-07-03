@@ -30,12 +30,18 @@ RECOVERY_MARKER = "[Conductor Recovery]"
 # agents' finalize path differs).
 RESULT_FILE_AGENT_TYPES = frozenset({"task-executor", "explorer"})
 
-# The result-block close-tag grammar (e.g. ``---END RESULT---``,
-# ``---END TASK RESULT---``). on-subagent-stop checks an agent emitted its close
-# tag; filter-subagent-output extracts the full open+close block. Both derive
-# from this one definition of what a result block looks like.
-RESULT_END_TAG = r"---END [A-Z ]+---"
-RESULT_BLOCK_PATTERN = rf"---[A-Z][A-Z ]+---.*?{RESULT_END_TAG}"
+# The result-block grammar (e.g. ``---TASK RESULT---`` / ``---END RESULT---``,
+# ``---END CHECKPOINT RESULT---``). on-subagent-stop checks an agent emitted its
+# close tag; filter-subagent-output extracts the full open+close block. Both
+# derive from this one definition of what a result block looks like.
+#
+# The class allows DIGITS as well as letters: test-runner's open tag is
+# ``---L1 VERIFY RESULT---`` and the ``1`` is not in ``[A-Z ]``. A letters-only
+# class made that block invisible to extract_result_blocks — every test-runner
+# result was replaced with the generic no-result warning and the phase-checker
+# fan-out could not parse L1_VERIFY_STATUS. Keep digits in.
+RESULT_END_TAG = r"---END [A-Z0-9 ]+---"
+RESULT_BLOCK_PATTERN = rf"---[A-Z][A-Z0-9 ]+---.*?{RESULT_END_TAG}"
 
 # Bounded recovery: how many SubagentStop recovery turns a result-file agent
 # gets before the hook stops forcing them and lets dispatch-finalize synthesize

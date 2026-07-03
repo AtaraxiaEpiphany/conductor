@@ -164,6 +164,23 @@ class MainEndToEndTests(TestCase):
         self.assertIsInstance(block["text"], str)
         self.assertEqual(updated["agentId"], "adcbd618a98aa0685")  # runtime field preserved
 
+    def test_digit_in_open_tag_block_survives_l1_verify(self):
+        """Regression: RESULT_BLOCK_PATTERN's open-tag class was ``[A-Z][A-Z ]+``,
+        which rejected the DIGIT in test-runner's ``---L1 VERIFY RESULT---``. The
+        block was invisible to extract_result_blocks → every test-runner result
+        was replaced with the generic no-result warning, so the phase-checker
+        fan-out could not parse L1_VERIFY_STATUS. The class now allows digits."""
+        text = ("Ran 42 tests.\n---L1 VERIFY RESULT---\nSTATUS: passed\n"
+                "COMMAND: pytest\n---END RESULT---")
+        result = self._run(_agent_payload(text, agent_type="test-runner"))
+        updated = result["hookSpecificOutput"]["updatedToolOutput"]
+        block = updated["content"][0]["text"]
+        self.assertIn("---L1 VERIFY RESULT---", block)
+        self.assertIn("STATUS: passed", block)
+        # The generic no-result warning is the symptom of the missed block —
+        # it must NOT appear when the L1 block is correctly extracted.
+        self.assertNotIn("without a structured result block", block)
+
 
 if __name__ == "__main__":
     main()
