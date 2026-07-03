@@ -44,14 +44,7 @@ Every non-transient marker MUST have `[sha]` **appended at the end of the task l
 Correct: `- [x] Task description [a1b2c3d]`
 Wrong:   `- [x] [a1b2c3d] Task description`
 
-| Marker | SHA required | SHA source                 | Example Line                              |
-| ------ | ------------ | -------------------------- | ----------------------------------------- |
-| `[x]`  | YES          | Implementation code commit | `- [x] Task description [a1b2c3d]`        |
-| `[!]`  | YES          | State management commit    | `- [!] Task description [a1b2c3d]`        |
-| `[>]`  | YES          | Skip decision commit       | `- [>] Task description [a1b2c3d]`        |
-| `[d]`  | YES          | Defer decision commit      | `- [d] Task description [a1b2c3d]`        |
-| `[#]`  | YES          | Block decision commit      | `- [#] Task description [a1b2c3d]`        |
-| `[-]`  | YES          | Cancellation commit        | `- [-] Task description [a1b2c3d]`        |
+SHA source per marker: `[x]`=implementation code commit · `[!]`=state-management commit · `[>]`=skip-decision commit · `[d]`=defer-decision commit · `[#]`=block-decision commit · `[-]`=cancellation commit.
 
 ### 🟡 F5 — Checkpoint Integrity
 
@@ -111,7 +104,7 @@ Conductor commits use `conductor` as the **scope**, never as a type. Valid prefi
 
 **Recovery:** If you violate any → STOP → announce `WORKFLOW VIOLATION: <code>` → revert → restart from last valid step.
 
-**V7 scope:** plan→state derivation is sanctioned in exactly two paths — **bootstrap** (state absent: `init-from-plan` builds the initial state from plan.md) and **additive absorption** (`sync-plan` adds new plan.md subtasks as `pending`). Reconstructing or overwriting *existing* status / `commit_sha` / completion from plan.md — or re-running `init`/`init-from-plan` on a live track — is the violation. Both init commands refuse an existing `track-state.json` unless `--force` explicitly re-bootstraps (resetting all progress to pending).
+**V7 scope:** plan→state derivation is sanctioned in exactly two paths — **bootstrap** (`init-from-plan` builds initial state from plan.md when state is absent) and **additive absorption** (`sync-plan` adds new plan.md subtasks as `pending`). Reconstructing/overwriting *existing* status, `commit_sha`, or completion from plan.md — or re-running `init`/`init-from-plan` on a live track — is the violation; both init commands refuse an existing `track-state.json` unless `--force` explicitly re-bootstraps.
 
 ---
 
