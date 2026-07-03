@@ -147,7 +147,7 @@ NAME={name}
 
 After return → `track-state dispatch-finalize "<track_dir>"` → **Section 3.7**.
 
-The explorer records findings via `track-state append-handoff` (→ `.conductor/handoff/`, the sanctioned channel) and writes `.conductor/result.json` (gitignored). Both are conductor-managed, so `dispatch-finalize`'s internal conductor commit stages them — **no separate `docs(explore)` commit, no `git add -A` sweep, no `--override commit_sha`**. The explorer's result ships `commit_sha: ""`; `dispatch-finalize` stores the conductor completion SHA for empty-sha explorer results. (This also kills the result.json history-churn bug: the transient file is no longer swept into a commit.)
+The explorer records findings via `track-state append-handoff` (→ `.conductor/handoff/`) and writes gitignored `.conductor/result.json`. Both are conductor-managed, so `dispatch-finalize`'s internal commit stages them — **no separate `docs(explore)` commit, no `git add -A` sweep, no `--override commit_sha`**. Ship `commit_sha: ""`; `dispatch-finalize` stores the conductor completion SHA.
 
 ### 3.4 Action: `dispatch_executor`
 
@@ -204,7 +204,7 @@ Then: `track-state sync-plan "<track_dir>"` → `git commit -m "chore(conductor)
 
 ### 3.6 Process Result (after task-executor)
 
-**ALWAYS** call `dispatch-finalize` after the task-executor returns — even when no result block was detected in the output or the subagent output looks incomplete. `dispatch-finalize` handles the missing result.json case by synthesizing a result from state: it detects whether the agent committed code (→ SUCCESS) or produced nothing (→ FAILURE with handoff record for retry context).
+**ALWAYS** call `dispatch-finalize` after the task-executor returns — even with no/incomplete result block. It synthesizes a result from state when `result.json` is missing (committed code → SUCCESS; nothing → FAILURE with retry handoff).
 
 ```bash
 track-state dispatch-finalize "<track_dir>"
@@ -256,7 +256,7 @@ Parse the `---REFUTATION RESULT---` block:
 
 `[Review]` is a **name marker, not a tag** — it does NOT enter the `[Docs]`/`[Config]`/… exemption logic, so a reviewable task still owes TDD (F2) and coverage (F3).
 
-When opted in (after a SUCCESSFUL `dispatch-finalize`, before §3.7), run a **convergent review loop** — review own changes → fix → re-review — that stops on a *dry* round, not a fixed count (loop-until-dry). A single self-certifying pass is exactly the self-preferential bias this loop exists to cure; convergence drives it to zero NEW Critical/High instead of declaring victory after one pass.
+When opted in (after a SUCCESSFUL `dispatch-finalize`, before §3.7), run a **convergent review loop** (review → fix → re-review) that stops on a *dry* round, not a fixed count (loop-until-dry) — convergence to zero NEW Critical/High, not a single self-certifying pass.
 
 Maintain a `seen` set of finding **signatures** (`severity+title+file+lines`). Dedup **new** findings vs `seen` (NOT vs the set you just fixed) — a finding that re-appears unchanged after a fix is a *residual*, counted separately, not "new".
 
@@ -272,8 +272,6 @@ Maintain a `seen` set of finding **signatures** (`severity+title+file+lines`). D
    - **NEW `Critical`/`High` present** → add their signatures to `seen`; re-dispatch `conductor:task-executor` with `ATTEMPT={n+1}` and the NEW findings as remediation context (the agent fixes its own changes), `dispatch-finalize` again, then loop back to step 1.
 3. **Budget guard — max 3 fix iterations.** No runaway loop. If still not dry after 3 fix iterations, stop iterating and announce: `"🔍 Self-review [Review]: {N} findings → 3 fix iterations → {M} residual"`.
 4. **Escalate on residual judgment only** — if `Critical` findings persist once the budget is spent (or at any dry stop that still leaves residual Critical), surface them via `AskUserQuestion` (fix-guidance / accept-with-debt / block). Medium/Low residual → note and proceed (do not block the loop on nits).
-
-This loop is orchestration over the existing `code-reviewer` + `task-executor` agents — no new agent, no new hook.
 
 ### 3.7 Phase Boundary
 
