@@ -157,7 +157,9 @@ After each `wave-finalize`, check `drained`:
 
 ### 4.1 Wave drained
 
-All members of this wave have settled. Announce the wave summary (`N completed / M failed`). If any members FAILED → the serial spine handles them next: when the phase has no more parallel OR serial work, `dispatch-next`'s recover path surfaces the failed members with full Retry/Skip/Block logic exactly as `implement` §2.2 (interactive) or routes to `skip-analyst` (continuous). Then → **§4.15** (cross-member seam check) before re-checking for the next wave.
+All members of this wave have settled. Announce the wave summary (`N completed / M failed`).
+
+If any members FAILED → §4.0's `wave-finalize` already told you which (`member_status: failed`/`conflict`). A terminal `failed` task is **invisible to `dispatch-next`** — it returns only `in_progress`/`pending`, so looping back to `dispatch-wave`/`dispatch-next` strands the member and the track eventually finalizes `status:"failed"` with no decision. Instead run `track-state recover "<track_dir>"` (the FAILURE transition left the current indices pointing at the failed member) and surface its Retry/Skip/Block decision exactly as `implement` §2.2 (interactive) or route to `skip-analyst` (continuous). Resolve every failed member before re-checking for the next wave. Then → **§4.15** (cross-member seam check).
 
 ### 4.15 Cross-Member Integration Review (completeness-critic)
 
