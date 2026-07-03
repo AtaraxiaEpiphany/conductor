@@ -5,7 +5,7 @@ from pathlib import Path
 
 from lib.atomic_io import atomic_write_json
 from .core import load
-from .spec_integrity import _ac_integrity_gate, _ears_gate, _TC_ID, _measured_tcs
+from .spec_integrity import _ac_integrity_gates, _TC_ID, _measured_tcs
 from .plan_parse import parse_plan
 from .helpers import (
     out, conductor_dir, _store_evidence, _extract_tags_for_task,
@@ -187,6 +187,28 @@ def _evaluate_gates(tags, result_data, sha, track_dir=None):
     return coverage_gate, tdd_gate, cov_pct
 
 
+def _advisory_gates(track_dir, result_data, tags, sha):
+    """All advisory gate strings + ``cov_pct`` for a finalize envelope.
+
+    Single source for the F2/F3 (``_evaluate_gates``), AC-integrity, EARS, and
+    TC-consistency gates shared by both finalize paths (``cmd_process_result``
+    here and ``_finalize_task`` in dispatch.py) so the envelope fields cannot
+    drift between them. The AC-integrity snapshot is computed ONCE via
+    ``_ac_integrity_gates`` and both ``ac_integrity_gate`` and ``ears_gate`` are
+    derived from it (halving the spec/plan parse + measured-TC scan the two
+    single-gate helpers would each repeat). WARN-only — never raises; a gate
+    status never blocks completion.
+
+    Returns ``(coverage_gate, tdd_gate, ac_integrity_gate, ears_gate,
+    tc_consistency_gate, cov_pct)``.
+    """
+    coverage_gate, tdd_gate, cov_pct = _evaluate_gates(tags, result_data, sha, track_dir)
+    ac_integrity_gate, ears_gate = _ac_integrity_gates(track_dir)
+    tc_consistency_gate = _tc_consistency_gate(track_dir, result_data, tags)
+    return (coverage_gate, tdd_gate, ac_integrity_gate, ears_gate,
+            tc_consistency_gate, cov_pct)
+
+
 # (cli flag, result key, coerce) for write-result field mode. A nested
 # failure_detail sub-field uses a (section, key) tuple so flat flags populate a
 # nested object without the agent hand-writing JSON.
@@ -329,10 +351,6 @@ def cmd_process_result(track_dir):
     if status == "SUCCESS":
         sha = r.get("commit_sha", "")
 
-        # F2/F3 advisory gates — WARN-only, shared with dispatch-finalize via
-        # _evaluate_gates so the two paths can't drift.
-        coverage_gate, tdd_gate, cov_pct = _evaluate_gates(tags, r, sha, track_dir)
-
         try:
             parent_completed, state = _do_complete(track_dir, p, t, s, sha)
         except (ValueError, IndexError) as e:
@@ -376,6 +394,12 @@ def cmd_process_result(track_dir):
         # Clean up
         result_path.unlink(missing_ok=True)
 
+        # F2/F3 + AC-integrity + EARS + TC-consistency advisory gates — WARN-only,
+        # shared with dispatch-finalize via _advisory_gates so the two paths can't
+        # drift. Computed AFTER _do_complete so a gate status never blocks
+        # completion; the AC-integrity snapshot is computed once here.
+        (coverage_gate, tdd_gate, ac_integrity_gate, ears_gate,
+         tc_consistency_gate, cov_pct) = _advisory_gates(track_dir, r, tags, sha)
         result = dict(
             status="success",
             sha=sha,
@@ -383,9 +407,9 @@ def cmd_process_result(track_dir):
             deviations=len(deviations),
             coverage_gate=coverage_gate,
             tdd_gate=tdd_gate,
-            ac_integrity_gate=_ac_integrity_gate(track_dir),
-            ears_gate=_ears_gate(track_dir),
-            tc_consistency_gate=_tc_consistency_gate(track_dir, r, tags),
+            ac_integrity_gate=ac_integrity_gate,
+            ears_gate=ears_gate,
+            tc_consistency_gate=tc_consistency_gate,
         )
         if cov_pct is not None:
             result["coverage_pct"] = cov_pct

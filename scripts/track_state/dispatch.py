@@ -11,8 +11,7 @@ from .helpers import (
 )
 from .constants import AUTO_COMPLETE_OK, MAX_RETRIES
 from .mutations import _do_lock, _do_complete, _do_fail, _do_fail_parent
-from .result import _evaluate_gates, _tc_consistency_gate
-from .spec_integrity import _ac_integrity_gate, _ears_gate
+from .result import _advisory_gates
 from .sync import _do_sync_plan
 from .git_ops import (
     _git_commit, _git_commit_ensured, _git_head_sha, _write_git_note,
@@ -692,20 +691,22 @@ def _finalize_task(track_dir, p, t, s, r, task_name, status):
         r["commit_sha"] = note_sha
         _write_git_note(track_dir, r, state)
 
-        # F2/F3 advisory gates on the hot path (WARN-only — matches process-result
-        # via the shared _evaluate_gates helper). Computed AFTER _do_complete so a
+        # Advisory gates on the hot path (WARN-only — matches process-result via
+        # the shared _advisory_gates helper). Computed AFTER _do_complete so a
         # gate status never blocks completion; real teeth stay at the commit-time
-        # F2 ask gate + on-batch-complete F3 probe. Sub-80% coverage now surfaces
-        # in the envelope instead of completing silently.
+        # F2 ask gate + on-batch-complete F3 probe. The AC-integrity snapshot is
+        # computed once here (ac_integrity + ears gates share it).
         tags = _extract_tags_for_task(state, p, t)
-        coverage_gate, tdd_gate, cov_pct = _evaluate_gates(tags, r, code_sha, track_dir)
+        (coverage_gate, tdd_gate, ac_integrity_gate, ears_gate,
+         tc_consistency_gate, cov_pct) = _advisory_gates(
+             track_dir, r, tags, code_sha)
         result = dict(status="success", sha=final_sha, parent_completed=parent_completed,
                       deviations=len(r.get("spec_deviation_detail", [])),
                       sync_count=synced, committed=committed,
                       coverage_gate=coverage_gate, tdd_gate=tdd_gate,
-                      ac_integrity_gate=_ac_integrity_gate(track_dir),
-                      ears_gate=_ears_gate(track_dir),
-                      tc_consistency_gate=_tc_consistency_gate(track_dir, r, tags),
+                      ac_integrity_gate=ac_integrity_gate,
+                      ears_gate=ears_gate,
+                      tc_consistency_gate=tc_consistency_gate,
                       phase=int(p), task=int(t),
                       subtask=(int(s) if s is not None else None))
         if cov_pct is not None:

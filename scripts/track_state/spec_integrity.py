@@ -392,27 +392,38 @@ def compute_ac_integrity(track_dir):
     }
 
 
+def _ac_integrity_gates(track_dir):
+    """``(ac_integrity_gate, ears_gate)`` advisory strings from ONE snapshot.
+
+    Both gates derive from a single ``compute_ac_integrity`` call (parse_spec +
+    parse_plan + load + the measured-TC ``*.py`` scan). The two single-gate
+    helpers below each used to pay that full cost in isolation — fine alone, but
+    the two finalize paths need *both* strings back-to-back, so computing the
+    snapshot twice per finalize was pure waste (a doubled spec/plan parse and a
+    doubled scan of the track's test tree). Never raises; returns
+    ``("N/A", "N/A")`` on any error so a gate status never blocks completion.
+    """
+    try:
+        snap = compute_ac_integrity(track_dir)
+        return snap.get("ac_integrity_gate", "N/A"), snap.get("ears_gate", "N/A")
+    except Exception:
+        return "N/A", "N/A"
+
+
 def _ac_integrity_gate(track_dir):
     """Advisory track-level AC-integrity gate string. Never raises.
 
-    Shared by both finalize paths (process-result + dispatch-finalize) so the
-    signal cannot drift between them — mirrors how ``result._evaluate_gates`` is
-    shared. WARN-only: computed after completion, never blocks.
+    Thin single-element view over ``_ac_integrity_gates`` for callers (and
+    tests) that need only this one signal. WARN-only: computed after
+    completion, never blocks.
     """
-    try:
-        return compute_ac_integrity(track_dir).get("ac_integrity_gate", "N/A")
-    except Exception:
-        return "N/A"
+    return _ac_integrity_gates(track_dir)[0]
 
 
 def _ears_gate(track_dir):
     """Advisory track-level EARS gate string. Never raises.
 
-    Sits beside ``_ac_integrity_gate`` in both finalize paths so the requirement-
-    authoring signal reaches the operator the same way. WARN-only: requirement
-    quality never blocks a task.
+    Thin single-element view over ``_ac_integrity_gates``. WARN-only:
+    requirement quality never blocks a task.
     """
-    try:
-        return compute_ac_integrity(track_dir).get("ears_gate", "N/A")
-    except Exception:
-        return "N/A"
+    return _ac_integrity_gates(track_dir)[1]

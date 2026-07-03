@@ -37,12 +37,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent / "lib"))
 
 from lib.hook_io import read_hook_input, write_hook_output
-
-# Ref patterns copied verbatim from plan_parse.py:56-58 so the hook and the
-# parser agree on what counts as a valid annotation.
-_HTML_COMMENT = re.compile(r"<!--(.*?)-->", re.DOTALL)
-_AC_REF = re.compile(r"AC-\d+")
-_TC_REF = re.compile(r"TC-\d+\.\d+")  # no IGNORECASE: lowercase ac-1/tc-1.1 fails
+from track_state.plan_parse import _extract_refs
 
 # Valid plan.md checkbox marker chars (constants.MARKER_MAP values), copied from
 # check-plan-checkboxes.py.
@@ -60,18 +55,12 @@ _EXEMPT_TAG = re.compile(r"(?<!\S)\[(?:Explore|Docs|Config|Chore|Manual)\](?!\S)
 
 
 def _comment_refs(line: str):
-    """Return ``(has_ac, has_tc)`` aggregated across ALL ``<!-- -->`` comments
-    on the line — mirrors ``plan_parse._extract_refs``, so a valid
-    ``<!-- AC-1 --> <!-- TC-1.1 -->`` (refs split across two comments) passes.
+    """``(has_ac, has_tc)`` aggregated across ALL ``<!-- -->`` comments on the
+    line — a bool view of ``plan_parse._extract_refs`` (the parser's own scan),
+    so the hook and parser agree by construction instead of by copied regex.
     """
-    has_ac = has_tc = False
-    for m in _HTML_COMMENT.finditer(line):
-        body = m.group(1)
-        if _AC_REF.search(body):
-            has_ac = True
-        if _TC_REF.search(body):
-            has_tc = True
-    return has_ac, has_tc
+    ac_refs, tc_refs = _extract_refs(line)
+    return bool(ac_refs), bool(tc_refs)
 
 
 def _fix_for(has_ac: bool, has_tc: bool) -> str:

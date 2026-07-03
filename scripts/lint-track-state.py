@@ -20,61 +20,23 @@ from lib.constants import TERMINAL_STATUSES
 from lib.validation import check_state_file_age, validate_json_structure
 from lib.path_utils import find_track_root, find_tracks_registry, extract_track_dirs
 from lib.git_utils import docs_synced_for_track
-
-
-def _load_wave_ledger(state_file: Path) -> dict:
-    """Read ``.conductor/parallel.json`` next to ``state_file``; ``{}`` if absent.
-
-    Best-effort: a corrupt ledger is treated as no ledger so lint can't be wedged
-    by a half-written file from a crashed wave session.
-    """
-    path = state_file.parent / ".conductor" / "parallel.json"
-    if not path.exists():
-        return {}
-    try:
-        with open(path) as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return {}
-
-
-def _in_flight_members(wave) -> list:
-    """Well-formed ``in_flight`` member dicts from a wave list, or ``[]``.
-
-    Best-effort filter shared by ``_active_wave_parents`` and
-    ``wave_relaxation_note``: skips anything that isn't a dict, isn't
-    ``in_flight``, or lacks ``phase``/``task``. A corrupt ledger — a partial
-    member left by a crashed wave session, or a non-dict entry — must not crash
-    lint; this extends ``_load_wave_ledger``'s "treated as no ledger" contract
-    member-by-member, so the two consumers can never drift back into the
-    ``m['phase']`` KeyError / non-dict ``m.get`` AttributeError crash they
-    previously shared.
-    """
-    if not wave:
-        return []
-    out = []
-    for m in wave:
-        if not isinstance(m, dict):
-            continue
-        if m.get("status") != "in_flight":
-            continue
-        if m.get("phase") is None or m.get("task") is None:
-            continue
-        out.append(m)
-    return out
+from track_state.wave import active_wave_member_locs
 
 
 def _active_wave_parents(state_file: Path) -> set:
     """``{"P{pi}.T{ti}", ...}`` for in_flight members of an active wave ledger.
 
-    Empty when there is no ledger or every member is terminal (drained). Wave
-    members are flat top-level tasks, so this only ever contains parent locs —
-    the F1 child-subtask rule is unaffected by waves. Corrupt/partial members
-    are skipped (see ``_in_flight_members``), never raised on.
+    Thin string-formatting view over ``wave.active_wave_member_locs`` — the
+    ledger read, the ``in_flight`` member-status constant, and the corrupt-
+    member filter all live in one place there (shared by validate/dispatch too),
+    so this linter and the runtime can't drift on what counts as an in-flight
+    wave member. Empty when there is no ledger or every member is terminal
+    (drained). Wave members are flat top-level tasks, so this only ever contains
+    parent locs — the F1 child-subtask rule is unaffected by waves.
+    Corrupt/partial members are skipped (see ``wave._in_flight_members``), never
+    raised on.
     """
-    ledger = _load_wave_ledger(state_file)
-    wave = ledger.get("wave") if isinstance(ledger, dict) else None
-    return {f"P{m['phase']}.T{m['task']}" for m in _in_flight_members(wave)}
+    return {f"P{p}.T{t}" for p, t in active_wave_member_locs(state_file.parent)}
 
 
 def check_f1_rule(state_file: Path) -> tuple[bool, Optional[str]]:
@@ -151,14 +113,12 @@ def check_f1_rule(state_file: Path) -> tuple[bool, Optional[str]]:
 
 def wave_relaxation_note(state_file: Path) -> Optional[str]:
     """Human-readable note when F1 is relaxed by an active wave, else ``None``."""
-    ledger = _load_wave_ledger(state_file)
-    wave = ledger.get("wave") if isinstance(ledger, dict) else None
-    in_flight = _in_flight_members(wave)
-    if not in_flight:
+    locs = sorted(active_wave_member_locs(state_file.parent))
+    if not locs:
         return None
-    locs = ", ".join(f"P{m['phase']}.T{m['task']}" for m in in_flight)
-    return (f"F1 relaxed: wave ledger active with {len(in_flight)} in_flight "
-            f"member(s) ({locs}) — parallel wave mode, not a serial F1 violation")
+    loc_str = ", ".join(f"P{p}.T{t}" for p, t in locs)
+    return (f"F1 relaxed: wave ledger active with {len(locs)} in_flight "
+            f"member(s) ({loc_str}) — parallel wave mode, not a serial F1 violation")
 
 
 def check_f4_rule(state_file: Path) -> tuple[bool, Optional[str]]:

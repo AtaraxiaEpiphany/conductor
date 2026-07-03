@@ -26,8 +26,8 @@ Design notes live in ``conductor/design/decision-serial-execution.md`` (the
 serial-default record, extended by the wave escape hatch) and the plan at
 ``.claude/plans/majestic-popping-feather.md``.
 """
-import json
 import os
+import re
 import shutil
 import tempfile
 import time
@@ -37,6 +37,8 @@ from .core import load, transaction
 from .helpers import emit, now_iso, conductor_dir, target, extract_tags, clean
 from .constants import TERMINAL_FOR_PARENT
 from .mutations import _lock_inplace
+from lib.atomic_io import atomic_write_json
+from lib.json_utils import load_json_safe
 from .dispatch import _classify_task, _finalize_task
 from .plan_parse import parse_plan, collect_deps
 from .git_ops import (
@@ -44,7 +46,6 @@ from .git_ops import (
     _git_range_commit_count, _git_merge_squash, _git_worktree_add,
     _git_worktree_remove, _git_branch_delete,
 )
-from lib.atomic_io import atomic_write_json
 
 
 # Cap the fan-out. Conservative default: four concurrent worktree-isolated
@@ -82,14 +83,7 @@ def _load_ledger(track_dir):
     case is re-running the wave from scratch, which re-locks already-pending
     tasks. ``_wave_ledger_path`` creates ``.conductor/`` if needed.
     """
-    path = _wave_ledger_path(track_dir)
-    if not path.exists():
-        return None
-    try:
-        with open(path) as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return None
+    return load_json_safe(_wave_ledger_path(track_dir))
 
 
 def _save_ledger(track_dir, ledger):
@@ -101,8 +95,35 @@ def _is_active(ledger):
     """A ledger is *active* (blocks the serial spine + new waves) iff it has
     at least one in-flight member. A fully drained ledger is inert —
     ``cmd_dispatch_wave`` recycles it."""
-    return bool(ledger) and any(
-        m.get("status") == MEMBER_IN_FLIGHT for m in ledger.get("wave", []))
+    return isinstance(ledger, dict) and any(
+        isinstance(m, dict) and m.get("status") == MEMBER_IN_FLIGHT
+        for m in ledger.get("wave", []))
+
+
+def _in_flight_members(ledger):
+    """Well-formed ``in_flight`` member dicts in ``ledger``, or ``[]``.
+
+    Single hardened source for "which wave members are currently locked":
+    skips anything that isn't a dict, isn't ``in_flight``, or lacks
+    ``phase``/``task``. A corrupt ledger — a non-dict entry or a partial member
+    left by a crashed wave session — must not crash the F1-guard consumers
+    (validate, dispatch, lint-track-state) that rely on
+    ``active_wave_member_locs``; this filter extends ``_load_ledger``'s
+    "treated as absent" contract member-by-member, so a half-written ledger
+    degrades to "no wave" instead of a crash that disables the F1 backstop.
+    """
+    if not isinstance(ledger, dict):
+        return []
+    out = []
+    for m in ledger.get("wave", []):
+        if not isinstance(m, dict):
+            continue
+        if m.get("status") != MEMBER_IN_FLIGHT:
+            continue
+        if m.get("phase") is None or m.get("task") is None:
+            continue
+        out.append(m)
+    return out
 
 
 def active_wave_member_locs(track_dir):
@@ -114,13 +135,13 @@ def active_wave_member_locs(track_dir):
     — a wave's authority to hold several in_progress tasks comes from its ledger,
     not F1, so those members must not be reaped, flagged, or refused as if they
     were serial-spine F1 violations. Returns an empty set when there is no ledger
-    or the ledger is drained (no in-flight members).
+    or the ledger is drained (no well-formed in-flight members); corrupt/partial
+    members are skipped (see ``_in_flight_members``), never raised on.
     """
     ledger = _load_ledger(track_dir)
     if not _is_active(ledger):
         return set()
-    return {(m.get("phase"), m.get("task"))
-            for m in ledger.get("wave", []) if m.get("status") == MEMBER_IN_FLIGHT}
+    return {(m["phase"], m["task"]) for m in _in_flight_members(ledger)}
 
 
 def _member_by_loc(ledger, p, t):
@@ -299,7 +320,6 @@ def _branch_slug(track_dir):
     is the canonical short id; chars outside ``[A-Za-z0-9._-]`` are replaced so
     a shortname with ``/`` or spaces can't break the ref.
     """
-    import re
     raw = Path(track_dir).name or "track"
     return re.sub(r"[^A-Za-z0-9._-]", "-", raw)
 
@@ -327,8 +347,7 @@ def _write_marker(wt_track_dir, member, branch):
     """
     payload = {"phase": member["phase"], "task": member["task"],
                "branch": branch, "track_id": member.get("track_id", "")}
-    marker = conductor_dir(wt_track_dir) / WAVE_MARKER_NAME
-    marker.write_text(json.dumps(payload))
+    atomic_write_json(conductor_dir(wt_track_dir) / WAVE_MARKER_NAME, payload)
 
 
 def _teardown_member(repo_root, member):
@@ -351,13 +370,7 @@ def _cleanup_wave_root(ledger):
 
 def _read_worktree_result(result_path):
     """Parse a worktree's ``result.json``; ``None`` if missing/unparseable."""
-    if not result_path.exists():
-        return None
-    try:
-        with open(result_path) as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return None
+    return load_json_safe(result_path)
 
 
 def _failure_result(member, summary, tip=None):

@@ -1,6 +1,7 @@
 """Git subprocess operations: commit, SHA, notes."""
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -8,6 +9,73 @@ from .core import load, save
 from .helpers import target, now_iso, _store_evidence, conductor_dir, _normalize_sha
 from .sync import _do_sync_plan
 from lib.git_utils import docs_synced_for_track  # noqa: F401 — re-exported; single source shared with lint-track-state
+
+# Best-effort git ops never crash the finalize/recover path: a git failure
+# (missing binary, timeout, bad SHA) degrades to a warning + skip, not a raise.
+_GIT_OP_ERRORS = (
+    subprocess.SubprocessError, FileNotFoundError, PermissionError,
+    subprocess.TimeoutExpired,
+)
+
+
+def _git_note_exists(track_dir, sha):
+    """True if ``sha`` resolves and already has a git note attached.
+
+    Best-effort: any git error, a missing binary, an unresolvable SHA, or no
+    note all return ``False`` — ``_ensure_note`` treats that as "write one".
+    """
+    try:
+        full_sha = subprocess.run(
+            ["git", "rev-parse", sha],
+            capture_output=True, text=True, cwd=track_dir, timeout=5
+        ).stdout.strip()
+        if not full_sha:
+            return False
+        existing = subprocess.run(
+            ["git", "notes", "show", full_sha],
+            capture_output=True, text=True, cwd=track_dir, timeout=5
+        )
+        return existing.returncode == 0 and bool(existing.stdout.strip())
+    except _GIT_OP_ERRORS:
+        return False
+
+
+def _add_git_note(track_dir, sha, note, *, skip_if_exists=False):
+    """Resolve ``sha`` to a full SHA and attach ``note`` to it. Best-effort:
+    returns ``True`` on success or (with ``skip_if_exists``) when a note is
+    already present; ``False`` on any failure, with a warning. Never raises.
+
+    Shared resolve/show/add mechanics for every git-note writer here so the
+    never-crash exception net and the SHA-resolution dance live in one place.
+    """
+    try:
+        full_sha = subprocess.run(
+            ["git", "rev-parse", sha],
+            capture_output=True, text=True, cwd=track_dir, timeout=5
+        ).stdout.strip()
+        if not full_sha:
+            print(f"WARNING: git note skipped — cannot resolve SHA '{sha}'",
+                  file=sys.stderr)
+            return False
+        if skip_if_exists:
+            existing = subprocess.run(
+                ["git", "notes", "show", full_sha],
+                capture_output=True, text=True, cwd=track_dir, timeout=5
+            )
+            if existing.returncode == 0 and existing.stdout.strip():
+                return True  # already attached
+        result = subprocess.run(
+            ["git", "notes", "add", "-f", "-m", note, full_sha],
+            capture_output=True, text=True, cwd=track_dir, timeout=5
+        )
+        if result.returncode != 0:
+            print(f"WARNING: git notes add failed for {sha}: "
+                  f"{result.stderr.strip()}", file=sys.stderr)
+            return False
+        return True
+    except _GIT_OP_ERRORS as e:
+        print(f"WARNING: git note write error for {sha}: {e}", file=sys.stderr)
+        return False
 
 
 def _write_git_note(track_dir, result_data, state):
@@ -55,24 +123,7 @@ def _write_git_note(track_dir, result_data, state):
 
     note = "\n".join(lines)
 
-    try:
-        import subprocess
-        # Resolve full SHA (result may have 7-char short form)
-        full_sha = subprocess.run(
-            ["git", "rev-parse", sha],
-            capture_output=True, text=True, cwd=track_dir, timeout=5
-        ).stdout.strip()
-        if not full_sha:
-            print(f"WARNING: git note skipped — cannot resolve SHA '{sha}'", file=sys.stderr)
-            return
-        result = subprocess.run(
-            ["git", "notes", "add", "-f", "-m", note, full_sha],
-            capture_output=True, text=True, cwd=track_dir, timeout=5
-        )
-        if result.returncode != 0:
-            print(f"WARNING: git notes add failed for {sha}: {result.stderr.strip()}", file=sys.stderr)
-    except (ImportError, subprocess.SubprocessError, FileNotFoundError, PermissionError, subprocess.TimeoutExpired) as e:
-        print(f"WARNING: git note write error for {sha}: {e}", file=sys.stderr)
+    _add_git_note(track_dir, sha, note)
 
 
 def _write_git_note_basic(track_dir, sha, state, pi, ti, si=None):
@@ -96,14 +147,13 @@ def _write_git_note_basic(track_dir, sha, state, pi, ti, si=None):
     # Get files from git diff
     files = ""
     try:
-        import subprocess
         diff_out = subprocess.run(
             ["git", "diff", "--name-only", f"{sha}~1", sha],
             capture_output=True, text=True, cwd=track_dir, timeout=5
         )
         if diff_out.returncode == 0 and diff_out.stdout.strip():
             files = ", ".join(diff_out.stdout.strip().split("\n"))
-    except (ImportError, subprocess.SubprocessError, FileNotFoundError, PermissionError, subprocess.TimeoutExpired):
+    except _GIT_OP_ERRORS:
         pass  # Git unavailable - no file info available
 
     lines = [f"[Conductor] {task_name} ({loc})"]
@@ -115,29 +165,8 @@ def _write_git_note_basic(track_dir, sha, state, pi, ti, si=None):
 
     note = "\n".join(lines)
 
-    try:
-        import subprocess
-        full_sha = subprocess.run(
-            ["git", "rev-parse", sha],
-            capture_output=True, text=True, cwd=track_dir, timeout=5
-        ).stdout.strip()
-        if not full_sha:
-            print(f"WARNING: git note skipped — cannot resolve SHA '{sha}'", file=sys.stderr)
-            return
-        # Only write if no note exists
-        existing = subprocess.run(
-            ["git", "notes", "show", full_sha],
-            capture_output=True, text=True, cwd=track_dir, timeout=5
-        )
-        if existing.returncode != 0:
-            result = subprocess.run(
-                ["git", "notes", "add", "-f", "-m", note, full_sha],
-                capture_output=True, text=True, cwd=track_dir, timeout=5
-            )
-            if result.returncode != 0:
-                print(f"WARNING: git notes add failed for {sha}: {result.stderr.strip()}", file=sys.stderr)
-    except (ImportError, subprocess.SubprocessError, FileNotFoundError, PermissionError, subprocess.TimeoutExpired) as e:
-        print(f"WARNING: git note write error for {sha}: {e}", file=sys.stderr)
+    # Only write if no note exists (recovery must never overwrite a real note).
+    _add_git_note(track_dir, sha, note, skip_if_exists=True)
 
 
 def _git_commit(track_dir, message, allow_empty=False):
@@ -314,7 +343,6 @@ def _recover_git_notes(track_dir, state):
     Scans track-state.json for completed tasks with commit SHAs,
     checks if each commit has a git note, writes one if missing."""
     try:
-        import subprocess
         for pi, phase in enumerate(state.get("phases", []), 1):
             for ti, task in enumerate(phase.get("tasks", []), 1):
                 # Check flat task
@@ -330,53 +358,41 @@ def _recover_git_notes(track_dir, state):
 
 
 def _ensure_note(track_dir, state, pi, ti, si, tgt):
-    """Check if a commit has a git note. If not, try to write one."""
+    """Attach a git note to ``tgt``'s commit if none is present yet.
+
+    Existence is checked first (cheap resolve+show via ``_git_note_exists``) so
+    we skip content synthesis entirely when a note is already attached. Content
+    comes from ``result.json`` when it matches this task (richest), else a basic
+    note is synthesized from track-state.json + git. The writers' resolve/show/
+    add mechanics + never-crash net are shared via ``_add_git_note``.
+    """
     sha = tgt.get("commit_sha", "")
-    if not sha:
-        return
+    if not sha or _git_note_exists(track_dir, sha):
+        return  # unresolvable, or a note is already attached — nothing to do
 
-    try:
-        import subprocess
-        full_sha = subprocess.run(
-            ["git", "rev-parse", sha],
-            capture_output=True, text=True, cwd=track_dir, timeout=5
-        ).stdout.strip()
-        if not full_sha:
-            return
+    # No note — try full recovery from result.json, then basic from state
+    result_path = Path(track_dir) / ".conductor" / "result.json"
+    if result_path.exists():
+        try:
+            with open(result_path) as f:
+                r = json.load(f)
+            rp, rt = r.get("phase"), r.get("task")
+            rs = r.get("subtask")
+            # Match by indices (1-based)
+            if str(rp) == str(pi) and str(rt) == str(ti) and ((rs is None and si is None) or str(rs) == str(si)):
+                _write_git_note(track_dir, r, state)
+                return
+            # Fallback: match by task_name
+            r_name = r.get("task_name", "")
+            if r_name == tgt.get("name", ""):
+                # Pass corrected indices so _write_git_note computes correct P/T location
+                _write_git_note(track_dir, {**r, "phase": pi, "task": ti, "subtask": si}, state)
+                return
+        except (FileNotFoundError, json.JSONDecodeError):
+            pass  # Result file missing or invalid
 
-        # Check if note already exists
-        existing = subprocess.run(
-            ["git", "notes", "show", full_sha],
-            capture_output=True, text=True, cwd=track_dir, timeout=5
-        )
-        if existing.returncode == 0 and existing.stdout.strip():
-            return  # Note exists, nothing to do
-
-        # No note — try full recovery from result.json, then basic from state
-        result_path = Path(track_dir) / ".conductor" / "result.json"
-        if result_path.exists():
-            try:
-                with open(result_path) as f:
-                    r = json.load(f)
-                rp, rt = r.get("phase"), r.get("task")
-                rs = r.get("subtask")
-                # Match by indices (1-based)
-                if str(rp) == str(pi) and str(rt) == str(ti) and ((rs is None and si is None) or str(rs) == str(si)):
-                    _write_git_note(track_dir, r, state)
-                    return
-                # Fallback: match by task_name
-                r_name = r.get("task_name", "")
-                if r_name == tgt.get("name", ""):
-                    # Pass corrected indices so _write_git_note computes correct P/T location
-                    _write_git_note(track_dir, {**r, "phase": pi, "task": ti, "subtask": si}, state)
-                    return
-            except (FileNotFoundError, json.JSONDecodeError):
-                pass  # Result file missing or invalid
-
-        # Fall back to basic note from track-state.json + git
-        _write_git_note_basic(track_dir, sha, state, pi, ti, si)
-    except (ImportError, subprocess.SubprocessError, FileNotFoundError, PermissionError, subprocess.TimeoutExpired) as e:
-        print(f"WARNING: _ensure_note failed for {sha}: {e}", file=sys.stderr)
+    # Fall back to basic note from track-state.json + git
+    _write_git_note_basic(track_dir, sha, state, pi, ti, si)
 
 
 def _finalize_parent(track_dir, p, t, sha, *, ensure_evidence=True):
