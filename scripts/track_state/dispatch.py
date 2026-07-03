@@ -11,7 +11,7 @@ from .helpers import (
     flag, _normalize_sha, target, _extract_tags_for_task,
 )
 from .constants import AUTO_COMPLETE_OK, MAX_RETRIES
-from .mutations import _do_lock, _do_complete, _do_fail, _do_fail_parent
+from .mutations import _do_lock, _do_complete, _do_fail, _do_fail_parent, _do_defer
 from .result import _advisory_gates
 from .sync import _do_sync_plan
 from .git_ops import (
@@ -497,21 +497,26 @@ def _clear_stale_result(track_dir):
     (conductor_dir(track_dir) / "result.json").unlink(missing_ok=True)
 
 
-def cmd_dispatch_prepare(track_dir, compact=True):
-    """Lock + sync-plan + return commit message template. Reduces CLI round trips."""
+def prepare_dispatch(track_dir):
+    """Compute-only half of ``dispatch-prepare`` — returns the result dict, no emit.
+
+    Extracted so ``cmd_step`` (Rail B) can compose the prepare step (find next,
+    route, lock, sync-plan, start-commit) without re-implementing its sequencing.
+    The CLI wrapper ``cmd_dispatch_prepare`` is now a thin ``emit()`` over this.
+
+    The stderr ``fixes`` notice is kept here (not in the wrapper) so every caller
+    — CLI and ``cmd_step`` alike — reports auto-fixes identically. It is a benign
+    side effect; only the returned dict is the contract.
+    """
     # Mutual exclusion: a wave in flight owns this track — refuse the serial spine.
     wave = _active_wave(track_dir)
     if wave:
-        emit(dict(action="wave_active", phase=wave.get("phase")),
-             "dispatch-prepare", compact)
-        return
+        return dict(action="wave_active", phase=wave.get("phase"))
 
     # Auto-fix state (includes plan reconciliation + all other fixes)
     state, fixes, _ = ensure_healthy(track_dir)
     if state is None:
-        emit(dict(action="error", error="Cannot read track-state.json"),
-             "dispatch-prepare", compact)
-        return
+        return dict(action="error", error="Cannot read track-state.json")
     if fixes:
         print(f"Dispatch-prepare auto-fixed {len(fixes)} issue(s): {'; '.join(fixes)}", file=sys.stderr)
 
@@ -522,8 +527,7 @@ def cmd_dispatch_prepare(track_dir, compact=True):
     nxt["execution_mode"] = execution_mode
 
     if nxt.get("phase", 0) < 1:
-        emit(dict(action="done"), "dispatch-prepare", compact)
-        return
+        return dict(action="done")
     pi, ti = nxt["phase"], nxt["task"]
     si = nxt.get("subtask")
     name = nxt.get("name", "?")
@@ -537,6 +541,7 @@ def cmd_dispatch_prepare(track_dir, compact=True):
         sha = _last_subtask_sha_from_state(track_dir, pi, ti)
         action = "parent_stuck"
     else:
+        sha = None
         category = _classify_task(tags)
         if category == "manual":
             action = "defer" if execution_mode == "continuous" else "manual_task"
@@ -546,26 +551,18 @@ def cmd_dispatch_prepare(track_dir, compact=True):
             action = "execute"
 
     if action == "parent-complete":
-        emit(dict(action=action, phase=pi, task=ti, name=name,
-                  sha=sha, next=nxt), "dispatch-prepare", compact)
-        return
+        return dict(action=action, phase=pi, task=ti, name=name, sha=sha, next=nxt)
     if action == "parent_stuck":
-        emit(dict(action=action, phase=pi, task=ti, name=name,
-                  sha=sha, execution_mode=execution_mode, next=nxt),
-             "dispatch-prepare", compact)
-        return
+        return dict(action=action, phase=pi, task=ti, name=name, sha=sha,
+                    execution_mode=execution_mode, next=nxt)
     if action == "manual_task":
         # Interactive: surface to the user — no lock (manual tasks aren't executed).
-        emit(dict(action="manual_task", phase=pi, task=ti, name=name,
-                  execution_mode=execution_mode, next=nxt),
-             "dispatch-prepare", compact)
-        return
+        return dict(action="manual_task", phase=pi, task=ti, name=name,
+                    execution_mode=execution_mode, next=nxt)
     if action == "defer":
         # Auto-defer (continuous): lock not needed
-        emit(dict(action="defer", phase=pi, task=ti, name=name,
-                  reason="Deferred: manual task requires human verification",
-                  next=nxt), "dispatch-prepare", compact)
-        return
+        return dict(action="defer", phase=pi, task=ti, name=name,
+                    reason="Deferred: manual task requires human verification", next=nxt)
 
     # Lock + sync-plan for explore/execute
     # Detect resume: if the target is already in_progress, this is a recovery
@@ -579,9 +576,7 @@ def cmd_dispatch_prepare(track_dir, compact=True):
     _do_lock(track_dir, pi, ti, si)
     synced = _do_sync_plan(track_dir)
 
-    if is_resume:
-        pass  # Already started — skip the start commit (recovery re-entry)
-    else:
+    if not is_resume:
         # Start-task commit is performed HERE (deterministic), not by the
         # orchestrator. Previously a <commit_msg> placeholder was emitted for
         # the orchestrator to paste into a shell `git commit -m "…"` line, and
@@ -593,14 +588,18 @@ def cmd_dispatch_prepare(track_dir, compact=True):
         # message pattern at recovery time, not a SHA the machinery requires).
         _git_commit(track_dir, f"chore(conductor): Start task '{name}' [P{pi}.T{ti}]")
 
-    emit(dict(action=action, phase=pi, task=ti, subtask=si, name=name,
-              tags=tags, sync_count=synced,
-              is_resume=is_resume,
-              retry_count=tgt.get("retry_count", 0),
-              max_retries=MAX_RETRIES,
-              last_failure_summary=tgt.get("last_failure_summary"),
-              execution_mode=nxt.get("execution_mode", "interactive"),
-              next=nxt), "dispatch-prepare", compact)
+    return dict(action=action, phase=pi, task=ti, subtask=si, name=name,
+                tags=tags, sync_count=synced, is_resume=is_resume,
+                retry_count=tgt.get("retry_count", 0),
+                max_retries=MAX_RETRIES,
+                last_failure_summary=tgt.get("last_failure_summary"),
+                execution_mode=nxt.get("execution_mode", "interactive"),
+                next=nxt)
+
+
+def cmd_dispatch_prepare(track_dir, compact=True):
+    """Lock + sync-plan + emit commit message template. Thin emit wrapper."""
+    emit(prepare_dispatch(track_dir), "dispatch-prepare", compact)
 
 
 def _last_subtask_sha_from_state(track_dir, pi, ti):
@@ -882,18 +881,19 @@ def _finalize_task(track_dir, p, t, s, r, task_name, status):
     return dict(error=f"Unknown status: {status}"), False
 
 
-def cmd_dispatch_finalize(track_dir, compact=True):
-    """Process result + create conductor commit + sync-plan.
-    Creates the conductor commit internally so each task/subtask gets a unique SHA.
-    Accepts --override key=value to patch result fields before processing.
-    When result.json is missing, synthesizes result from the locked task in state."""
+def finalize_dispatch(track_dir):
+    """Compute-only half of ``dispatch-finalize`` — returns the result dict, no emit.
+
+    Extracted so ``cmd_step`` (Rail B) can run the finalize step (resolve result,
+    completion/failure mutation, conductor commit, result.json cleanup) inline and
+    route on its outcome in the same call. ``--override`` still works: the underlying
+    ``_resolve_finalize_target`` reads ``sys.argv`` exactly as before.
+    """
     result_path = conductor_dir(track_dir) / "result.json"
 
     resolved = _resolve_finalize_target(track_dir, result_path)
     if resolved is None:
-        emit(dict(error="No result file at .conductor/result.json and no locked task in state"),
-             "dispatch-finalize", compact)
-        return
+        return dict(error="No result file at .conductor/result.json and no locked task in state")
     if not result_path.exists():
         print("NOTE: result.json missing — synthesized from locked task state",
               file=sys.stderr)
@@ -909,4 +909,276 @@ def cmd_dispatch_finalize(track_dir, compact=True):
     elif result.get("status") != "error":
         print("WARNING: result.json preserved due to commit failure", file=sys.stderr)
 
-    emit(result, "dispatch-finalize", compact)
+    return result
+
+
+def cmd_dispatch_finalize(track_dir, compact=True):
+    """Process result + create conductor commit + sync-plan. Thin emit wrapper.
+
+    Creates the conductor commit internally so each task/subtask gets a unique SHA.
+    Accepts --override key=value to patch result fields before processing.
+    When result.json is missing, synthesizes result from the locked task in state."""
+    emit(finalize_dispatch(track_dir), "dispatch-finalize", compact)
+
+
+# ---------------------------------------------------------------------------
+# Rail B-min: `step` — a state-driven spine that collapses §2.0 recover +
+# §3.0 dispatch routing into ONE leaf action per call. The orchestrator becomes
+# a teleoperator: read `action`, do exactly that, call `step` again. See
+# conductor/design/rail-b-step.md and skills/implement-step/SKILL.md.
+# ---------------------------------------------------------------------------
+
+
+def _step_assemble_prompt(track_dir, pre, attempt):
+    """Build the ready-to-paste subagent prompt for explorer/task-executor.
+
+    Pre-assembled in code (not by the model) so a weak orchestrator can't
+    fumble field interpolation — the step envelope's ``prompt`` is pasted
+    verbatim into the Agent dispatch. Mirrors skills/implement/SKILL.md §3.3/§3.4.
+    ``SUBTASK`` is emitted only when present (flat tasks omit the line).
+    """
+    td = str(track_dir)
+    lines = [f"TRACK_DIR={td}", f"PHASE={pre['phase']}", f"TASK={pre['task']}"]
+    si = pre.get("subtask")
+    if si is not None:
+        lines.append(f"SUBTASK={si}")
+    lines.append(f"NAME={pre.get('name', '?')}")
+    if _classify_task(pre.get("tags", [])) == "explore":
+        return "explorer", "\n".join(lines)
+    lines.append(f"ATTEMPT={attempt}")
+    lines.append(f"MAX_RETRIES={MAX_RETRIES}")
+    return "task-executor", "\n".join(lines)
+
+
+def _manual_task_decision(track_dir, pi, ti, name):
+    """Pre-computed Defer/Skip ``decision`` blob for an interactive [Manual] task.
+
+    Same transducer shape as :func:`_failed_task_decision` — the orchestrator
+    does ``AskUserQuestion(decision.question, …)`` → run
+    ``decision.commands[choice]`` verbatim → re-call ``step`` (or HALT). Commands
+    omit ``--subtask`` to mirror the failed-task blob (parent-scoped defer/skip).
+    """
+    td = str(track_dir)
+    loc = f"P{pi}.T{ti}"
+    defer_cmd = (f'track-state defer "{td}" --phase {pi} --task {ti} '
+                 f'--reason {shlex.quote("Deferred: manual task requires human verification")}')
+    skip_cmd = (f'track-state skip "{td}" --phase {pi} --task {ti} '
+                f'--reason {shlex.quote("Skipped: manual task not required")}')
+    sync_cmd = f'track-state sync-plan "{td}"'
+    commit_defer = "git commit -m " + shlex.quote(
+        f"chore(conductor): Defer manual task '{name}' [{loc}]")
+    commit_skip = "git commit -m " + shlex.quote(
+        f"chore(conductor): Skip manual task '{name}' [{loc}]")
+    return dict(
+        question=f"Manual task '{name}' ({loc}) needs human verification. Defer or skip?",
+        header="Manual task",
+        options=[
+            {"label": "Defer", "description": "Mark deferred — revisit later"},
+            {"label": "Skip", "description": "Mark skipped — not required"},
+        ],
+        commands={"Defer": [defer_cmd, sync_cmd, commit_defer],
+                  "Skip": [skip_cmd, sync_cmd, commit_skip]},
+        next={"Defer": "step", "Skip": "step"},
+    )
+
+
+def _step_emit_dispatch(track_dir, compact):
+    """Run prepare (lock + start-commit) and emit the ``dispatch`` leaf with the
+    pre-assembled subagent prompt. Falls back to leaf re-resolution if prepare
+    surfaces a non-dispatch action (state moved under us — rare; bounded because
+    the non-dispatch actions are themselves terminal/resolving).
+    """
+    pre = prepare_dispatch(track_dir)
+    if pre.get("action") not in ("explore", "execute"):
+        return _step_emit_next_leaf(track_dir, load(track_dir), compact)
+    attempt = pre.get("retry_count", 0) + 1
+    agent, prompt = _step_assemble_prompt(track_dir, pre, attempt)
+    emit(dict(action="dispatch", agent=agent, prompt=prompt,
+              phase=pre["phase"], task=pre["task"], subtask=pre.get("subtask"),
+              name=pre.get("name", "?"), attempt=attempt,
+              max_retries=MAX_RETRIES, is_resume=pre.get("is_resume", False),
+              execution_mode=pre.get("execution_mode", "interactive")),
+         "step", compact)
+
+
+def _step_emit_exhausted(track_dir, outcome, execution_mode, retry_count, compact):
+    """Surface a retries-exhausted failure: interactive → ``ask`` (Retry/Skip/Block
+    via the shared failed-task decision blob), continuous → ``skip_analyze``
+    (skill §3.6 owns skip-analyst→refute→route)."""
+    state = load(track_dir)
+    pi, ti, si = outcome.get("phase"), outcome.get("task"), outcome.get("subtask")
+    name, rc = "?", retry_count
+    try:
+        tgt = target(state, int(pi), int(ti), int(si) if si is not None else None)
+        name = tgt.get("name", "?")
+        rc = tgt.get("retry_count", rc)
+    except (IndexError, KeyError, TypeError, ValueError):
+        pass
+    if execution_mode == "interactive":
+        decision = _failed_task_decision(
+            track_dir, int(pi), int(ti), int(si) if si is not None else None, name, rc)
+        emit(dict(action="ask", phase=pi, task=ti, subtask=si, name=name,
+                  decision=decision, execution_mode=execution_mode), "step", compact)
+    else:
+        emit(dict(action="skip_analyze", phase=pi, task=ti, subtask=si,
+                  name=name, execution_mode=execution_mode), "step", compact)
+
+
+def _step_route_after_finalize(track_dir, outcome, compact):
+    """Decide the next leaf from a finalize outcome (SUCCESS / FAILURE / error)."""
+    if outcome.get("error"):
+        emit(dict(action="error", error=outcome["error"]), "step", compact)
+        return
+    execution_mode = outcome.get("execution_mode", "interactive")
+    cp = outcome.get("phase_checkpoint_pending")
+    if cp is not None:
+        emit(dict(action="phase_checkpoint", phase=cp, execution_mode=execution_mode),
+             "step", compact)
+        return
+    if outcome.get("status") == "SUCCESS":
+        return _step_emit_next_leaf(track_dir, load(track_dir), compact)
+    # FAILURE — retry (re-queued to pending by _do_fail) or surface exhaustion.
+    if outcome.get("retry_count", 0) < MAX_RETRIES:
+        return _step_emit_dispatch(track_dir, compact)
+    _step_emit_exhausted(track_dir, outcome, execution_mode, outcome.get("retry_count", 0), compact)
+
+
+def _step_emit_next_leaf(track_dir, state, compact):
+    """Resolve the next leaf from a quiescent state (no in_progress task awaiting
+    finalize). Resolves parent-complete / parent-stuck / continuous-[Manual]-defer
+    internally before emitting; surfaces explore / execute / manual / phase_checkpoint
+    / done / ask / skip_analyze."""
+    execution_mode = state.get("execution_mode", "interactive")
+
+    nxt = _find_next_task(state)
+    nxt["execution_mode"] = execution_mode
+    has_dispatchable = nxt.get("phase", 0) >= 1
+
+    # A failed+exhausted task surfaces its decision BEFORE a phase checkpoint —
+    # matching recover→dispatch-next ordering (Rail A §2.0 runs before §3.0), so
+    # the user decides retry/skip/block before a phase-checker re-verifies a phase
+    # with a known-failed task. Surfaced only when no dispatchable work remains
+    # (pending work elsewhere proceeds first, as in Rail A).
+    if not has_dispatchable:
+        found = _find_failed_exhausted(state)
+        if found is not None:
+            fpi, fti, fsi, ftgt, fname = found
+            frc = ftgt.get("retry_count", 0)
+            if execution_mode == "interactive":
+                decision = _failed_task_decision(track_dir, fpi, fti, fsi, fname, frc)
+                emit(dict(action="ask", phase=fpi, task=fti, subtask=fsi, name=fname,
+                          decision=decision, execution_mode=execution_mode), "step", compact)
+            else:
+                emit(dict(action="skip_analyze", phase=fpi, task=fti, subtask=fsi,
+                          name=fname, execution_mode=execution_mode), "step", compact)
+            return
+
+    # Phase checkpoint gates an earlier completed phase before any new dispatch
+    # (dispatch-next §3.0 checks this first). Reached when there is dispatchable
+    # work in a later phase, or as the final checkpoint before `done`.
+    cp = _any_phase_needs_checkpoint(track_dir, state)
+    if cp is not None:
+        emit(dict(action="phase_checkpoint", phase=cp, execution_mode=execution_mode),
+             "step", compact)
+        return
+
+    if not has_dispatchable:
+        emit(dict(action="done"), "step", compact)
+        return
+
+    ntype = nxt["type"]
+    pi, ti = nxt["phase"], nxt["task"]
+    si = nxt.get("subtask")
+    name = nxt.get("name", "?")
+
+    if ntype == "parent-complete":
+        sha = _last_subtask_sha_from_state(track_dir, pi, ti)
+        _, pstate = _do_complete(track_dir, pi, ti, None, sha)
+        _do_sync_plan(track_dir, pstate)
+        _git_commit_ensured(track_dir, f"chore(conductor): Complete parent '{name}' [{sha}]")
+        _finalize_parent(track_dir, pi, ti, sha)
+        return _step_emit_next_leaf(track_dir, load(track_dir), compact)
+
+    if ntype == "parent-stuck":
+        sha = _last_subtask_sha_from_state(track_dir, pi, ti)
+        _do_fail_parent(track_dir, pi, ti, "", sha)
+        _do_sync_plan(track_dir, load(track_dir))
+        _git_commit_ensured(
+            track_dir, f"chore(conductor): Fail parent '{name}' (subtasks exhausted retries)")
+        # The failed parent now surfaces as ask/skip_analyze via the no-active-task path.
+        return _step_emit_next_leaf(track_dir, load(track_dir), compact)
+
+    if _classify_task(nxt.get("tags", [])) == "manual":
+        if execution_mode == "continuous":
+            _do_defer(track_dir, pi, ti, si,
+                      "Deferred: manual task requires human verification")
+            _do_sync_plan(track_dir, load(track_dir))
+            _git_commit_ensured(track_dir, f"chore(conductor): Defer manual task '{name}'")
+            return _step_emit_next_leaf(track_dir, load(track_dir), compact)
+        decision = _manual_task_decision(track_dir, pi, ti, name)
+        emit(dict(action="ask", phase=pi, task=ti, subtask=si, name=name,
+                  decision=decision, execution_mode=execution_mode), "step", compact)
+        return
+
+    # explore / execute → prepare + emit dispatch.
+    return _step_emit_dispatch(track_dir, compact)
+
+
+def cmd_step(track_dir, compact=True):
+    """State-driven dispatch-loop step — the Rail B-min spine entry point.
+
+    Composes recover + next + prepare + finalize into ONE leaf action per call,
+    then returns. The orchestrator's entire job is to read ``action`` and do
+    exactly that — dispatch the named agent with the pre-assembled ``prompt``,
+    relay an ``ask`` blob, hand off to a named skill branch (``phase_checkpoint``
+    / ``skip_analyze`` / ``wave_active``), ``halt`` on ``error``, or enter the
+    post-loop on ``done`` — then call ``step`` again.
+
+    Action set:
+      - ``dispatch``         : run one subagent (explorer/task-executor) with ``prompt``. [spine]
+      - ``ask``              : AskUserQuestion(decision…) → run decision.commands[choice] → step. [spine]
+      - ``phase_checkpoint`` : hand to skill §3.2 (parallel fan-out + synthesize). [non-spine]
+      - ``skip_analyze``     : hand to skill §3.6 (skip-analyst → refute → route). [non-spine]
+      - ``wave_active``      : hand to the wave spine. [non-spine]
+      - ``done``             : track finalized → enter post-loop (skill §4.0). [terminal]
+      - ``error``            : unrecoverable; HALT.
+
+    Internal-only transitions (parent-complete/stuck auto-resolution, continuous
+    [Manual] auto-defer) are fully resolved before emitting, so the model never
+    sees them. An ``ask`` whose ``decision.next[choice] == "HALT"`` stops the
+    loop; any other ``next`` means "re-call step".
+    """
+    # Wave in flight → the wave spine owns this track.
+    wave = _active_wave(track_dir)
+    if wave:
+        emit(dict(action="wave_active", phase=wave.get("phase")), "step", compact)
+        return
+
+    state, fixes, verrors = ensure_healthy(track_dir)
+    if state is None:
+        emit(dict(action="error", errors=verrors), "step", compact)
+        return
+
+    # If the current task is in_progress, the model just returned from a dispatch
+    # (or was interrupted mid-dispatch). Decide finalize vs re-dispatch.
+    pi = state.get("current_phase_index", 0)
+    ti = state.get("current_task_index", 0)
+    si = state.get("current_subtask_index")
+    result_path = conductor_dir(track_dir) / "result.json"
+    if pi >= 1 and ti >= 1:
+        try:
+            tgt = target(state, pi, ti, si)
+        except IndexError:
+            tgt = None
+        if tgt is not None and tgt.get("status") == "in_progress":
+            if result_path.exists() or not _is_start_commit(track_dir):
+                # Agent returned (or committed code without writing result) → finalize.
+                return _step_route_after_finalize(
+                    track_dir, finalize_dispatch(track_dir), compact)
+            # Interrupted before any work: HEAD still the Start commit, no result.
+            # Re-dispatch WITHOUT finalize so we don't burn a retry on a dispatch
+            # that never ran. prepare's is_resume path skips the start commit.
+            return _step_emit_dispatch(track_dir, compact)
+
+    # No in_progress task awaiting finalize → resolve the next leaf.
+    return _step_emit_next_leaf(track_dir, state, compact)

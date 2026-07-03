@@ -98,6 +98,14 @@ COMPACT_FIELDS = {
                           "phase", "task", "subtask", "summary",
                           "coverage_gate", "tdd_gate", "coverage_pct",
                           "ac_integrity_gate", "ears_gate", "tc_consistency_gate"),
+    # Rail B-min spine (skills/implement-step/SKILL.md). `step` collapses the
+    # §2.0/§3.0 routing into one leaf action; the union of keys across its
+    # action variants: dispatch (agent/prompt/attempt/is_resume), ask (decision),
+    # phase_checkpoint/skip_analyze/wave_active (phase), done, parent_stuck (sha).
+    # Error envelopes bypass the allowlist (emit's error carve-out).
+    "step": ("action", "phase", "task", "subtask", "name", "execution_mode",
+             "agent", "prompt", "attempt", "max_retries", "is_resume",
+             "decision", "sha"),
     # Wave parallelism (skills/parallel/SKILL.md). dispatch-wave carries the
     # member list (worktree/branch/worktree_track_dir) so the orchestrator can
     # fan out pinned task-executor agents; `deferred` surfaces the eligible-but-
