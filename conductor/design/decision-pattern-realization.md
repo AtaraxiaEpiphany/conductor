@@ -76,7 +76,7 @@ comprehension digests, integrity gates), rather than re-inflating it.
    tournament. Routing analysis to Rail B is where the leverage actually is.
 3. **Opt-in discipline, consistent with prior decisions.** Every new pattern
    carries a gate, the way waves require `<!-- deps: -->`
-   ([[conductor/design/plan-format-contract]]) and the loop heartbeat is opt-in
+   ([[runtime/contracts/plan-format-contract]]) and the loop heartbeat is opt-in
    ([[conductor/design/decision-loop-heartbeat]]). Tournaments fire only on
    flagged-ambiguous specs; adversarial panels only at review; dry-loops only on
    explicit audit. Patterns that become the default path silently multiply token
@@ -122,5 +122,5 @@ literature most emphasizes, and it slots behind the existing `review` skill.
 - [[runtime/core-contract]] — F1–F6; the construction invariants Rail A preserves and Rail B is structurally exempt from.
 - [[conductor/design/decision-serial-execution]] — the serial-default / wave-opt-in model this record extends with analysis-side patterns.
 - [[conductor/design/decision-loop-heartbeat]] — the opt-in discipline every new pattern inherits.
-- [[conductor/design/plan-format-contract]] — the `<!-- deps: -->` annotation the wave ready-set consumes.
-- [[conductor/design/doc-conventions]] — corpus-authoring conventions.
+- [[runtime/contracts/plan-format-contract]] — the `<!-- deps: -->` annotation the wave ready-set consumes.
+- [[runtime/contracts/doc-conventions]] — corpus-authoring conventions.

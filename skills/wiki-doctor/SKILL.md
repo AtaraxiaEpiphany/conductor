@@ -25,7 +25,7 @@ CRITICAL: You must validate the success of every tool call. If any tool call fai
 
 ## 1.1 SETUP CHECK
 
-Fetch and execute `conductor/design/wiki-setup-check.md`. (`wiki-doctor` does not require `purpose.md`.)
+Fetch and execute `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/wiki-setup-check.md`. (`wiki-doctor` does not require `purpose.md`.)
 
 ---
 

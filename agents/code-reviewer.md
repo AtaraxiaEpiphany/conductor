@@ -114,7 +114,7 @@ Read these files, **gated by `LENS` (§2.6) when set** — a lensed pass loads o
 
 ### 3.3 Load Scoped Context
 
-Match changed files to scoped design docs (routing: `conductor/design/doc-routing.md`). Only read documents relevant to the diff; skip any scoped doc that does not exist or has no matching changes.
+Match changed files to scoped design docs (routing: `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/doc-routing.md`). Only read documents relevant to the diff; skip any scoped doc that does not exist or has no matching changes.
 
 ### 3.4 Verify Checklist
 

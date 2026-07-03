@@ -39,4 +39,4 @@ previously restated independently — and which had drifted (e.g.
 
 ## See Also
 
-- [[conductor/design/doc-conventions]] — corpus authoring conventions.
+- [[runtime/contracts/doc-conventions]] — corpus authoring conventions.

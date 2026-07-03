@@ -67,7 +67,7 @@ track-state harvest-candidates "{TRACK_DIR}"
 
 Resolve all paths via `conductor/index.md`. Read the full corpus (Global + Scoped docs) — overview.md regenerates by **synthesizing the currently loaded documents**, so you need their current (post-Phase-1) content.
 
-**Read the procedure reference:** `conductor/design/doc-sync-procedure.md` — the Phase 2 synthesis specs (§B overview, §C purpose). §4.1/§4.2 below point into it; this is the canonical reference for how overview/purpose are (re)generated.
+**Read the procedure reference:** `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/doc-sync-procedure.md` — the Phase 2 synthesis specs (§B overview, §C purpose). §4.1/§4.2 below point into it; this is the canonical reference for how overview/purpose are (re)generated.
 
 ### 3.3 Wiki Infrastructure
 
@@ -83,11 +83,11 @@ Resolve all paths via `conductor/index.md`. Read the full corpus (Global + Scope
 
 ### 4.1 Regenerate `conductor/overview.md`
 
-Regenerate per `conductor/design/doc-sync-procedure.md` §B (Overview Regeneration Spec) — rewrite `overview.md` **in its entirety** (Write, not append), synthesizing the six §B sections from the currently loaded documents. (§B is authoritative for the section list; don't restate it here.)
+Regenerate per `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/doc-sync-procedure.md` §B (Overview Regeneration Spec) — rewrite `overview.md` **in its entirety** (Write, not append), synthesizing the six §B sections from the currently loaded documents. (§B is authoritative for the section list; don't restate it here.)
 
 ### 4.2 Update `conductor/purpose.md` (partial — preserve user-authored sections)
 
-Update per `conductor/design/doc-sync-procedure.md` §C (Purpose Update Spec) — `purpose.md` is **co-evolved**, updated with Edit (targeted, **never** a wholesale Write); the Goals and In/Out-of-Scope sections are **user-authored** (touch only to append a user-confirmed exclusion). Apply the LLM-maintained sections (Evolving Thesis, Active Decisions, Key Questions) per §C, sourced from this track's spec + the harvested `decisions[]` (§3.1b). If `purpose.md` is missing, create it from the template per §C. If this run had no decisions, no direction shift, and resolved/raised no key questions → leave it unchanged (a no-op Phase 2 is correct).
+Update per `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/doc-sync-procedure.md` §C (Purpose Update Spec) — `purpose.md` is **co-evolved**, updated with Edit (targeted, **never** a wholesale Write); the Goals and In/Out-of-Scope sections are **user-authored** (touch only to append a user-confirmed exclusion). Apply the LLM-maintained sections (Evolving Thesis, Active Decisions, Key Questions) per §C, sourced from this track's spec + the harvested `decisions[]` (§3.1b). If `purpose.md` is missing, create it from the template per §C. If this run had no decisions, no direction shift, and resolved/raised no key questions → leave it unchanged (a no-op Phase 2 is correct).
 
 ### 4.3 Append to `conductor/log.md`
 

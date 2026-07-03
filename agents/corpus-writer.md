@@ -81,13 +81,13 @@ Carry the harvested queue into §4 alongside the spec analysis. (wiki-synthesize
 
 Resolve all paths via `conductor/index.md`. Corpus-writer reads **all** documents (Global + Scoped) because its responsibility is to detect and propagate any spec-vs-doc divergence.
 
-**Read the procedure reference:** `conductor/design/doc-sync-procedure.md` — the per-document analysis table (§A), the proposal template + variants (§A). §4/§5 below point into it; this is the canonical reference for what each document owes an update.
+**Read the procedure reference:** `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/doc-sync-procedure.md` — the per-document analysis table (§A), the proposal template + variants (§A). §4/§5 below point into it; this is the canonical reference for what each document owes an update.
 
 **Global Docs:**
 2. **Product Definition** — `conductor/product/product.md`
 3. **Product Guidelines** — `conductor/product/product-guidelines.md`
 
-**Scoped Docs:** read **every** row of `conductor/design/doc-routing.md` (corpus-writer reads all scoped docs — not just the matching one — to detect corpus-wide divergence): architecture, database (`index.md`, with `schema.md` for per-table detail), api-specs index (also read individual endpoint specs referenced there if API-related changes exist), ux-ui design spec, tech-stack, glossary.
+**Scoped Docs:** read **every** row of `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/doc-routing.md` (corpus-writer reads all scoped docs — not just the matching one — to detect corpus-wide divergence): architecture, database (`index.md`, with `schema.md` for per-table detail), api-specs index (also read individual endpoint specs referenced there if API-related changes exist), ux-ui design spec, tech-stack, glossary.
 
 If any document does not exist, note it and skip the corresponding analysis.
 
@@ -123,7 +123,7 @@ Using the holistic ANALYSIS, compare the source against each project document an
 
 ### 4.1–4.8 Per-Document Analysis (criteria in the procedure reference)
 
-For each project document, apply its **analysis criteria** from `conductor/design/doc-sync-procedure.md` §A (Per-Document table — Analysis-criteria column). The source owes an update when any criterion matches; skip a document whose guard says SKIP, and skip any document that does not exist (per §3.2). Carry each flagged document (with its Proposal variant + Doc name from the §A table) into §5.
+For each project document, apply its **analysis criteria** from `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/doc-sync-procedure.md` §A (Per-Document table — Analysis-criteria column). The source owes an update when any criterion matches; skip a document whose guard says SKIP, and skip any document that does not exist (per §3.2). Carry each flagged document (with its Proposal variant + Doc name from the §A table) into §5.
 
 ### 4.9 Cross-Reference Analysis
 
@@ -153,7 +153,7 @@ For each item in the harvested queue (§3.1b), determine its **target scoped doc
 
 For each document flagged by the Step-1 ANALYSIS (§4.0a/4.0b) as needing change, present a proposal to the user via `AskUserQuestion`. Batch related small changes into a single prompt where possible. Proposals are grounded in the holistic analysis, not re-derived per doc in isolation.
 
-**Proposal template + variants** live in `conductor/design/doc-sync-procedure.md` §A (Proposal template + Per-Document table → Proposal column). Render each flagged document's proposal using its row's variant (`base` / `caution` / `terms`) and Doc name. §5.1–5.8 are now that table; the only prompts retained inline are the two non-table ones below.
+**Proposal template + variants** live in `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/doc-sync-procedure.md` §A (Proposal template + Per-Document table → Proposal column). Render each flagged document's proposal using its row's variant (`base` / `caution` / `terms`) and Doc name. §5.1–5.8 are now that table; the only prompts retained inline are the two non-table ones below.
 
 ### 5.9 Cross-Reference Proposals
 
@@ -186,7 +186,7 @@ Options: "Yes, seed" / "Skip"
 For each document the user confirms:
 
 1. Apply the proposed changes using Edit tool.
-2. **Bump provenance** — if the edited file is a scoped corpus doc (`conductor/design/`, `conductor/resource/`, `conductor/requirement/`), ensure its frontmatter block exists (see `conductor/design/doc-conventions.md` → Page Provenance Frontmatter) and update `last_verified` to this run's date/SHA. `sources:` gains the `{TRACK_ID}` if not already listed. If the doc lacks frontmatter entirely, add the block (this is how legacy docs are brought into compliance).
+2. **Bump provenance** — if the edited file is a scoped corpus doc (`conductor/design/`, `conductor/resource/`, `conductor/requirement/`), ensure its frontmatter block exists (see `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/doc-conventions.md` → Page Provenance Frontmatter) and update `last_verified` to this run's date/SHA. `sources:` gains the `{TRACK_ID}` if not already listed. If the doc lacks frontmatter entirely, add the block (this is how legacy docs are brought into compliance).
 3. Verify the edit was applied correctly.
 4. Record the file as updated.
 
@@ -194,7 +194,7 @@ For confirmed cross-references (5.9):
 
 5. For each bidirectional pair (A ↔ B), append or update a `## See Also` section at the bottom of each document using Edit.
    - Format: `- [[path/to/other/doc]] -- {one-line description of relationship}`
-   - Follow the Wikilink Format convention defined in `conductor/design/doc-conventions.md`.
+   - Follow the Wikilink Format convention defined in `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/doc-conventions.md`.
 6. Record cross-references added.
 
 For confirmed graduation harvests (§5.10):

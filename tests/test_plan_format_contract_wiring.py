@@ -1,13 +1,19 @@
 """Wiring tests for the plan-format-contract extraction (#4).
 
 spec-planner's inline <rules> / <task-type-tags> / <subtask-rules> blocks were
-relocated to conductor/design/plan-format-contract.md — a plugin-side reference
-doc spec-planner reads via ${CLAUDE_PLUGIN_ROOT} (same idiom it already uses for
-spec-scaffold.md). These tests guard:
-- the contract doc exists with compliant provenance frontmatter (it lives under a
-  provenance dir, so the doc-linter + SessionStart GC enforce type/sources/last_verified);
+relocated to runtime/contracts/plan-format-contract.md — a plugin-internal
+behavioral contract spec-planner reads via ${CLAUDE_PLUGIN_ROOT} (sibling of
+core-contract.md / subagent-firewall.md, never copied into a project). These
+tests guard:
+- the contract doc exists at its runtime/contracts/ home;
+- it carries compliant provenance frontmatter naming spec-planner as a source
+  (retained by convention — runtime/contracts/ is NOT scanned by the SessionStart
+  corpus-frontmatter GC, which scopes the project's conductor/{design,resource}
+  corpus dirs, so the frontmatter here is documentation guarded by test, not
+  hook enforcement);
 - the relocated content (status-marker rules, the tag table, subtask rules) lives there;
-- spec-planner points at it and no longer carries the inline blocks (dedup happened).
+- spec-planner points at it via ${CLAUDE_PLUGIN_ROOT} and no longer carries the
+  inline blocks (dedup happened).
 """
 from pathlib import Path
 from unittest import TestCase, main
@@ -15,7 +21,7 @@ from unittest import TestCase, main
 from scripts.lib.frontmatter import missing_required_fields
 
 ROOT = Path(__file__).resolve().parent.parent
-CONTRACT = ROOT / "conductor" / "design" / "plan-format-contract.md"
+CONTRACT = ROOT / "runtime" / "contracts" / "plan-format-contract.md"
 SPEC_PLANNER = (ROOT / "agents" / "spec-planner.md").read_text(encoding="utf-8")
 
 
@@ -25,8 +31,10 @@ class ContractDocTests(TestCase):
         self.text = CONTRACT.read_text(encoding="utf-8")
 
     def test_frontmatter_compliant(self):
-        # Lives under a provenance dir (conductor/design/), so it must carry the
-        # required provenance fields the doc-linter + SessionStart GC enforce.
+        # The contract retains provenance frontmatter (type/sources/last_verified)
+        # naming its consumers. runtime/contracts/ is NOT scanned by the SessionStart
+        # corpus-frontmatter GC (which scopes the project's conductor/{design,resource}
+        # corpus dirs), so this is documentation guarded by test, not hook enforcement.
         self.assertEqual(missing_required_fields(self.text), [])
 
     def test_lists_spec_planner_as_source(self):
@@ -58,10 +66,10 @@ class ContractDocTests(TestCase):
 
 class SpecPlannerPointerTests(TestCase):
     def test_points_at_contract_doc_via_plugin_root(self):
-        # spec-planner resolves plugin-side files via ${CLAUDE_PLUGIN_ROOT}
-        # (same idiom it already uses for templates/spec-scaffold.md).
+        # spec-planner resolves plugin-internal files via ${CLAUDE_PLUGIN_ROOT}
+        # (sibling idiom to core-contract.md / templates/spec-scaffold.md).
         self.assertIn(
-            "${CLAUDE_PLUGIN_ROOT}/conductor/design/plan-format-contract.md",
+            "${CLAUDE_PLUGIN_ROOT}/runtime/contracts/plan-format-contract.md",
             SPEC_PLANNER,
         )
 

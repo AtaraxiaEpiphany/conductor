@@ -29,7 +29,7 @@ CRITICAL: You must validate the success of every tool call. If any tool call fai
 
 ## 1.1 SETUP CHECK
 
-Fetch and execute `conductor/design/wiki-setup-check.md`. Additionally resolve `conductor/purpose.md` (directional intent — read/co-edited by the `purpose` sub-command).
+Fetch and execute `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/wiki-setup-check.md`. Additionally resolve `conductor/purpose.md` (directional intent — read/co-edited by the `purpose` sub-command).
 
 ---
 
@@ -167,7 +167,7 @@ A broad topic spans several wiki corners; a single `wiki-researcher` pass must t
 Lift the orientation `wiki-researcher` does internally up to the skill, so it can decide the fan-out shape:
 
 1. Read `conductor/overview.md` (its **Knowledge Base** table maps concepts to source `[[wikilinks]]`) and `conductor/index.md` (the **Scoped Docs** table is a routing index with a Match Strategy per category).
-2. Route `{topic}` through the Scoped Docs Match Strategy (`conductor/design/doc-routing.md`). Collect the routed scoped doc(s) / index categories the topic touches.
+2. Route `{topic}` through the Scoped Docs Match Strategy (`${CLAUDE_PLUGIN_ROOT}/runtime/contracts/doc-routing.md`). Collect the routed scoped doc(s) / index categories the topic touches.
 3. **Decompose into scoped sub-queries** — one per routed corner. A topic that routes to a single scoped doc (or none) is **single-corner** → one sub-query (the original `{topic}`); the rest of §4.2 runs as a single dispatch. A topic spanning two or more corners → N scoped sub-queries (N = number of distinct routed corners), each a narrower `TOPIC` naming that corner.
 4. **Cap at 4 (no-silent-caps).** If routing identifies more than 4 corners, keep the 4 highest-signal (Knowledge-Base hit beats index Match-Strategy strength beats keyword density) and announce "Topic spans more than 4 wiki corners; fanning out the top 4 (`<topics>`)." The truncation is surfaced, not silent.
 

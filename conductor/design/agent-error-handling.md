@@ -49,4 +49,4 @@ If the agent completes but no `<RESULT-BLOCK>` delimiter is detected:
 
 ## See Also
 
-- [[conductor/design/doc-conventions]] — corpus authoring conventions.
+- [[runtime/contracts/doc-conventions]] — corpus authoring conventions.

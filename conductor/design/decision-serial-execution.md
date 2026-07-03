@@ -110,6 +110,6 @@ cross-track throughput justifies the added complexity.
 ## See Also
 
 - [[runtime/core-contract]] — F1 Global State Lock; the invariant this decision preserves (relaxed to a wave lock only while `.conductor/parallel.json` is active).
-- [[conductor/design/plan-format-contract]] — the `<!-- deps: -->` annotation the wave ready-set consumes.
-- [[conductor/design/doc-conventions]] — corpus-authoring conventions.
+- [[runtime/contracts/plan-format-contract]] — the `<!-- deps: -->` annotation the wave ready-set consumes.
+- [[runtime/contracts/doc-conventions]] — corpus-authoring conventions.
 - [[conductor/design/decision-pattern-realization]] — extends this model with analysis-side patterns (adversarial review, tournament) on the Workflow-tool rail; construction stays on the prose-skill rail.

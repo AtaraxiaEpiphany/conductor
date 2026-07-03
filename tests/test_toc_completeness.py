@@ -16,7 +16,7 @@ from unittest import TestCase, main
 ROOT = Path(__file__).resolve().parent.parent
 TOC = (ROOT / "templates" / "claude-md-toc.md").read_text(encoding="utf-8")
 INDEX = (ROOT / "templates" / "project-index.md").read_text(encoding="utf-8")
-CONVENTIONS = (ROOT / "conductor" / "design" / "doc-conventions.md").read_text(encoding="utf-8")
+CONVENTIONS = (ROOT / "runtime" / "contracts" / "doc-conventions.md").read_text(encoding="utf-8")
 
 # First-class docs BOTH maps must list. Adding a spine doc to one map forces
 # adding it to the other — this list is the contract that enforces agreement.

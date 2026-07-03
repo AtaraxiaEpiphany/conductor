@@ -133,7 +133,7 @@ Loop — max **2 re-dispatches (3 total attempts)**, counting from the first dis
    RELATED_DOCS={paths or N/A}
    PREVIOUS_ERRORS:
    {the format errors[] and/or the AC-integrity gate string, verbatim}
-   REGEN_FOCUS: The prior plan.md/spec.md failed validation. For FORMAT defects: every task AND subtask line MUST begin with `- [ ]`; every phase MUST begin with `## Phase N: Name`; subtasks are indented 2 spaces under their parent and never replace the `[ ]` with a tag. For AC-INTEGRITY defects: address the gate string — every AC-n must appear in some task's `<!-- AC-n -->` annotation AND map to a `TC-{n}.{m} | AC-n` row under ## Test Scenarios. Re-read conductor/design/plan-format-contract.md, then regenerate a conforming plan.md/spec.md.
+   REGEN_FOCUS: The prior plan.md/spec.md failed validation. For FORMAT defects: every task AND subtask line MUST begin with `- [ ]`; every phase MUST begin with `## Phase N: Name`; subtasks are indented 2 spaces under their parent and never replace the `[ ]` with a tag. For AC-INTEGRITY defects: address the gate string — every AC-n must appear in some task's `<!-- AC-n -->` annotation AND map to a `TC-{n}.{m} | AC-n` row under ## Test Scenarios. Re-read `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/plan-format-contract.md`, then regenerate a conforming plan.md/spec.md.
    ```
 
    Re-parse the returned `---SPEC PLAN RESULT---` block (halt on FAILURE), then loop back to step 1.

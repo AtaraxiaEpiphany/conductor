@@ -120,7 +120,7 @@ class CorpusWriterTwoStepCoTTests(TestCase):
         self.assertIn("idempotent ingest", self.agent)
 
     def test_points_at_procedure_doc(self):
-        self.assertIn("conductor/design/doc-sync-procedure.md", self.agent)
+        self.assertIn("${CLAUDE_PLUGIN_ROOT}/runtime/contracts/doc-sync-procedure.md", self.agent)
 
 
 class WikiSynthesizerPhaseTests(TestCase):
@@ -130,7 +130,7 @@ class WikiSynthesizerPhaseTests(TestCase):
         self.agent = (AGENTS / "wiki-synthesizer.md").read_text(encoding="utf-8")
 
     def test_points_at_procedure_doc(self):
-        self.assertIn("conductor/design/doc-sync-procedure.md", self.agent)
+        self.assertIn("${CLAUDE_PLUGIN_ROOT}/runtime/contracts/doc-sync-procedure.md", self.agent)
 
     def test_drift_gate_present(self):
         # The inline §4.4 drift gate (broken wikilinks + moved + coverage) with
@@ -151,18 +151,18 @@ class WikiSynthesizerPhaseTests(TestCase):
 
 class DocSyncProcedureExtractionTests(TestCase):
     """The per-document table + proposal template + synthesis specs were relocated
-    to conductor/design/doc-sync-procedure.md. Both phases of the split now consume
+    to ${CLAUDE_PLUGIN_ROOT}/runtime/contracts/doc-sync-procedure.md. Both phases of the split now consume
     it; guard the pointer + the consumer provenance so they can't drift apart."""
 
     def setUp(self):
         self.cw = (AGENTS / "corpus-writer.md").read_text(encoding="utf-8")
         self.ws = (AGENTS / "wiki-synthesizer.md").read_text(encoding="utf-8")
-        self.proc_path = ROOT / "conductor" / "design" / "doc-sync-procedure.md"
+        self.proc_path = ROOT / "runtime" / "contracts" / "doc-sync-procedure.md"
         self.proc = self.proc_path.read_text(encoding="utf-8")
 
     def test_both_phases_point_at_procedure_doc(self):
-        self.assertIn("conductor/design/doc-sync-procedure.md", self.cw)
-        self.assertIn("conductor/design/doc-sync-procedure.md", self.ws)
+        self.assertIn("${CLAUDE_PLUGIN_ROOT}/runtime/contracts/doc-sync-procedure.md", self.cw)
+        self.assertIn("${CLAUDE_PLUGIN_ROOT}/runtime/contracts/doc-sync-procedure.md", self.ws)
 
     def test_procedure_doc_frontmatter_names_both_consumers(self):
         # The old frontmatter named only `agents/doc-syncer`; after the split it

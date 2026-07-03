@@ -85,5 +85,5 @@ If this run had **no** decisions, no spec-level direction change, and resolved/r
 
 ## See Also
 
-- [[conductor/design/doc-conventions]] — provenance frontmatter + wikilink format used by the execute step.
-- [[conductor/design/doc-routing]] — scope→doc routing shared with task-executor, explorer, code-reviewer.
+- [[runtime/contracts/doc-conventions]] — provenance frontmatter + wikilink format used by the execute step.
+- [[runtime/contracts/doc-routing]] — scope→doc routing shared with task-executor, explorer, code-reviewer.
