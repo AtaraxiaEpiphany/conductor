@@ -111,12 +111,18 @@ class MainEndToEndTests(TestCase):
         text = "All done.\n---TASK RESULT---\nSTATUS: SUCCESS\nCOMMIT_SHA: abc1234\n---END RESULT---"
         result = self._run(_agent_payload(text))
         updated = result["hookSpecificOutput"]["updatedToolOutput"]
-        # The collapsed output is exactly the extracted block — no agentId noise.
-        self.assertIn("---TASK RESULT---", updated)
-        self.assertIn("STATUS: SUCCESS", updated)
-        self.assertIn("abc1234", updated)
-        self.assertNotIn("agentId", updated)
-        self.assertNotIn("agentType", updated)
+        # updatedToolOutput is now a schema-valid Agent result OBJECT (echoed
+        # tool_response + swapped content), not the bare extracted string — a
+        # bare string is rejected by Claude Code's PostToolUse validation.
+        self.assertIsInstance(updated, dict)
+        self.assertEqual(updated["agentId"], "adcbd618a98aa0685")  # preserved, not stripped
+        block = updated["content"][0]["text"]
+        # The trimmed content is exactly the extracted block — no agentId noise.
+        self.assertIn("---TASK RESULT---", block)
+        self.assertIn("STATUS: SUCCESS", block)
+        self.assertIn("abc1234", block)
+        self.assertNotIn("agentId", block)
+        self.assertNotIn("agentType", block)
 
     def test_failure_status_read_from_result_block_not_prose(self):
         """Failure status travels in the deterministic result block (preserved in
@@ -127,7 +133,7 @@ class MainEndToEndTests(TestCase):
                 "---END RESULT---")
         result = self._run(_agent_payload(text))
         updated = result["hookSpecificOutput"]["updatedToolOutput"]
-        self.assertIn("STATUS: FAILURE", updated)
+        self.assertIn("STATUS: FAILURE", updated["content"][0]["text"])
 
     def test_prose_failure_alone_does_not_trigger_failure_advisory(self):
         """A Traceback in prose with NO result block must NOT yield a 'subagent
@@ -138,6 +144,25 @@ class MainEndToEndTests(TestCase):
         result = self._run(_agent_payload(text))
         ctx = result["hookSpecificOutput"].get("additionalContext") or ""
         self.assertNotIn("subagent reported failure", ctx.lower())
+
+    def test_updated_output_is_schema_valid_object_not_bare_string(self):
+        """Regression: updatedToolOutput was emitted as a bare string, which
+        Claude Code's PostToolUse schema validation REJECTS (Zod invalid_type
+        'expected object, received string', confirmed 1:1 against live fires in
+        session debug logs) — the replacement was discarded and the verbose
+        original reached the model. It must now be an Agent result object: a
+        dict whose ``content`` is a list of {type:text, text:str} blocks, with
+        the runtime's agentId/status preserved (echoed from tool_response)."""
+        result = self._run(_agent_payload(
+            "ok\n---TASK RESULT---\nSTATUS: SUCCESS\n---END RESULT---"))
+        updated = result["hookSpecificOutput"]["updatedToolOutput"]
+        self.assertIsInstance(updated, dict,
+                              "updatedToolOutput must be an object, not a bare string")
+        self.assertIsInstance(updated["content"], list)
+        block = updated["content"][0]
+        self.assertEqual(block["type"], "text")
+        self.assertIsInstance(block["text"], str)
+        self.assertEqual(updated["agentId"], "adcbd618a98aa0685")  # runtime field preserved
 
 
 if __name__ == "__main__":
