@@ -136,6 +136,18 @@ COMPACT_FIELDS = {
                   "base_sha", "wave", "deferred", "ineligible",
                   "finalized_count", "revision_range", "decision",
                   "is_resume", "attempt"),
+    # Rail B-min post-loop spine (skills/post-loop-step/SKILL.md). Collapses the
+    # prose post-loop (templates/post-loop.md §5.0–§8.0) into one leaf per call.
+    # Union of keys across action variants: deferred_ask/archive_ask (decision +
+    # phase/task/name identity), finalize (post = sync-plan + registry-update +
+    # commit lines), dispatch/dispatch_advisory (agent + pre-assembled prompt),
+    # the §7.0 review dispatch also carries `post` (the reviewed-range stamp) +
+    # `range` + `shas_count`, digest (digest), halt/error. `track_dir` so the
+    # skill has the path without re-resolving. Error envelopes bypass the allowlist.
+    "post-loop-step": ("action", "phase", "task", "subtask", "name",
+                       "agent", "prompt", "decision", "post", "range",
+                       "shas_count", "digest", "reason", "incomplete",
+                       "track_dir"),
 }
 
 

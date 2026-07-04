@@ -18,10 +18,13 @@ from .git_ops import (
     _git_commit, _git_commit_ensured, _git_head_sha, _write_git_note,
     _has_sibling_sha, _update_task_sha, _recover_git_notes,
     _is_start_commit, _git_uncommitted_files, _finalize_parent,
+    docs_synced_for_track, wiki_phase2_committed_for_track,
 )
 from .handoff import (
     _append_execution_record, _append_deviation_legacy, _append_failure_legacy,
 )
+from .misc import _get_all_shas
+from .quality import _finalize_track
 from .validate import _fix_plan_mismatches, ensure_healthy
 
 
@@ -1249,3 +1252,275 @@ def cmd_step(track_dir, compact=True):
 
     # No in_progress task awaiting finalize → resolve the next leaf.
     return _step_emit_next_leaf(track_dir, state, compact)
+
+
+# --------------------------------------------------------------------------- #
+# Rail B-min post-loop spine (skills/post-loop-step/SKILL.md). Collapses the
+# prose post-loop (templates/post-loop.md §5.0–§8.0) into one leaf action per
+# call, so the 185-line template is never resident on a small context window.
+# Mirrors cmd_step: ordered gates, each short-circuits and emits ONE leaf.
+# --------------------------------------------------------------------------- #
+
+_POST_LOOP_SIDECAR = "post-loop.json"  # conductor-managed, committed (NOT gitignored)
+
+
+def _post_loop_read_sidecar(track_dir):
+    """Tolerant reader for ``.conductor/post-loop.json``.
+
+    Returns a dict with defaults so callers can branch without existence checks.
+    Schema 1 carried only ``reviewed_range``; schema 2 adds ``deferred_resolved``
+    (§5.0 gate), ``advisory_diff_shown`` / ``lint_status`` / ``digest_shown``
+    (reserved — §6.0 advisory / §6.5 / §7.5 gates, wired in a follow-up).
+    """
+    path = conductor_dir(track_dir) / _POST_LOOP_SIDECAR
+    defaults = dict(reviewed_range=None, deferred_resolved=False,
+                    advisory_diff_shown=None, lint_status=None, digest_shown=None)
+    if not path.exists():
+        return defaults
+    try:
+        data = json.loads(path.read_text())
+        if isinstance(data, dict):
+            for k, v in data.items():
+                defaults[k] = v
+    except (ValueError, OSError):
+        pass
+    return defaults
+
+
+def _post_loop_deferred_list(state):
+    """All deferred tasks (flat + subtask) — mirrors cmd_deferred_report's loop."""
+    out_list = []
+    for pi, phase in enumerate(state.get("phases", []), 1):
+        for ti, task in enumerate(phase.get("tasks", []), 1):
+            if task.get("status") == "deferred":
+                out_list.append(dict(phase=pi, task=ti, subtask=None,
+                                     name=task.get("name", "?")))
+            for si, sub in enumerate(task.get("subtasks", []), 1):
+                if sub.get("status") == "deferred":
+                    out_list.append(dict(phase=pi, task=ti, subtask=si,
+                                         name=sub.get("name", "?")))
+    return out_list
+
+
+def _post_loop_deferred_decision(track_dir, deferred):
+    """§5.0 decision blob: resolve the deferred queue in one prompt.
+
+    Verify-all / Skip-all mutate every deferred task to terminal (so re-entry
+    finds an empty queue and the gate passes naturally); Keep-deferred stamps
+    ``deferred_resolved`` in the sidecar (the tasks stay deferred for the final
+    report, but the spine advances). Mirrors the ``_failed_task_decision`` shape.
+    """
+    loc = (f"P{deferred[0]['phase']}.T{deferred[0]['task']}"
+           + (f".S{deferred[0]['subtask']}" if deferred[0].get("subtask") else ""))
+    td = str(track_dir)
+    verify_cmds, skip_cmds = [], []
+    for d in deferred:
+        sub_flag = f" --subtask {d['subtask']}" if d.get("subtask") else ""
+        verify_cmds.append(
+            f'track-state complete "{td}" --phase {d["phase"]} --task {d["task"]}'
+            f'{sub_flag} --sha ""')
+        skip_cmds.append(
+            f'track-state skip "{td}" --phase {d["phase"]} --task {d["task"]}'
+            f'{sub_flag} --reason {shlex.quote("Skipped: user verified not needed")}')
+    sync_cmd = f'track-state sync-plan "{td}"'
+    commit_cmd = "git commit -m " + shlex.quote(
+        f"chore(conductor): Resolve deferred tasks [{loc}]")
+    # Keep-deferred: stamp the sidecar so the gate advances without mutating state.
+    keep_cmd = (
+        f'tee "{td}/.conductor/{_POST_LOOP_SIDECAR}" > /dev/null << \'EOF\'\n'
+        '{"schema":2,"deferred_resolved":true}\nEOF')
+    keep_commit = "git commit -m " + shlex.quote(
+        f"chore(conductor): Keep deferred tasks (user-verified) [{loc}]")
+    return dict(
+        question=(f"{len(deferred)} deferred task(s) pending (first: "
+                  f"'{deferred[0]['name']}' at {loc}). The quality score must "
+                  f"reflect the verified state — resolve before finalize?"),
+        header="Deferred tasks",
+        options=[
+            {"label": "Verify all", "description": "Mark every deferred task completed (user-verified)"},
+            {"label": "Skip all", "description": "Mark every deferred task skipped — not required"},
+            {"label": "Keep deferred", "description": "Leave deferred for the report; advance"},
+        ],
+        commands={
+            "Verify all": verify_cmds + [sync_cmd, commit_cmd],
+            "Skip all": skip_cmds + [sync_cmd, commit_cmd],
+            "Keep deferred": [keep_cmd, keep_commit],
+        },
+        next={"Verify all": "post-loop-step", "Skip all": "post-loop-step",
+              "Keep deferred": "post-loop-step"},
+    )
+
+
+def _post_loop_finalize_post(track_dir):
+    """§5.5 ``post`` lines — bookkeeping the model runs after the in-code finalize."""
+    td = str(track_dir)
+    return [
+        f'track-state sync-plan "{td}"',
+        f'track-state registry-update "{td}" "conductor/tracks.md"',
+        "git commit -m " + shlex.quote("chore(conductor): Complete track"),
+    ]
+
+
+def _post_loop_review_post(track_dir, range_str):
+    """§7.0 ``post`` lines — stamp the reviewed-range sidecar after code-reviewer.
+
+    A pure heredoc overwrite (idempotent); the range equality is the
+    lossless-resume discriminator, so a changed SHA range forces a re-review.
+    """
+    td = str(track_dir)
+    payload = json.dumps({"schema": 2, "reviewed_range": range_str})
+    return [
+        f'tee "{td}/.conductor/{_POST_LOOP_SIDECAR}" > /dev/null << \'EOF\'\n'
+        f'{payload}\nEOF',
+        "git commit -m " + shlex.quote(
+            f"chore(conductor): Stamp post-loop reviewed range [{range_str}]"),
+    ]
+
+
+def _post_loop_archive_decision(track_dir):
+    """§8.0 Archive / Keep active / Delete decision blob."""
+    td = str(track_dir)
+    archive_cmd = f'track-state archive "{td}"'
+    registry_cmd = f'track-state registry-update "<new_track_dir>" "conductor/tracks.md"'
+    commit_cmd = "git commit -m " + shlex.quote("chore(conductor): Archive track")
+    delete_cmd = f'rm -rf "{td}"'
+    delete_commit = "git commit -m " + shlex.quote("chore(conductor): Delete track")
+    return dict(
+        question="Track finalized, doc-synced, and reviewed. Archive it now?",
+        header="Archive",
+        options=[
+            {"label": "Archive", "description": "Relocate to archive/ + registry-update + commit"},
+            {"label": "Keep active", "description": "Leave in the active set; stop here"},
+            {"label": "Delete", "description": "Remove the track directory entirely (destructive)"},
+        ],
+        commands={
+            "Archive": [archive_cmd, registry_cmd, commit_cmd],
+            "Keep active": [],
+            "Delete": [delete_cmd, delete_commit],
+        },
+        next={"Archive": "post-loop-step", "Keep active": "HALT", "Delete": "HALT"},
+    )
+
+
+def _post_loop_doc_sync_prompt(track_dir, track_id, desc, agent):
+    """Pre-assembled prompt for corpus-writer (Phase 1) / wiki-synthesizer (Phase 2)."""
+    return (
+        f"TRACK_DIR={track_dir}\n"
+        f"TRACK_ID={track_id}\n"
+        f"TRACK_DESCRIPTION={desc}\n"
+        f"_AGENT={agent}\n"
+    )
+
+
+def cmd_post_loop_step(track_dir, compact=True):
+    """State-driven post-loop spine — Rail B-min, one leaf action per call.
+
+    Replaces the prose ``templates/post-loop.md`` §5.0–§8.0 with ordered gates,
+    each short-circuiting to ONE leaf, so the orchestrator's only job is to read
+    ``action`` and relay it (dispatch an agent / run ``post`` / relay a decision
+    / announce a digest / halt). Mirrors ``cmd_step``; lossless resume via the
+    same durable markers ``cmd_post_loop_status`` reads (finalized, doc_synced,
+    reviewed_range) plus the sidecar's ``deferred_resolved``.
+
+    Action set:
+      - ``deferred_ask``   : §5.0 — AskUserQuestion(decision) → run commands → loop. [spine]
+      - ``finalize``       : §5.5 — finalize already ran in-code (ok); run ``post`` → loop. [spine]
+      - ``dispatch``       : §6.0 Phase 1/2 — dispatch corpus-writer / wiki-synthesizer → loop. [spine]
+      - ``dispatch_advisory``: §6.0 advisory — dispatch wiki-differ → loop. [spine]
+      - ``dispatch`` (lint): §6.5 — dispatch doc-linter → loop. [spine]
+      - ``dispatch`` (review): §7.0 — dispatch code-reviewer, then run ``post`` (stamp) → loop. [spine]
+      - ``digest``         : §7.5 — announce the pre-assembled digest, run ``post`` → loop. [spine]
+      - ``archive_ask``    : §8.0 — AskUserQuestion(decision) → run commands → loop/HALT. [spine]
+      - ``done``           : every gate satisfied. [terminal]
+      - ``halt``           : finalize refused (incomplete) — surface + stop. [terminal]
+      - ``error``          : unhealthy — HALT.
+
+    The §5.0/§5.5/§6.0/§7.0 gates are wired here; §6.0 advisory / §6.5 lint /
+    §7.5 digest follow in a subsequent commit (the sidecar schema reserves them).
+    """
+    state, _fixes, verrors = ensure_healthy(track_dir)
+    if state is None:
+        emit(dict(action="error", errors=verrors), "post-loop-step", compact)
+        return
+
+    td = str(track_dir)
+    track_id = state.get("track_id") or Path(td).name
+    desc = state.get("description") or state.get("name") or track_id
+    sidecar = _post_loop_read_sidecar(track_dir)
+
+    # An archived track has passed every post-loop gate (cmd_archive refuses
+    # unless doc-synced, and the spine archives only after finalize + review) →
+    # short-circuit to done. Idempotent re-entry after the archive commit lands here.
+    if state.get("status") == "archived":
+        emit(dict(action="done", track_dir=td), "post-loop-step", compact)
+        return
+
+    # §5.0 — deferred verification (skip if empty OR user already chose to keep).
+    deferred = _post_loop_deferred_list(state)
+    if deferred and not sidecar.get("deferred_resolved"):
+        emit(dict(action="deferred_ask", track_dir=td,
+                  decision=_post_loop_deferred_decision(td, deferred)),
+             "post-loop-step", compact)
+        return
+
+    # §5.5 — finalization. finalized := a terminal status (completed/failed/
+    # blocked — the set cmd_finalize leaves on ok:true — or archived, post-§8.0)
+    # AND a numeric quality_score. An incomplete track stays in_progress with no
+    # score, so it re-enters finalize (which halts on the still-incomplete set).
+    # A failed/blocked track IS finalized (faithful A/B: it proceeds to archive,
+    # where the human picks "Keep active") — without this, a terminal failed track
+    # would loop the finalize leaf forever.
+    status = state.get("status")
+    finalized = (status in ("completed", "failed", "blocked", "archived")
+                 and isinstance(state.get("quality_score"), (int, float)))
+    if not finalized:
+        result = _finalize_track(td)
+        if not result.get("ok"):
+            # Refused false completion — surface the unfinished units and stop.
+            emit(dict(action="halt", reason=result.get("reason"),
+                      incomplete=result.get("incomplete"), track_dir=td),
+                 "post-loop-step", compact)
+            return
+        emit(dict(action="finalize", post=_post_loop_finalize_post(td),
+                  track_dir=td), "post-loop-step", compact)
+        return
+
+    # §6.0 — doc sync (two-tier: Phase 1 corpus-writer, Phase 2 wiki-synthesizer).
+    if not docs_synced_for_track(td):
+        emit(dict(action="dispatch", agent="corpus-writer", track_dir=td,
+                  prompt=_post_loop_doc_sync_prompt(td, track_id, desc, "corpus-writer")),
+             "post-loop-step", compact)
+        return
+    if not wiki_phase2_committed_for_track(td):
+        emit(dict(action="dispatch", agent="wiki-synthesizer", track_dir=td,
+                  prompt=_post_loop_doc_sync_prompt(td, track_id, desc, "wiki-synthesizer")),
+             "post-loop-step", compact)
+        return
+
+    # §7.0 — code review over the implementation SHA range. Skipped iff no SHAs.
+    shas = _get_all_shas(state)
+    if shas:
+        first, last = shas[0], shas[-1]
+        range_str = f"{first}~1..{last}"
+        review_done = bool(sidecar.get("reviewed_range")
+                           and sidecar["reviewed_range"] == range_str)
+        if not review_done:
+            emit(dict(action="dispatch", agent="code-reviewer", track_dir=td,
+                      range=range_str, shas_count=len(shas),
+                      prompt=(f"TRACK_DIR={td}\nTRACK_ID={track_id}\n"
+                              f"REVISION_RANGE={range_str}\n"),
+                      post=_post_loop_review_post(td, range_str)),
+                 "post-loop-step", compact)
+            return
+
+    # §8.0 — archive gate. A failed/blocked track proceeds faithfully (the human
+    # picks "Keep active"); cmd_finalize returned ok:true for terminal failed/blocked.
+    if status != "archived":
+        emit(dict(action="archive_ask", track_dir=td,
+                  decision=_post_loop_archive_decision(td)),
+             "post-loop-step", compact)
+        return
+
+    # Every gate satisfied.
+    emit(dict(action="done", track_dir=td), "post-loop-step", compact)
+

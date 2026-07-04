@@ -283,3 +283,28 @@ def docs_synced_for_track(track_dir) -> bool:
         return any(needle in line for line in result.stdout.splitlines())
     except Exception:
         return False
+
+
+def wiki_phase2_committed_for_track(track_dir) -> bool:
+    """Return True if the wiki-synthesizer (doc-sync Phase 2) commit exists.
+
+    Phase 1 (corpus-writer) and Phase 2 (wiki-synthesizer) both make a
+    ``docs(conductor): ... [{TRACK_ID}]`` commit, so :func:`docs_synced_for_track`
+    can't tell them apart. This discriminator greps for Phase 2's distinct
+    ``Wiki sync`` subject, so the post-loop spine can resume at Phase 2 when
+    Phase 1 ran but Phase 2 was interrupted out (the two-tier doc-sync gate).
+    """
+    track_id = Path(track_dir).name
+    try:
+        result = subprocess.run(
+            ["git", "log", "--all", "--format=%s", "--grep",
+             "docs(conductor):", "-50"],
+            capture_output=True, text=True, cwd=str(track_dir), timeout=10
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            return False
+        needle = f"[{track_id}]"
+        return any("Wiki sync" in line and needle in line
+                   for line in result.stdout.splitlines())
+    except Exception:
+        return False

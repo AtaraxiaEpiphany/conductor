@@ -22,7 +22,7 @@ from unittest import TestCase, main
 from scripts.track_state.core import load, save
 from scripts.track_state.dispatch import (
     cmd_next, cmd_recover, cmd_dispatch_next,
-    cmd_dispatch_prepare, cmd_dispatch_finalize,
+    cmd_dispatch_prepare, cmd_dispatch_finalize, cmd_post_loop_step,
 )
 
 
@@ -274,6 +274,52 @@ class TestParentStuckCompact(TestCase):
         full_result = _out_captured(cmd_dispatch_next, d2, compact=False)
         self.assertEqual(full_result["action"], "parent_stuck")
         self.assertNotIn("failed", full_result)
+
+
+class TestPostLoopStepCompact(TestCase):
+    """``post-loop-step`` emits a compact leaf: only the allowlisted keys survive
+    (the spine's internal gate signals — sidecar, deferred list, finalize result —
+    must NOT reach the orchestrator)."""
+
+    def _finalized_dir(self):
+        # Finalized (status completed + score), not doc-synced → dispatch corpus-writer.
+        state = {
+            "track_id": "plsc", "type": "feature", "status": "completed",
+            "description": "compact test", "quality_score": 90,
+            "current_phase_index": 0, "current_task_index": 0,
+            "updated_at": _recent_iso(),
+            "phases": [{"name": "Phase 1", "status": "pending", "tasks": [
+                {"name": "Task A", "status": "completed", "commit_sha": "aaa0001"},
+            ]}],
+        }
+        d = tempfile.mkdtemp()
+        Path(d, "plan.md").write_text("# Plan\n\n## Phase 1\n- [x] Task A\n")
+        save(d, state)
+        env = {**__import__("os").environ,
+               "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+               "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+        subprocess.run(["git", "-C", d, "init", "-q"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", d, "add", "-A"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", d, "commit", "-q", "-m", "init"],
+                       check=True, capture_output=True, env=env)
+        return d
+
+    def test_dispatch_leaf_compact(self):
+        d = self._finalized_dir()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        result = _out_captured(cmd_post_loop_step, d)
+        self.assertEqual(result["action"], "dispatch")
+        self.assertEqual(result["agent"], "corpus-writer")
+        # Allowlisted keys present.
+        self.assertIn("prompt", result)
+        self.assertIn("track_dir", result)
+        # Internal gate signals the spine computed but the orchestrator does not
+        # need — stripped by the compact allowlist.
+        self.assertNotIn("sidecar", result)
+        self.assertNotIn("deferred", result)
+        self.assertNotIn("finalized", result)
+        self.assertNotIn("doc_synced", result)
+
 
 
 class TestCliFullFlag(TestCase):

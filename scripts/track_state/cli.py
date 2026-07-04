@@ -10,7 +10,7 @@ from .mutations import cmd_lock, cmd_fail, cmd_skip, cmd_block, cmd_defer
 from .cmd_complete import cmd_complete
 from .dispatch import (
     cmd_next, cmd_dispatch_next, cmd_dispatch_prepare, cmd_dispatch_finalize,
-    cmd_recover, cmd_step,
+    cmd_recover, cmd_step, cmd_post_loop_step,
 )
 from .result import cmd_process_result, cmd_write_result
 from .validate import cmd_validate
@@ -206,6 +206,10 @@ COMMAND_HELP = {
              "Rail B-min spine: composes recover + next + prepare + finalize into ONE leaf action "
              "(dispatch / ask / phase_checkpoint / skip_analyze / wave_active / done / error). "
              "Driven by skills/implement-step/SKILL.md; see conductor/design/rail-b-step.md."),
+    "post-loop-step": ("post-loop-step <track-dir> [--full]",
+                       "Rail B-min post-loop spine: collapses the prose post-loop (§5.0–§8.0) into ONE leaf "
+                       "action (deferred_ask / finalize / dispatch / dispatch_advisory / digest / archive_ask / "
+                       "done / halt / error). Driven by skills/post-loop-step/SKILL.md."),
     "record-summary": ("record-summary <track-dir>",
                        "Record compact task summary (stdin JSON) for post-compaction recovery"),
     "dispatch-wave": ("dispatch-wave <track-dir> [--full]",
@@ -262,6 +266,7 @@ _COMMAND_GROUPS = [
     ("Handoff", ["get-handoff", "append-handoff", "harvest-candidates"]),
     ("Result Processing", ["write-result", "process-result"]),
     ("Dispatch Composites", ["dispatch-prepare", "dispatch-finalize", "record-summary"]),
+    ("Rail B-min Spines", ["step", "post-loop-step"]),
     ("Wave Parallelism", ["dispatch-wave", "wave-status", "wave-finalize", "wave-abort", "wave-step"]),
     ("Naming", ["derive-name"]),
     ("Diagnostics", ["validate", "gc", "shas", "post-loop-status", "checklist-verify",
@@ -416,6 +421,8 @@ def main():
             cmd_dispatch_finalize(track_dir, compact="--full" not in args)
         elif cmd == "step":
             cmd_step(track_dir, compact="--full" not in args)
+        elif cmd == "post-loop-step":
+            cmd_post_loop_step(track_dir, compact="--full" not in args)
         elif cmd == "record-summary":
             cmd_record_summary(track_dir)
         elif cmd == "dispatch-wave":

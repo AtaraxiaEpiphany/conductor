@@ -348,7 +348,13 @@ def cmd_set_mode(track_dir, mode):
 _FINALIZE_OK_STATUSES = ("completed", "skipped", "deferred", "cancelled")
 
 
-def cmd_finalize(track_dir):
+def _finalize_track(track_dir):
+    """Compute+save half of ``finalize`` — returns the result dict, no emit.
+
+    Extracted so ``cmd_post_loop_step`` (Rail B-min post-loop spine) can run the
+    finalize step inline and route on its outcome (``halt`` on ok:false) in the
+    same call. Mirrors ``finalize_dispatch`` / ``cmd_dispatch_finalize``.
+    """
     state = load(track_dir)
     state["current_phase_index"] = 0
     state["current_task_index"] = 0
@@ -384,10 +390,9 @@ def cmd_finalize(track_dir):
         state["status"] = "in_progress"
         state["updated_at"] = now_iso()
         save(track_dir, state)
-        out(dict(ok=False, status="in_progress",
-                 reason=f"{len(incomplete)} task(s) still non-terminal",
-                 incomplete=incomplete))
-        return
+        return dict(ok=False, status="in_progress",
+                    reason=f"{len(incomplete)} task(s) still non-terminal",
+                    incomplete=incomplete)
 
     # Feature checklist verification
     checklist = _checklist_status(track_dir)
@@ -410,7 +415,12 @@ def cmd_finalize(track_dir):
             total=checklist["total"],
             unverified=checklist["unverified"],
         )
-    out(result)
+    return result
+
+
+def cmd_finalize(track_dir):
+    """CLI wrapper for :func:`_finalize_track` — emits the result."""
+    out(_finalize_track(track_dir))
 
 def _compute_quality_score(track_dir, state, statuses, checklist):
     """Compute a 0-100 quality score for the track.

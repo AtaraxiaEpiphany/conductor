@@ -9,6 +9,7 @@ from .core import load, save
 from .helpers import target, now_iso, _store_evidence, conductor_dir, _normalize_sha
 from .sync import _do_sync_plan
 from lib.git_utils import docs_synced_for_track  # noqa: F401 — re-exported; single source shared with lint-track-state
+from lib.git_utils import wiki_phase2_committed_for_track  # noqa: F401 — re-exported; post-loop spine Phase-2 discriminator
 
 # Best-effort git ops never crash the finalize/recover path: a git failure
 # (missing binary, timeout, bad SHA) degrades to a warning + skip, not a raise.
