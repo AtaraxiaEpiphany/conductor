@@ -7,6 +7,7 @@ squash-merge integration by test_wave_finalize.py.
 """
 import io
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -69,8 +70,25 @@ def _state(n_tasks):
     }
 
 
-class TestDispatchWave(unittest.TestCase):
+class _PinnedWaveCap(unittest.TestCase):
+    """Pin ``CONDUCTOR_WAVE_SIZE`` for the 3-member wave scenarios below so they
+    stay independent of the shipped default (these exercise the worktree
+    lifecycle / abort, not the cap knob — test_wave_step.py covers the knob)."""
+
     def setUp(self):
+        self._prev = os.environ.pop("CONDUCTOR_WAVE_SIZE", None)
+        os.environ["CONDUCTOR_WAVE_SIZE"] = "4"  # >= the 3-member scenarios
+
+    def tearDown(self):
+        if self._prev is not None:
+            os.environ["CONDUCTOR_WAVE_SIZE"] = self._prev
+        else:
+            os.environ.pop("CONDUCTOR_WAVE_SIZE", None)
+
+
+class TestDispatchWave(_PinnedWaveCap):
+    def setUp(self):
+        super().setUp()
         self.d = _make_git_track(_state(3), _disjoint_plan(3))
         self.addCleanup(shutil.rmtree, self.d, ignore_errors=True)
 
@@ -179,8 +197,9 @@ class TestDispatchWave(unittest.TestCase):
         self.assertEqual(out["phase"], 0)
 
 
-class TestWaveAbort(unittest.TestCase):
+class TestWaveAbort(_PinnedWaveCap):
     def setUp(self):
+        super().setUp()
         self.d = _make_git_track(_state(3), _disjoint_plan(3))
         self.addCleanup(shutil.rmtree, self.d, ignore_errors=True)
         self.members = _capture(cmd_dispatch_wave, self.d)[0]["wave"]

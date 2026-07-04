@@ -38,7 +38,7 @@ Read `action` and do **only** that:
 
 | action | you do |
 |---|---|
-| `dispatch_batch` | **Dispatch `conductor:task-executor` for EVERY member of `wave` in ONE message** (concurrent Agent calls — that parallelism is the whole point). Each agent's prompt is that member's `prompt` field **verbatim** (pre-assembled — do not edit or re-fill any field). If `deferred` is non-empty, first announce `⚠️ Wave capped at 4; deferring <P{p}.T{t} …>` for each. Then → §2.0. |
+| `dispatch_batch` | **Dispatch `conductor:task-executor` for EVERY member of `wave` in ONE message** (concurrent Agent calls — that parallelism is the whole point). Each agent's prompt is that member's `prompt` field **verbatim** (pre-assembled — do not edit or re-fill any field). If `deferred` is non-empty, first announce `⚠️ Wave cap reached; deferring <P{p}.T{t} …>` for each (the cap is env-tunable via `CONDUCTOR_WAVE_SIZE`, default 2). Then → §2.0. |
 | `wave_integrate` | Run exactly: `track-state wave-finalize "<td>" --phase <phase> --task <task>`. Then → §2.0. |
 | `done` | Track finalized → run the post-loop: `Read conductor/workflow/post-loop.md`, execute §5.0–§8.0 (or hand off to `/conductor:parallel` §5.0). |
 | `error` | Announce the error → STOP. |

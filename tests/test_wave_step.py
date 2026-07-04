@@ -26,6 +26,7 @@ from scripts.track_state.core import save, load
 from scripts.track_state.wave import (
     cmd_wave_step, cmd_dispatch_wave, cmd_wave_finalize,
     _drain_processed, _mark_drain_processed, _load_ledger,
+    DEFAULT_WAVE_SIZE, _wave_size,
 )
 from scripts.track_state.quality import _CONDUCTOR_GITIGNORE
 
@@ -125,7 +126,24 @@ def _simulate_agent(member, files=None, status="SUCCESS", summary="done"):
     }))
 
 
-class WaveStepBatchTests(TestCase):
+class _PinnedWaveCap(TestCase):
+    """Scenario tests that pre-date the ``CONDUCTOR_WAVE_SIZE`` knob: pin the
+    historical cap so their 3+ member scenarios stay independent of the shipped
+    default. ``WaveSizeTests`` below exercises the knob itself, so it does NOT
+    inherit this pin (it isolates the env in its own setUp)."""
+
+    def setUp(self):
+        self._prev = os.environ.pop("CONDUCTOR_WAVE_SIZE", None)
+        os.environ["CONDUCTOR_WAVE_SIZE"] = "4"  # >= the 3-member scenarios
+
+    def tearDown(self):
+        if self._prev is not None:
+            os.environ["CONDUCTOR_WAVE_SIZE"] = self._prev
+        else:
+            os.environ.pop("CONDUCTOR_WAVE_SIZE", None)
+
+
+class WaveStepBatchTests(_PinnedWaveCap):
     def test_dispatch_batch_assembles_per_member_prompts(self):
         d = _make_git_track(_state(3), _disjoint_plan(3))
         self.addCleanup(shutil.rmtree, d, ignore_errors=True)
@@ -157,15 +175,65 @@ class WaveStepBatchTests(TestCase):
         self.assertEqual(locs, locked)
 
     def test_dispatch_batch_surfaces_deferred_overflow(self):
+        # 6 eligible members → first _wave_size() ready, rest deferred. Asserts
+        # against the resolved cap (not a hardcoded number) so this stays correct
+        # under any default or env override; the env-override cases below pin the
+        # knob itself.
         d = _make_git_track(_state(6), _disjoint_plan(6))
         self.addCleanup(shutil.rmtree, d, ignore_errors=True)
         out = _wave_step(d)
         self.assertEqual(out["action"], "dispatch_batch")
-        self.assertEqual(len(out["wave"]), 4)         # DEFAULT_WAVE_SIZE cap
-        self.assertEqual(len(out["deferred"]), 2)     # eligible-but-capped (no-silent-caps)
+        cap = _wave_size()
+        self.assertEqual(len(out["wave"]), cap)           # resolved cap
+        self.assertEqual(len(out["deferred"]), 6 - cap)   # eligible-but-capped (no-silent-caps)
 
 
-class WaveStepIntegrateTests(TestCase):
+# --------------------------------------------------------------------------- #
+# _wave_size — the env-tunable fan-out cap (P4)
+# --------------------------------------------------------------------------- #
+class WaveSizeTests(TestCase):
+    def setUp(self):
+        # Isolate the cap from the developer's env.
+        self._prev = os.environ.pop("CONDUCTOR_WAVE_SIZE", None)
+
+    def tearDown(self):
+        if self._prev is not None:
+            os.environ["CONDUCTOR_WAVE_SIZE"] = self._prev
+        else:
+            os.environ.pop("CONDUCTOR_WAVE_SIZE", None)
+
+    def test_default_is_conservative_two(self):
+        # P4: the small-window conservative default. A larger-window operator
+        # bumps it via the env knob; this pins the shipped default.
+        self.assertEqual(DEFAULT_WAVE_SIZE, 2)
+        self.assertEqual(_wave_size(), 2)
+
+    def test_env_override_resolves(self):
+        os.environ["CONDUCTOR_WAVE_SIZE"] = "3"
+        self.assertEqual(_wave_size(), 3)
+
+    def test_env_override_drives_dispatch_batch_cap(self):
+        # The override must reach the actual slice site, not just the helper.
+        d = _make_git_track(_state(6), _disjoint_plan(6))
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        os.environ["CONDUCTOR_WAVE_SIZE"] = "3"
+        out = _wave_step(d)
+        self.assertEqual(out["action"], "dispatch_batch")
+        self.assertEqual(len(out["wave"]), 3)
+        self.assertEqual(len(out["deferred"]), 3)
+
+    def test_nonpositive_env_falls_back(self):
+        for bad in ("0", "-2"):
+            os.environ["CONDUCTOR_WAVE_SIZE"] = bad
+            self.assertEqual(_wave_size(), DEFAULT_WAVE_SIZE,
+                             f"expected fallback for {bad!r}")
+
+    def test_nonnumeric_env_falls_back(self):
+        os.environ["CONDUCTOR_WAVE_SIZE"] = "wide"
+        self.assertEqual(_wave_size(), DEFAULT_WAVE_SIZE)
+
+
+class WaveStepIntegrateTests(_PinnedWaveCap):
     def test_wave_integrate_one_in_flight_member(self):
         d = _make_git_track(_state(3), _disjoint_plan(3))
         self.addCleanup(shutil.rmtree, d, ignore_errors=True)
@@ -209,7 +277,7 @@ class WaveStepIntegrateTests(TestCase):
         self.assertEqual(out["task"], 1)
 
 
-class WaveStepDrainTests(TestCase):
+class WaveStepDrainTests(_PinnedWaveCap):
     def _drain_wave(self, d, batch, statuses=None):
         """Simulate + finalize every member to terminal status; returns the last
         wave-finalize envelope (carries drained=True)."""

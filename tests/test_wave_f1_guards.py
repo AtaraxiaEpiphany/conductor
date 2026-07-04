@@ -14,6 +14,7 @@ importlib from that same path.
 import importlib.util
 import io
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -90,7 +91,23 @@ def _state(n):
 
 
 class _WaveFixture(unittest.TestCase):
-    """A git track with an active 3-member wave; members' locks aged stale."""
+    """A git track with an active N-member wave; members' locks aged stale.
+
+    Pins ``CONDUCTOR_WAVE_SIZE`` so the multi-member scenario stays independent
+    of the shipped default — these tests exercise the F1 wave exemption, not the
+    cap knob (``tests/test_wave_step.py::WaveSizeTests`` covers that).
+    """
+
+    def setUp(self):
+        self._prev = os.environ.pop("CONDUCTOR_WAVE_SIZE", None)
+        os.environ["CONDUCTOR_WAVE_SIZE"] = "4"  # >= the 3-member scenarios below
+
+    def tearDown(self):
+        if self._prev is not None:
+            os.environ["CONDUCTOR_WAVE_SIZE"] = self._prev
+        else:
+            os.environ.pop("CONDUCTOR_WAVE_SIZE", None)
+
     def _wave(self, n=3):
         d = _make_git_track(_state(n), _plan(n))
         self.addCleanup(shutil.rmtree, d, ignore_errors=True)

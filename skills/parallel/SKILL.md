@@ -95,7 +95,7 @@ Switch on `action`:
 
 The `wave` array has one member per ready task, each carrying `worktree`, `branch`, `worktree_track_dir`, `phase`, `task`, `name`. **Dispatch ALL members in ONE message** (concurrent `Agent` calls) so they run in parallel — that is the entire point of this skill.
 
-If the envelope also carries a non-empty `deferred` list, those are eligible members the `DEFAULT_WAVE_SIZE=4` cap pushed past this wave — announce them before fanning out: `⚠️ Wave capped at 4; deferring <P{p}.T{t} …> to the next wave`. They stay `pending`; the next `dispatch-wave` (after this one drains) picks them up automatically. **The cap is never silent** — an eligible task deferred by the cap is always surfaced, never dropped (no-silent-caps).
+If the envelope also carries a non-empty `deferred` list, those are eligible members the wave cap (`CONDUCTOR_WAVE_SIZE`, default 2) pushed past this wave — announce them before fanning out: `⚠️ Wave cap reached; deferring <P{p}.T{t} …> to the next wave`. They stay `pending`; the next `dispatch-wave` (after this one drains) picks them up automatically. **The cap is never silent** — an eligible task deferred by the cap is always surfaced, never dropped (no-silent-caps).
 
 Per member, dispatch `conductor:task-executor` with the canonical minimal prompt **plus the worktree pinning**:
 

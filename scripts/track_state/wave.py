@@ -49,10 +49,27 @@ from .git_ops import (
 )
 
 
-# Cap the fan-out. Conservative default: four concurrent worktree-isolated
-# agents is enough headroom for a phase of independent tasks without flooding
-# the context budget or the worktree object store.
-DEFAULT_WAVE_SIZE = 4
+# Cap the fan-out. Conservative small-window default: two concurrent
+# worktree-isolated agents is enough headroom for a phase of independent tasks
+# without flooding a small context budget or the worktree object store. Override
+# via the env knob (e.g. a large-window operator sets CONDUCTOR_WAVE_SIZE=4).
+DEFAULT_WAVE_SIZE = 2
+
+
+def _wave_size() -> int:
+    """Resolved wave cap. Env-overridable via ``CONDUCTOR_WAVE_SIZE``.
+
+    Mirrors ``on-batch-complete._budget_threshold``: a positive integer in the
+    env wins; anything missing/empty/non-positive/non-numeric falls back to
+    ``DEFAULT_WAVE_SIZE``. Read at each dispatch so a mid-session env change is
+    honored without restart.
+    """
+    raw = os.environ.get("CONDUCTOR_WAVE_SIZE", "")
+    try:
+        n = int(raw)
+        return n if n > 0 else DEFAULT_WAVE_SIZE
+    except (TypeError, ValueError):
+        return DEFAULT_WAVE_SIZE
 
 WAVE_LEDGER_NAME = "parallel.json"      # sidecar under .conductor/
 WAVE_MARKER_NAME = "wave-agent.marker"  # per-worktree SubagentStop short-circuit
@@ -251,7 +268,7 @@ def _eligible_members(state, parsed, phase):
 
 
 def _ready_set(state, parsed, phase):
-    """The capped wave ready-set: first ``DEFAULT_WAVE_SIZE`` eligible members.
+    """The capped wave ready-set: first ``_wave_size()`` eligible members.
 
     Thin cap over ``_eligible_members`` — eligibility is separable from the cap
     so the deferred overflow (eligible-but-capped members) can be surfaced to the
@@ -259,7 +276,7 @@ def _ready_set(state, parsed, phase):
     calls ``_eligible_members`` directly and splits; this wrapper keeps the
     historical capped-list contract (``tests/test_wave_ready_set.py`` imports it).
     """
-    return _eligible_members(state, parsed, phase)[:DEFAULT_WAVE_SIZE]
+    return _eligible_members(state, parsed, phase)[:_wave_size()]
 
 
 def _pending_ineligibility(state, parsed, phase):
@@ -458,8 +475,9 @@ def prepare_wave(track_dir):
     # members are NOT locked/worktreed this wave — they stay pending and surface
     # in the envelope so the skill announces them (no-silent-caps); the next
     # dispatch-wave (after this one drains) picks them up automatically.
-    ready = eligible[:DEFAULT_WAVE_SIZE]
-    deferred = eligible[DEFAULT_WAVE_SIZE:]
+    cap = _wave_size()
+    ready = eligible[:cap]
+    deferred = eligible[cap:]
 
     # Create worktrees BEFORE mutating state: a failure here tears down the
     # partial wave_root and leaves track-state.json untouched (no half-locks).

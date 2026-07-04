@@ -370,7 +370,10 @@ def verify_phase_checkpoint(cwd: Path) -> Optional[str]:
 # under a track's .conductor/, which would race the orchestrator's commit and
 # violate single-writer (decision-serial-execution.md).
 BUDGET_YIELD_FILE = "budget-yield.json"
-DEFAULT_BUDGET_YIELD_N = 8
+# Conservative small-window default — a small-context model exhausts its budget
+# well before 8 cycles. Override via CONDUCTOR_BUDGET_YIELD_N for a larger
+# window (the original 8 suits a strong model on a long phase).
+DEFAULT_BUDGET_YIELD_N = 4
 
 
 def _detect_dispatch_finalize(tool_calls: list[dict]) -> bool:

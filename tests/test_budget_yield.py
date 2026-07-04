@@ -3,7 +3,7 @@ r"""Tests for the deterministic context-budget yield gate (#3).
 ``on-batch-complete.py`` counts per-session ``track-state dispatch-finalize``
 cycles (the per-cycle accounting seat named by decision-loop-heartbeat.md) into
 ``{data_dir}/budget-yield.json`` and, once the count crosses
-``CONDUCTOR_BUDGET_YIELD_N`` (default 8), injects a yield instruction telling
+``CONDUCTOR_BUDGET_YIELD_N`` (default 4), injects a yield instruction telling
 the orchestrator to finish the in-flight task to a terminal state and emit the
 §5 checkpoint string. This replaces the orchestrator's fuzzy "~6+ dispatches"
 self-assessment — a weak model cannot reliably budget itself, so the hook does
