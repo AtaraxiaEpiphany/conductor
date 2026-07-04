@@ -40,7 +40,7 @@ Read `action` and do **only** that:
 | `dispatch` | **Dispatch `conductor:<agent>`**, prompt the fenced ``prompt`` field **verbatim** (it is pre-assembled — do not edit or re-fill any field). Then → §2.0. |
 | `dispatch_batch` | **Fire `conductor:<member.agent>` for each entry in `wave`, in ONE message (parallel Agent calls)**, prompting each member's ``prompt`` field **verbatim** (pre-assembled — ac-tracer + test-runner). Collect both RESULT blocks, then switch to `/conductor:implement` §3.2 Step 2 (parse verdicts → dispatch `phase-checker`). Then resume this loop. |
 | `ask` | `AskUserQuestion(decision.question, decision.header, decision.options)`. Run `decision.commands[<chosen label>]` **verbatim** (one shell-safe line each). If `decision.next[<chosen label>] == "HALT"` → STOP. Else → §2.0. |
-| `done` | Track finalized → run the post-loop: `Read conductor/workflow/post-loop.md`, execute §5.0–§8.0 (or hand off to `/conductor:implement` §4.0). |
+| `done` | Track finalized → hand off to the post-loop spine: `/conductor:post-loop-step "<td>"` (one-line skill invocation; no prose template read). |
 | `error` | Announce the error → STOP. |
 
 ### Non-spine branches (B-min boundary — hand off to `/conductor:implement`)

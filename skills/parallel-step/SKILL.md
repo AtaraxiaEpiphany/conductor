@@ -40,7 +40,7 @@ Read `action` and do **only** that:
 |---|---|
 | `dispatch_batch` | **Dispatch `conductor:task-executor` for EVERY member of `wave` in ONE message** (concurrent Agent calls — that parallelism is the whole point). Each agent's prompt is that member's `prompt` field **verbatim** (pre-assembled — do not edit or re-fill any field). If `deferred` is non-empty, first announce `⚠️ Wave cap reached; deferring <P{p}.T{t} …>` for each (the cap is env-tunable via `CONDUCTOR_WAVE_SIZE`, default 2). Then → §2.0. |
 | `wave_integrate` | Run exactly: `track-state wave-finalize "<td>" --phase <phase> --task <task>`. Then → §2.0. |
-| `done` | Track finalized → run the post-loop: `Read conductor/workflow/post-loop.md`, execute §5.0–§8.0 (or hand off to `/conductor:parallel` §5.0). |
+| `done` | Track finalized → hand off to the post-loop spine: `/conductor:post-loop-step "<td>"` (one-line skill invocation; no prose template read). |
 | `error` | Announce the error → STOP. |
 
 A single-member `dispatch_batch` with `is_resume: true` is a **re-dispatch of one interrupted member** — fire that one agent (the prompt is already pinned to the existing worktree). Do not finalize it; the next `wave-step` does.
