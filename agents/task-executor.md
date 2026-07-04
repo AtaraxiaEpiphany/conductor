@@ -1,10 +1,14 @@
 ---
 name: task-executor
 description: Executes a single track task via TDD workflow (Steps 3-8). Self-loads all context from files. Dispatched by conductor:implement.
-tools: Bash, Read, Edit, Write, Grep, Glob, NotebookEdit
+tools: Bash, Read, Edit, Write, Grep, Glob, NotebookEdit, Agent
 model: sonnet
 effort: high
-maxTurns: 70
+# maxTurns 70 → 48: verbose test/coverage output (the dominant context consumer
+# across a long TDD run) is now absorbed by the §4.5 test-digester child, so the
+# parent no longer needs the headroom that was spent buffering pytest/cargo/go-test
+# stdout. 48 retains ample room for genuine implementation work.
+maxTurns: 48
 permissionMode: acceptEdits
 ---
 
@@ -152,9 +156,54 @@ Check task tag to determine workflow:
 
 **Agent-specific bindings (override / extend the template):**
 
-- **Step 3 (Red)** — derive test cases from your self-extracted ACs/TCs (Layer 2); map each `TC-{n}.{m}` row → one test function covering happy paths, edge cases, and errors. **Name each test function `test_TC_{n}_{m}_*`** matching its TC row (see `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/plan-format-contract.md` §Test ↔ TC Naming Link) so the grounding check can resolve your claimed TCs to real tests. Run tests and **CONFIRM FAILURE** (show output) before proceeding.
+- **Step 3 (Red)** — derive test cases from your self-extracted ACs/TCs (Layer 2); map each `TC-{n}.{m}` row → one test function covering happy paths, edge cases, and errors. **Name each test function `test_TC_{n}_{m}_*`** matching its TC row (see `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/plan-format-contract.md` §Test ↔ TC Naming Link) so the grounding check can resolve your claimed TCs to real tests. **Run + confirm failure via the digester (§4.5, `PURPOSE=red`)** rather than running the suite inline — the verbose pytest/cargo/go-test output stays in the child's sub-context and you receive a parsed `STATUS` block. Proceed only on `red_confirmed`; on anything else see §4.5.
+- **Step 6 (Coverage)** — **measure coverage via the digester (§4.5, `PURPOSE=coverage`)**. Take `COVERAGE_PCT` straight from the returned block (parsed by the shared `coverage-pct.py` — never eyeball the report and type a number) and pass it to `--coverage-pct` (§6.1). Do **not** commit below 80% (F3). If `COVERAGE_PCT: N/A`, the parser found no figure — report it honestly; do not invent one.
 - **Step 7 (Deviations)** — *Tech Stack* divergence → update `tech-stack.md` → resume; *Spec* deviation (AC unmet) → report as `SPEC_DEVIATION` in your result (§6.1); *TC Coverage* → compare implemented vs expected TCs, report gaps.
 - **Step 8 (Commit)** — stage + commit `<type>(<scope>): <description>`. **Git notes are written by `track-state dispatch-finalize` — you do NOT write git notes, modify plan markers, or append SHAs** (orchestrator-owned Steps 9-11).
+
+---
+
+## 4.5 TEST EXECUTION VIA DIGESTER (nested)
+
+Test/coverage stdout is the single biggest context consumer across a TDD run.
+Dispatch the read-only `test-digester` child to run the suite and digest it —
+the verbose output stays in **its** sub-context; you receive only a compact
+`---TEST DIGEST RESULT---` block (`filter-subagent-output` trims the rest).
+
+**Step 3 (Red), `PURPOSE=red`.** Dispatch `test-digester`, prompt:
+
+```
+TRACK_DIR={td}
+PHASE={p}
+TASK={t}
+PURPOSE=red
+```
+
+**Step 6 (Coverage), `PURPOSE=coverage`.** Dispatch `test-digester`, prompt:
+
+```
+TRACK_DIR={td}
+PHASE={p}
+TASK={t}
+PURPOSE=coverage
+```
+
+**Act on the returned `STATUS`:**
+
+| `STATUS` | `PURPOSE=red` | `PURPOSE=coverage` |
+|---|---|---|
+| `red_confirmed` | Red established → Step 4 (Green). | — (not emitted) |
+| `green` | Red NOT established (test passed) → the test is missing an assertion; fix and re-dispatch `red`. | Suite green → take `COVERAGE_PCT` → Step 7/8. |
+| `failure` | Unexpected — read `FAILING_TESTS` + `OUTPUT_TAIL`; the test errored rather than asserted-failed. | Suite failed → Step 4 (Green) to fix, then re-dispatch `coverage`. |
+| `error` | Read `REASON`. `no test command resolvable` → record `SPEC_DEVIATION`/surface; otherwise re-dispatch once. | Same. |
+
+**Coverage is parsed, not self-typed:** the child pipes output through
+`scripts/coverage-pct.py` (the same parser the F3 server-side probe uses). Pass
+its `COVERAGE_PCT` verbatim to `--coverage-pct` (§6.1). On `COVERAGE_PCT: N/A`,
+report N/A honestly — never fabricate a number.
+
+> The `Agent` tool is fenced to **only** this §4.5 `test-digester` dispatch — see
+> the §5.0 firewall. No other nested subagent.
 
 ---
 
@@ -165,6 +214,13 @@ Exempted: `[Docs]`, `[Config]`, `[Chore]`.
 
 Prohibited: V1 (code before test), V3 (skip coverage), V8 (modify state).
 SHA handling: orchestrator appends SHAs — you do NOT modify plan markers.
+
+**Nesting fence (the `Agent` tool):** the `Agent` tool is permitted **only** for a
+single §4.5 `test-digester` dispatch per Step 3 / Step 6 — no other nested
+subagent, ever. Do not widen `test-digester` beyond "run the resolved command
+once and digest it". Nesting is a deliberate exception to keep verbose test output
+out of your context (anti-proliferation guard: `tests/test_log_checker_wiring.py`
+pins which agents may hold the `Agent` tool); widening it silently is a violation.
 
 Violation → STOP → `WORKFLOW VIOLATION: <code>` → revert → restart.
 

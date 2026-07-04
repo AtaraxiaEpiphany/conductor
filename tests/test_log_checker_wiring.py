@@ -1,18 +1,28 @@
-"""Wiring tests for the Phase 3 nested-subagent pilot: doc-linter → log-checker.
+"""Wiring tests for nested-subagent pilots: doc-linter → log-checker (and the
+shared anti-proliferation allowlist that admits task-executor → test-digester).
 
-doc-linter is read-only (``Read, Grep, Glob`` — no ``Bash``), yet its §4.5 *Log
-Consistency* check must inspect git history to attribute ``DOC_UPDATE`` log
-entries to track-bearing commits. Rather than widen doc-linter's firewall with
-``Bash``, the git-needing step is delegated to a tightly-scoped child agent,
-``log-checker`` (``Bash, Read, Grep, Glob``). This is the conductor fleet's first
-nested subagent — the deliberate, sole exception to "subagents don't have the
-Agent tool" (pinned in test_doc_sync_split_wiring.py for corpus-writer /
-wiki-synthesizer, which stay Agent-free because their verify is skill-sequenced).
+A Conductor subagent is normally a leaf (no ``Agent`` tool) — bulk output is
+already kept out of the orchestrator's context by ``filter-subagent-output``.
+Nesting is a deliberate, fenced exception, each delegating a single step to a
+tightly-scoped child whose own context absorbs the noisy work:
 
-These tests lock the pilot's wiring so it can't silently regress AND so the
-exception can't silently proliferate: doc-linter must remain the ONLY agent with
-the ``Agent`` tool, and its body must constrain that tool to a single §4.5
-``log-checker`` dispatch.
+- **doc-linter → log-checker** — doc-linter is read-only (``Read, Grep, Glob`` —
+  no ``Bash``), yet its §4.5 *Log Consistency* check must inspect git history to
+  attribute ``DOC_UPDATE`` log entries to track-bearing commits. Rather than widen
+  doc-linter's firewall with ``Bash``, the git-needing step is delegated to
+  ``log-checker`` (``Bash, Read, Grep, Glob``).
+- **task-executor → test-digester** — pinned in ``test_test_digester_wiring.py``.
+  task-executor runs long TDD cycles; the dominant context consumer is verbose
+  test/coverage stdout. Step 3 (Red) and Step 6 (Coverage) delegate run-and-digest
+  to ``test-digester`` (haiku), which returns a parsed block and keeps the noisy
+  output in its own sub-context.
+
+Both exceptions are gated by ``EXPECTED_AGENT_TOOL_AGENTS`` below — the
+anti-proliferation allowlist — so a third Agent-having agent is a design decision
+forced into the open rather than silent spread. corpus-writer / wiki-synthesizer
+stay Agent-free (their verify is skill-sequenced — pinned in
+test_doc_sync_split_wiring.py). Each parent body must constrain the ``Agent``
+tool to its one documented child dispatch.
 """
 import json
 import re
@@ -25,6 +35,16 @@ DOC_LINTER = (AGENTS / "doc-linter.md").read_text(encoding="utf-8")
 LOG_CHECKER = (AGENTS / "log-checker.md").read_text(encoding="utf-8")
 HOOKS = (ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8")
 ON_START = (ROOT / "scripts" / "on-subagent-start.py").read_text(encoding="utf-8")
+
+# Anti-proliferation allowlist: the only agents that may hold the ``Agent`` tool
+# (i.e. dispatch a nested child). Each entry is a fenced, single-purpose exception
+# to "subagents are leaves" — adding a third is a design decision that should edit
+# this set explicitly (with a nesting rationale: capability gap or bulk-output
+# isolation, a haiku-tier child, depth ≤ 2, and a firewall fence pinning the
+# Agent tool to one dispatch) rather than spread silently. A peer wiring test must
+# pin each entry's child dispatch + firewall fence (see test_doc_linter_wiring +
+# test_test_digester_wiring).
+EXPECTED_AGENT_TOOL_AGENTS = {"doc-linter.md", "task-executor.md"}
 
 
 def _frontmatter_tools(agent_text: str) -> str:
@@ -95,18 +115,20 @@ class DocLinterNestingTests(unittest.TestCase):
         self.assertNotIn("Bash", tools,
                          "doc-linter must stay non-Bash; the git step is delegated")
 
-    def test_doc_linter_is_the_only_agent_with_agent_tool(self):
-        # Anti-proliferation guard: doc-linter is the deliberate, sole exception
-        # to "subagents don't nest." If a second agent grows the Agent tool, that
-        # is a design decision this test forces into the open rather than letting
-        # nesting spread silently across the fleet.
-        nested = []
+    def test_only_allowlisted_agents_have_agent_tool(self):
+        # Anti-proliferation guard: the Agent tool (nesting capability) is an
+        # opt-in allowlist, not a default. A new Agent-having agent is a design
+        # decision this test forces into the open — add the file to
+        # EXPECTED_AGENT_TOOL_AGENTS (module-level, with a nesting rationale)
+        # rather than letting nesting spread silently across the fleet.
+        nested = set()
         for path in sorted(AGENTS.glob("*.md")):
             if "Agent" in _frontmatter_tools(path.read_text(encoding="utf-8")):
-                nested.append(path.name)
+                nested.add(path.name)
         self.assertEqual(
-            ["doc-linter.md"], nested,
-            f"unexpected agents with the Agent tool (doc-linter should be sole): {nested}",
+            EXPECTED_AGENT_TOOL_AGENTS, nested,
+            f"unexpected agents with the Agent tool "
+            f"(allowlist = {sorted(EXPECTED_AGENT_TOOL_AGENTS)}): {sorted(nested)}",
         )
 
     def test_section_4_5_heading_preserved(self):

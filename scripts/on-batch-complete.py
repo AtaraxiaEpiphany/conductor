@@ -27,6 +27,11 @@ from lib.json_utils import load_json_safe
 from lib.path_utils import find_tracks_registry, extract_track_dirs
 from lib.env import get_data_dir
 from lib.atomic_io import atomic_write_json
+# detect_project_type + the pure coverage parser live in lib.coverage so the
+# test-digester agent (via scripts/coverage-pct.py) shares the exact same
+# per-language parsing the F3 probe uses here. get_coverage_percent below stays
+# in this module (it owns the subprocess run); only the parser is shared.
+from lib.coverage import detect_project_type, parse_coverage_percent
 
 
 # Coverage detection patterns for common tools
@@ -46,24 +51,6 @@ COVERAGE_COMMANDS = {
     "node": ["npm", "test", "--", "--coverage"],
     "go": ["go", "test", "-coverprofile=/dev/stdout", "-cover"],
 }
-
-
-def detect_project_type(cwd: Path) -> Optional[str]:
-    """Detect project type based on files present.
-
-    Args:
-        cwd: Current working directory
-
-    Returns:
-        Project type string or None
-    """
-    if (cwd / "pyproject.toml").exists() or (cwd / "setup.py").exists():
-        return "python"
-    if (cwd / "package.json").exists():
-        return "node"
-    if (cwd / "go.mod").exists():
-        return "go"
-    return None
 
 
 def get_coverage_percent(cwd: Path) -> Optional[float]:
@@ -97,43 +84,16 @@ def get_coverage_percent(cwd: Path) -> Optional[float]:
             return None
 
         output = result.stdout + result.stderr
-
-        # Parse coverage percentage based on tool type
-        if project_type == "python":
-            # Coverage.py output: "TOTAL                             100      100    100.00%"
-            for line in output.split('\n'):
-                if line.strip().startswith("TOTAL"):
-                    parts = line.split()
-                    if len(parts) >= 4:
-                        try:
-                            return float(parts[-1].rstrip('%'))
-                        except (ValueError, IndexError):
-                            continue
-        elif project_type == "node":
-            # Jest output: "All files | 85.5 | ..."
-            for line in output.split('\n'):
-                if "All files" in line or "% Statements" in line:
-                    match = re.search(r'(\d+\.?\d*)\s*%?', line)
-                    if match:
-                        try:
-                            return float(match.group(1))
-                        except ValueError:
-                            pass
-        elif project_type == "go":
-            # go test -cover output: "coverage: 87.5% of statements"
-            match = re.search(r'coverage:\s*(\d+\.?\d*)%', output)
-            if match:
-                try:
-                    return float(match.group(1))
-                except ValueError:
-                    pass
+        # Per-language parsing is shared with the test-digester agent via
+        # lib.coverage — one parser, used by both the F3 probe and the
+        # implementation-loop digester, so coverage % stays deterministic and
+        # can't drift between the two call sites.
+        return parse_coverage_percent(output, project_type)
 
     except (subprocess.TimeoutExpired, FileNotFoundError, PermissionError, OSError):
         return None
     except Exception:
         return None
-
-    return None
 
 
 def analyze_tool_calls(tool_calls: list[dict]) -> dict:

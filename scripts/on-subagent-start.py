@@ -78,6 +78,7 @@ AGENT_REMINDERS = {
     "wiki-researcher": "[Conductor] Result format: ---WIKI RESEARCH RESULT--- ... ---END RESULT---",
     "refuter": "[Conductor] Result format: ---REFUTATION RESULT--- ... ---END RESULT---",
     "log-checker": "[Conductor] Result format: ---LOG CHECK RESULT--- ... ---END RESULT---",
+    "test-digester": "[Conductor] Result format: ---TEST DIGEST RESULT--- ... ---END RESULT---",
 }
 
 
