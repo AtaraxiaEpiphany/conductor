@@ -96,6 +96,22 @@ Read `{TRACK_DIR}/plan.md`. Find your task at `## Phase {PHASE}`, locate task `{
 Extract from task line:
 - Task description and annotations (`<!-- AC-n, TC-n.n -->`)
 - AC/TC references (record IDs for Layer 2)
+- Task tag (`[Docs]`/`[Config]`/`[Chore]`/…) — drives the Layer 1.5 fast path
+
+### Layer 1.5: Task-Type Fast Path (TDD-exempt tags)
+
+If the Layer-1 task tag is `[Docs]`, `[Config]`, or `[Chore]` → these are
+**TDD-exempt** (§4.0 → Step 8 only; §5.0 exempts F2/F3), so the TDD-machinery
+loads below are dead weight on a small context budget:
+
+- **Skip Layer 2** — these tags carry no AC/TC test annotations, so spec.md
+  AC extraction / test derivation does not apply. (If the task description or
+  Layer 0 notes name an out-of-scope boundary, honor it directly — you do not
+  need the spec.md `Out of Scope` section to do a docs/config/chore task.)
+- **In Layer 3, skip `testing/strategy.md` and the styleguide read** — read
+  only `task-workflow.md` Step 8 for the commit-message format.
+
+Then go **straight to §4.0 Step 8**. For any other tag → continue to Layer 2.
 
 ### Layer 2: Acceptance Criteria (READ BEFORE Step 3)
 
@@ -303,9 +319,18 @@ Only write to handoff when execution is interrupted or fails — NOT on every st
 | Condition | Action |
 |-----------|--------|
 | Step fails and you cannot recover | Write interruption log + report FAILURE |
-| Turn budget approaching (~80% of maxTurns) with no commit | Write interruption log + report FAILURE |
+| **~38 tool-call rounds spent with no commit** (the hard tripwire) | Write interruption log + report FAILURE **now** |
 | `on-subagent-stop` recovery fails | Write interruption log + report FAILURE |
 | Normal completion (commit succeeded) | Do NOT write — `process-result` handles handoff |
+
+**The 38-round tripwire is a hard number, not a percentage.** A small-window
+model cannot reliably self-assess "~80% of maxTurns", so count tool-call rounds
+instead: once you cross **~38 rounds** (≈80% of the 48-turn budget) without
+committing, **stop doing implementation work immediately** and spend your
+remaining ~10 rounds on the two mandatory shutdown artifacts below. Tripping
+*early* is correct — it hands a rich `### Attempt` record to a fresh retry
+subagent (Layer 3.R) *before* the window overflows; tripping late loses the
+retry to a context-overflow crash with no handoff.
 
 ### How to write
 
