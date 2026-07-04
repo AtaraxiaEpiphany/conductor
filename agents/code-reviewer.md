@@ -97,7 +97,7 @@ Read these files, **gated by `LENS` (§2.6) when set** — a lensed pass loads o
 
 5. **Product Guidelines** — `{PRODUCT_GUIDELINES}`
 6. **Tech Stack** — `{TECH_STACK}`
-7. **Code Style Guides** — Read all `.md` files in `{STYLEGUIDES_DIR}`
+7. **Code Style Guides** — **Deferred load (see §3.4 item 3).** Do NOT read `{STYLEGUIDES_DIR}` here. Style guides are dead weight unless §3.4 item 3 (Style Compliance) actually runs against a code-bearing diff — so the load is gated to that point: skipped entirely under any lensed pass (§2.6 — no lens maps Style Compliance) and for docs/config/chore-only diffs.
 
 ### 3.2 Load Diff & Determine Scope
 
@@ -124,6 +124,7 @@ Execute each verification:
    - Mapping: `pending=[ ]`, `in_progress=[~]`, `completed=[x]`, `failed=[!]`, `skipped=[>]`, `deferred=[d]`, `blocked=[#]`, `cancelled=[-]`
 
 3. **Style Compliance**
+   - **Lazy styleguide load:** if you deferred `{STYLEGUIDES_DIR}` in §3.1 item 7 (a lensed pass, or the §3.2 diff had not been loaded yet), read it **now** — but only if the diff contains code files. **Skip this item entirely for docs/config/chore-only diffs** — there is no code to style-check, and loading the styleguides would be pure context cost.
    - Does the code follow the project's code style guides?
    - Does the code follow product guidelines?
    - Naming conventions, file organization, import patterns.
