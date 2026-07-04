@@ -40,12 +40,29 @@ Read `action` and do **only** that:
 |---|---|
 | `deferred_ask` | `AskUserQuestion(decision.question, decision.header, decision.options)`. Run `decision.commands[<chosen label>]` **verbatim** (one shell-safe line each). Then → §2.0. |
 | `finalize` | The finalize already ran in code. Run the envelope's `post` lines **verbatim** (sync-plan + registry-update + commit). Then → §2.0. |
-| `dispatch` | **Dispatch `conductor:<agent>`**, prompt the fenced ``prompt`` field **verbatim** (pre-assembled — do not edit). After it returns: **if the envelope carries `post` AND the agent's RESULT-block STATUS ≠ FAILURE → run `post` verbatim** (the reviewed-range stamp, etc.), else skip `post`. Then → §2.0. |
-| `digest` | Announce the `digest` block to the user. Then → §2.0. |
+| `dispatch` | **Dispatch `conductor:<agent>`**, prompt the fenced ``prompt`` field **verbatim** (pre-assembled — do not edit). Then run `post` per the **`post` rule** below. Then → §2.0. |
+| `dispatch_advisory` | Same as `dispatch` (wiki-differ is advisory — surface its `STALE`/`MOVED`/`UNCOVERED` counts and recommend `/conductor:wiki-doctor diff` if non-zero). Then run `post` per the rule. Then → §2.0. |
+| `digest` | Announce the `digest` block to the user (what shipped / outcome / read-this-first), then run `post` per the rule. Then → §2.0. |
 | `archive_ask` | `AskUserQuestion(decision.question, decision.header, decision.options)`. Run `decision.commands[<chosen label>]` **verbatim**. If `decision.next[<chosen label>] == "HALT"` → STOP. Else → §2.0. |
 | `halt` | Announce the `incomplete` list (finalize refused false completion) → STOP. |
 | `done` | Post-loop complete → STOP. |
 | `error` | Announce the error → STOP. |
+
+### The `post` rule (gate-advance bookkeeping)
+
+Most leaves carry a `post` field — deterministic bash lines that MERGE the gate's
+sidecar marker so the next `post-loop-step` call advances past it. Run `post`
+**verbatim** (one shell-safe line each) UNLESS:
+
+- the leaf was a `dispatch`/`dispatch_advisory` whose agent returned a RESULT-block
+  with `STATUS: FAILURE`, **AND**
+- the envelope's `post_on` is **not** `"always"`.
+
+So: the §7.0 code-reviewer leaf (`post_on` omitted → `"non_failure"`) skips `post`
+on a failed review (no real review ran → don't stamp the range). The §6.0 advisory,
+§6.5 lint, and §7.5 digest leaves set `post_on: "always"` — they advance on any
+return (advisory/lint are non-blocking; digest has no agent). When in doubt, run
+`post`.
 
 ## 3.0 CONTEXT-BUDGET YIELD
 
@@ -58,14 +75,13 @@ If context runs low: finish the in-flight `dispatch` to a terminal state first
 **NEVER stop between a `dispatch` agent returning and running its `post`** — for
 the code-reviewer leaf that loses the reviewed-range stamp and forces an
 expensive re-review. Re-entry is automatic: the sidecar's `reviewed_range`
-equality and the `deferred_resolved` / doc-sync-commit gates make `post-loop-step`
-pick up exactly where it stopped.
+equality and the `deferred_resolved` / doc-sync-commit / advisory / lint / digest
+gates make `post-loop-step` pick up exactly where it stopped.
 
 ---
 
 **Spike status:** the spine (`deferred_ask` / `finalize` / `dispatch` /
-`archive_ask` / `done` / `halt` / `error`) is fully code-driven and tested. The
-§6.0 advisory wiki-differ, §6.5 lint, and §7.5 digest leaves are reserved in the
-sidecar schema for a follow-up; until then the spine covers finalize → doc-sync
-(Phase 1+2) → review+stamp → archive. See `conductor/design/rail-b-step.md` for
-the action contract.
+`dispatch_advisory` / `digest` / `archive_ask` / `done` / `halt` / `error`) is
+fully code-driven and tested, covering finalize → doc-sync (Phase 1+2) → advisory
+→ lint → review+stamp → digest → archive. See `conductor/design/rail-b-step.md`
+for the action contract.

@@ -8,7 +8,7 @@ from .core import load
 from .helpers import (
     emit, now_iso, extract_tags, _inherit_tags,
     conductor_dir, _store_evidence, _last_subtask_sha, _any_phase_needs_checkpoint,
-    flag, _normalize_sha, target, _extract_tags_for_task,
+    flag, _normalize_sha, target, _extract_tags_for_task, _resolve_conductor_root,
 )
 from .constants import AUTO_COMPLETE_OK, MAX_RETRIES
 from .mutations import _do_lock, _do_complete, _do_fail, _do_fail_parent, _do_defer
@@ -1269,12 +1269,18 @@ def _post_loop_read_sidecar(track_dir):
 
     Returns a dict with defaults so callers can branch without existence checks.
     Schema 1 carried only ``reviewed_range``; schema 2 adds ``deferred_resolved``
-    (§5.0 gate), ``advisory_diff_shown`` / ``lint_status`` / ``digest_shown``
-    (reserved — §6.0 advisory / §6.5 / §7.5 gates, wired in a follow-up).
+    (§5.0 gate), ``advisory_diff_shown`` / ``lint_done`` / ``digest_shown``
+    (§6.0 advisory / §6.5 / §7.5 gates — fired-markers: truthy ⇒ the gate ran,
+    so the spine advances). ``lint_status`` is reserved for a future richer
+    model-written value; the gate keys on ``lint_done`` so the deterministic
+    ``post`` (which can't read the agent's RESULT STATUS) only needs to stamp a
+    boolean. All stamps MERGE (see ``_post_loop_stamp_line``) so a later gate
+    never clobbers an earlier gate's marker — the lossless-resume invariant.
     """
     path = conductor_dir(track_dir) / _POST_LOOP_SIDECAR
     defaults = dict(reviewed_range=None, deferred_resolved=False,
-                    advisory_diff_shown=None, lint_status=None, digest_shown=None)
+                    advisory_diff_shown=None, lint_status=None, lint_done=False,
+                    digest_shown=None)
     if not path.exists():
         return defaults
     try:
@@ -1285,6 +1291,115 @@ def _post_loop_read_sidecar(track_dir):
     except (ValueError, OSError):
         pass
     return defaults
+
+
+def _post_loop_stamp_line(track_dir, updates):
+    """Build a ``python3 -c`` one-liner that MERGES ``updates`` into the sidecar.
+
+    Each post-loop gate that advances on a sidecar marker stamps its own field
+    AFTER the gate passes. A heredoc OVERWRITE would clobber the prior gate's
+    marker (e.g. an advisory stamp erasing ``reviewed_range`` → a re-review on
+    the next resume); merging preserves every marker. ``updates`` is a dict of
+    code-controlled bool/int/str values (no free text), rendered as a Python
+    dict literal. The sidecar path rides in ``sys.argv[1]`` so no path text is
+    embedded in the code (shlex-safe regardless of the track dir).
+    """
+    parts = []
+    for k, v in updates.items():
+        if isinstance(v, bool):
+            parts.append(f"{json.dumps(k)}:{v}")  # Python True/False (not JSON true)
+        elif isinstance(v, (int, float)):
+            parts.append(f"{json.dumps(k)}:{v}")
+        else:
+            parts.append(f"{json.dumps(k)}:{json.dumps(v)}")  # quoted str literal
+    updates_lit = "{" + ",".join(parts) + "}"
+    sidecar = shlex.quote(str(Path(track_dir) / ".conductor" / _POST_LOOP_SIDECAR))
+    code = (
+        "import json,sys,pathlib;"
+        "p=pathlib.Path(sys.argv[1]);"
+        "d=json.loads(p.read_text()) if p.exists() else {};"
+        f"d.update({updates_lit});"
+        "p.write_text(json.dumps(d))"
+    )
+    return f"python3 -c {shlex.quote(code)} {sidecar}"
+
+
+def _post_loop_project_root(track_dir):
+    """Best-effort project root for wiki-differ / doc-linter ``PROJECT_DIR``.
+
+    The conductor root (dir holding ``tracks.md``) is ``<project>/conductor``;
+    its parent is the project root. Falls back to the track dir resolved when no
+    ``tracks.md`` ancestor is found — the agents re-resolve from there anyway.
+    """
+    cond = _resolve_conductor_root(track_dir)
+    if cond is not None:
+        return str(cond.parent)
+    return str(Path(track_dir).resolve())
+
+
+def _post_loop_counts(state):
+    """Terminal-status counts across flat tasks + subtasks (done/skipped/deferred)."""
+    done = skipped = deferred = 0
+    for phase in state.get("phases", []):
+        for task in phase.get("tasks", []):
+            st = task.get("status")
+            if st == "completed":
+                done += 1
+            elif st == "skipped":
+                skipped += 1
+            elif st == "deferred":
+                deferred += 1
+            for sub in task.get("subtasks", []):
+                sst = sub.get("status")
+                if sst == "completed":
+                    done += 1
+                elif sst == "skipped":
+                    skipped += 1
+                elif sst == "deferred":
+                    deferred += 1
+    return done, skipped, deferred
+
+
+def _post_loop_read_findings(track_dir):
+    """Best-effort read of ``review-result.json`` findings (defensive)."""
+    path = conductor_dir(track_dir) / "review-result.json"
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text())
+    except (ValueError, OSError):
+        return []
+    findings = data.get("findings") if isinstance(data, dict) else None
+    return [f for f in (findings or []) if isinstance(f, dict)]
+
+
+def _compose_digest(track_dir, state, desc, shas, range_str):
+    """§7.5 comprehension digest — composed from data already in context (no dispatch).
+
+    Mirrors templates/post-loop.md §7.5: what shipped / outcome / shape / the
+    1–3 highest-risk diffs to read first. Informational, non-blocking.
+    """
+    done, skipped, deferred = _post_loop_counts(state)
+    lines = [
+        f"What shipped: {desc}",
+        f"Outcome: {done} done · {skipped} skipped · {deferred} deferred",
+    ]
+    if shas and range_str:
+        lines.append(f"Shape: {len(shas)} commit(s) over {range_str}")
+    findings = _post_loop_read_findings(track_dir)
+    if findings:
+        sev_order = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
+        top = sorted(findings,
+                     key=lambda f: sev_order.get(f.get("severity", "Low"), 4))[:3]
+        lines.append(f"Review: {len(findings)} finding(s). 🔍 Read this first:")
+        for f in top:
+            sev = f.get("severity", "?")
+            title = f.get("title", "?")
+            file = f.get("file", "?")
+            lines.append(f"  - [{sev}] {title} ({file})")
+    else:
+        lines.append("Review: none flagged")
+    return "\n".join(lines)
 
 
 def _post_loop_deferred_list(state):
@@ -1325,11 +1440,10 @@ def _post_loop_deferred_decision(track_dir, deferred):
     sync_cmd = f'track-state sync-plan "{td}"'
     commit_cmd = "git commit -m " + shlex.quote(
         f"chore(conductor): Resolve deferred tasks [{loc}]")
-    # Keep-deferred: stamp the sidecar so the gate advances without mutating state.
-    keep_cmd = (
-        f'tee "{td}/.conductor/{_POST_LOOP_SIDECAR}" > /dev/null << \'EOF\'\n'
-        '{"schema":2,"deferred_resolved":true}\nEOF')
-    keep_commit = "git commit -m " + shlex.quote(
+    # Keep-deferred: stamp the sidecar (MERGE — preserves prior markers) so the
+    # gate advances without mutating state.
+    keep_cmd = _post_loop_stamp_line(td, {"schema": 2, "deferred_resolved": True})
+    keep_commit = "git commit -am " + shlex.quote(
         f"chore(conductor): Keep deferred tasks (user-verified) [{loc}]")
     return dict(
         question=(f"{len(deferred)} deferred task(s) pending (first: "
@@ -1364,16 +1478,65 @@ def _post_loop_finalize_post(track_dir):
 def _post_loop_review_post(track_dir, range_str):
     """§7.0 ``post`` lines — stamp the reviewed-range sidecar after code-reviewer.
 
-    A pure heredoc overwrite (idempotent); the range equality is the
-    lossless-resume discriminator, so a changed SHA range forces a re-review.
+    MERGES into the sidecar (preserves advisory/lint/digest markers stamped
+    later); the range equality is the lossless-resume discriminator, so a
+    changed SHA range forces a re-review. ``post_on`` defaults to non_failure —
+    the stamp must NOT fire on a failed review (no real review ran).
     """
     td = str(track_dir)
-    payload = json.dumps({"schema": 2, "reviewed_range": range_str})
     return [
-        f'tee "{td}/.conductor/{_POST_LOOP_SIDECAR}" > /dev/null << \'EOF\'\n'
-        f'{payload}\nEOF',
-        "git commit -m " + shlex.quote(
+        _post_loop_stamp_line(td, {"schema": 2, "reviewed_range": range_str}),
+        "git commit -am " + shlex.quote(
             f"chore(conductor): Stamp post-loop reviewed range [{range_str}]"),
+    ]
+
+
+def _post_loop_advisory_prompt(track_dir):
+    """§6.0 advisory wiki-differ prompt — post-commit overview drift check."""
+    return (f"PROJECT_DIR={_post_loop_project_root(track_dir)}\n"
+            f"SCOPE=overview regen drift check\n")
+
+
+def _post_loop_advisory_post(track_dir):
+    """§6.0 advisory ``post`` — stamp ``advisory_diff_shown`` (non-blocking gate).
+
+    ``post_on="always"``: advisory is non-blocking, so the spine advances on any
+    return (including agent FAILURE → "announce and continue" per template §6.0).
+    """
+    td = str(track_dir)
+    return [
+        _post_loop_stamp_line(td, {"schema": 2, "advisory_diff_shown": True}),
+        "git commit -am " + shlex.quote(
+            "chore(conductor): Post-loop advisory diff checked"),
+    ]
+
+
+def _post_loop_lint_prompt(track_dir):
+    """§6.5 doc-linter prompt — wiki health check on the synced docs."""
+    return f"PROJECT_DIR={_post_loop_project_root(track_dir)}\n"
+
+
+def _post_loop_lint_post(track_dir):
+    """§6.5 lint ``post`` — stamp ``lint_done`` (non-blocking gate).
+
+    ``post_on="always"``: lint is non-blocking; the actual PASS/WARN/FAIL is
+    surfaced by the teleoperator from the ``---DOC LINT RESULT---`` block (the
+    deterministic ``post`` can't read the agent's STATUS). The sidecar only
+    records "the gate fired" so the spine advances.
+    """
+    td = str(track_dir)
+    return [
+        _post_loop_stamp_line(td, {"schema": 2, "lint_done": True}),
+        "git commit -am " + shlex.quote("chore(conductor): Post-loop wiki lint run"),
+    ]
+
+
+def _post_loop_digest_post(track_dir):
+    """§7.5 digest ``post`` — stamp ``digest_shown`` after announcing (no dispatch)."""
+    td = str(track_dir)
+    return [
+        _post_loop_stamp_line(td, {"schema": 2, "digest_shown": True}),
+        "git commit -am " + shlex.quote("chore(conductor): Post-loop digest shown"),
     ]
 
 
@@ -1435,8 +1598,11 @@ def cmd_post_loop_step(track_dir, compact=True):
       - ``halt``           : finalize refused (incomplete) — surface + stop. [terminal]
       - ``error``          : unhealthy — HALT.
 
-    The §5.0/§5.5/§6.0/§7.0 gates are wired here; §6.0 advisory / §6.5 lint /
-    §7.5 digest follow in a subsequent commit (the sidecar schema reserves them).
+    Every dispatch/digest leaf that completes a gate carries a ``post`` (the
+    deterministic bash that MERGES the gate's sidecar marker) and a ``post_on``
+    rule: ``"non_failure"`` (default — the §7.0 review stamp must NOT fire on a
+    failed review) or ``"always"`` (advisory / lint / digest — non-blocking gates
+    that advance on any return, including agent FAILURE).
     """
     state, _fixes, verrors = ensure_healthy(track_dir)
     if state is None:
@@ -1497,11 +1663,30 @@ def cmd_post_loop_step(track_dir, compact=True):
              "post-loop-step", compact)
         return
 
+    # §6.0 advisory — wiki-differ post-commit drift check (non-blocking). Advances
+    # on any return (post_on="always") — advisory FAILURE → "announce and continue".
+    if not sidecar.get("advisory_diff_shown"):
+        emit(dict(action="dispatch_advisory", agent="wiki-differ", track_dir=td,
+                  prompt=_post_loop_advisory_prompt(td),
+                  post=_post_loop_advisory_post(td), post_on="always"),
+             "post-loop-step", compact)
+        return
+
+    # §6.5 — wiki lint (non-blocking). Advances on any return; the actual
+    # PASS/WARN/FAIL is surfaced from the agent's RESULT block, not the sidecar.
+    if not sidecar.get("lint_done"):
+        emit(dict(action="dispatch", agent="doc-linter", track_dir=td,
+                  prompt=_post_loop_lint_prompt(td),
+                  post=_post_loop_lint_post(td), post_on="always"),
+             "post-loop-step", compact)
+        return
+
     # §7.0 — code review over the implementation SHA range. Skipped iff no SHAs.
+    # range_str is hoisted so §7.5's digest (and §7.6 apply_fixes) can reuse it
+    # without re-deriving the SHA range.
     shas = _get_all_shas(state)
+    range_str = f"{shas[0]}~1..{shas[-1]}" if shas else None
     if shas:
-        first, last = shas[0], shas[-1]
-        range_str = f"{first}~1..{last}"
         review_done = bool(sidecar.get("reviewed_range")
                            and sidecar["reviewed_range"] == range_str)
         if not review_done:
@@ -1512,6 +1697,15 @@ def cmd_post_loop_step(track_dir, compact=True):
                       post=_post_loop_review_post(td, range_str)),
                  "post-loop-step", compact)
             return
+
+    # §7.5 — comprehension digest (no dispatch; announce + stamp). Composed from
+    # data already in context (SHAs + finalize + review-result.json findings).
+    if not sidecar.get("digest_shown"):
+        emit(dict(action="digest", track_dir=td,
+                  digest=_compose_digest(td, state, desc, shas, range_str),
+                  post=_post_loop_digest_post(td), post_on="always"),
+             "post-loop-step", compact)
+        return
 
     # §8.0 — archive gate. A failed/blocked track proceeds faithfully (the human
     # picks "Keep active"); cmd_finalize returned ok:true for terminal failed/blocked.

@@ -320,6 +320,27 @@ class TestPostLoopStepCompact(TestCase):
         self.assertNotIn("finalized", result)
         self.assertNotIn("doc_synced", result)
 
+    def test_advisory_leaf_post_on_survives_compact(self):
+        # The §6.0 advisory leaf carries post_on="always" — the teleoperator's
+        # `post` rule reads it, so it must survive compaction (be in the allowlist).
+        # Drive past Phase 1+2 doc-sync (both commits) to land on the advisory gate.
+        import os
+        env = {**os.environ,
+               "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+               "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+        d = self._finalized_dir()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        tid = os.path.basename(d)
+        for msg in (f"docs(conductor): Synchronize docs for track [{tid}]",
+                    f"docs(conductor): Wiki sync for track [{tid}]"):
+            subprocess.run(["git", "-C", d, "commit", "-q", "--allow-empty",
+                            "-m", msg], check=True, capture_output=True, env=env)
+        result = _out_captured(cmd_post_loop_step, d)
+        self.assertEqual(result["action"], "dispatch_advisory")
+        self.assertEqual(result["agent"], "wiki-differ")
+        self.assertEqual(result["post_on"], "always")
+        self.assertIn("post", result)
+
 
 
 class TestCliFullFlag(TestCase):

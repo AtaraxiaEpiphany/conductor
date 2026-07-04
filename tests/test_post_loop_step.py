@@ -23,7 +23,9 @@ from pathlib import Path
 from unittest import TestCase, main
 
 from scripts.track_state.core import save, load
-from scripts.track_state.dispatch import cmd_post_loop_step
+from scripts.track_state.dispatch import (
+    cmd_post_loop_step, _post_loop_stamp_line, _post_loop_advisory_post,
+)
 
 _GIT_ENV = {
     **os.environ,
@@ -102,6 +104,17 @@ def _sidecar(td, body):
     (cond / "post-loop.json").write_text(json.dumps(body))
 
 
+def _sidecar_post_sync(td, **extra):
+    """Sidecar with the §6.0 advisory / §6.5 lint / §7.5 digest gates stamped
+    (truthy ⇒ fired) so a test lands PAST them — at §7.0 review or §8.0 archive.
+    Caller passes ``reviewed_range=`` / ``digest_shown=False`` etc. to open a
+    specific later gate."""
+    body = {"schema": 2, "advisory_diff_shown": True, "lint_done": True,
+            "digest_shown": True}
+    body.update(extra)
+    _sidecar(td, body)
+
+
 class FinalizeGateTests(TestCase):
     def setUp(self):
         self.d = _git_track_dir(_make_state(status="in_progress", quality_score=None,
@@ -162,8 +175,11 @@ class DocSyncGateTests(TestCase):
     def test_both_phases_done_skips_doc_sync(self):
         _docs_commit(self.d)
         _wiki_commit(self.d)
+        # Stamp advisory+lint so the spine lands at §7.0 review (digest stays
+        # stamped too — it is past §7.0, irrelevant to reaching the review gate).
+        _sidecar_post_sync(self.d)
         out = _pls(self.d)
-        # Past doc-sync → review gate (shas present, not reviewed) → code-reviewer.
+        # Past doc-sync → advisory → lint → review gate (shas present, not reviewed).
         self.assertEqual(out["action"], "dispatch")
         self.assertEqual(out["agent"], "code-reviewer")
 
@@ -173,6 +189,9 @@ class ReviewGateTests(TestCase):
         self.d = _git_track_dir(_make_state())
         _docs_commit(self.d)
         _wiki_commit(self.d)
+        # Stamp advisory+lint so the spine lands at §7.0 review (digest stays
+        # stamped — it is past §7.0, irrelevant here).
+        _sidecar_post_sync(self.d)
         self.addCleanup(shutil.rmtree, self.d, ignore_errors=True)
 
     def test_shas_not_reviewed_dispatches_code_reviewer_with_post(self):
@@ -182,19 +201,20 @@ class ReviewGateTests(TestCase):
         self.assertEqual(out["range"], "aaa0001~1..aaa0002")
         self.assertEqual(out["shas_count"], 2)
         self.assertIn("REVISION_RANGE=aaa0001~1..aaa0002", out["prompt"])
-        # The stamp `post` writes the reviewed-range sidecar.
+        # The stamp `post` MERGES the reviewed-range into the sidecar.
         self.assertIn("post", out)
-        self.assertTrue(any("post-loop.json" in c for c in out["post"]))
         self.assertTrue(any("reviewed_range" in c for c in out["post"]))
+        # post_on defaults to non_failure (omitted) — a failed review must not stamp.
+        self.assertNotIn("post_on", out)
 
     def test_review_done_skips_to_archive(self):
-        _sidecar(self.d, {"schema": 2, "reviewed_range": "aaa0001~1..aaa0002"})
+        _sidecar_post_sync(self.d, reviewed_range="aaa0001~1..aaa0002")
         out = _pls(self.d)
         self.assertEqual(out["action"], "archive_ask")
 
     def test_changed_range_forces_re_review(self):
         # A stale reviewed_range (range shifted) → re-review, not skip.
-        _sidecar(self.d, {"schema": 2, "reviewed_range": "aaa0001~1..aaa0000"})
+        _sidecar_post_sync(self.d, reviewed_range="aaa0001~1..aaa0000")
         out = _pls(self.d)
         self.assertEqual(out["action"], "dispatch")
         self.assertEqual(out["agent"], "code-reviewer")
@@ -209,6 +229,8 @@ class NoShasSkipsReviewTests(TestCase):
         d = _git_track_dir(state)
         _docs_commit(d)
         _wiki_commit(d)
+        # Stamp advisory+lint+digest so the no-shas path reaches §8.0 archive.
+        _sidecar_post_sync(d)
         self.addCleanup(shutil.rmtree, d, ignore_errors=True)
         out = _pls(d)
         self.assertEqual(out["action"], "archive_ask")
@@ -219,7 +241,8 @@ class ArchiveAndDoneTests(TestCase):
         d = _git_track_dir(_make_state())
         _docs_commit(d)
         _wiki_commit(d)
-        _sidecar(d, {"schema": 2, "reviewed_range": "aaa0001~1..aaa0002"})
+        # Every gate satisfied: advisory + lint + digest + review stamped.
+        _sidecar_post_sync(d, reviewed_range="aaa0001~1..aaa0002")
         self.addCleanup(shutil.rmtree, d, ignore_errors=True)
         out = _pls(d)
         self.assertEqual(out["action"], "archive_ask")
@@ -272,6 +295,156 @@ class ErrorGateTests(TestCase):
         self.addCleanup(shutil.rmtree, d, ignore_errors=True)
         out = _pls(d)
         self.assertEqual(out["action"], "error")
+
+
+class AdvisoryGateTests(TestCase):
+    """§6.0 advisory wiki-differ — non-blocking; advances on any return."""
+
+    def setUp(self):
+        self.d = _git_track_dir(_make_state())
+        _docs_commit(self.d)
+        _wiki_commit(self.d)
+        self.addCleanup(shutil.rmtree, self.d, ignore_errors=True)
+
+    def test_not_advisory_dispatches_wiki_differ_always(self):
+        out = _pls(self.d)
+        self.assertEqual(out["action"], "dispatch_advisory")
+        self.assertEqual(out["agent"], "wiki-differ")
+        self.assertIn("PROJECT_DIR=", out["prompt"])
+        # Advisory is non-blocking → post_on="always" (advances on FAILURE too).
+        self.assertEqual(out["post_on"], "always")
+        self.assertIn("post", out)
+
+    def test_advisory_done_advances_to_lint(self):
+        _sidecar_post_sync(self.d, advisory_diff_shown=True, lint_done=False,
+                           digest_shown=True)
+        out = _pls(self.d)
+        # Advisory passed → §6.5 lint gate (lint_done False) → doc-linter.
+        self.assertEqual(out["action"], "dispatch")
+        self.assertEqual(out["agent"], "doc-linter")
+        self.assertEqual(out["post_on"], "always")
+
+
+class LintGateTests(TestCase):
+    """§6.5 doc-linter — non-blocking; the gate keys on lint_done."""
+
+    def setUp(self):
+        self.d = _git_track_dir(_make_state())
+        _docs_commit(self.d)
+        _wiki_commit(self.d)
+        _sidecar_post_sync(self.d, lint_done=False, digest_shown=True)
+        self.addCleanup(shutil.rmtree, self.d, ignore_errors=True)
+
+    def test_not_lint_dispatches_doc_linter(self):
+        out = _pls(self.d)
+        self.assertEqual(out["action"], "dispatch")
+        self.assertEqual(out["agent"], "doc-linter")
+        self.assertEqual(out["post_on"], "always")
+        self.assertTrue(any("lint_done" in c for c in out["post"]))
+
+    def test_lint_done_advances_to_review(self):
+        # Stamp lint_done too → spine reaches §7.0 review (shas present, unsynced).
+        _sidecar_post_sync(self.d, digest_shown=True)
+        out = _pls(self.d)
+        self.assertEqual(out["action"], "dispatch")
+        self.assertEqual(out["agent"], "code-reviewer")
+
+
+class DigestGateTests(TestCase):
+    """§7.5 comprehension digest — no dispatch; announce + stamp."""
+
+    def setUp(self):
+        self.d = _git_track_dir(_make_state())
+        _docs_commit(self.d)
+        _wiki_commit(self.d)
+        # Advisory + lint done; review done (matching range); digest NOT shown.
+        _sidecar_post_sync(self.d, digest_shown=False,
+                           reviewed_range="aaa0001~1..aaa0002")
+        self.addCleanup(shutil.rmtree, self.d, ignore_errors=True)
+
+    def test_not_digest_emits_digest_leaf(self):
+        out = _pls(self.d)
+        self.assertEqual(out["action"], "digest")
+        self.assertEqual(out["post_on"], "always")
+        self.assertIn("post", out)
+        # Composed from in-context data: the track description + outcome counts.
+        self.assertIn("post-loop-step test", out["digest"])
+        self.assertIn("Outcome:", out["digest"])
+        self.assertIn("2 done", out["digest"])  # both fixture tasks completed
+
+    def test_digest_includes_review_findings_when_present(self):
+        # Drop a review-result.json; the digest surfaces the top finding.
+        cond = Path(self.d, ".conductor")
+        (cond / "review-result.json").write_text(json.dumps({
+            "status": "SUCCESS",
+            "findings": [
+                {"severity": "Critical", "title": "Off-by-one", "file": "src/a.py"},
+                {"severity": "Low", "title": "Typo", "file": "docs/b.md"},
+            ],
+        }))
+        out = _pls(self.d)
+        self.assertIn("Read this first", out["digest"])
+        # Critical ranks above Low → surfaced first.
+        self.assertLess(out["digest"].index("Off-by-one"),
+                        out["digest"].index("Typo"))
+
+    def test_digest_done_advances_to_archive(self):
+        _sidecar_post_sync(self.d,
+                           reviewed_range="aaa0001~1..aaa0002")  # digest_shown=True
+        out = _pls(self.d)
+        self.assertEqual(out["action"], "archive_ask")
+
+
+class GateOrderingTests(TestCase):
+    """The new gates fire in template order: advisory → lint → review → digest."""
+
+    def test_order_advisory_then_lint_then_review(self):
+        d = _git_track_dir(_make_state())
+        _docs_commit(d)
+        _wiki_commit(d)
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        # No sidecar → advisory first.
+        self.assertEqual(_pls(d)["agent"], "wiki-differ")
+        # Advisory stamped → lint.
+        _sidecar_post_sync(d, advisory_diff_shown=True, lint_done=False,
+                           digest_shown=True)
+        self.assertEqual(_pls(d)["agent"], "doc-linter")
+        # Lint stamped → review (shas present).
+        _sidecar_post_sync(d, digest_shown=True)
+        out = _pls(d)
+        self.assertEqual(out["action"], "dispatch")
+        self.assertEqual(out["agent"], "code-reviewer")
+
+
+class SidecarMergeTests(TestCase):
+    """The stamp `post` MERGES into the sidecar — a later gate's stamp must NOT
+    clobber an earlier gate's marker (the lossless-resume invariant)."""
+
+    def test_stamp_line_merges_not_overwrites(self):
+        # The stamp is a python3 -c one-liner using dict .update (merge), not a
+        # `tee` heredoc (overwrite).
+        line = _post_loop_stamp_line("/tmp/x",
+                                     {"schema": 2, "advisory_diff_shown": True})
+        self.assertIn("python3 -c", line)
+        self.assertIn(".update(", line)
+        self.assertNotIn("tee ", line)
+
+    def test_advisory_stamp_preserves_reviewed_range(self):
+        # Functionally: a sidecar already holding reviewed_range survives the
+        # advisory stamp (run the real post line as shell against a temp dir).
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        cond = Path(d, ".conductor")
+        cond.mkdir()
+        sidecar = cond / "post-loop.json"
+        sidecar.write_text(json.dumps(
+            {"schema": 2, "reviewed_range": "aaa0001~1..aaa0002"}))
+        # Run only the stamp line (post[0]); skip the git commit (post[1]).
+        stamp_line = _post_loop_advisory_post(d)[0]
+        subprocess.run(["bash", "-c", stamp_line], check=True, capture_output=True)
+        merged = json.loads(sidecar.read_text())
+        self.assertEqual(merged["reviewed_range"], "aaa0001~1..aaa0002")
+        self.assertTrue(merged["advisory_diff_shown"])
 
 
 if __name__ == "__main__":

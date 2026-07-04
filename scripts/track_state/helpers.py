@@ -141,12 +141,15 @@ COMPACT_FIELDS = {
     # Union of keys across action variants: deferred_ask/archive_ask (decision +
     # phase/task/name identity), finalize (post = sync-plan + registry-update +
     # commit lines), dispatch/dispatch_advisory (agent + pre-assembled prompt),
-    # the §7.0 review dispatch also carries `post` (the reviewed-range stamp) +
-    # `range` + `shas_count`, digest (digest), halt/error. `track_dir` so the
-    # skill has the path without re-resolving. Error envelopes bypass the allowlist.
+    # the §6.0 advisory / §6.5 lint / §7.5 digest leaves also carry `post` (the
+    # sidecar MERGE-stamp) + `post_on` ("always" — non-blocking gates advance on
+    # any return; default "non_failure" gates the §7.0 review stamp), the §7.0
+    # review dispatch also carries `range` + `shas_count`, digest (digest),
+    # halt/error. `track_dir` so the skill has the path without re-resolving.
+    # Error envelopes bypass the allowlist.
     "post-loop-step": ("action", "phase", "task", "subtask", "name",
-                       "agent", "prompt", "decision", "post", "range",
-                       "shas_count", "digest", "reason", "incomplete",
+                       "agent", "prompt", "decision", "post", "post_on",
+                       "range", "shas_count", "digest", "reason", "incomplete",
                        "track_dir"),
 }
 
