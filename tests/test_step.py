@@ -103,6 +103,18 @@ def _commit(track_dir, msg, files=None):
                    check=True, capture_output=True, env=env)
 
 
+def _phase_complete_track():
+    """A track whose Phase 1 is fully terminal with no checkpoint marker —
+    the state that surfaces ``dispatch_batch`` on the next ``step`` (site B:
+    ``_emit_quiescent_leaf``). Shared by the dispatch_batch prompt-field tests."""
+    state = _make_state(
+        current_phase_index=0, current_task_index=0,
+        phases=[{"name": "Phase 1", "status": "pending", "tasks": [
+            {"name": "Task A", "status": "completed", "commit_sha": "abc1234"}]}])
+    plan = "# Plan\n\n## Phase 1: Build\n- [x] Task A [abc1234]\n"
+    return _git_track_dir(state, plan_content=plan)
+
+
 class StepDispatchTests(TestCase):
     def test_dispatch_execute_assembles_prompt(self):
         d = _git_track_dir(_make_state())
@@ -231,17 +243,54 @@ class StepExhaustedTests(TestCase):
 
 
 class StepTerminalTests(TestCase):
-    def test_phase_complete_without_checkpoint_emits_phase_checkpoint(self):
-        state = _make_state(
-            current_phase_index=0, current_task_index=0,
-            phases=[{"name": "Phase 1", "status": "pending", "tasks": [
-                {"name": "Task A", "status": "completed", "commit_sha": "abc1234"}]}])
-        # plan.md has no [checkpoint: ...] marker on Phase 1; checkbox matches state.
-        plan = "# Plan\n\n## Phase 1: Build\n- [x] Task A [abc1234]\n"
-        d = _git_track_dir(state, plan_content=plan)
+    def test_phase_complete_without_checkpoint_emits_dispatch_batch(self):
+        # Serial spine: a phase whose tasks are all terminal but has no checkpoint
+        # emits dispatch_batch — the pre-assembled ac-tracer + test-runner fan-out
+        # (COMPACT_FIELDS["step"] now keeps "wave") — retiring the phase_checkpoint
+        # non-spine hand-off for the verifier prompts.
+        d = _phase_complete_track()
         self.addCleanup(shutil.rmtree, d, ignore_errors=True)
         o = _step(d)
-        self.assertEqual(o["action"], "phase_checkpoint")
+        self.assertEqual(o["action"], "dispatch_batch")
+        self.assertEqual(o["phase"], 1)
+        self.assertEqual(o["execution_mode"], "interactive")
+        members = {m["agent"]: m for m in o["wave"]}
+        self.assertEqual(set(members), {"ac-tracer", "test-runner"})
+
+    def test_dispatch_batch_ac_tracer_prompt_omits_phase_index(self):
+        # ac-tracer §2.0 ASSIGNMENT takes only TRACK_DIR + TRACK_ID (no PHASE_INDEX).
+        d = _phase_complete_track()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        ac = next(m for m in _step(d)["wave"] if m["agent"] == "ac-tracer")
+        self.assertIn("TRACK_DIR=", ac["prompt"])
+        self.assertIn("TRACK_ID=step", ac["prompt"])
+        self.assertNotIn("PHASE_INDEX=", ac["prompt"])
+
+    def test_dispatch_batch_test_runner_prompt_includes_phase_index(self):
+        # test-runner §2.0 ASSIGNMENT adds PHASE_INDEX, dropped straight from the
+        # phase value (reporting-only — mirrors skills/implement/SKILL.md §3.2).
+        d = _phase_complete_track()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        tr = next(m for m in _step(d)["wave"] if m["agent"] == "test-runner")
+        self.assertIn("TRACK_DIR=", tr["prompt"])
+        self.assertIn("TRACK_ID=step", tr["prompt"])
+        self.assertIn("PHASE_INDEX=1", tr["prompt"])
+
+    def test_finalizing_last_task_in_phase_emits_dispatch_batch(self):
+        # Site A (_step_route_after_finalize): finalizing the last in_progress
+        # task sets phase_checkpoint_pending on the outcome → dispatch_batch.
+        # (The quiescent tests above exercise site B — _emit_quiescent_leaf.)
+        state = _make_state(phases=[{"name": "Phase 1", "status": "pending", "tasks": [
+            {"name": "Task A", "status": "in_progress"},
+            {"name": "Task B", "status": "completed", "commit_sha": "bbb2222"}]}])
+        plan = "# Plan\n\n## Phase 1: Build\n- [ ] Task A\n- [x] Task B [bbb2222]\n"
+        d = _git_track_dir(state, plan_content=plan)
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        _commit(d, "impl A", {"impl_a.py": "x=1"})
+        _result(d, {"status": "SUCCESS", "phase": 1, "task": 1, "subtask": None,
+                    "task_name": "Task A", "commit_sha": "abc1234"})
+        o = _step(d)
+        self.assertEqual(o["action"], "dispatch_batch")
         self.assertEqual(o["phase"], 1)
 
     def test_all_done_with_checkpoint_emits_done(self):

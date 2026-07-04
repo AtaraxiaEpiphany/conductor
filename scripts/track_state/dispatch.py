@@ -950,6 +950,50 @@ def _step_assemble_prompt(track_dir, pre, attempt):
     return "task-executor", "\n".join(lines)
 
 
+def _step_assemble_verifier_prompt(track_dir, state, phase, agent):
+    """Build the ready-to-paste prompt for a read-only phase verifier
+    (``ac-tracer`` / ``test-runner``).
+
+    Pre-assembled in code so a weak orchestrator can't fumble the §3.2 fan-out
+    field interpolation — the verifier prompts are pasted verbatim into the
+    parallel Agent dispatches. Mirrors ``_step_assemble_prompt`` (serial
+    dispatch) and ``_wave_assemble_member_prompt`` (wave spine). Read-only
+    verifiers run on the main checkout (no worktree pinning, unlike wave
+    members). Field set is each agent's own §2.0 ASSIGNMENT: ac-tracer takes
+    TRACK_DIR/TRACK_ID; test-runner adds PHASE_INDEX, dropped straight from
+    ``phase`` (reporting-only — never a state index — per agents/test-runner.md
+    §2.0, so this mirrors skills/implement/SKILL.md §3.2 byte-for-byte).
+    """
+    td = str(track_dir)
+    lines = [f"TRACK_DIR={td}", f"TRACK_ID={state.get('track_id', '')}"]
+    if agent == "test-runner":
+        lines.append(f"PHASE_INDEX={phase}")
+    return "\n".join(lines)
+
+
+def _step_emit_dispatch_batch(track_dir, state, phase, execution_mode, compact):
+    """Emit ``dispatch_batch`` — the pre-assembled ac-tracer + test-runner
+    fan-out that retires the serial spine's ``phase_checkpoint`` non-spine
+    hand-off for the verifier prompts. The synthesizer (``phase-checker``)
+    dispatch + verdict routing STAYS in prose §3.2, where the orchestrator holds
+    the verifier RESULT blocks in context (verdicts don't flow through disk).
+    Mirrors ``_wave_step_emit_batch`` (wave.py).
+
+    Each member carries its own ``agent`` + ``prompt``; unlike wave members they
+    need no worktree/branch — the verifiers are read-only and run on the main
+    checkout. ``name`` mirrors the wave member shape (a display label).
+    """
+    wave = [
+        {"agent": "ac-tracer", "name": "ac-tracer",
+         "prompt": _step_assemble_verifier_prompt(track_dir, state, phase, "ac-tracer")},
+        {"agent": "test-runner", "name": "test-runner",
+         "prompt": _step_assemble_verifier_prompt(track_dir, state, phase, "test-runner")},
+    ]
+    emit(dict(action="dispatch_batch", phase=phase, execution_mode=execution_mode,
+              wave=wave),
+         "step", compact)
+
+
 def _manual_task_decision(track_dir, pi, ti, name):
     """Pre-computed Defer/Skip ``decision`` blob for an interactive [Manual] task.
 
@@ -1032,8 +1076,7 @@ def _step_route_after_finalize(track_dir, outcome, compact):
     execution_mode = outcome.get("execution_mode", "interactive")
     cp = outcome.get("phase_checkpoint_pending")
     if cp is not None:
-        emit(dict(action="phase_checkpoint", phase=cp, execution_mode=execution_mode),
-             "step", compact)
+        _step_emit_dispatch_batch(track_dir, load(track_dir), cp, execution_mode, compact)
         return
     if outcome.get("status") == "SUCCESS":
         return _step_emit_next_leaf(track_dir, load(track_dir), compact)
@@ -1081,8 +1124,15 @@ def _emit_quiescent_leaf(track_dir, state, compact, command):
 
     cp = _any_phase_needs_checkpoint(track_dir, state)
     if cp is not None:
-        emit(dict(action="phase_checkpoint", phase=cp, execution_mode=execution_mode),
-             command, compact)
+        if command == "step":
+            # Serial spine: pre-assemble the verifier batch (deterministic
+            # fan-out) instead of the non-spine phase_checkpoint hand-off. The
+            # wave spine keeps phase_checkpoint — its §3.2 hand-off is the
+            # parallel-step skill's contract.
+            _step_emit_dispatch_batch(track_dir, state, cp, execution_mode, compact)
+        else:
+            emit(dict(action="phase_checkpoint", phase=cp, execution_mode=execution_mode),
+                 command, compact)
         return None
 
     if not has_dispatchable:
@@ -1146,14 +1196,15 @@ def cmd_step(track_dir, compact=True):
     Composes recover + next + prepare + finalize into ONE leaf action per call,
     then returns. The orchestrator's entire job is to read ``action`` and do
     exactly that — dispatch the named agent with the pre-assembled ``prompt``,
-    relay an ``ask`` blob, hand off to a named skill branch (``phase_checkpoint``
-    / ``skip_analyze`` / ``wave_active``), ``halt`` on ``error``, or enter the
-    post-loop on ``done`` — then call ``step`` again.
+    fan out a ``dispatch_batch`` of verifier prompts in one parallel message,
+    relay an ``ask`` blob, hand off to a named skill branch (``skip_analyze``
+    / ``wave_active``), ``halt`` on ``error``, or enter the post-loop on
+    ``done`` — then call ``step`` again.
 
     Action set:
       - ``dispatch``         : run one subagent (explorer/task-executor) with ``prompt``. [spine]
+      - ``dispatch_batch``   : fan out the pre-assembled ac-tracer + test-runner verifier prompts in ONE parallel message; then prose §3.2 (skills/implement) collects verdicts + dispatches phase-checker. [spine]
       - ``ask``              : AskUserQuestion(decision…) → run decision.commands[choice] → step. [spine]
-      - ``phase_checkpoint`` : hand to skill §3.2 (parallel fan-out + synthesize). [non-spine]
       - ``skip_analyze``     : hand to skill §3.6 (skip-analyst → refute → route). [non-spine]
       - ``wave_active``      : hand to the wave spine. [non-spine]
       - ``done``             : track finalized → enter post-loop (skill §4.0). [terminal]

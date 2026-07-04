@@ -50,7 +50,7 @@ A single-member `dispatch_batch` with `is_resume: true` is a **re-dispatch of on
 | action | hand-off |
 |---|---|
 | `seam_review` | `/conductor:parallel` §4.15 — dispatch `conductor:code-reviewer` (read-only) over `revision_range` with `SCOPE=cross-member interaction defects at deps boundaries only`; write Critical/High to `{td}/.conductor/seam-findings.json`; dispatch `conductor:refuter` to re-examine each; surface survivors via `AskUserQuestion` (fix-now / accept-with-debt / block). Then resume §2.0. |
-| `serial` | Run `track-state step "<td>"` ONCE and relay exactly what it emits (dispatch one subagent / ask / phase_checkpoint / done). Then → §2.0 — `wave-step` re-checks for waves (the serial task may have unlocked one). Announce `ineligible` reasons if non-empty. |
+| `serial` | Run `track-state step "<td>"` ONCE and relay exactly what it emits (`dispatch` / `dispatch_batch` / `ask` / `done` — handle each per `implement-step` §2.0; a `dispatch_batch` fires the ac-tracer + test-runner fan-out, then `/conductor:implement` §3.2 synthesizes). Then → §2.0 — `wave-step` re-checks for waves (the serial task may have unlocked one). Announce `ineligible` reasons if non-empty. |
 | `phase_checkpoint` | `/conductor:implement` §3.2 — fan out `ac-tracer` + `test-runner` in parallel, then `phase-checker` synthesizes. Then → §2.0. |
 | `ask` | `AskUserQuestion(decision.question, decision.header, decision.options)`. Run `decision.commands[<chosen label>]` **verbatim** (one shell-safe line each). If `decision.next[<chosen label>] == "HALT"` → STOP. Else → §2.0. |
 | `skip_analyze` | `/conductor:implement` §3.6 — `skip-analyst` → `refuter` refute → route. Then resume §2.0. |

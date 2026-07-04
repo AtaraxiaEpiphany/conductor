@@ -38,19 +38,19 @@ Read `action` and do **only** that:
 | action | you do |
 |---|---|
 | `dispatch` | **Dispatch `conductor:<agent>`**, prompt the fenced ``prompt`` field **verbatim** (it is pre-assembled — do not edit or re-fill any field). Then → §2.0. |
+| `dispatch_batch` | **Fire `conductor:<member.agent>` for each entry in `wave`, in ONE message (parallel Agent calls)**, prompting each member's ``prompt`` field **verbatim** (pre-assembled — ac-tracer + test-runner). Collect both RESULT blocks, then switch to `/conductor:implement` §3.2 Step 2 (parse verdicts → dispatch `phase-checker`). Then resume this loop. |
 | `ask` | `AskUserQuestion(decision.question, decision.header, decision.options)`. Run `decision.commands[<chosen label>]` **verbatim** (one shell-safe line each). If `decision.next[<chosen label>] == "HALT"` → STOP. Else → §2.0. |
 | `done` | Track finalized → run the post-loop: `Read conductor/workflow/post-loop.md`, execute §5.0–§8.0 (or hand off to `/conductor:implement` §4.0). |
 | `error` | Announce the error → STOP. |
 
 ### Non-spine branches (B-min boundary — hand off to `/conductor:implement`)
 
-These need parallel fan-out or model judgment, so `step` surfaces them as named
+These need model judgment or another spine, so `step` surfaces them as named
 actions rather than collapsing them. When you see one, switch to the matching
 section of `/conductor:implement`:
 
 | action | hand-off |
 |---|---|
-| `phase_checkpoint` | `/conductor:implement` §3.2 — fan out `ac-tracer` + `test-runner` in parallel, then `phase-checker` synthesizes. Then resume this loop. |
 | `skip_analyze` | `/conductor:implement` §3.6 — `skip-analyst` → `refuter` refute → route. Then resume this loop. |
 | `wave_active` | `/conductor:parallel` — the wave spine owns this track. |
 
@@ -69,7 +69,8 @@ without burning a retry.
 
 ---
 
-**Spike status:** the spine (`dispatch` / `ask` / `done` / `error`) is fully
-code-driven and tested. The three non-spine branches deliberately defer to
-`/conductor:implement` — that is the measured B-min boundary, not a gap. See
-`conductor/design/rail-b-step.md` for the action contract and the B-full options.
+**Spike status:** the spine (`dispatch` / `dispatch_batch` / `ask` / `done` /
+`error`) is fully code-driven and tested. The two non-spine branches
+deliberately defer to `/conductor:implement` — that is the measured B-min
+boundary, not a gap. See `conductor/design/rail-b-step.md` for the action
+contract and the B-full options.
