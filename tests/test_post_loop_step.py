@@ -25,6 +25,7 @@ from unittest import TestCase, main
 from scripts.track_state.core import save, load
 from scripts.track_state.dispatch import (
     cmd_post_loop_step, _post_loop_stamp_line, _post_loop_advisory_post,
+    _post_loop_fix_sentinel,
 )
 
 _GIT_ENV = {
@@ -113,6 +114,35 @@ def _sidecar_post_sync(td, **extra):
             "digest_shown": True}
     body.update(extra)
     _sidecar(td, body)
+
+
+def _review_result(td, findings):
+    """Write a minimal review-result.json with the given findings list."""
+    cond = Path(td, ".conductor")
+    cond.mkdir(exist_ok=True)
+    (cond / "review-result.json").write_text(
+        json.dumps({"status": "SUCCESS", "findings": findings}))
+
+
+def _drain_chunk(td, file_path):
+    """Drop the per-chunk ``.done`` sentinel marking ``file_path`` applied."""
+    sentinel = _post_loop_fix_sentinel(td, file_path)
+    sentinel.parent.mkdir(parents=True, exist_ok=True)
+    sentinel.touch()
+
+
+def _apply_fixes_fixture(findings):
+    """Finalized + doc-synced + advisory/lint done + review done (range stamped),
+    digest NOT shown, with a review-result.json carrying ``findings``. Lands the
+    spine at the §7.0 step-4 apply_fixes gate."""
+    d = _git_track_dir(_make_state())
+    _docs_commit(d)
+    _wiki_commit(d)
+    _sidecar_post_sync(d, digest_shown=False,
+                       reviewed_range="aaa0001~1..aaa0002")
+    if findings is not None:
+        _review_result(d, findings)
+    return d
 
 
 class FinalizeGateTests(TestCase):
@@ -414,6 +444,83 @@ class GateOrderingTests(TestCase):
         out = _pls(d)
         self.assertEqual(out["action"], "dispatch")
         self.assertEqual(out["agent"], "code-reviewer")
+
+
+class ApplyFixesGateTests(TestCase):
+    """§7.0 step 4 — chunked apply_fixes (P5). Drains one Critical/High fixable
+    chunk per call; the per-file ``.done`` sentinel is the durable marker."""
+
+    _FINDINGS = [
+        {"severity": "Critical", "title": "Null deref", "file": "src/b.py",
+         "lines": "L10-L12", "suggestion": "guard None"},
+        {"severity": "High", "title": "Race", "file": "src/a.py",
+         "lines": "L4", "suggestion": "add lock"},
+        {"severity": "Low", "title": "Typo", "file": "src/a.py",
+         "lines": "L1", "suggestion": "fix spelling"},  # Low → NOT auto-fixable
+    ]
+
+    def test_critical_findings_emit_apply_fixes_for_first_file(self):
+        # Sorted file order → src/a.py first; the Low finding in a.py is dropped
+        # (only Critical/High are fixable), so the chunk carries JUST the High one.
+        d = _apply_fixes_fixture(self._FINDINGS)
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        out = _pls(d)
+        self.assertEqual(out["action"], "apply_fixes")
+        self.assertEqual(out["agent"], "apply-fixes")
+        self.assertIn("FILE=src/a.py", out["prompt"])
+        self.assertIn('"High"', out["prompt"])
+        self.assertNotIn('"Low"', out["prompt"])
+        # post drops the per-chunk sentinel; post_on defaults to non_failure
+        # (a failed chunk is NOT marked done → re-entry re-dispatches it).
+        self.assertTrue(any("post-loop-fixes" in c for c in out["post"]))
+        self.assertTrue(any("src_a.py.done" in c for c in out["post"]))
+        self.assertNotIn("post_on", out)
+
+    def test_drained_chunk_advances_to_next_file(self):
+        d = _apply_fixes_fixture(self._FINDINGS)
+        _drain_chunk(d, "src/a.py")  # a.py done → next is b.py
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        out = _pls(d)
+        self.assertEqual(out["action"], "apply_fixes")
+        self.assertIn("FILE=src/b.py", out["prompt"])
+
+    def test_all_drained_advances_to_digest(self):
+        d = _apply_fixes_fixture(self._FINDINGS)
+        _drain_chunk(d, "src/a.py")
+        _drain_chunk(d, "src/b.py")
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        out = _pls(d)
+        # All chunks drained → §7.5 digest (digest_shown was False in the fixture).
+        self.assertEqual(out["action"], "digest")
+
+    def test_medium_low_only_skips_apply_fixes(self):
+        # Medium/Low are "approve with comments" — not auto-fixable → straight to digest.
+        d = _apply_fixes_fixture([
+            {"severity": "Medium", "title": "Style", "file": "src/a.py",
+             "lines": "L1", "suggestion": "rename"},
+            {"severity": "Low", "title": "Typo", "file": "src/b.py",
+             "lines": "L1", "suggestion": "fix"},
+        ])
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        out = _pls(d)
+        self.assertEqual(out["action"], "digest")
+
+    def test_no_review_result_skips_apply_fixes(self):
+        # No review-result.json → nothing fixable → digest (and no crash).
+        d = _apply_fixes_fixture(None)
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        out = _pls(d)
+        self.assertEqual(out["action"], "digest")
+
+    def test_unsuggested_critical_not_fixable(self):
+        # A Critical finding with an empty suggestion is not auto-fixable.
+        d = _apply_fixes_fixture([
+            {"severity": "Critical", "title": "Mystery", "file": "src/a.py",
+             "lines": "L1", "suggestion": ""},
+        ])
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        out = _pls(d)
+        self.assertEqual(out["action"], "digest")
 
 
 class SidecarMergeTests(TestCase):

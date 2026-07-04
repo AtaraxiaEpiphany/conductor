@@ -101,6 +101,12 @@ STDOUT_BLOCK_AGENTS = {
         "IMMEDIATELY print the ---SPEC PLAN RESULT--- block (Section 5.0). Report "
         "STATUS: FAILURE with a one-line SUMMARY if generation could not complete."
     ),
+    "apply-fixes": (
+        "IMMEDIATELY print the ---FIX RESULT--- block (Section 5.0). Report "
+        "STATUS: FAILURE with a one-line REASON if the chunk could not be applied; "
+        "the spine does NOT mark a failed chunk done, so an honest FAILURE re-dispatches "
+        "it — do not fake SUCCESS."
+    ),
 }
 
 # Matches any conductor result-block close tag, e.g. ---END RESULT---,

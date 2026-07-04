@@ -1,5 +1,6 @@
 """Task dispatch orchestration: find next, prepare, finalize."""
 import json
+import re
 import shlex
 import sys
 from pathlib import Path
@@ -1540,6 +1541,72 @@ def _post_loop_digest_post(track_dir):
     ]
 
 
+# §7.0 step 4 — chunked apply_fixes (P5). Only Critical/High findings with a
+# suggestion + file are auto-fixable (Medium/Low → "approve with comments"); the
+# spine chunks them per-file and drains one chunk per call so each bounded
+# apply-fixes agent (maxTurns 20) finishes before overflow — the fix for the
+# prior open-ended free-form patch agent (the "unguarded chimney").
+_APPLY_FIXES_SEVERITIES = ("Critical", "High")
+_APPLY_FIXES_DIR = "post-loop-fixes"  # conductor-managed sentinels (committed)
+
+
+def _post_loop_fix_sentinel(track_dir, file_path):
+    """Path to the per-chunk ``.done`` sentinel marking ``file_path``'s chunk drained."""
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", file_path) + ".done"
+    return Path(track_dir) / ".conductor" / _APPLY_FIXES_DIR / safe
+
+
+def _post_loop_apply_fixes_post(track_dir, file_path):
+    """§7.0 step 4 ``post`` — drop the chunk's ``.done`` sentinel + commit.
+
+    A separate sentinel file per chunk (not a sidecar field) sidesteps the
+    JSON-merge complexity of accumulating applied-finding lists, and existence
+    is the durable marker (committed → survives a context-budget interruption).
+    ``post_on`` defaults to non_failure — a failed chunk is NOT marked done, so
+    re-entry re-dispatches it (fresh window) instead of skipping it.
+    """
+    td = str(track_dir)
+    sentinel = _post_loop_fix_sentinel(td, file_path)
+    return [
+        f'mkdir -p {shlex.quote(str(sentinel.parent))}',
+        f'touch {shlex.quote(str(sentinel))}',
+        "git add -A && git commit -m " + shlex.quote(
+            f"chore(conductor): Post-loop fix chunk done [{file_path}]"),
+    ]
+
+
+def _post_loop_next_apply_fixes(track_dir, track_id):
+    """Return the next ``apply_fixes`` leaf dict, or None when all chunks drained.
+
+    Reads ``review-result.json`` (written by §7.0 code-reviewer), filters to
+    Critical/High fixable findings, groups per-file, drops chunks whose sentinel
+    already exists, and emits ONE chunk (deterministic file order). None when
+    there is nothing fixable or every chunk is drained → caller advances to §7.5.
+    """
+    findings = _post_loop_read_findings(track_dir)
+    fixable = [f for f in findings
+               if f.get("severity") in _APPLY_FIXES_SEVERITIES
+               and f.get("file") and str(f.get("suggestion", "")).strip()]
+    if not fixable:
+        return None
+    chunks = {}
+    for f in fixable:
+        chunks.setdefault(f["file"], []).append(f)
+    remaining = [fp for fp in sorted(chunks)
+                 if not _post_loop_fix_sentinel(track_dir, fp).exists()]
+    if not remaining:
+        return None
+    next_file = remaining[0]
+    chunk = chunks[next_file]
+    td = str(track_dir)
+    return dict(
+        action="apply_fixes", agent="apply-fixes", track_dir=td,
+        prompt=(f"TRACK_DIR={td}\nTRACK_ID={track_id}\n"
+                f"FILE={next_file}\nFINDINGS={json.dumps(chunk)}\n"),
+        post=_post_loop_apply_fixes_post(td, next_file),
+    )
+
+
 def _post_loop_archive_decision(track_dir):
     """§8.0 Archive / Keep active / Delete decision blob."""
     td = str(track_dir)
@@ -1592,6 +1659,8 @@ def cmd_post_loop_step(track_dir, compact=True):
       - ``dispatch_advisory``: §6.0 advisory — dispatch wiki-differ → loop. [spine]
       - ``dispatch`` (lint): §6.5 — dispatch doc-linter → loop. [spine]
       - ``dispatch`` (review): §7.0 — dispatch code-reviewer, then run ``post`` (stamp) → loop. [spine]
+      - ``apply_fixes``    : §7.0 step 4 — dispatch apply-fixes for one Critical/High
+                             chunk, then run ``post`` (sentinel) → loop until drained. [spine]
       - ``digest``         : §7.5 — announce the pre-assembled digest, run ``post`` → loop. [spine]
       - ``archive_ask``    : §8.0 — AskUserQuestion(decision) → run commands → loop/HALT. [spine]
       - ``done``           : every gate satisfied. [terminal]
@@ -1697,6 +1766,13 @@ def cmd_post_loop_step(track_dir, compact=True):
                       post=_post_loop_review_post(td, range_str)),
                  "post-loop-step", compact)
             return
+
+    # §7.0 step 4 — chunked apply_fixes (P5). Drains one Critical/High fixable
+    # chunk per call; None when nothing fixable or all chunks drained.
+    apply_leaf = _post_loop_next_apply_fixes(td, track_id)
+    if apply_leaf is not None:
+        emit(apply_leaf, "post-loop-step", compact)
+        return
 
     # §7.5 — comprehension digest (no dispatch; announce + stamp). Composed from
     # data already in context (SHAs + finalize + review-result.json findings).

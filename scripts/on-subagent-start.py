@@ -80,6 +80,7 @@ AGENT_REMINDERS = {
     "log-checker": "[Conductor] Result format: ---LOG CHECK RESULT--- ... ---END RESULT---",
     "test-digester": "[Conductor] Result format: ---TEST DIGEST RESULT--- ... ---END RESULT---",
     "doc-probe": "[Conductor] Result format: ---PROBE RESULT--- ... ---END RESULT---",
+    "apply-fixes": "[Conductor] Result format: ---FIX RESULT--- ... ---END RESULT---",
 }
 
 
