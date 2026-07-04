@@ -89,6 +89,35 @@ Read the returned `content` and extract the `## Exploration Notes` section (Summ
 
 Read `conductor/index.md` → the **Scoped Docs** table. For each entry whose **Match Strategy** matches this task's scope (areas/components named in the task description or spec ACs), open the matching doc. Routing: `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/doc-routing.md`. Read only matching docs — never the whole corpus.
 
+### Layer 0(c): Nested read fan-out (OPT-IN — else skip to Layer 1)
+
+**Opt-in gate** (both checked): the task name carries a `[Probe]` marker **OR** env
+`CONDUCTOR_TASK_FANOUT=1` is set. If NEITHER → this layer is skipped; do the
+Layer 0(b) reads directly (the default — bulk reads stay in your context).
+
+**When opted in** and Layer 0(b) matched **more than one** doc, replace the
+direct reads with a fan-out: **Dispatch `doc-probe`** once per matching doc **in
+ONE message** (parallel `Agent` calls), each prompted:
+
+```
+TRACK_DIR={td}
+DOC_PATH={matched doc path}
+TASK_SCOPE={one-two line summary of this task's areas/AC keywords}
+```
+
+Collect every `---PROBE RESULT---` block (`filter-subagent-output` trims the
+rest). Treat each digest as the doc's load: honor its `GOTCHAS`/`SCOPE_NOTES`,
+jump to its `ANCHORS` if you need detail. Drop `STATUS: irrelevant` docs. If a
+doc's digest is insufficient for a specific decision, read that one doc's
+named section directly at the point of need — not eagerly.
+
+**Anti-pattern guard (load-bearing):** `doc-probe` children do *scoped reads*
+and return RESULT blocks; they **never continue your work**. You remain the
+implementer. Continuation = your yield→stop→orchestrator-re-dispatch path (the
+retry/salvage in Layer 3.R + §7.0), not spawn-child. Fan-out turns count
+against your `maxTurns` (§7.0 tripwire) — a one-message parallel dispatch is
+one round, not N.
+
 ### Layer 1: Task Identity (READ FIRST)
 
 Read `{TRACK_DIR}/plan.md`. Find your task at `## Phase {PHASE}`, locate task `{TASK}`.
@@ -218,8 +247,8 @@ PURPOSE=coverage
 its `COVERAGE_PCT` verbatim to `--coverage-pct` (§6.1). On `COVERAGE_PCT: N/A`,
 report N/A honestly — never fabricate a number.
 
-> The `Agent` tool is fenced to **only** this §4.5 `test-digester` dispatch — see
-> the §5.0 firewall. No other nested subagent.
+> The `Agent` tool is fenced to §4.5 `test-digester` dispatches and the opt-in
+> §3.0c `doc-probe` fan-out — see the §5.0 firewall. No other nested subagent.
 
 ---
 
@@ -231,12 +260,19 @@ Exempted: `[Docs]`, `[Config]`, `[Chore]`.
 Prohibited: V1 (code before test), V3 (skip coverage), V8 (modify state).
 SHA handling: orchestrator appends SHAs — you do NOT modify plan markers.
 
-**Nesting fence (the `Agent` tool):** the `Agent` tool is permitted **only** for a
-single §4.5 `test-digester` dispatch per Step 3 / Step 6 — no other nested
-subagent, ever. Do not widen `test-digester` beyond "run the resolved command
-once and digest it". Nesting is a deliberate exception to keep verbose test output
-out of your context (anti-proliferation guard: `tests/test_log_checker_wiring.py`
-pins which agents may hold the `Agent` tool); widening it silently is a violation.
+**Nesting fence (the `Agent` tool):** the `Agent` tool is permitted for exactly
+two dispatch kinds, no other nested subagent ever:
+1. a §4.5 `test-digester` dispatch per Step 3 / Step 6 (run + digest the suite);
+2. the **opt-in** §3.0c `doc-probe` fan-out — only when the gate fires
+   (`[Probe]` marker or `CONDUCTOR_TASK_FANOUT=1`), one parallel dispatch per
+   matching Layer 0(b) doc.
+
+Do not widen either child beyond its scoped mandate ("run the resolved command
+once and digest it" / "read one doc and return a digest"). Both are deliberate
+exceptions to keep bulk output out of your context (anti-proliferation guard:
+`tests/test_log_checker_wiring.py` pins which agents may hold the `Agent` tool;
+`tests/test_doc_probe_wiring.py` pins the doc-probe fan-out); widening either
+silently is a violation.
 
 Violation → STOP → `WORKFLOW VIOLATION: <code>` → revert → restart.
 
