@@ -77,17 +77,21 @@ Parse the JSON result:
 
 Carry the harvested queue into §4 alongside the spec analysis. (wiki-synthesizer re-reads `decisions[]` independently for `purpose.md` — this harvest call is an idempotent read; running it in both phases is correct, not wasteful.)
 
-### 3.2 Project Documentation
+### 3.2 Project Documentation (two-pass load)
 
-Resolve all paths via `conductor/index.md`. Corpus-writer reads **all** documents (Global + Scoped) because its responsibility is to detect and propagate any spec-vs-doc divergence.
+Resolve all paths via `conductor/index.md`. Read the corpus in **two passes** so a small context window isn't flooded with every scoped doc up front: corpus-writer's job is still to detect and propagate any spec-vs-doc divergence, but most sources touch only 1–2 scoped docs, so the bulk read is deferred until routing identifies the docs that matter for THIS source.
 
 **Read the procedure reference:** `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/doc-sync-procedure.md` — the per-document analysis table (§A), the proposal template + variants (§A). §4/§5 below point into it; this is the canonical reference for what each document owes an update.
 
-**Global Docs:**
-2. **Product Definition** — `conductor/product/product.md`
-3. **Product Guidelines** — `conductor/product/product-guidelines.md`
+**Pass 1 — corpus map (always, cheap):**
+- `conductor/index.md` — the Scoped Docs table (paths + categories + Match Strategy). This is the routing MAP — it tells you which scoped docs exist, not their bodies.
+- Global Docs (always relevant — the product thesis): `conductor/product/product.md`, `conductor/product/product-guidelines.md`.
 
-**Scoped Docs:** read **every** row of `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/doc-routing.md` (corpus-writer reads all scoped docs — not just the matching one — to detect corpus-wide divergence): architecture, database (`index.md`, with `schema.md` for per-table detail), api-specs index (also read individual endpoint specs referenced there if API-related changes exist), ux-ui design spec, tech-stack, glossary.
+**Pass 2 — candidate scoped docs (deferred to §4.0a, after routing):** §4.0a routes the source against the Pass-1 map and reads only the scoped docs whose Match Strategy matches the source's areas — architecture, database (`index.md`, with `schema.md` for per-table detail), api-specs index (also read individual endpoint specs referenced there if API-related changes exist), ux-ui design spec, tech-stack, glossary. Divergence detection happens here, among the candidates.
+
+**Corpus-wide coverage stays intact (do not weaken):**
+- §4.9's broken-wikilink + orphan scans remain corpus-wide — the `Grep` tool scans `conductor/`, returning matches without loading each doc into context.
+- If §4.0a's synthesis, the source text, or a §4.9 grep names a scoped doc Pass 2 did **not** route in, read it before finalizing the ANALYSIS — a surprise cross-domain contradiction must not slip through. (This is the safety net over pure Match-Strategy routing.)
 
 If any document does not exist, note it and skip the corresponding analysis.
 
@@ -107,7 +111,7 @@ This run is a **two-step** ingest: analyze fully (Step 1) → generate (Step 2).
 
 ### 4.0a STEP 1 — Holistic Analysis (read-only, no edits yet)
 
-Read the source (§3.1) + loaded corpus (§3.2) and synthesize one **ANALYSIS** block:
+**Run §3.2 Pass 2 first:** route the source (§3.1) against the Pass-1 index map and read the candidate scoped docs whose Match Strategy matches the source's areas. Then synthesize one **ANALYSIS** block from source + globals + candidates:
 
 - **New entities** / concepts the source introduces (components, tables, endpoints, domain terms).
 - **Contradictions** / tensions with the corpus — surface, don't hide; feed to `purpose.md` Thesis in wiki-synthesizer §7.1b.
