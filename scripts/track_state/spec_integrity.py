@@ -16,6 +16,7 @@ Mirrors the WARN-only posture of ``result._evaluate_gates``: the
 ``"N/A"`` gate when ``spec.md`` is absent or has no ACs, so tracks without a
 formal spec are not penalized.
 """
+import os
 import re
 from pathlib import Path
 
@@ -45,14 +46,78 @@ _SKIP_PARTS = {".git", ".conductor", "node_modules", "__pycache__", ".venv",
 
 
 # --- EARS (Easy Approach to Requirements Syntax) advisory lint ----------------
-# Every Functional / Non-Functional requirement must carry the mandatory ``shall``
+# Every Functional / Non-Functional requirement must carry a mandatory EARS
 # response verb, and must avoid negation (``shall not`` / ``shall never``) — EARS
 # §12 says rephrase as a positive ``If <trigger>, then the <system> shall
 # <recovery>.`` unwanted-behavior clause rather than negating. ACs are NOT linted:
 # they are measurable pass/fail criteria, not EARS requirements, and legitimately
-# may not use ``shall``. Advisory only — authoring quality never blocks a task
-# (same WARN-only posture as ``ac_integrity_gate``).
-_EARS_SHALL = re.compile(r"\bshall\b", re.IGNORECASE)
+# may not carry an obligation verb. Advisory only — authoring quality never blocks
+# a task (same WARN-only posture as ``ac_integrity_gate``).
+#
+# Multilingual: the mandatory verb need not be English ``shall``. The canonical
+# obligation modal in common spec languages is accepted too — Latin verbs
+# (FR/ES/IT/PT/DE/NL) match with ``\b`` and benefit from Unicode case-folding;
+# CJK verbs (ZH/JA/KO) match WITHOUT ``\b`` because Python's word boundary does
+# not fire between two ideographs (``系统应当响应`` would defeat ``\b应当\b``).
+# ``CONDUCTOR_EARS_VERBS`` (comma-separated) appends project-specific verbs; each
+# is auto-classified into the Latin or CJK branch by the same rule, so tracks in
+# any language can be made EARS-clean without a code change. Negation detection
+# stays English-centric (``shall not``) — the cross-language equivalent (FR
+# ``ne…pas``, DE ``nicht``) is discontinuous and would false-positive; the
+# mandatory-verb axis is the load-bearing one and is fully multilingual here.
+_EARS_LATIN_VERBS = (
+    "shall",                              # English (canonical EARS)
+    "doit", "devra", "devront",           # French
+    "debe", "deberá", "deberán",          # Spanish
+    "deve", "dovrà", "devono",            # Italian
+    "deve", "deverá", "devem",            # Portuguese
+    "muss", "müssen",                     # German (mandatory; "soll"≈should, excluded)
+    "moet", "moeten",                     # Dutch
+)
+_EARS_CJK_VERBS = (
+    "应当", "应", "必须",                                 # Chinese (Simplified)
+    "しなければならない", "するものとする", "すること",    # Japanese
+    "해야 한다", "한다",                                  # Korean
+)
+
+
+def _is_cjk_verb(verb):
+    """True if ``verb`` contains a CJK ideograph / kana / hangul syllable.
+
+    Such verbs are matched without ``\\b`` (no boundary fires between two
+    ideographs); Latin-script verbs are matched with ``\\b``."""
+    for c in verb:
+        if ("一" <= c <= "鿿"     # CJK Unified Ideographs
+                or "぀" <= c <= "ヿ"  # Hiragana + Katakana
+                or "가" <= c <= "힯"):  # Hangul Syllables
+            return True
+    return False
+
+
+def _build_ears_shall_regex():
+    """Compile the mandatory-EARS-verb regex once at import.
+
+    Latin verbs get ``\\b`` anchors (and IGNORECASE Unicode folding); CJK verbs
+    do not. ``CONDUCTOR_EARS_VERBS`` extends the set; its entries are classified
+    by ``_is_cjk_verb`` so an env-supplied verb lands in the right branch."""
+    extra = tuple(v.strip()
+                  for v in os.environ.get("CONDUCTOR_EARS_VERBS", "").split(",")
+                  if v.strip())
+    latin = sorted({v for v in (_EARS_LATIN_VERBS + extra) if not _is_cjk_verb(v)},
+                   key=len, reverse=True)
+    cjk = sorted({v for v in (_EARS_CJK_VERBS + extra) if _is_cjk_verb(v)},
+                 key=len, reverse=True)
+    parts = []
+    if latin:
+        parts.append(r"\b(?:" + "|".join(re.escape(v) for v in latin) + r")\b")
+    if cjk:
+        parts.append(r"(?:" + "|".join(re.escape(v) for v in cjk) + r")")
+    # Unreachable in practice (shall is always present); guards a degenerate env.
+    body = "|".join(parts) if parts else r"(?!)"
+    return re.compile(body, re.IGNORECASE)
+
+
+_EARS_SHALL = _build_ears_shall_regex()
 _EARS_NEGATION = re.compile(r"\bshall\s+(?:not|never)\b|\bshan['’]t\b",
                             re.IGNORECASE)
 
@@ -255,12 +320,15 @@ def _gate(ac_tc_coverage_rate, orphan_acs, ac_traceability_rate, untraced_acs,
 
 def _ears_item_warnings(item):
     """Return a reason string if requirement ``item`` (``{"id","text"}``) breaks an
-    EARS invariant, else ``None``. Missing-``shall`` takes priority; a requirement
-    that has ``shall`` but negates it (``shall not``) gets the negation reason."""
+    EARS invariant, else ``None``. Missing mandatory verb takes priority; a
+    requirement that carries the verb but negates it (``shall not``) gets the
+    negation reason. The mandatory verb may be English ``shall`` or any localized
+    equivalent in ``_EARS_SHALL`` (extend via ``CONDUCTOR_EARS_VERBS``)."""
     text = item.get("text", "")
     if not _EARS_SHALL.search(text):
-        return ("missing mandatory 'shall' response verb — EARS requires 'shall' "
-                "(avoid should/may/will)")
+        return ("missing mandatory EARS response verb — EARS requires an "
+                "obligation modal (e.g. 'shall'/'doit'/'muss'/'应当'; extend via "
+                "CONDUCTOR_EARS_VERBS; avoid should/may/will)")
     if _EARS_NEGATION.search(text):
         return ("negation — rephrase as a positive 'If <trigger>, then the "
                 "<system> shall <recovery>.' unwanted-behavior clause "
@@ -286,9 +354,11 @@ def _ears_gate_str(warnings):
         return "PASS"
     ids = ", ".join(w["id"] for w in warnings)
     return (f"WARN ({len(warnings)} requirement(s) not EARS-compliant: {ids}) — "
-            "fix: rewrite each in an EARS pattern with a mandatory 'shall' "
-            "(When/While/Where/If-then, or ubiquitous 'The <system> shall ...'); "
-            "see spec-scaffold.md Requirements (EARS)")
+            "fix: rewrite each in an EARS pattern with a mandatory response verb "
+            "('shall' or a localized equivalent: doit/debe/deve/muss/moet/应当 …; "
+            "extend via CONDUCTOR_EARS_VERBS); When/While/Where/If-then, or "
+            "ubiquitous 'The <system> shall ...'; see spec-scaffold.md "
+            "Requirements (EARS)")
 
 
 def compute_ac_integrity(track_dir):

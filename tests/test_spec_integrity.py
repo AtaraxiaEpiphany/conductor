@@ -437,7 +437,8 @@ class AcEvidenceMapTests(TestCase):
 
 
 class EarsLintTests(TestCase):
-    """The EARS advisory lint: every FR/NFR must carry a mandatory ``shall`` and
+    """The EARS advisory lint: every FR/NFR must carry a mandatory EARS response
+    verb (English ``shall`` or a localized equivalent — see ``_EARS_SHALL``) and
     must avoid negation (``shall not``). ACs are criteria, not requirements, so
     they are never linted. WARN-only — ``ears_gate`` never blocks; it rides the
     same advisory channel as ``ac_integrity_gate``."""
@@ -540,6 +541,87 @@ class EarsLintTests(TestCase):
         d = _track()  # empty dir
         from scripts.track_state.spec_integrity import _ears_gate
         self.assertEqual(_ears_gate(d), "N/A")
+
+    # --- multilingual EARS: the mandatory verb need not be English 'shall' ----
+
+    def test_multilingual_latin_verbs_accepted(self):
+        # The canonical obligation modal in FR/DE/ES lints clean — Unicode
+        # case-folded, \b-anchored. Localized requirements must not false-WARN.
+        spec = ("# Specification: Demo\n## Requirements\n"
+                "### Functional Requirements\n"
+                "- FR-1: Le système doit authentifier l'utilisateur.\n"
+                "- FR-2: Das System MUSS Passwörter mit bcrypt hashen.\n"
+                "- FR-3: El sistema deberá responder en menos de 200 ms.\n"
+                "## Acceptance Criteria\n- AC-1: crit\n"
+                "## Test Scenarios\n| ID | AC Ref | S | O |\n| -- | ------ | - | - |\n"
+                "| TC-1.1 | AC-1 | x | y |\n")
+        d = _track(spec, _PLAN_2AC, _state([
+            {"name": "a", "status": "completed", "evidence": {"tc_coverage": "TC-1.1"}},
+        ]))
+        r = compute_ac_integrity(d)
+        self.assertEqual(r["ears_gate"], "PASS")
+        self.assertEqual(r["ears_warnings"], [])
+
+    def test_multilingual_cjk_verbs_accepted(self):
+        # ZH/JA verbs match WITHOUT \b — no boundary fires between ideographs,
+        # so '系统应当响应' and 'トークンを発行すること' must lint clean.
+        spec = ("# Specification: Demo\n## Requirements\n"
+                "### Functional Requirements\n"
+                "- FR-1: 系统应当在一秒内颁发令牌。\n"
+                "- FR-2: システムはトークンを発行すること。\n"
+                "## Acceptance Criteria\n- AC-1: crit\n"
+                "## Test Scenarios\n| ID | AC Ref | S | O |\n| -- | ------ | - | - |\n"
+                "| TC-1.1 | AC-1 | x | y |\n")
+        d = _track(spec, _PLAN_2AC, _state([
+            {"name": "a", "status": "completed", "evidence": {"tc_coverage": "TC-1.1"}},
+        ]))
+        r = compute_ac_integrity(d)
+        self.assertEqual(r["ears_gate"], "PASS")
+        self.assertEqual(r["ears_warnings"], [])
+
+    def test_non_english_requirement_without_verb_still_warns(self):
+        # Multilingual is not "accept anything" — a ZH requirement lacking any
+        # obligation modal (应/应当/必须) still WARNs, same as 'fast login'.
+        spec = ("# Specification: Demo\n## Requirements\n"
+                "### Functional Requirements\n"
+                "- FR-1: 快速登录。\n"
+                "## Acceptance Criteria\n- AC-1: crit\n"
+                "## Test Scenarios\n| ID | AC Ref | S | O |\n| -- | ------ | - | - |\n"
+                "| TC-1.1 | AC-1 | x | y |\n")
+        d = _track(spec, _PLAN_2AC, _state([
+            {"name": "a", "status": "completed", "evidence": {"tc_coverage": "TC-1.1"}},
+        ]))
+        r = compute_ac_integrity(d)
+        self.assertTrue(r["ears_gate"].startswith("WARN"))
+        self.assertEqual([w["id"] for w in r["ears_warnings"]], ["FR-1"])
+        self.assertIn("mandatory", r["ears_warnings"][0]["reason"])
+
+    def test_env_var_extends_ears_verbs(self):
+        # CONDUCTOR_EARS_VERBS appends project-specific verbs at regex-build time.
+        # Without it 'zall' is unknown → WARN; with it the requirement lints PASS.
+        import os
+        from unittest import mock
+        from scripts.track_state import spec_integrity as si
+        spec = ("# Specification: Demo\n## Requirements\n"
+                "### Functional Requirements\n"
+                "- FR-1: The system zall the tokens within 1 second.\n"
+                "## Acceptance Criteria\n- AC-1: crit\n"
+                "## Test Scenarios\n| ID | AC Ref | S | O |\n| -- | ------ | - | - |\n"
+                "| TC-1.1 | AC-1 | x | y |\n")
+        d = _track(spec, _PLAN_2AC, _state([
+            {"name": "a", "status": "completed", "evidence": {"tc_coverage": "TC-1.1"}},
+        ]))
+        # Baseline (module-level regex built at import, env unset): WARNs.
+        os.environ.pop("CONDUCTOR_EARS_VERBS", None)
+        r0 = compute_ac_integrity(d)
+        self.assertTrue(r0["ears_gate"].startswith("WARN"))
+        # With env set + rebuilt regex patched in: PASS.
+        with mock.patch.dict(os.environ, {"CONDUCTOR_EARS_VERBS": "zall"}):
+            with mock.patch.object(si, "_EARS_SHALL",
+                                   si._build_ears_shall_regex()):
+                r1 = compute_ac_integrity(d)
+        self.assertEqual(r1["ears_gate"], "PASS")
+        self.assertEqual(r1["ears_warnings"], [])
 
 
 if __name__ == "__main__":

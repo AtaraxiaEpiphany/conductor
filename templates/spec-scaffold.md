@@ -25,6 +25,12 @@
 > Be specific and measurable (`within 200 ms`, `≥ 12 chars`, `99.9%`), never vague
 > (`fast`, `user-friendly`). The conductor's EARS lint flags any requirement
 > missing `shall` or using `shall not`.
+>
+> **Multilingual:** `shall` is the canonical English verb, but the mandatory
+> response verb may be its localized obligation equivalent — FR `doit`, ES `debe`,
+> IT/PT `deve`, DE `muss`, NL `moet`, ZH `应`/`应当`/`必须`, JA `すること`, KO `한다`.
+> Set `CONDUCTOR_EARS_VERBS=verb1,verb2,…` to extend the set for any other
+> language (CJK verbs need no word boundary; Latin verbs are case-folded).
 
 **EARS patterns** (keyword → when to use it):
 
