@@ -38,8 +38,14 @@ class _Project:
         self.tracks_dir.mkdir(parents=True, exist_ok=True)
         self.registry = self.cond / "tracks.md"
 
-    def add_track(self, track_id, status, marker=None, line_fmt="checkbox"):
-        """Create a track dir with track-state.json and a registry line."""
+    def add_track(self, track_id, status, marker=None, line_fmt="checkbox", link=None):
+        """Create a track dir with track-state.json and a registry line.
+
+        ``link`` overrides the checkbox link path (default canonical
+        ``conductor/tracks/<id>/`` — the form ``cmd_derive_name`` writes, and the
+        one that exposed the path-doubling bug). The historic ``tracks/<id>/``
+        form and absolute paths are exercised by passing ``link`` explicitly.
+        """
         td = self.tracks_dir / track_id
         td.mkdir(parents=True, exist_ok=True)
         for f in ("spec.md", "plan.md"):
@@ -50,7 +56,8 @@ class _Project:
         if line_fmt == "checkbox":
             m = marker if marker is not None else {"new": " ", "in_progress": "~",
                                                     "completed": "x"}.get(status, " ")
-            lines.append(f"- [{m}] {track_id} (tracks/{track_id}/)")
+            lp = link if link is not None else f"conductor/tracks/{track_id}/"
+            lines.append(f"- [{m}] {track_id} ({lp})")
         elif line_fmt == "section":
             lines.append(f"### {track_id}")
             lines.append(f"- **Status:** {status}")
@@ -221,6 +228,70 @@ class ResolveTrackRegistryFormatsTests(TestCase):
         entries = _iter_registry_entries(self.p.registry.read_text(), str(self.p.cond))
         ids = {e["track_id"] for e in entries}
         self.assertEqual(ids, {"cb_20260101", "se_20260102", "ta_20260103"})
+
+
+class ResolveTrackPathFormTests(TestCase):
+    """The checkbox link-path forms — the path-doubling regression."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.p = _Project(self.d)
+
+    def tearDown(self):
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    def test_checkbox_canonical_path_not_doubled(self):
+        # The canonical form cmd_derive_name writes (conductor/tracks/<id>/) must
+        # resolve to a SINGLE conductor/ segment — the regression that made
+        # preflight HALT "Conductor environment incomplete" on a non-existent
+        # conductor/conductor/tracks/<id> path.
+        td = self.p.add_track("auth_20260706", "in_progress")  # default canonical
+        r = self.p.resolve("auth_20260706")
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["track_dir"], str(td))
+        self.assertNotIn("conductor/conductor", r["track_dir"])
+
+    def test_checkbox_legacy_conductor_relative_path(self):
+        # Historic form (tracks/<id>/) still resolves to the same real dir.
+        td = self.p.add_track("leg_20260101", "in_progress",
+                              link=f"tracks/leg_20260101/")
+        r = self.p.resolve("leg_20260101")
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["track_dir"], str(td))
+
+    def test_absolute_link_path(self):
+        td = self.p.tracks_dir / "ab_20260101"
+        self.p.add_track("ab_20260101", "in_progress", link=f"{td}/")
+        r = self.p.resolve("ab_20260101")
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["track_dir"], str(td))
+
+
+class ResolveTrackPlaceholderTests(TestCase):
+    """Small-window-model defenses: literal $ARGUMENTS and full-path args."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.p = _Project(self.d)
+        self.td = self.p.add_track("auth_20260706", "in_progress")
+
+    def tearDown(self):
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    def test_literal_arguments_placeholder_auto_selects(self):
+        # A model that emits $ARGUMENTS unsubstituted must not get no_match.
+        for placeholder in ("$ARGUMENTS", "${ARGUMENTS}"):
+            r = self.p.resolve(placeholder)
+            self.assertTrue(r["ok"], placeholder)
+            self.assertEqual(r["via"], "auto_single", placeholder)
+
+    def test_full_path_arg_reduces_to_basename(self):
+        # The done → post-loop-step hand-off passes <td> (the resolved dir)
+        # verbatim — a full path whose basename IS the track_id.
+        r = self.p.resolve(str(self.td))
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["track_id"], "auth_20260706")
+        self.assertEqual(r["via"], "arg")
 
 
 class ResolveTrackLocatorTests(TestCase):

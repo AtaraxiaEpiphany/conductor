@@ -40,14 +40,13 @@ Wave loop: `DISPATCH-WAVE → FAN OUT → INTEGRATE (per member) → (drained) �
 
 ## 1.0 SETUP + TRACK SELECTION
 
-1. Resolve `<track_dir>` in code (do NOT hand-construct it from the registry): `track-state resolve-track "$ARGUMENTS"`. `ok: true` → `<track_dir>` = `track_dir`. `reason: "ambiguous"` → `AskUserQuestion` over `candidates` (label = `track_id`), then re-run `resolve-track "<chosen track_id>"`. `reason: "no_registry"` → `"Conductor environment incomplete. Run /conductor:setup."` → HALT. `reason: "no_match"` / `"no_non_terminal"` → announce `hint` → HALT.
-2. Run `track-state preflight "<track_dir>"`. If `ok: false` (missing spec/plan/state, or missing `conductor/workflow/`) → `"Conductor environment incomplete. Run /conductor:setup."` → HALT.
-3. `track-state recover "<track_dir>"`.
+1. Resolve + preflight `<track_dir>` in one call: `track-state setup "$ARGUMENTS"`. `ok: true` → `<track_dir>` = `td`. `reason: "ambiguous"` → `AskUserQuestion` over `candidates` (label = `track_id`), then re-run `setup "<chosen track_id>"`. `reason: "preflight"` (missing spec/plan/state, or missing `conductor/workflow/`) / `"no_registry"` → `"Conductor environment incomplete. Run /conductor:setup."` → HALT. `reason: "no_match"` / `"no_non_terminal"` → announce `hint` → HALT.
+2. `track-state recover "<track_dir>"`.
    - `status: "wave_active"` → an interrupted wave has in-flight members. Go to **§2.5** (resume the wave — integrate members before anything else).
    - error → HALT.
    - otherwise → continue.
-4. If `status == "new"` → `track-state start` + `registry-update` + commit.
-5. If recover surfaced a normal `in_progress`/`failed`/`blocked` serial task (no wave active) → handle exactly as `implement` §2.0, then come back here.
+3. If `status == "new"` → `track-state start` + `registry-update` + commit.
+4. If recover surfaced a normal `in_progress`/`failed`/`blocked` serial task (no wave active) → handle exactly as `implement` §2.0, then come back here.
 
 ---
 

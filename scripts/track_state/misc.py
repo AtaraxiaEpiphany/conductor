@@ -56,17 +56,9 @@ _RE_SHORTNAME_DATE = re.compile(r"_\d{8}$")
 _RE_TABLE_STATUS = re.compile(r"\b(new|in_progress|completed|archived|blocked|cancelled|deferred|skipped|failed)\b")
 
 
-def cmd_preflight(track_dir):
-    """Verify a track's core conductor files exist and its state loads.
-
-    Single machine-checkable entry point for skill setup checks, replacing the
-    repeated "verify spec.md/plan.md/track-state.json" prose. Also gates the two
-    project-level workflow files (``conductor/workflow/index.md`` and
-    ``post-loop.md``) that implement depends on — fail-open per
-    ``_resolve_conductor_root``. Outputs
-    ``{ok, missing, missing_workflow, track_dir, invalid_state}`` and ALWAYS
-    exits 0 — callers switch on ``ok`` and emit their own halt message (mirrors
-    ``validate``).
+def _preflight_result(track_dir):
+    """Compute the preflight envelope as a dict — factored body of
+    ``cmd_preflight`` so ``cmd_setup`` can compose it without capturing stdout.
     """
     td = Path(track_dir)
     missing = [f for f in _TRACK_CORE_FILES if not (td / f).exists()]
@@ -101,14 +93,30 @@ def cmd_preflight(track_dir):
         hint = ("track_dir looks like the conductor root (contains tracks.md but "
                 "no spec.md/plan.md/track-state.json). Pass conductor/tracks/<track_id>.")
 
-    out(dict(
+    return dict(
         ok=not missing and not invalid_state and not missing_workflow,
         missing=missing,
         missing_workflow=missing_workflow,
         track_dir=str(td),
         invalid_state=invalid_state,
         hint=hint,
-    ))
+    )
+
+
+def cmd_preflight(track_dir):
+    """Verify a track's core conductor files exist and its state loads.
+
+    Single machine-checkable entry point for skill setup checks, replacing the
+    repeated "verify spec.md/plan.md/track-state.json" prose. Also gates the two
+    project-level workflow files (``conductor/workflow/index.md`` and
+    ``post-loop.md``) that implement depends on — fail-open per
+    ``_resolve_conductor_root``. Outputs
+    ``{ok, missing, missing_workflow, track_dir, invalid_state}`` and ALWAYS
+    exits 0 — callers switch on ``ok`` and emit their own halt message (mirrors
+    ``validate``). The check itself lives in ``_preflight_result``, shared with
+    ``cmd_setup``.
+    """
+    out(_preflight_result(track_dir))
 
 
 def cmd_quality_snapshot(track_dir):
@@ -385,7 +393,22 @@ def _iter_registry_entries(text, conductor_root):
             _prefix, marker, _mid, link_path, _suffix = cm.groups()
             lp = link_path.strip()
             if lp:
-                track_dir = str((root / lp).resolve())
+                # Registry checkbox links are written either project-root-
+                # relative ("conductor/tracks/<id>/") — the canonical form
+                # ``cmd_derive_name`` emits — or conductor-root-relative
+                # ("tracks/<id>/"). ``root`` is the conductor root (parent of
+                # tracks.md = <project>/conductor); resolving a project-root-
+                # relative link against it doubles "conductor/" and yields a
+                # non-existent path. Pick the base by form: absolute as-is,
+                # "conductor/"-prefixed against the project root (root.parent),
+                # else against the conductor root.
+                lp_norm = lp.replace("\\", "/")
+                if Path(lp).is_absolute():
+                    track_dir = str(Path(lp).resolve())
+                elif lp_norm.lower().startswith("conductor/"):
+                    track_dir = str((root.parent / lp).resolve())
+                else:
+                    track_dir = str((root / lp).resolve())
                 track_id = Path(lp).name  # full id incl. _YYYYMMDD; shortname derived at match time
             else:
                 track_dir, track_id = None, None
@@ -406,32 +429,25 @@ def _iter_registry_entries(text, conductor_root):
     return entries
 
 
-def cmd_resolve_track(query=None, registry_path=None):
-    """Resolve a ``track_dir`` from the Tracks Registry; ALWAYS exits 0.
+def _resolve_core(reg, query):
+    """Resolve ``query -> track_dir`` and return the outcome dict (no ``out()``).
 
-    The single machine-checkable entry point for the skill §1.0 "locate track"
-    step — kills the bug class where a model hand-constructs the path (and passes
-    ``conductor/tracks.md``, the registry file, instead of the track directory).
-    Mirrors ``cmd_preflight``'s contract: outcome is in the JSON, never the exit
-    code, because ambiguity is a normal skill-handled branch (surface via
-    ``AskUserQuestion``), not an error.
+    Factored body of ``cmd_resolve_track`` so ``cmd_setup`` can compose it without
+    capturing stdout. Hosts two small-window-model defenses before tier matching:
 
-    Outputs:
-      - resolved: ``{ok:true, track_id, track_dir, status, via}`` (``via`` ∈
-        ``arg``/``auto_single``)
-      - ambiguous: ``{ok:false, reason:"ambiguous", candidates:[...]}``
-      - ``{ok:false, reason:"no_match", query, hint}``
-      - ``{ok:false, reason:"no_non_terminal", hint}``
-      - ``{ok:false, reason:"no_registry", hint}``
+    - **Literal placeholder:** a model that emits ``$ARGUMENTS`` unsubstituted
+      (the reported empty-``<td>`` failure) collapses to auto-select instead of
+      ``no_match``.
+    - **Full track_dir path:** the ``done`` -> post-loop-step hand-off passes
+      ``<td>`` (the resolved dir) verbatim; a path's basename is the track_id, so
+      reduce it and fall through to the exact-id tier instead of ``no_match``.
 
     Status is authoritative — read from each entry's ``track-state.json`` via
     ``load()``; the registry marker is the fallback when state is unreadable.
     """
-    reg = Path(registry_path) if registry_path else _find_registry()
     if reg is None or not reg.is_file():
-        out(dict(ok=False, reason="no_registry",
-                 hint="Run /conductor:setup (no conductor/tracks.md found)."))
-        return
+        return dict(ok=False, reason="no_registry",
+                    hint="Run /conductor:setup (no conductor/tracks.md found).")
     conductor_root = reg.parent
     entries = _iter_registry_entries(reg.read_text(), conductor_root)
 
@@ -448,7 +464,15 @@ def cmd_resolve_track(query=None, registry_path=None):
         resolved.append(dict(track_id=e.get("track_id"), track_dir=td,
                              status=status, marker=e.get("marker")))
 
-    q = (query or "").strip().lower() or None
+    q = (query or "").strip()
+    if q.lower() in ("$arguments", "${arguments}"):
+        q = None  # literal placeholder emitted unsubstituted -> auto-select
+    else:
+        if "/" in q or "\\" in q:
+            # full track_dir path (done hand-off) -> basename is the track_id
+            q = Path(q).name
+        q = q.lower() or None
+
     if q:
         # Tier 1: exact track_id (short-circuits even if shortname collides).
         hits = [r for r in resolved if r["track_id"] and r["track_id"].lower() == q]
@@ -461,26 +485,77 @@ def cmd_resolve_track(query=None, registry_path=None):
             hits = [r for r in resolved if r["track_dir"]
                     and q in Path(r["track_dir"]).name.lower()]
         if len(hits) == 1:
-            out(dict(ok=True, track_id=hits[0]["track_id"], track_dir=hits[0]["track_dir"],
-                     status=hits[0]["status"], via="arg"))
+            return dict(ok=True, track_id=hits[0]["track_id"], track_dir=hits[0]["track_dir"],
+                        status=hits[0]["status"], via="arg")
         elif len(hits) > 1:
-            out(dict(ok=False, reason="ambiguous", candidates=hits))
+            return dict(ok=False, reason="ambiguous", candidates=hits)
         else:
-            out(dict(ok=False, reason="no_match", query=query,
-                     hint=f"No registry entry matches '{query}'. "
-                          "List tracks with 'cat conductor/tracks.md'."))
-        return
+            return dict(ok=False, reason="no_match", query=query,
+                        hint=f"No registry entry matches '{query}'. "
+                             "List tracks with 'cat conductor/tracks.md'.")
 
     # Auto-select: the active (non-terminal) tracks.
     live = [r for r in resolved if r["status"] in _TRACK_NON_TERMINAL]
     if len(live) == 1:
-        out(dict(ok=True, track_id=live[0]["track_id"], track_dir=live[0]["track_dir"],
-                 status=live[0]["status"], via="auto_single"))
+        return dict(ok=True, track_id=live[0]["track_id"], track_dir=live[0]["track_dir"],
+                    status=live[0]["status"], via="auto_single")
     elif len(live) > 1:
-        out(dict(ok=False, reason="ambiguous", candidates=live))
+        return dict(ok=False, reason="ambiguous", candidates=live)
     else:
-        out(dict(ok=False, reason="no_non_terminal",
-                 hint="No track with status new/in_progress. Pass a track_id query."))
+        return dict(ok=False, reason="no_non_terminal",
+                    hint="No track with status new/in_progress. Pass a track_id query.")
+
+
+def cmd_resolve_track(query=None, registry_path=None):
+    """Resolve a ``track_dir`` from the Tracks Registry; ALWAYS exits 0.
+
+    A machine-checkable entry point for the skill §1.0 "locate track" step —
+    kills the bug class where a model hand-constructs the path (and passes
+    ``conductor/tracks.md``, the registry file, instead of the track directory).
+    Mirrors ``cmd_preflight``'s contract: outcome is in the JSON, never the exit
+    code, because ambiguity is a normal skill-handled branch (surface via
+    ``AskUserQuestion``), not an error. The resolve logic (and the placeholder /
+    full-path defenses) live in ``_resolve_core``, shared with ``cmd_setup``.
+    """
+    reg = Path(registry_path) if registry_path else _find_registry()
+    out(_resolve_core(reg, query))
+
+
+def cmd_setup(query=None, registry_path=None):
+    """Resolve + preflight a track in one call; ALWAYS exits 0.
+
+    Collapses the skill §1.0 ``resolve-track`` + ``preflight`` pair into a single
+    read-only query so the model never hand-carries ``<td>`` between them — the
+    last path-handoff in setup, and the exact mishandling class that motivated
+    ``resolve-track``. Mirrors ``cmd_preflight`` / ``cmd_resolve_track``: outcome
+    in JSON, never the exit code. Composes ``_resolve_core`` (resolve + the
+    placeholder / full-path defenses) with ``_preflight_result`` (the readiness
+    check). Read-only — the ``new`` -> ``start`` transition stays with
+    ``recover``, where the status comes from.
+
+    Outputs:
+      - resolved + ready: ``{ok:true, td, track_id, status, via}``
+      - resolved but not ready: ``{ok:false, reason:"preflight", td, hint,
+        missing, missing_workflow}``
+      - ambiguous / no_registry / no_match / no_non_terminal: passed through from
+        ``_resolve_core`` (``reason`` names each).
+    """
+    reg = Path(registry_path) if registry_path else _find_registry()
+    core = _resolve_core(reg, query)
+    if not core.get("ok"):
+        out(core)  # ambiguous / no_registry / no_match / no_non_terminal
+        return
+    td = core["track_dir"]
+    pf = _preflight_result(td)
+    if pf["ok"]:
+        out(dict(ok=True, td=td, track_id=core["track_id"],
+                 status=core["status"], via=core["via"]))
+    else:
+        out(dict(ok=False, reason="preflight", td=td,
+                 hint=pf.get("hint")
+                 or "Conductor environment incomplete. Run /conductor:setup.",
+                 missing=pf.get("missing"),
+                 missing_workflow=pf.get("missing_workflow")))
 
 
 def _get_all_shas(state):

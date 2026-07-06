@@ -23,10 +23,9 @@ is precious; this skill body is deliberately tiny.
 
 ## 1.0 SETUP (once)
 
-1. Resolve `<td>` in code (do NOT hand-construct it from the registry): `track-state resolve-track "$ARGUMENTS"`. `ok: true` → `<td>` = `track_dir`. `reason: "ambiguous"` → `AskUserQuestion` over `candidates` (label = `track_id`), then re-run `resolve-track "<chosen track_id>"`. `reason: "no_registry"` → `"Conductor environment incomplete. Run /conductor:setup."` → HALT. `reason: "no_match"` / `"no_non_terminal"` → announce `hint` → HALT.
-2. `track-state preflight "<td>"`. If `ok: false` → `"Conductor environment incomplete. Run /conductor:setup."` → HALT.
-3. `track-state recover "<td>"`. If `status == "new"` → `track-state start "<td>"` + commit.
-4. If recover surfaces an interrupted wave (`wave_active`), just enter §2.0 — `wave-step` integrates in-flight members before anything else.
+1. Resolve + preflight `<td>` in one call: `track-state setup "$ARGUMENTS"`. `ok: true` → `<td>` = `td`. `reason: "ambiguous"` → `AskUserQuestion` over `candidates` (label = `track_id`), then re-run `setup "<chosen track_id>"`. `reason: "preflight"` / `"no_registry"` → `"Conductor environment incomplete. Run /conductor:setup."` → HALT. `reason: "no_match"` / `"no_non_terminal"` → announce `hint` → HALT.
+2. `track-state recover "<td>"`. If `status == "new"` → `track-state start "<td>"` + commit.
+3. If recover surfaces an interrupted wave (`wave_active`), just enter §2.0 — `wave-step` integrates in-flight members before anything else.
 
 ## 2.0 THE LOOP
 
