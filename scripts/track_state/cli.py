@@ -20,6 +20,7 @@ from .misc import (
     cmd_deferred_report, cmd_phase_done, cmd_registry_update,
     cmd_record_summary, cmd_preflight, cmd_quality_snapshot,
     cmd_spec_integrity, cmd_derive_name, cmd_post_loop_status,
+    cmd_resolve_track,
 )
 from .handoff import cmd_get_handoff, cmd_sync_handoff, cmd_append_handoff, cmd_harvest_candidates
 from .sync import cmd_sync_plan
@@ -256,6 +257,10 @@ COMMAND_HELP = {
     "derive-name": ("derive-name <shortname>",
                     "Derive canonical track_id (<shortname>_<YYYYMMDD>) and track_dir for "
                     "today; idempotent. Uniqueness is the skill's job (new-track §2.6)."),
+    "resolve-track": ("resolve-track [<query>] [--registry <path>]",
+                      "Resolve a track_dir from conductor/tracks.md (exact id / shortname "
+                      "prefix / auto-select the single active track). ALWAYS exits 0 — "
+                      "switch on ok/reason (ambiguous→ask, no_registry→setup)."),
 }
 
 _COMMAND_GROUPS = [
@@ -268,7 +273,7 @@ _COMMAND_GROUPS = [
     ("Dispatch Composites", ["dispatch-prepare", "dispatch-finalize", "record-summary"]),
     ("Rail B-min Spines", ["step", "post-loop-step"]),
     ("Wave Parallelism", ["dispatch-wave", "wave-status", "wave-finalize", "wave-abort", "wave-step"]),
-    ("Naming", ["derive-name"]),
+    ("Naming", ["derive-name", "resolve-track"]),
     ("Diagnostics", ["validate", "gc", "shas", "post-loop-status", "checklist-verify",
                      "deferred-report", "phase-done", "add-checkpoint", "preflight",
                      "quality-snapshot", "spec-integrity"]),
@@ -308,13 +313,17 @@ def main():
         cmd_help(target)
         sys.exit(0)
 
-    if len(sys.argv) < 3:
+    # Commands that take no track-dir positional (their [optional] positional is
+    # a query/shortname, not a path). They may legally run with len(argv) == 2.
+    _NO_TRACK_DIR_COMMANDS = {"resolve-track"}
+
+    cmd = sys.argv[1]
+    if len(sys.argv) < 3 and cmd not in _NO_TRACK_DIR_COMMANDS:
         print("Usage: track-state <command> <track-dir> [args...]", file=sys.stderr)
         print("       track-state help [<command>]", file=sys.stderr)
         sys.exit(1)
 
-    cmd = sys.argv[1]
-    track_dir = sys.argv[2]
+    track_dir = sys.argv[2] if len(sys.argv) >= 3 else None
     args = sys.argv[3:]
     pos = positional(args)
 
@@ -473,6 +482,13 @@ def main():
             cmd_preflight(track_dir)
         elif cmd == "derive-name":
             cmd_derive_name(sys.argv[2])  # shortname — the one positional that isn't a track-dir
+        elif cmd == "resolve-track":
+            # Re-derive from argv[2:] (not the shared track_dir/args split): with
+            # no query, `resolve-track --registry X` would otherwise eat the
+            # flag name into the track_dir slot.
+            raw = sys.argv[2:]
+            query = None if (not raw or raw[0].startswith("--")) else raw[0]
+            cmd_resolve_track(query=query, registry_path=flag(raw, "--registry"))
         else:
             print(f"Unknown command: {cmd}", file=sys.stderr)
             sys.exit(1)

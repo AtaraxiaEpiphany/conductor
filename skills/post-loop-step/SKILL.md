@@ -24,7 +24,7 @@ prose post-loop template is never resident.
 
 ## 1.0 SETUP (once)
 
-1. Locate track from `conductor/tracks.md` (resolve `$ARGUMENTS` or auto-select).
+1. Resolve `<td>` in code (do NOT hand-construct it from the registry): `track-state resolve-track "$ARGUMENTS"`. `ok: true` → `<td>` = `track_dir`. `reason: "ambiguous"` → `AskUserQuestion` over `candidates` (label = `track_id`), then re-run `resolve-track "<chosen track_id>"`. `reason: "no_registry"` → `"Conductor environment incomplete. Run /conductor:setup."` → HALT. `reason: "no_match"` / `"no_non_terminal"` → announce `hint` → HALT.
 2. `track-state post-loop-status "<td>"` is NOT required — `post-loop-step` reads
    the gates itself. Skip straight to §2.0.
 

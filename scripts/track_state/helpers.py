@@ -32,6 +32,29 @@ def _resolve_conductor_root(track_dir):
     return None
 
 
+def _find_registry(start=None):
+    """Locate ``conductor/tracks.md`` by walking up from ``start`` (default CWD).
+
+    ``_resolve_conductor_root`` walks up from a TRACK dir looking for a directory
+    that *holds* ``tracks.md`` — so it works when handed a track path, but NOT
+    when handed the project root (where ``tracks.md`` is a child at
+    ``conductor/tracks.md``). This locator checks BOTH ``<cand>/conductor/
+    tracks.md`` and ``<cand>/tracks.md`` at each ancestor, so it resolves from
+    the project root, from ``conductor/``, from a track dir, or from a nested
+    subdir like ``src/auth/``. Returns the registry ``Path`` or ``None``.
+    """
+    try:
+        p = Path(start or Path.cwd()).resolve(strict=False)
+    except OSError:
+        return None
+    for cand in (p, *p.parents):
+        for cand_root in (cand / "conductor", cand):
+            f = cand_root / "tracks.md"
+            if f.is_file():
+                return f
+    return None
+
+
 def flag(args, name):
     """Parse a --flag value from args list. Supports --flag=val and --flag val."""
     for i, a in enumerate(args):

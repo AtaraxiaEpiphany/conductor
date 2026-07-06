@@ -75,6 +75,34 @@ class PreflightTests(TestCase):
         self.assertEqual(proc.returncode, 0)
         self.assertIn("preflight", proc.stdout)
 
+    def test_no_hint_for_normal_track(self):
+        self._files("spec.md", "plan.md")
+        self._state(json.dumps({"phases": []}))
+        r = self._preflight()
+        self.assertIsNone(r.get("hint"))
+
+    def test_hint_when_track_dir_is_the_registry_file(self):
+        # The original bug: model passes conductor/tracks.md (the registry file)
+        # as the track_dir. preflight must surface a targeted hint.
+        self._files("tracks.md")  # a file named tracks.md, no core files
+        proc = _run([sys.executable, str(_CLI), "preflight", str(Path(self.d, "tracks.md"))])
+        self.assertEqual(proc.returncode, 0)
+        r = json.loads(proc.stdout)
+        self.assertFalse(r["ok"])
+        self.assertIsNotNone(r.get("hint"))
+        self.assertIn("registry", r["hint"].lower())
+
+    def test_hint_when_track_dir_is_conductor_root(self):
+        # A dir that holds tracks.md but no spec/plan/state — the conductor root,
+        # not a track dir.
+        (Path(self.d) / "tracks.md").write_text("x")
+        proc = _run([sys.executable, str(_CLI), "preflight", self.d])
+        self.assertEqual(proc.returncode, 0)
+        r = json.loads(proc.stdout)
+        self.assertFalse(r["ok"])
+        self.assertIsNotNone(r.get("hint"))
+        self.assertIn("conductor root", r["hint"])
+
 
 class PreflightWorkflowFilesTests(TestCase):
     """Project-level workflow files (conductor/workflow/) are now gated by

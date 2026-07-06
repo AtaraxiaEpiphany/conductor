@@ -9,7 +9,7 @@ from .core import load, save
 from .helpers import (
     out, now_iso, target, extract_tags, _reset_task,
     _any_phase_needs_checkpoint, conductor_dir, _tag_exempt_from_coverage,
-    _resolve_conductor_root,
+    _resolve_conductor_root, _find_registry,
 )
 from .mutations import _do_complete
 from .sync import _do_sync_plan
@@ -32,6 +32,28 @@ _TRACK_CORE_FILES = ("spec.md", "plan.md", "track-state.json")
 # never HALT setup on a non-standard layout (and the existing preflight tests,
 # which use temp dirs without a project layout, stay green).
 _WORKFLOW_FILES = ("workflow/index.md", "workflow/post-loop.md")
+
+# Track-level non-terminal statuses eligible for auto-select — exactly the
+# `[~]`/`[ ]` markers the skills auto-select on. (Task-level `pending` is NOT a
+# track status; `TERMINAL_STATUSES` is task-level and omits `archived`/`failed`,
+# so neither constant fits here.)
+_TRACK_NON_TERMINAL = ("new", "in_progress")
+
+# Inverse of the inline ``status_to_marker`` in ``cmd_registry_update`` (the
+# 9-entry registry map — NOT ``constants.MARKER_MAP``, which is for plan.md and
+# lacks ``new``/``archived``). Used to read a registry marker back to a status
+# when ``track-state.json`` is unavailable.
+_REGISTRY_MARKER_TO_STATUS = {
+    " ": "new", "~": "in_progress", "x": "completed", "@": "archived",
+    "#": "blocked", "-": "cancelled", "d": "deferred", ">": "skipped", "!": "failed",
+}
+
+# Read-side regexes mirroring the write-side matchers in ``cmd_registry_update``.
+_RE_SECTION_HEAD = re.compile(r"^###\s+(\S+)")
+_RE_SECTION_STATUS = re.compile(r"^\s*-\s+\*\*Status:\*\*\s+(\S+)")
+_RE_CHECKBOX = re.compile(r"^(\s*-\s+\[)([ x~!>#\-d@])(\]\s+.*?\()([^)]*)(\).*)$")
+_RE_SHORTNAME_DATE = re.compile(r"_\d{8}$")
+_RE_TABLE_STATUS = re.compile(r"\b(new|in_progress|completed|archived|blocked|cancelled|deferred|skipped|failed)\b")
 
 
 def cmd_preflight(track_dir):
@@ -63,12 +85,29 @@ def cmd_preflight(track_dir):
         missing_workflow = [f for f in _WORKFLOW_FILES
                             if not (conductor_root / f).exists()]
 
+    # Defense-in-depth: a mispassed track_dir (the registry file, or the
+    # conductor root) yields the generic missing=[spec,plan,state] failure that
+    # looks identical to a genuinely unbuilt track. Surface a targeted hint so
+    # the skill's HALT message is actionable instead of mysterious. ``hint`` is
+    # None for a normal (possibly incomplete) track dir.
+    hint = None
+    td_path = Path(track_dir)
+    if td_path.is_file() or td_path.name == "tracks.md":
+        hint = ("track_dir points to the registry file (or a file), not a track "
+                "directory. Pass conductor/tracks/<track_id> "
+                "(or run 'track-state resolve-track \"<query>\"').")
+    elif td_path.is_dir() and (td_path / "tracks.md").exists() and \
+            not any((td_path / f).exists() for f in _TRACK_CORE_FILES):
+        hint = ("track_dir looks like the conductor root (contains tracks.md but "
+                "no spec.md/plan.md/track-state.json). Pass conductor/tracks/<track_id>.")
+
     out(dict(
         ok=not missing and not invalid_state and not missing_workflow,
         missing=missing,
         missing_workflow=missing_workflow,
         track_dir=str(td),
         invalid_state=invalid_state,
+        hint=hint,
     ))
 
 
@@ -296,6 +335,154 @@ def cmd_derive_name(shortname):
     ))
 
 
+def _iter_registry_entries(text, conductor_root):
+    """Parse registry text into a list of ``{track_id, track_dir, marker, status_str}``.
+
+    Read-only mirror of the write-side parsing in ``cmd_registry_update`` (the
+    single source of truth for the registry file's three formats). Handles:
+
+    - **checkbox**: ``- [marker] desc (path/)`` — ``track_dir`` from the link
+      path (resolved against ``conductor_root``); ``marker`` captured directly.
+    - **section**: ``### <id>`` + ``- **Status:** <status>`` — ``track_dir``
+      derived as ``<conductor_root>/tracks/<id>`` (sections carry no path).
+    - **table**: ``| id | type | status | desc |`` — ``track_dir`` derived.
+
+    Only checkbox entries carry a path; section/table entries derive it from
+    ``track_id`` via the canonical ``conductor/tracks/<track_id>`` layout.
+    Returns entries in document order; malformed lines are silently skipped.
+    """
+    entries = []
+    root = Path(conductor_root)
+    in_section_id = None
+    section_status = None
+
+    def _derived_dir(track_id):
+        return str(root / "tracks" / track_id)
+
+    def _flush(tid, status):
+        if tid:
+            entries.append(dict(track_id=tid, track_dir=_derived_dir(tid),
+                                marker=None, status_str=status))
+
+    for line in text.splitlines():
+        # Section heading: ### <id>  (id is first token; heading may have prose)
+        m = _RE_SECTION_HEAD.match(line)
+        if m:
+            _flush(in_section_id, section_status)  # prior section w/o Status line
+            in_section_id = m.group(1).strip()
+            section_status = None
+            continue
+        if in_section_id is not None:
+            sm = _RE_SECTION_STATUS.match(line)
+            if sm:
+                section_status = sm.group(1).strip()
+                _flush(in_section_id, section_status)
+                in_section_id = None
+                continue
+        # Checkbox: - [marker] desc (path/)
+        cm = _RE_CHECKBOX.match(line)
+        if cm:
+            _prefix, marker, _mid, link_path, _suffix = cm.groups()
+            lp = link_path.strip()
+            if lp:
+                track_dir = str((root / lp).resolve())
+                track_id = Path(lp).name  # full id incl. _YYYYMMDD; shortname derived at match time
+            else:
+                track_dir, track_id = None, None
+            entries.append(dict(track_id=track_id, track_dir=track_dir,
+                                marker=marker,
+                                status_str=_REGISTRY_MARKER_TO_STATUS.get(marker)))
+            continue
+        # Table row: | id | type | status | desc |
+        if line.lstrip().startswith("|"):
+            sm = _RE_TABLE_STATUS.search(line)
+            if sm:
+                cells = [c.strip() for c in line.strip().strip("|").split("|")]
+                tid = cells[0] if cells else ""
+                if tid and tid.lower() not in ("id", "track id", "track"):
+                    entries.append(dict(track_id=tid, track_dir=_derived_dir(tid),
+                                        marker=None, status_str=sm.group(1)))
+    _flush(in_section_id, section_status)  # trailing section w/o Status line
+    return entries
+
+
+def cmd_resolve_track(query=None, registry_path=None):
+    """Resolve a ``track_dir`` from the Tracks Registry; ALWAYS exits 0.
+
+    The single machine-checkable entry point for the skill §1.0 "locate track"
+    step — kills the bug class where a model hand-constructs the path (and passes
+    ``conductor/tracks.md``, the registry file, instead of the track directory).
+    Mirrors ``cmd_preflight``'s contract: outcome is in the JSON, never the exit
+    code, because ambiguity is a normal skill-handled branch (surface via
+    ``AskUserQuestion``), not an error.
+
+    Outputs:
+      - resolved: ``{ok:true, track_id, track_dir, status, via}`` (``via`` ∈
+        ``arg``/``auto_single``)
+      - ambiguous: ``{ok:false, reason:"ambiguous", candidates:[...]}``
+      - ``{ok:false, reason:"no_match", query, hint}``
+      - ``{ok:false, reason:"no_non_terminal", hint}``
+      - ``{ok:false, reason:"no_registry", hint}``
+
+    Status is authoritative — read from each entry's ``track-state.json`` via
+    ``load()``; the registry marker is the fallback when state is unreadable.
+    """
+    reg = Path(registry_path) if registry_path else _find_registry()
+    if reg is None or not reg.is_file():
+        out(dict(ok=False, reason="no_registry",
+                 hint="Run /conductor:setup (no conductor/tracks.md found)."))
+        return
+    conductor_root = reg.parent
+    entries = _iter_registry_entries(reg.read_text(), conductor_root)
+
+    # Authoritative status per entry (registry projection is the fallback).
+    resolved = []
+    for e in entries:
+        status = e.get("status_str")
+        td = e.get("track_dir")
+        if td:
+            try:
+                status = load(td).get("status") or status
+            except Exception:
+                pass  # keep the registry projection
+        resolved.append(dict(track_id=e.get("track_id"), track_dir=td,
+                             status=status, marker=e.get("marker")))
+
+    q = (query or "").strip().lower() or None
+    if q:
+        # Tier 1: exact track_id (short-circuits even if shortname collides).
+        hits = [r for r in resolved if r["track_id"] and r["track_id"].lower() == q]
+        # Tier 2: shortname prefix (track_id minus trailing _YYYYMMDD).
+        if not hits:
+            hits = [r for r in resolved if r["track_id"]
+                    and _RE_SHORTNAME_DATE.sub("", r["track_id"]).lower().startswith(q)]
+        # Tier 3: path-basename substring.
+        if not hits:
+            hits = [r for r in resolved if r["track_dir"]
+                    and q in Path(r["track_dir"]).name.lower()]
+        if len(hits) == 1:
+            out(dict(ok=True, track_id=hits[0]["track_id"], track_dir=hits[0]["track_dir"],
+                     status=hits[0]["status"], via="arg"))
+        elif len(hits) > 1:
+            out(dict(ok=False, reason="ambiguous", candidates=hits))
+        else:
+            out(dict(ok=False, reason="no_match", query=query,
+                     hint=f"No registry entry matches '{query}'. "
+                          "List tracks with 'cat conductor/tracks.md'."))
+        return
+
+    # Auto-select: the active (non-terminal) tracks.
+    live = [r for r in resolved if r["status"] in _TRACK_NON_TERMINAL]
+    if len(live) == 1:
+        out(dict(ok=True, track_id=live[0]["track_id"], track_dir=live[0]["track_dir"],
+                 status=live[0]["status"], via="auto_single"))
+    elif len(live) > 1:
+        out(dict(ok=False, reason="ambiguous", candidates=live))
+    else:
+        out(dict(ok=False, reason="no_non_terminal",
+                 hint="No track with status new/in_progress. Pass a track_id query."))
+
+
 def _get_all_shas(state):
     """Extract all commit SHAs from state. Returns list."""
     shas = []
@@ -507,6 +694,10 @@ def cmd_registry_update(track_dir, tracks_md_path):
     updated = False
     in_track_section = False
 
+    # NOTE: this is the WRITE side (mutates lines by index). The READ side —
+    # enumerating every registry entry — lives in ``_iter_registry_entries``
+    # (used by ``cmd_resolve_track``). Intentional duplication: a read-only
+    # yielder does not fit this index-mutating write loop.
     for i, line in enumerate(lines):
         # Detect track section start: ### heading containing track dir name or track_id
         if re.match(r"^###\s+", line):
