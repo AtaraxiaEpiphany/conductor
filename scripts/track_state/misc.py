@@ -51,7 +51,15 @@ _REGISTRY_MARKER_TO_STATUS = {
 # Read-side regexes mirroring the write-side matchers in ``cmd_registry_update``.
 _RE_SECTION_HEAD = re.compile(r"^###\s+(\S+)")
 _RE_SECTION_STATUS = re.compile(r"^\s*-\s+\*\*Status:\*\*\s+(\S+)")
-_RE_CHECKBOX = re.compile(r"^(\s*-\s+\[)([ x~!>#\-d@])(\]\s+.*?\()([^)]*)(\).*)$")
+# Checkbox: ``- [marker] description (link/)``. The link is the TRAILING
+# parenthetical, so group 3 uses GREEDY ``.*\(`` to reach the LAST ``(`` on the
+# line. A non-greedy ``.*?\(`` would stop at the first ``(`` — which is inside
+# the description when it contains parens (``- [~] Add SSO (OAuth2) login
+# (conductor/tracks/sso_20260706/)``) — and capture ``OAuth2`` as the link,
+# silently resolving to a bogus track_dir. The write-side matcher in
+# ``cmd_registry_update`` is identical and MUST stay in sync; reconstruction is
+# unaffected (the groups still partition the whole line, only the marker swaps).
+_RE_CHECKBOX = re.compile(r"^(\s*-\s+\[)([ x~!>#\-d@])(\]\s+.*\()([^)]*)(\).*)$")
 _RE_SHORTNAME_DATE = re.compile(r"_\d{8}$")
 _RE_TABLE_STATUS = re.compile(r"\b(new|in_progress|completed|archived|blocked|cancelled|deferred|skipped|failed)\b")
 
@@ -392,27 +400,31 @@ def _iter_registry_entries(text, conductor_root):
         if cm:
             _prefix, marker, _mid, link_path, _suffix = cm.groups()
             lp = link_path.strip()
-            if lp:
-                # Registry checkbox links are written either project-root-
-                # relative ("conductor/tracks/<id>/") — the canonical form
-                # ``cmd_derive_name`` emits — or conductor-root-relative
-                # ("tracks/<id>/"). ``root`` is the conductor root (parent of
-                # tracks.md = <project>/conductor); resolving a project-root-
-                # relative link against it doubles "conductor/" and yields a
-                # non-existent path. Pick the base by form: absolute as-is,
-                # "conductor/"-prefixed against the project root (root.parent),
-                # else against the conductor root.
-                link = Path(lp)
-                lp_norm = lp.replace("\\", "/").lower()
-                if link.is_absolute():
-                    track_dir = str(link.resolve())
-                elif lp_norm.startswith("conductor/"):
-                    track_dir = str((root.parent / lp).resolve())
-                else:
-                    track_dir = str((root / lp).resolve())
-                track_id = link.name  # full id incl. _YYYYMMDD; shortname derived at match time
+            if not lp:
+                # An empty link ``()`` carries no track identity — no path to
+                # resolve and no basename to derive a track_id from. Skip it:
+                # emitting ``{track_dir: None}`` here would let ``_resolve_core``
+                # auto-select a null track_dir and crash ``_preflight_result``
+                # (``Path(None)`` -> TypeError), or pollute ``ambiguous``
+                # candidates with nulls the skill can't render as labels.
+                continue
+            # Registry checkbox links are written either project-root-relative
+            # ("conductor/tracks/<id>/") — the canonical form ``cmd_derive_name``
+            # emits — or conductor-root-relative ("tracks/<id>/"). ``root`` is
+            # the conductor root (parent of tracks.md = <project>/conductor);
+            # resolving a project-root-relative link against it doubles
+            # "conductor/" and yields a non-existent path. Pick the base by
+            # form: absolute as-is, "conductor/"-prefixed against the project
+            # root (root.parent), else against the conductor root.
+            link = Path(lp)
+            lp_norm = lp.replace("\\", "/").lower()
+            if link.is_absolute():
+                track_dir = str(link.resolve())
+            elif lp_norm.startswith("conductor/"):
+                track_dir = str((root.parent / lp).resolve())
             else:
-                track_dir, track_id = None, None
+                track_dir = str((root / lp).resolve())
+            track_id = link.name  # full id incl. _YYYYMMDD; shortname derived at match time
             entries.append(dict(track_id=track_id, track_dir=track_dir,
                                 marker=marker,
                                 status_str=_REGISTRY_MARKER_TO_STATUS.get(marker)))
@@ -551,7 +563,17 @@ def cmd_setup(query=None, registry_path=None):
     if not core.get("ok"):
         out(core)  # ambiguous / no_registry / no_match / no_non_terminal
         return
-    td = core["track_dir"]
+    td = core.get("track_dir")
+    if not td:
+        # Defense-in-depth: ``_resolve_core`` should never return ok:true
+        # without a track_dir (empty-link registry entries are skipped in
+        # ``_iter_registry_entries``), but this command's contract is "ALWAYS
+        # exits 0" — a stray null must surface as a HALT reason, not a
+        # ``Path(None)`` TypeError crash.
+        out(dict(ok=False, reason="no_match", query=query,
+                 hint="Resolved track has no usable directory — check the "
+                      "link paths in conductor/tracks.md."))
+        return
     pf = _preflight_result(td)
     if pf["ok"]:
         out(dict(ok=True, td=td, track_id=core["track_id"],
@@ -792,8 +814,11 @@ def cmd_registry_update(track_dir, tracks_md_path):
                 updated = True
             continue
 
-        # Format 2: Checkbox — [marker] ... (path/)
-        m = re.match(r"^(\s*-\s+\[)([ x~!>#\-d@])(\]\s+.*?\()([^)]*)(\).*)$", line)
+        # Format 2: Checkbox — [marker] ... (path/). Greedy ``.*\(`` reaches the
+        # LAST ``(`` (the link), so a description containing parens doesn't
+        # capture the wrong text as the link path. Mirrors ``_RE_CHECKBOX``
+        # (read side) — keep the two identical.
+        m = re.match(r"^(\s*-\s+\[)([ x~!>#\-d@])(\]\s+.*\()([^)]*)(\).*)$", line)
         if m:
             prefix, old_marker, mid, link_path, suffix = m.groups()
             if track_dir_name in link_path or str(track_dir_path) in link_path:

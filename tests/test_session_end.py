@@ -26,9 +26,14 @@ clean_temp_files = _mod.clean_temp_files
 
 
 def _registry(cwd: Path, track_rel: str):
+    # ``track_rel`` is a conductor-root-relative link (e.g. ``tracks/a``); the
+    # track dir lives at ``<cwd>/conductor/<track_rel>`` (the canonical layout,
+    # since the registry is at ``<cwd>/conductor/tracks.md``). extract_track_dirs
+    # normalizes such links to project-root-relative ``conductor/<track_rel>``,
+    # so ``cwd / d`` resolves to the dir below.
     (cwd / "conductor").mkdir(parents=True, exist_ok=True)
     (cwd / "conductor" / "tracks.md").write_text(f"- [T]({track_rel})\n")
-    track_dir = cwd / track_rel
+    track_dir = cwd / "conductor" / track_rel
     track_dir.mkdir(parents=True, exist_ok=True)
     return track_dir
 

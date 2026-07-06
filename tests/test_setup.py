@@ -201,5 +201,57 @@ class SetupCLITests(TestCase):
         self.assertEqual(r["track_id"], "feat_20260101")
 
 
+class SetupLinkParsingTests(TestCase):
+    """The skill §1.0 invokes ``track-state setup "$ARGUMENTS"`` — often with an
+    empty arg when the user runs ``/conductor:parallel-step`` directly. Two
+    link-parsing defects made that path fail on otherwise-valid registries:
+
+    - A checkbox description containing parens (``Add SSO (OAuth2) login``)
+      was mis-parsed so the description's paren content became the link ->
+      ``setup ""`` auto-selected a bogus dir -> ``reason: "preflight"`` HALT.
+    - A checkbox with an empty link ``()`` was emitted as ``{track_dir: None}``;
+      as the sole live entry it made ``setup`` crash (``Path(None)``) instead of
+      exiting 0.
+    """
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.p = _Project(self.d)
+
+    def tearDown(self):
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    def test_setup_auto_select_with_parens_in_description(self):
+        td = self.p.add_track("sso-oauth2_20260706", "in_progress")
+        self.p.registry.write_text(
+            "- [~] Add SSO (OAuth2) login (conductor/tracks/sso-oauth2_20260706/)\n")
+        r = self.p.setup()
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["td"], str(td))
+        self.assertEqual(r["track_id"], "sso-oauth2_20260706")
+        self.assertNotIn("OAuth2", r["td"])
+
+    def test_setup_empty_link_only_does_not_crash(self):
+        # The literal reported failure: ``setup ""`` where the registry's only
+        # live entry is a null-dir ghost. Must exit 0 with a reason, not raise.
+        self.p.registry.write_text("- [~] ghost track ()\n")
+        r = self.p.setup()
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["reason"], "no_non_terminal")
+
+    def test_setup_cli_empty_arg_with_parens_description(self):
+        # End-to-end via the CLI entry point the skill actually calls, with the
+        # literal empty-string arg (``setup "$ARGUMENTS"`` with no args).
+        self.p.add_track("sso-oauth2_20260706", "in_progress")
+        self.p.registry.write_text(
+            "- [~] Add SSO (OAuth2) login (conductor/tracks/sso-oauth2_20260706/)\n")
+        proc = _run([sys.executable, str(_CLI), "setup", "",
+                     "--registry", str(self.p.registry)])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        r = json.loads(proc.stdout)
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["track_id"], "sso-oauth2_20260706")
+
+
 if __name__ == "__main__":
     main()

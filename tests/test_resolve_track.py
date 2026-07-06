@@ -411,5 +411,92 @@ class ResolveTrackCLITests(TestCase):
         self.assertEqual(r.get("via"), "auto_single")  # not treated as query="--registry"
 
 
+class ResolveTrackDescriptionParensTests(TestCase):
+    """A checkbox description containing parens must not be mis-read as the link.
+
+    The link is the TRAILING parenthetical; a non-greedy ``.*?\\(`` would capture
+    the description's own parens (``Add SSO (OAuth2) login`` -> link ``OAuth2``)
+    and resolve to a bogus track_dir — the realistic trigger for the reported
+    ``setup ""`` "directly failed" (preflight HALT on a valid track).
+    """
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.p = _Project(self.d)
+
+    def tearDown(self):
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    def test_parens_in_description_resolves_auto(self):
+        td = self.p.add_track("sso-oauth2_20260706", "in_progress")
+        # Overwrite the registry with a description that itself has parens.
+        self.p.registry.write_text(
+            "- [~] Add SSO (OAuth2) login (conductor/tracks/sso-oauth2_20260706/)\n")
+        r = self.p.resolve()
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["track_id"], "sso-oauth2_20260706")
+        self.assertEqual(r["track_dir"], str(td))  # not ".../OAuth2"
+
+    def test_parens_in_description_shortname_query(self):
+        self.p.add_track("sso-oauth2_20260706", "in_progress")
+        self.p.registry.write_text(
+            "- [~] Add SSO (OAuth2) login (conductor/tracks/sso-oauth2_20260706/)\n")
+        r = self.p.resolve("sso")
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["track_id"], "sso-oauth2_20260706")
+
+    def test_multiple_paren_groups_dont_corrupt_link(self):
+        td = self.p.add_track("kv_20260706", "in_progress")
+        self.p.registry.write_text(
+            "- [~] Cache (redis) layer (v2) (conductor/tracks/kv_20260706/)\n")
+        r = self.p.resolve()
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["track_dir"], str(td))
+
+
+class ResolveTrackEmptyLinkTests(TestCase):
+    """A checkbox with an empty link ``()`` carries no track identity and is skipped.
+
+    Without the skip, such an entry emits ``{track_dir: None}``, which (a) makes
+    ``_resolve_core`` auto-select a null track_dir -> ``cmd_setup`` crashes in
+    ``_preflight_result`` (``Path(None)``), and (b) pollutes ``ambiguous``
+    candidates with nulls the skill can't render. Real (parseable) entries must
+    be unaffected.
+    """
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.p = _Project(self.d)
+
+    def tearDown(self):
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    def test_empty_link_entry_not_emitted(self):
+        self.p.registry.write_text(
+            "- [~] ghost track ()\n"
+            "- [~] real_20260706 (conductor/tracks/real_20260706/)\n")
+        entries = _iter_registry_entries(self.p.registry.read_text(), str(self.p.cond))
+        ids = [e["track_id"] for e in entries]
+        self.assertEqual(ids, ["real_20260706"])  # ghost dropped, no None
+        self.assertTrue(all(e["track_dir"] for e in entries))
+
+    def test_empty_link_only_no_crash(self):
+        # Sole live entry being a null-dir ghost must not auto-select null ->
+        # no_non_terminal, not a TypeError.
+        self.p.registry.write_text("- [~] ghost track ()\n")
+        r = self.p.resolve()
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["reason"], "no_non_terminal")
+
+    def test_empty_link_ghost_excluded_from_ambiguous(self):
+        self.p.add_track("a_20260101", "in_progress")
+        self.p.registry.write_text(
+            self.p.registry.read_text() + "- [~] ghost ()\n")
+        r = self.p.resolve()
+        # ghost dropped -> single live track auto-selects (not ambiguous)
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["track_id"], "a_20260101")
+
+
 if __name__ == "__main__":
     main()
