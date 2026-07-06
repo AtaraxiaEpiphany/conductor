@@ -486,19 +486,14 @@ def main():
             cmd_preflight(track_dir)
         elif cmd == "derive-name":
             cmd_derive_name(sys.argv[2])  # shortname — the one positional that isn't a track-dir
-        elif cmd == "resolve-track":
-            # Re-derive from argv[2:] (not the shared track_dir/args split): with
-            # no query, `resolve-track --registry X` would otherwise eat the
-            # flag name into the track_dir slot.
+        elif cmd in ("resolve-track", "setup"):
+            # Re-derive from argv[2:] (not the shared track_dir/args split):
+            # `resolve-track --registry X` would otherwise eat the flag name
+            # into the track_dir slot. Both commands share the query/flag shape.
             raw = sys.argv[2:]
             query = None if (not raw or raw[0].startswith("--")) else raw[0]
-            cmd_resolve_track(query=query, registry_path=flag(raw, "--registry"))
-        elif cmd == "setup":
-            # Same argv re-derivation as resolve-track: `setup --registry X`
-            # must not eat the flag into the query slot.
-            raw = sys.argv[2:]
-            query = None if (not raw or raw[0].startswith("--")) else raw[0]
-            cmd_setup(query=query, registry_path=flag(raw, "--registry"))
+            _SETUP_FNS = {"resolve-track": cmd_resolve_track, "setup": cmd_setup}
+            _SETUP_FNS[cmd](query=query, registry_path=flag(raw, "--registry"))
         else:
             print(f"Unknown command: {cmd}", file=sys.stderr)
             sys.exit(1)

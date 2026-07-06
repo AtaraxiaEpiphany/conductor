@@ -402,14 +402,15 @@ def _iter_registry_entries(text, conductor_root):
                 # non-existent path. Pick the base by form: absolute as-is,
                 # "conductor/"-prefixed against the project root (root.parent),
                 # else against the conductor root.
-                lp_norm = lp.replace("\\", "/")
-                if Path(lp).is_absolute():
-                    track_dir = str(Path(lp).resolve())
-                elif lp_norm.lower().startswith("conductor/"):
+                link = Path(lp)
+                lp_norm = lp.replace("\\", "/").lower()
+                if link.is_absolute():
+                    track_dir = str(link.resolve())
+                elif lp_norm.startswith("conductor/"):
                     track_dir = str((root.parent / lp).resolve())
                 else:
                     track_dir = str((root / lp).resolve())
-                track_id = Path(lp).name  # full id incl. _YYYYMMDD; shortname derived at match time
+                track_id = link.name  # full id incl. _YYYYMMDD; shortname derived at match time
             else:
                 track_dir, track_id = None, None
             entries.append(dict(track_id=track_id, track_dir=track_dir,
@@ -467,10 +468,10 @@ def _resolve_core(reg, query):
     q = (query or "").strip()
     if q.lower() in ("$arguments", "${arguments}"):
         q = None  # literal placeholder emitted unsubstituted -> auto-select
+    elif "/" in q or "\\" in q:
+        # full track_dir path (done hand-off) -> basename is the track_id
+        q = Path(q).name.lower() or None
     else:
-        if "/" in q or "\\" in q:
-            # full track_dir path (done hand-off) -> basename is the track_id
-            q = Path(q).name
         q = q.lower() or None
 
     if q:
@@ -506,6 +507,11 @@ def _resolve_core(reg, query):
                     hint="No track with status new/in_progress. Pass a track_id query.")
 
 
+def _resolve_registry(registry_path):
+    """The registry path: an explicit ``--registry`` arg, else auto-located."""
+    return Path(registry_path) if registry_path else _find_registry()
+
+
 def cmd_resolve_track(query=None, registry_path=None):
     """Resolve a ``track_dir`` from the Tracks Registry; ALWAYS exits 0.
 
@@ -517,7 +523,7 @@ def cmd_resolve_track(query=None, registry_path=None):
     ``AskUserQuestion``), not an error. The resolve logic (and the placeholder /
     full-path defenses) live in ``_resolve_core``, shared with ``cmd_setup``.
     """
-    reg = Path(registry_path) if registry_path else _find_registry()
+    reg = _resolve_registry(registry_path)
     out(_resolve_core(reg, query))
 
 
@@ -540,7 +546,7 @@ def cmd_setup(query=None, registry_path=None):
       - ambiguous / no_registry / no_match / no_non_terminal: passed through from
         ``_resolve_core`` (``reason`` names each).
     """
-    reg = Path(registry_path) if registry_path else _find_registry()
+    reg = _resolve_registry(registry_path)
     core = _resolve_core(reg, query)
     if not core.get("ok"):
         out(core)  # ambiguous / no_registry / no_match / no_non_terminal
