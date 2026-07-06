@@ -214,7 +214,7 @@ Store the user's choice as `$EXECUTION_MODE` for use in Section 2.6.
    ```
    This validates `plan.md` syntax and creates `track-state.json` + `index.md` in one call, extracting every task and subtask deterministically. On `ok: false` (malformed `plan.md`) → halt → announce the reported `errors`.
    > **Resume:** append `"state_created"` to `steps_done`.
-4. **Update Tracks Registry:** Append entry to `conductor/tracks.md`.
+4. **Update Tracks Registry:** `track-state registry-add "<track_dir>"` — appends the canonical entry (`- [<marker>] <description> (conductor/tracks/<track_id>/)`) from `track-state.json`; idempotent and auto-locates `conductor/tracks.md`. **Never hand-write the line** — a freeform entry (no `(link)`, plain bullet, bold id) is silently dropped by `setup`/`resolve-track`, which breaks auto-select AND explicit `setup <track>`.
    > **Resume:** append `"registry_updated"` to `steps_done`.
 5. **Commit:**
    ```bash

@@ -48,6 +48,15 @@ _REGISTRY_MARKER_TO_STATUS = {
     "#": "blocked", "-": "cancelled", "d": "deferred", ">": "skipped", "!": "failed",
 }
 
+# Inverse of ``_REGISTRY_MARKER_TO_STATUS`` — the single source for status ->
+# marker, shared by ``cmd_registry_add`` (canonical write) and
+# ``cmd_registry_update`` (marker sync). Hoisted from the inline dict that used
+# to live in ``cmd_registry_update`` so the two registry writers cannot drift.
+_STATUS_TO_MARKER = {
+    "new": " ", "in_progress": "~", "completed": "x", "archived": "@",
+    "blocked": "#", "cancelled": "-", "deferred": "d", "skipped": ">", "failed": "!",
+}
+
 # Read-side regexes mirroring the write-side matchers in ``cmd_registry_update``.
 _RE_SECTION_HEAD = re.compile(r"^###\s+(\S+)")
 _RE_SECTION_STATUS = re.compile(r"^\s*-\s+\*\*Status:\*\*\s+(\S+)")
@@ -62,6 +71,16 @@ _RE_SECTION_STATUS = re.compile(r"^\s*-\s+\*\*Status:\*\*\s+(\S+)")
 _RE_CHECKBOX = re.compile(r"^(\s*-\s+\[)([ x~!>#\-d@])(\]\s+.*\()([^)]*)(\).*)$")
 _RE_SHORTNAME_DATE = re.compile(r"_\d{8}$")
 _RE_TABLE_STATUS = re.compile(r"\b(new|in_progress|completed|archived|blocked|cancelled|deferred|skipped|failed)\b")
+# Universal track_id token. ``cmd_derive_name`` always emits ``<slug>_<YYYYMMDD>``
+# (slug = [a-z0-9_]; see cmd_derive_name), so EVERY real track_id matches this.
+# Used as a backstop in ``_iter_registry_entries`` for lines the format-specific
+# branches drop — the freeform entries ``new-track`` §2.6 historically wrote
+# without a parseable trailing ``(link)``: plain bullets (``- auth_20260706``),
+# bold ids (``**auth_20260706**``), checkbox-without-link (``- [~] auth_20260706``),
+# inline mentions. High signal / low false positive: it requires a slug, an
+# underscore, and exactly-eight trailing digits, so prose dates (``2026-07-06``)
+# and SHAs don't match. Keep in sync with the twin in ``lib/path_utils.py``.
+_RE_TRACK_ID_TOKEN = re.compile(r"([A-Za-z0-9][A-Za-z0-9_]*_\d{8})")
 
 
 def _preflight_result(track_dir):
@@ -438,8 +457,33 @@ def _iter_registry_entries(text, conductor_root):
                 if tid and tid.lower() not in ("id", "track id", "track"):
                     entries.append(dict(track_id=tid, track_dir=_derived_dir(tid),
                                         marker=None, status_str=sm.group(1)))
+            continue  # a table line is fully owned by this branch (status or not)
+        # Universal fallback: a dated track_id token anywhere on the line.
+        # Catches the freeform entries new-track's model wrote without a
+        # parseable ``(link)`` — plain bullet ``- auth_20260706``, bold
+        # ``**auth_20260706**``, checkbox-without-link ``- [~] auth_20260706``,
+        # inline mentions. Status stays authoritative (``_resolve_core`` reads
+        # each entry's ``track-state.json``), so the fallback only needs to
+        # supply ``track_id`` + a derived dir. Re-emits are deduped below.
+        tok = _RE_TRACK_ID_TOKEN.search(line)
+        if tok:
+            tid = tok.group(1)
+            entries.append(dict(track_id=tid, track_dir=_derived_dir(tid),
+                                marker=None, status_str=None))
     _flush(in_section_id, section_status)  # trailing section w/o Status line
-    return entries
+    # Dedup by track_id, FIRST occurrence wins. The universal fallback can
+    # re-emit an id a section/checkbox branch already captured (e.g. a
+    # section's ``- **Path:** ...(<id>/)`` body line also contains the id);
+    # track_ids are unique, so first-wins is safe and keeps the link-resolved
+    # ``track_dir`` from a canonical branch over the fallback's derived dir.
+    seen, deduped = set(), []
+    for e in entries:
+        tid = e.get("track_id")
+        if tid in seen:
+            continue
+        seen.add(tid)
+        deduped.append(e)
+    return deduped
 
 
 def _resolve_core(reg, query):
@@ -509,14 +553,24 @@ def _resolve_core(reg, query):
 
     # Auto-select: the active (non-terminal) tracks.
     live = [r for r in resolved if r["status"] in _TRACK_NON_TERMINAL]
-    if len(live) == 1:
-        return dict(ok=True, track_id=live[0]["track_id"], track_dir=live[0]["track_dir"],
-                    status=live[0]["status"], via="auto_single")
-    elif len(live) > 1:
-        return dict(ok=False, reason="ambiguous", candidates=live)
-    else:
+    if not live:
         return dict(ok=False, reason="no_non_terminal",
                     hint="No track with status new/in_progress. Pass a track_id query.")
+    if len(live) == 1:
+        r = live[0]
+        return dict(ok=True, track_id=r["track_id"], track_dir=r["track_dir"],
+                    status=r["status"], via="auto_single")
+    # >1 live: prefer resuming a SINGLE in_progress track over starting one of
+    # several new ones — work-in-flight beats fresh work, and this dissolves the
+    # common "one track running + a freshly-created new track" ambiguous prompt.
+    # Only ask on a genuine tie (multiple in_progress, or several new with none
+    # in flight).
+    in_prog = [r for r in live if r["status"] == "in_progress"]
+    if len(in_prog) == 1:
+        r = in_prog[0]
+        return dict(ok=True, track_id=r["track_id"], track_dir=r["track_dir"],
+                    status=r["status"], via="auto_prefer_in_progress")
+    return dict(ok=False, reason="ambiguous", candidates=live)
 
 
 def _resolve_registry(registry_path):
@@ -780,18 +834,7 @@ def cmd_registry_update(track_dir, tracks_md_path):
     content = registry_path.read_text()
     track_dir_name = track_dir_path.name
 
-    status_to_marker = {
-        "new": " ",
-        "in_progress": "~",
-        "completed": "x",
-        "archived": "@",
-        "blocked": "#",
-        "cancelled": "-",
-        "deferred": "d",
-        "skipped": ">",
-        "failed": "!",
-    }
-    new_marker = status_to_marker.get(track_status, " ")
+    new_marker = _STATUS_TO_MARKER.get(track_status, " ")
 
     lines = content.split("\n")
     updated = False
@@ -850,6 +893,61 @@ def cmd_registry_update(track_dir, tracks_md_path):
         out(dict(updated=True, marker=new_marker, status=track_status))
     else:
         out(dict(updated=False, status=track_status))
+
+
+def cmd_registry_add(track_dir, tracks_md_path=None):
+    """Append a CANONICAL checkbox entry for ``track_dir`` to the Tracks Registry.
+
+    Single source of truth for the registry line format — kills the drift class
+    where ``new-track`` §2.6's model hand-wrote entries the reader couldn't parse
+    (no ``(link)``, plain bullet, bold id, ...), which silently broke auto-select
+    AND explicit ``setup <track>`` (entries dropped -> ``no_match``). Reads
+    ``track_id`` / ``status`` / ``description`` from ``track-state.json`` and
+    writes exactly::
+
+        - [<marker>] <description> (conductor/tracks/<track_id>/)
+
+    Idempotent: if an entry for ``track_id`` already parses (any format), it's a
+    no-op (``already_present: true``) — safe to re-run, and it never duplicates.
+    The registry is auto-located when ``tracks_md_path`` is omitted (walk-up via
+    ``_find_registry``, then alongside the track dir), so the skill never has to
+    hand-compute the path.
+    """
+    state = load(track_dir)
+    track_id = state.get("track_id") or Path(track_dir).resolve().name
+    status = state.get("status", "new")
+    desc = (state.get("description") or track_id).strip() or track_id
+    marker = _STATUS_TO_MARKER.get(status, " ")
+
+    if tracks_md_path:
+        reg = Path(tracks_md_path)
+    else:
+        # Walk UP from the track dir (CWD-independent): finds
+        # ``<root>/conductor/tracks.md`` whether the skill ran from the project
+        # root, ``conductor/``, or elsewhere. (``conductor_dir()`` is the
+        # per-track ``.conductor/`` metadata dir, NOT the project conductor
+        # root — not what we want here.)
+        reg = _find_registry(track_dir)
+    if not reg or not reg.is_file():
+        out(dict(ok=False, reason="no_registry",
+                 hint="No conductor/tracks.md found. Run /conductor:setup."))
+        return
+
+    existing = _iter_registry_entries(reg.read_text(), reg.parent)
+    if any(e.get("track_id") == track_id for e in existing):
+        out(dict(ok=True, already_present=True, track_id=track_id,
+                 registry=str(reg)))
+        return
+
+    link = f"conductor/tracks/{track_id}/"
+    line = f"- [{marker}] {desc} ({link})"
+    content = reg.read_text()
+    if content and not content.endswith("\n"):
+        content += "\n"
+    reg.write_text(content + line + "\n")
+    out(dict(ok=True, appended=True, track_id=track_id, marker=marker,
+             line=line, registry=str(reg)))
+
 
 def cmd_record_summary(track_dir):
     """Record a compact task summary for context recovery after compaction."""

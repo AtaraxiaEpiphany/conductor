@@ -25,6 +25,13 @@ _RE_MARKDOWN_LINK = re.compile(r"\[[^\]]*\]\(([^)]+)\)")          # section [tex
 _RE_TABLE_STATUS = re.compile(
     r"\b(new|in_progress|completed|archived|blocked|cancelled|deferred|skipped|failed)\b")
 _WIN_DRIVE = re.compile(r"^[A-Za-z]:[\\/]")
+# Universal track_id token — twin of ``track_state.misc._RE_TRACK_ID_TOKEN``.
+# ``derive-name`` always emits ``<slug>_<YYYYMMDD>``, so every real track_id
+# matches; used as a backstop for registry lines the format-specific branches
+# drop (plain bullet, bold id, checkbox-without-link, inline mention). Keep the
+# two in lockstep — the pre-command rm/mv guard and consistency checks depend on
+# this enumerator seeing the SAME entries ``_iter_registry_entries`` does.
+_RE_TRACK_ID_TOKEN = re.compile(r"([A-Za-z0-9][A-Za-z0-9_]*_\d{8})")
 # Status-word gate for table rows mirrors track_state.misc so a non-track
 # markdown table is (mostly) not mistaken for track entries. False positives are
 # harmless here: a derived dir with no track-state.json is skipped by callers.
@@ -147,6 +154,12 @@ def extract_track_dirs(tracks_file: Path) -> List[str]:
             continue
         # Section / inline markdown link: [text](link).
         raw.extend(_RE_MARKDOWN_LINK.findall(line))
+        # Universal fallback: a dated track_id token on an otherwise-unmatched
+        # line (plain bullet ``- auth_20260706``, bold id, checkbox-without-link,
+        # inline mention). derive-name always stamps _YYYYMMDD, so this is a
+        # high-signal backstop. Mirrors track_state.misc._iter_registry_entries
+        # — keep in lockstep. Re-emits are deduped below.
+        raw.extend(f"tracks/{tid}" for tid in _RE_TRACK_ID_TOKEN.findall(line))
 
     dirs = []
     seen = set()

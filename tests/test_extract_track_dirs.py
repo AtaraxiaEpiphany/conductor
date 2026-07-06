@@ -118,6 +118,23 @@ class ExtractTrackDirsEdgeTests(TestCase):
     def test_missing_file_returns_empty(self):
         self.assertEqual(extract_track_dirs(Path("/no/such/tracks.md")), [])
 
+    def test_checkbox_without_link_recovered(self):
+        # new-track §2.6 wrote freeform entries with no (link); the old extractor
+        # dropped them. The _\d{8} token fallback recovers.
+        root = _project_with("- [~] auth_20260706\n", ["auth_20260706"])
+        self.assertEqual(extract_track_dirs(find_tracks_registry(root)),
+                         ["conductor/tracks/auth_20260706"])
+
+    def test_plain_bullet_recovered(self):
+        root = _project_with("- auth_20260706 — Add SSO login\n", ["auth_20260706"])
+        self.assertEqual(extract_track_dirs(find_tracks_registry(root)),
+                         ["conductor/tracks/auth_20260706"])
+
+    def test_bold_id_recovered(self):
+        root = _project_with("- [~] **auth_20260706**: login\n", ["auth_20260706"])
+        self.assertEqual(extract_track_dirs(find_tracks_registry(root)),
+                         ["conductor/tracks/auth_20260706"])
+
 
 class StateLockIntegrationTests(TestCase):
     """End-to-end: the pre-command hook's in-progress rm/mv guard now fires for

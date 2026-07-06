@@ -17,7 +17,7 @@ from .validate import cmd_validate
 from .quality import cmd_init_from_plan, cmd_start, cmd_set_mode, cmd_finalize, cmd_archive, cmd_gc, cmd_checklist_verify
 from .misc import (
     cmd_reset, cmd_indices, cmd_shas, cmd_add_checkpoint,
-    cmd_deferred_report, cmd_phase_done, cmd_registry_update,
+    cmd_deferred_report, cmd_phase_done, cmd_registry_update, cmd_registry_add,
     cmd_record_summary, cmd_preflight, cmd_quality_snapshot,
     cmd_spec_integrity, cmd_derive_name, cmd_post_loop_status,
     cmd_resolve_track, cmd_setup,
@@ -193,6 +193,8 @@ COMMAND_HELP = {
                            "Extract durable findings (graduation candidates + decisions) from handoffs for corpus-writer"),
     "registry-update": ("registry-update <track-dir> <tracks-md-path>",
                         "Update track entry in Tracks Registry (tracks.md)"),
+    "registry-add": ("registry-add <track-dir> [<tracks-md-path>]",
+                     "Append the canonical entry for a track to tracks.md (idempotent; auto-locates registry)"),
     "write-result": ("write-result <track-dir> --status success|failure --commit-sha <sha>\n"
                      "                                --summary <text> --coverage-pct <n> ...\n"
                      "                  <track-dir> [--data '<json>']   (or pipe JSON on stdin)",
@@ -271,7 +273,7 @@ _COMMAND_GROUPS = [
     ("Lifecycle", ["init-from-plan", "start", "set-mode", "finalize", "archive"]),
     ("Navigation", ["next", "dispatch-next", "recover", "indices"]),
     ("State Mutations", ["lock", "complete", "fail", "skip", "defer", "block", "reset"]),
-    ("Sync & Registry", ["sync-plan", "sync-handoff", "registry-update"]),
+    ("Sync & Registry", ["sync-plan", "sync-handoff", "registry-update", "registry-add"]),
     ("Handoff", ["get-handoff", "append-handoff", "harvest-candidates"]),
     ("Result Processing", ["write-result", "process-result"]),
     ("Dispatch Composites", ["dispatch-prepare", "dispatch-finalize", "record-summary"]),
@@ -393,6 +395,11 @@ def main():
                 out(dict(error="Missing tracks-md-path argument"))
                 sys.exit(1)
             cmd_registry_update(track_dir, pos[0])
+        elif cmd == "registry-add":
+            # tracks-md-path is optional — registry-add auto-locates the
+            # registry (walk-up, then alongside the track) when omitted, so the
+            # new-track skill never hand-computes the path.
+            cmd_registry_add(track_dir, pos[0] if pos else None)
         elif cmd == "start":
             cmd_start(track_dir)
         elif cmd == "set-mode":

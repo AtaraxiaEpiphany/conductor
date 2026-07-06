@@ -498,5 +498,83 @@ class ResolveTrackEmptyLinkTests(TestCase):
         self.assertEqual(r["track_id"], "a_20260101")
 
 
+class ResolveTrackLinklessFormatsTests(TestCase):
+    """``new-track`` §2.6 historically said only "Append entry to tracks.md"
+    with NO format constraint, so the model wrote freeform lines the parser
+    silently dropped — breaking both auto-select (0 live entries parsed ->
+    ``no_non_terminal``) and explicit ``setup <track>`` (``no_match``). The
+    universal ``_\\d{8}`` token fallback recovers them. derive-name always
+    stamps ``_YYYYMMDD``, so every real track_id is caught regardless of the
+    surrounding line shape.
+    """
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.p = _Project(self.d)
+
+    def tearDown(self):
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    def _seed(self, track_id, status):
+        # Creates the track dir + track-state.json (authoritative status) via the
+        # canonical checkbox line, then the test overwrites tracks.md with the
+        # freeform line under test. The dir/state persist across the overwrite.
+        return self.p.add_track(track_id, status)
+
+    def test_checkbox_without_link_resolves(self):
+        self._seed("auth_20260706", "in_progress")
+        self.p.registry.write_text("- [~] auth_20260706\n")
+        r = self.p.resolve("auth_20260706")
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["via"], "arg")
+        self.assertEqual(r["track_id"], "auth_20260706")
+        # auto-select too
+        self.assertTrue(self.p.resolve()["ok"])
+
+    def test_plain_bullet_resolves(self):
+        self._seed("auth_20260706", "in_progress")
+        self.p.registry.write_text("- auth_20260706 — Add SSO login\n")
+        r = self.p.resolve("auth_20260706")
+        self.assertTrue(r["ok"])
+        self.assertTrue(self.p.resolve()["ok"])
+
+    def test_bold_id_resolves(self):
+        self._seed("auth_20260706", "in_progress")
+        self.p.registry.write_text("- [~] **auth_20260706**: Add SSO login\n")
+        self.assertTrue(self.p.resolve("auth_20260706")["ok"])
+
+    def test_section_path_line_does_not_duplicate(self):
+        # A section's "- **Path:** [link](tracks/<id>/)" body line also contains
+        # the dated id -> the universal fallback would re-emit it. Dedup must
+        # collapse to a single entry.
+        self._seed("auth_20260706", "in_progress")
+        self.p.registry.write_text(
+            "### auth_20260706\n"
+            "- **Status:** in_progress\n"
+            "- **Path:** [link](tracks/auth_20260706/)\n")
+        entries = _iter_registry_entries(
+            self.p.registry.read_text(), str(self.p.cond))
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["track_id"], "auth_20260706")
+
+    def test_prefer_in_progress_over_multiple_new(self):
+        # 2 new + 1 in_progress -> resume the single in_progress rather than ask.
+        self._seed("a_new_20260101", "new")
+        self._seed("b_new_20260102", "new")
+        self._seed("c_prog_20260103", "in_progress")
+        r = self.p.resolve()
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["via"], "auto_prefer_in_progress")
+        self.assertEqual(r["track_id"], "c_prog_20260103")
+
+    def test_two_in_progress_still_ambiguous(self):
+        self._seed("a_20260101", "in_progress")
+        self._seed("b_20260102", "in_progress")
+        r = self.p.resolve()
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["reason"], "ambiguous")
+        self.assertEqual(len(r["candidates"]), 2)
+
+
 if __name__ == "__main__":
     main()
