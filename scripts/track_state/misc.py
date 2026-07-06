@@ -605,18 +605,46 @@ def cmd_setup(query=None, registry_path=None):
     check). Read-only — the ``new`` -> ``start`` transition stays with
     ``recover``, where the status comes from.
 
-    Outputs:
-      - resolved + ready: ``{ok:true, td, track_id, status, via}``
-      - resolved but not ready: ``{ok:false, reason:"preflight", td, hint,
-        missing, missing_workflow}``
-      - ambiguous / no_registry / no_match / no_non_terminal: passed through from
-        ``_resolve_core`` (``reason`` names each).
+    The skill switches on ``action`` (a ready-to-execute directive, not a status
+    to re-interpret) — this is what keeps the 5 skills' §1.0 a 3-arm switch
+    instead of a run-on branch sentence:
+
+      - ``action:"proceed"`` — resolved + ready. ``{ok:true, td, track_id,
+        status, via, announce}``. Print ``announce`` (the transparent
+        "Auto-selected '<id>' (<status>)" / "Resolved track '<id>'" line), then
+        continue to ``recover``.
+      - ``action:"ask"`` — ambiguous. ``{ok:false, reason:"ambiguous",
+        candidates, announce}``. ``AskUserQuestion`` over ``candidates``.
+      - ``action:"halt"`` — anything that stops the skill.
+        ``{ok:false, reason, message, hint?, missing?, missing_workflow?}``.
+        Print ``message``; HALT. ``reason`` is one of ``preflight`` /
+        ``no_registry`` / ``no_match`` / ``no_non_terminal``.
+
+    The legacy ``ok`` / ``reason`` / ``td`` / ``candidates`` / ``missing`` /
+    ``missing_workflow`` / ``hint`` fields are all preserved alongside ``action``
+    so existing readers keep working — ``action`` is the preferred switch.
     """
     reg = _resolve_registry(registry_path)
     core = _resolve_core(reg, query)
-    if not core.get("ok"):
-        out(core)  # ambiguous / no_registry / no_match / no_non_terminal
+    reason = core.get("reason") if not core.get("ok") else None
+
+    if reason == "ambiguous":
+        out(dict(action="ask", ok=False, reason="ambiguous",
+                 candidates=core.get("candidates", []),
+                 announce="Multiple active tracks — choose one."))
         return
+    if reason == "no_registry":
+        out(dict(action="halt", ok=False, reason="no_registry",
+                 message="Conductor environment incomplete. Run /conductor:setup.",
+                 hint=core.get("hint")))
+        return
+    if reason in ("no_match", "no_non_terminal"):
+        out(dict(action="halt", ok=False, reason=reason,
+                 message=core.get("hint")
+                 or "No track selected. Pass a track_id, or see conductor/tracks.md.",
+                 hint=core.get("hint")))
+        return
+
     td = core.get("track_dir")
     if not td:
         # Defense-in-depth: ``_resolve_core`` should never return ok:true
@@ -624,20 +652,28 @@ def cmd_setup(query=None, registry_path=None):
         # ``_iter_registry_entries``), but this command's contract is "ALWAYS
         # exits 0" — a stray null must surface as a HALT reason, not a
         # ``Path(None)`` TypeError crash.
-        out(dict(ok=False, reason="no_match", query=query,
-                 hint="Resolved track has no usable directory — check the "
-                      "link paths in conductor/tracks.md."))
+        out(dict(action="halt", ok=False, reason="no_match",
+                 message="Resolved track has no usable directory — check the "
+                         "link paths in conductor/tracks.md."))
         return
+
     pf = _preflight_result(td)
-    if pf["ok"]:
-        out(dict(ok=True, td=td, track_id=core["track_id"],
-                 status=core["status"], via=core["via"]))
-    else:
-        out(dict(ok=False, reason="preflight", td=td,
+    if not pf["ok"]:
+        out(dict(action="halt", ok=False, reason="preflight", td=td,
+                 message="Conductor environment incomplete. Run /conductor:setup.",
                  hint=pf.get("hint")
                  or "Conductor environment incomplete. Run /conductor:setup.",
                  missing=pf.get("missing"),
                  missing_workflow=pf.get("missing_workflow")))
+        return
+
+    # Resolved + ready.
+    status = core["status"]
+    via = core.get("via", "arg")
+    how = "auto-selected" if str(via).startswith("auto") else "resolved"
+    announce = f"Track '{core['track_id']}' ({status}) — {how}."
+    out(dict(action="proceed", ok=True, td=td, track_id=core["track_id"],
+             status=status, via=via, announce=announce))
 
 
 def _get_all_shas(state):

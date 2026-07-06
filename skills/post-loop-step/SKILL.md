@@ -24,7 +24,10 @@ prose post-loop template is never resident.
 
 ## 1.0 SETUP (once)
 
-1. Resolve + preflight `<td>` in one call: `track-state setup "$ARGUMENTS"`. `ok: true` → `<td>` = `td`. `reason: "ambiguous"` → `AskUserQuestion` over `candidates` (label = `track_id`), then re-run `setup "<chosen track_id>"`. `reason: "preflight"` / `"no_registry"` → `"Conductor environment incomplete. Run /conductor:setup."` → HALT. `reason: "no_match"` / `"no_non_terminal"` → announce `hint` → HALT.
+1. `track-state setup "$ARGUMENTS"` — always exits 0; outcome is in `action`:
+   - `proceed` → `<td>` = `td`; **print `announce`**; continue to step 2.
+   - `ask` → `AskUserQuestion` over `candidates` (label = `track_id`), then re-run `track-state setup "<chosen track_id>"`.
+   - `halt` → print `message`; HALT.
 2. `track-state post-loop-status "<td>"` is NOT required — `post-loop-step` reads
    the gates itself. Skip straight to §2.0.
 

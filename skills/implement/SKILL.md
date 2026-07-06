@@ -40,7 +40,10 @@ Tag inheritance: subtasks inherit dispatch tags from parent when subtask name ha
 
 ## 1.0 SETUP + TRACK SELECTION
 
-1. Resolve + preflight `<track_dir>` in one call: `track-state setup "$ARGUMENTS"`. `ok: true` → `<track_dir>` = `td`. `reason: "ambiguous"` → `AskUserQuestion` over `candidates` (label = `track_id`), then re-run `setup "<chosen track_id>"`. `reason: "preflight"` (missing `spec.md`/`plan.md`/`track-state.json`, unreadable state, **or missing `conductor/workflow/index.md`/`post-loop.md`** — reported in `missing`/`missing_workflow`) / `"no_registry"` → `"Conductor environment incomplete. Run /conductor:setup."` → HALT. `reason: "no_match"` / `"no_non_terminal"` → announce `hint` → HALT.
+1. `track-state setup "$ARGUMENTS"` — always exits 0; outcome is in `action`:
+   - `proceed` → `<track_dir>` = `td`; **print `announce`**; continue to step 2.
+   - `ask` → `AskUserQuestion` over `candidates` (label = `track_id`), then re-run `track-state setup "<chosen track_id>"`.
+   - `halt` → print `message`; HALT. (`reason: "preflight"` carries `missing`/`missing_workflow` — missing `spec.md`/`plan.md`/`track-state.json`, unreadable state, or missing `conductor/workflow/index.md`/`post-loop.md`.)
 2. `track-state recover "<track_dir>"` — if error → HALT.
 3. If `status == "new"` → `track-state start` + `registry-update` + commit.
 

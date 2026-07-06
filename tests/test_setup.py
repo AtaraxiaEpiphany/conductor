@@ -253,5 +253,78 @@ class SetupLinkParsingTests(TestCase):
         self.assertEqual(r["track_id"], "sso-oauth2_20260706")
 
 
+class SetupActionDirectiveTests(TestCase):
+    """The skill switches on ``action`` (proceed/ask/halt), not on a parsed
+    ``reason`` — this is what keeps the 5 §1.0 blocks a 3-arm switch instead of a
+    run-on branch sentence. The legacy ``ok``/``reason``/``td``/``candidates``
+    fields stay alongside ``action`` (backward-compatible superset).
+    """
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.p = _Project(self.d)
+
+    def tearDown(self):
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    def test_proceed_emits_action_and_announce(self):
+        self.p.add_track("auth_20260706", "in_progress")
+        r = self.p.setup()
+        self.assertEqual(r["action"], "proceed")
+        self.assertEqual(r["ok"], True)  # legacy field preserved
+        self.assertEqual(r["track_id"], "auth_20260706")
+        self.assertIn("announce", r)
+        # announce names the track + status + how (auto-selected here)
+        self.assertIn("auth_20260706", r["announce"])
+        self.assertIn("in_progress", r["announce"])
+        self.assertIn("auto-selected", r["announce"])
+
+    def test_proceed_via_arg_says_resolved(self):
+        self.p.add_track("auth_20260706", "in_progress")
+        r = self.p.setup("auth_20260706")
+        self.assertEqual(r["action"], "proceed")
+        self.assertIn("resolved", r["announce"])
+
+    def test_ask_emits_action_and_candidates(self):
+        self.p.add_track("a_20260101", "in_progress")
+        self.p.add_track("b_20260102", "in_progress")
+        r = self.p.setup()
+        self.assertEqual(r["action"], "ask")
+        self.assertEqual(r["reason"], "ambiguous")  # legacy preserved
+        self.assertEqual(len(r["candidates"]), 2)
+
+    def test_halt_preflight_emits_message(self):
+        td = self.p.add_track("feat_20260101", "in_progress")
+        (td / "spec.md").unlink()
+        r = self.p.setup("feat_20260101")
+        self.assertEqual(r["action"], "halt")
+        self.assertEqual(r["reason"], "preflight")
+        self.assertIn("message", r)
+        self.assertEqual(r["missing"], ["spec.md"])  # legacy preserved
+
+    def test_halt_no_non_terminal_emits_message(self):
+        self.p.add_track("done_20260101", "completed")
+        r = self.p.setup()
+        self.assertEqual(r["action"], "halt")
+        self.assertEqual(r["reason"], "no_non_terminal")
+        self.assertIn("message", r)
+
+    def test_halt_no_registry_emits_message(self):
+        bare = tempfile.mkdtemp()
+        self._cwd = os.getcwd()
+        try:
+            os.chdir(bare)
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                cmd_setup()  # no registry_path -> _find_registry finds nothing
+            r = json.loads(buf.getvalue())
+            self.assertEqual(r["action"], "halt")
+            self.assertEqual(r["reason"], "no_registry")
+            self.assertIn("/conductor:setup", r["message"])
+        finally:
+            os.chdir(self._cwd)
+            shutil.rmtree(bare, ignore_errors=True)
+
+
 if __name__ == "__main__":
     main()
