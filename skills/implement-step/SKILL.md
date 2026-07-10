@@ -40,7 +40,8 @@ Read `action` and do **only** that:
 | action | you do |
 |---|---|
 | `dispatch` | **Dispatch `conductor:<agent>`**, prompt the fenced ``prompt`` field **verbatim** (it is pre-assembled — do not edit or re-fill any field). Then → §2.0. |
-| `dispatch_batch` | **Fire `conductor:<member.agent>` for each entry in `wave`, in ONE message (parallel Agent calls)**, prompting each member's ``prompt`` field **verbatim** (pre-assembled — ac-tracer + test-runner). Collect both RESULT blocks, then switch to `/conductor:implement` §3.2 Step 2 (parse verdicts → dispatch `phase-checker`). Then resume this loop. |
+| `dispatch_batch` | **Fire `conductor:<member.agent>` for each entry in `wave`, in ONE message (parallel Agent calls)**, prompting each member's ``prompt`` field **verbatim** (pre-assembled — ac-tracer + test-runner). Then read the two RESULT blocks and **transcribe** them to the spine: from ac-tracer's `---AC TRACE RESULT---` take `VERDICT` (+ `GATE` if `FAILED`, `N_UNGROUNDED` if `warn`); from test-runner's `---L1 VERIFY RESULT---` take `STATUS` + `COMMAND`. Run **`track-state phase-verdict "<td>" --ac-verdict <V> [--ac-gate <G>] [--ac-n-ungrounded <N>] --l1-status <S> --l1-command "<CMD>"`** (this owns the §3.2 parse+assemble in code). Then → §2.0. |
+| `dispatch_phase_checker` | **Dispatch `conductor:phase-checker`**, prompt the fenced ``prompt`` field **verbatim** (pre-assembled from the fanned verdicts). After it returns, read its `---CHECKPOINT RESULT---`: `STATUS` (`PASSED`/`FAILED`), `CHECKPOINT_SHA` (if `PASSED`), `FAILURE_REASON` (if `FAILED`). Run **`track-state phase-checkpoint-review "<td>" --status <STATUS> [--sha <SHA>] [--reason "<R>"]`** — this owns the §3.7 stamp/halt in code. `PASSED` → §2.0. `FAILED` → announce the reason and **STOP** (an AC-trace authoring defect needs spec/plan edits, not a retry; re-invoke after the fix re-runs the phase). |
 | `ask` | `AskUserQuestion(decision.question, decision.header, decision.options)`. Run `decision.commands[<chosen label>]` **verbatim** (one shell-safe line each). If `decision.next[<chosen label>] == "HALT"` → STOP. Else → §2.0. |
 | `done` | Track finalized → hand off to the post-loop spine: `/conductor:post-loop-step "<td>"` (one-line skill invocation; no prose template read). |
 | `error` | Announce the error → STOP. |
@@ -67,12 +68,20 @@ stop with exactly:
 **NEVER stop between a `dispatch` and the next `step` call** — that leaves a
 stale `[~]` lock. `step` is state-driven, so re-entry is automatic on the next
 invocation: a task still `in_progress` with no result and a Start HEAD re-dispatches
-without burning a retry.
+without burning a retry. Likewise never stop between a `dispatch_batch` returning
+and its `phase-verdict` call, or between a `dispatch_phase_checker` returning and
+its `phase-checkpoint-review` call — that drops the verdict the spine needs and
+forces an expensive re-fan / re-synth on resume. (If you do, `step` still
+recovers: with no verdict marker it simply re-fans; a `synth_pending` marker
+re-dispatches the synthesizer.)
 
 ---
 
-**Spike status:** the spine (`dispatch` / `dispatch_batch` / `ask` / `done` /
-`error`) is fully code-driven and tested. The two non-spine branches
-deliberately defer to `/conductor:implement` — that is the measured B-min
+**Spike status:** the spine (`dispatch` / `dispatch_batch` / `dispatch_phase_checker` /
+`ask` / `done` / `error`) is fully code-driven and tested — the whole phase-checkpoint
+handshake (fan-out → verdict transcription → synthesizer dispatch → stamp/halt) now
+runs in code via `phase-verdict` + `phase-checkpoint-review`, not prose §3.2/§3.7. The
+remaining non-spine branches deliberately defer to `/conductor:implement` — `skip_analyze`
+(skill §3.6) and `wave_active` (`/conductor:parallel`) — that is the measured B-min
 boundary, not a gap. See `${CLAUDE_PLUGIN_ROOT}/conductor/design/rail-b-step.md` for the action
 contract and the B-full options.

@@ -24,7 +24,7 @@ from .git_ops import (
 from .handoff import (
     _append_execution_record, _append_deviation_legacy, _append_failure_legacy,
 )
-from .misc import _get_all_shas
+from .misc import _get_all_shas, _stamp_checkpoint_in_plan
 from .quality import _finalize_track
 from .validate import _fix_plan_mismatches, ensure_healthy
 
@@ -975,6 +975,90 @@ def _step_assemble_verifier_prompt(track_dir, state, phase, agent):
     return "\n".join(lines)
 
 
+# --------------------------------------------------------------------------- #
+# Phase-checkpoint handshake marker (WM2 verdict-on-disk, step 2).
+#
+# ``_any_phase_needs_checkpoint`` only sees "checkpoint absent in plan.md" — it
+# can't tell *verifiers fanned, awaiting the synthesizer* from *nothing fanned
+# yet*. This transient marker discriminates the sub-states. The teleoperator
+# transcribes the fanned verifier verdicts to ``cmd_phase_verdict`` (writes the
+# marker), then the spine emits the phase-checker synth dispatch; after the synth
+# returns, ``cmd_phase_checkpoint_review`` stamps the checkpoint (PASSED) or
+# clears it (FAILED → teleoperator halts) and deletes the marker either way.
+# Mirrors ``new_track.py``'s tolerant read/write helpers and lifecycle. Single
+# file per track — only one checkpoint is pending at a time (the first needing
+# one); the phase lives inside the JSON so a stale post-crash file self-clears.
+# --------------------------------------------------------------------------- #
+_PHASE_CP_MARKER = "phase-checkpoint.json"
+
+
+def _phase_cp_marker_path(track_dir):
+    """Pure path to the marker — deliberately does NOT mkdir, so a read never
+    creates directories as a side effect (mirrors ``_nt_marker_path``)."""
+    return Path(track_dir) / ".conductor" / _PHASE_CP_MARKER
+
+
+def _phase_cp_read_marker(track_dir):
+    """Tolerant reader: ``None`` on missing/corrupt, so the routing branch on the
+    marker without existence checks and a half-written file never crashes the
+    spine (mirrors ``_nt_read_marker``)."""
+    path = _phase_cp_marker_path(track_dir)
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text())
+        if isinstance(data, dict):
+            return data
+    except (ValueError, OSError):
+        pass
+    return None
+
+
+def _phase_cp_write_marker(track_dir, data):
+    """Write the whole marker dict; ``parents=True`` ensures ``.conductor/`` exists."""
+    cdir = Path(track_dir) / ".conductor"
+    cdir.mkdir(parents=True, exist_ok=True)
+    _phase_cp_marker_path(track_dir).write_text(json.dumps(data, ensure_ascii=False))
+
+
+def _phase_cp_clear_marker(track_dir):
+    """Delete the marker; idempotent (a missing file is a no-op success)."""
+    path = _phase_cp_marker_path(track_dir)
+    if path.exists():
+        path.unlink()
+
+
+def _step_assemble_phase_checker_prompt(track_dir, state, phase, marker):
+    """Build the ready-to-paste prompt for ``conductor:phase-checker`` (the
+    synthesizer) from the fanned verifier verdicts stored in the marker.
+
+    Pre-assembled in code so a weak orchestrator can't fumble the §3.2 Step-3
+    field interpolation — the prompt is pasted verbatim into the Agent dispatch.
+    Adjacent to ``_step_assemble_verifier_prompt`` (the fan-out prompts). Emits
+    the exact §3.2 Step-3 field set: ``AC_TRACE_GATE`` only when the ac-tracer
+    FAILED, ``AC_TRACE_N_UNGROUNDED`` only on warn (byte-for-byte the prose it
+    retires). Verdicts come from the marker (transcribed by the teleoperator from
+    the two RESULT blocks), not re-derived — the read-only verifiers already ran.
+    """
+    td = str(track_dir)
+    ac = marker.get("ac_verdict", "")
+    lines = [
+        f"TRACK_DIR={td}",
+        f"TRACK_ID={state.get('track_id', '')}",
+        f"PHASE_INDEX={phase}",
+        f"EXECUTION_MODE={state.get('execution_mode', 'interactive')}",
+        f"AC_TRACE_VERDICT={ac}",
+    ]
+    if ac == "FAILED" and marker.get("ac_gate"):
+        lines.append(f"AC_TRACE_GATE={marker['ac_gate']}")
+    if ac == "warn" and marker.get("ac_n_ungrounded") is not None:
+        lines.append(f"AC_TRACE_N_UNGROUNDED={marker['ac_n_ungrounded']}")
+    lines.append(f"L1_VERIFY_STATUS={marker.get('l1_status', '')}")
+    if marker.get("l1_command"):
+        lines.append(f"L1_VERIFY_COMMAND={marker['l1_command']}")
+    return "\n".join(lines)
+
+
 def _step_emit_dispatch_batch(track_dir, state, phase, execution_mode, compact):
     """Emit ``dispatch_batch`` — the pre-assembled ac-tracer + test-runner
     fan-out that retires the serial spine's ``phase_checkpoint`` non-spine
@@ -1129,11 +1213,25 @@ def _emit_quiescent_leaf(track_dir, state, compact, command):
     cp = _any_phase_needs_checkpoint(track_dir, state)
     if cp is not None:
         if command == "step":
-            # Serial spine: pre-assemble the verifier batch (deterministic
-            # fan-out) instead of the non-spine phase_checkpoint hand-off. The
-            # wave spine keeps phase_checkpoint — its §3.2 hand-off is the
-            # parallel-step skill's contract.
-            _step_emit_dispatch_batch(track_dir, state, cp, execution_mode, compact)
+            # Serial spine. If a synth_pending marker exists for THIS phase, the
+            # verifiers already fanned and their verdicts are on disk (written by
+            # ``cmd_phase_verdict``) → dispatch the synthesizer (phase-checker)
+            # with a pre-assembled prompt. Otherwise (no marker, or a stale one
+            # for another phase) fan the verifiers. The wave spine keeps the
+            # non-spine ``phase_checkpoint`` leaf — its §3.2 hand-off is the
+            # parallel-step skill's contract (command == "wave-step" arm below).
+            marker = _phase_cp_read_marker(track_dir)
+            if (marker and marker.get("stage") == "synth_pending"
+                    and marker.get("phase") == cp):
+                emit(dict(action="dispatch_phase_checker", agent="phase-checker",
+                          phase=cp, execution_mode=execution_mode,
+                          prompt=_step_assemble_phase_checker_prompt(
+                              track_dir, state, cp, marker)),
+                     "step", compact)
+            else:
+                if marker:  # stale (phase mismatch / unknown stage) → clear + fan
+                    _phase_cp_clear_marker(track_dir)
+                _step_emit_dispatch_batch(track_dir, state, cp, execution_mode, compact)
         else:
             emit(dict(action="phase_checkpoint", phase=cp, execution_mode=execution_mode),
                  command, compact)
@@ -1253,6 +1351,117 @@ def cmd_step(track_dir, compact=True):
 
     # No in_progress task awaiting finalize → resolve the next leaf.
     return _step_emit_next_leaf(track_dir, state, compact)
+
+
+# --------------------------------------------------------------------------- #
+# Phase-checkpoint handshake commands (WM2 verdict-on-disk, step 2).
+#
+# Stamp-only (return JSON, never emit a leaf) — the teleoperator transcribes a
+# read-only agent's fixed-format RESULT line to one of these, then re-calls
+# ``step``; the spine re-derives the next leaf from the marker it just wrote.
+# Mirrors ``cmd_post_loop_review`` (WM2-1): the agent firewall stays intact (no
+# read-only agent writes state); the judgment the prose §3.2/§3.7 hand-off asked
+# the model to make now lives in code.
+# --------------------------------------------------------------------------- #
+
+# Verdict enums — the exact tokens the read-only agents emit (agents/ac-tracer.md
+# §4.0, agents/test-runner.md §3.0). Mixed case is the agent contract: ac-tracer
+# distinguishes passed/warn/skipped (ok-ish) from FAILED/ERROR (terminal).
+_AC_VERDICTS = ("passed", "warn", "skipped", "FAILED", "ERROR")
+_L1_STATUSES = ("passed", "failed", "error")
+
+
+def cmd_phase_verdict(track_dir, ac_verdict, ac_gate, ac_n_ungrounded,
+                      l1_status, l1_command):
+    """Transcribe the fanned verifier verdicts to the checkpoint marker (WM2-2).
+
+    After ``dispatch_batch`` fans ac-tracer + test-runner, the teleoperator parses
+    both RESULT blocks and runs this with ``VERDICT``/``GATE``/``N_UNGROUNDED``
+    (ac-tracer) and ``STATUS``/``COMMAND`` (test-runner). Writes
+    ``stage=synth_pending`` so the next ``step`` emits the phase-checker synth
+    dispatch (pre-assembled from the stored verdicts) instead of re-fanning.
+
+    Validates the verdict enums (a code guard: a transcription typo HALTs with a
+    clear error rather than handing the synthesizer garbage) and confirms a
+    checkpoint is actually pending for this track. Idempotent — overwriting with
+    fresh verdicts after a re-fan is harmless.
+    """
+    td = str(track_dir)
+    if ac_verdict not in _AC_VERDICTS:
+        out(dict(error=f"unrecognized ac-verdict: {ac_verdict!r}", track_dir=td,
+                 hint=f"one of: {', '.join(_AC_VERDICTS)} (from ---AC TRACE RESULT--- VERDICT)"))
+        return
+    if l1_status not in _L1_STATUSES:
+        out(dict(error=f"unrecognized l1-status: {l1_status!r}", track_dir=td,
+                 hint=f"one of: {', '.join(_L1_STATUSES)} (from ---L1 VERIFY RESULT--- STATUS)"))
+        return
+    state, _fixes, verrors = ensure_healthy(track_dir)
+    if state is None:
+        out(dict(error="track state unhealthy", errors=verrors, track_dir=td))
+        return
+    cp = _any_phase_needs_checkpoint(track_dir, state)
+    if cp is None:
+        out(dict(error="no pending phase checkpoint — nothing to synthesize",
+                 track_dir=td,
+                 hint="run `track-state step` to advance; phase-verdict follows a dispatch_batch"))
+        return
+    marker = {
+        "phase": cp, "stage": "synth_pending",
+        "ac_verdict": ac_verdict,
+        "ac_gate": ac_gate or None,
+        "ac_n_ungrounded": ac_n_ungrounded,
+        "l1_status": l1_status,
+        "l1_command": l1_command or None,
+    }
+    _phase_cp_write_marker(track_dir, marker)
+    out(dict(ok=True, phase=cp, stage="synth_pending", track_dir=td))
+
+
+def cmd_phase_checkpoint_review(track_dir, status, sha, reason):
+    """Stamp or clear the checkpoint from phase-checker's STATUS (WM2-2).
+
+    After the synthesizer (``dispatch_phase_checker``) returns, the teleoperator
+    transcribes its ``---CHECKPOINT RESULT---`` ``STATUS`` to this command.
+    ``PASSED`` stamps ``[checkpoint: <sha>]`` in plan.md (via
+    ``_stamp_checkpoint_in_plan``) and deletes the marker → the next ``step``
+    sees the checkpoint present and advances. ``FAILED`` deletes the marker → the
+    teleoperator halts (an AC-trace authoring defect needs spec/plan edits, not a
+    retry); re-invocation after the fix re-fans fresh, matching §3.7. Both
+    outcomes delete the marker, so no terminal stage persists.
+    """
+    td = str(track_dir)
+    verdict = (status or "").strip()
+    state, _fixes, verrors = ensure_healthy(track_dir)
+    if state is None:
+        out(dict(error="track state unhealthy", errors=verrors, track_dir=td))
+        return
+    cp = _any_phase_needs_checkpoint(track_dir, state)
+    if cp is None:
+        # Already stamped (e.g. a duplicate review call after a PASSED) — clean.
+        _phase_cp_clear_marker(track_dir)
+        out(dict(ok=True, stamped=False, reason="no_pending_checkpoint", phase=None,
+                 track_dir=td,
+                 hint="checkpoint already present — nothing to review"))
+        return
+    if verdict == "PASSED":
+        if not sha or not re.match(r"^[0-9a-f]{7}$", sha):
+            out(dict(error="PASSED requires a valid --sha (7 hex)",
+                     track_dir=td, hint="CHECKPOINT_SHA from ---CHECKPOINT RESULT---"))
+            return
+        result = _stamp_checkpoint_in_plan(track_dir, cp, sha)
+        if "error" in result:
+            out(dict(error=result["error"], track_dir=td))
+            return
+        _phase_cp_clear_marker(track_dir)
+        out(dict(ok=True, stamped=True, phase=cp, sha=sha, track_dir=td))
+    elif verdict == "FAILED":
+        _phase_cp_clear_marker(track_dir)
+        out(dict(ok=True, stamped=False, phase=cp, track_dir=td,
+                 reason=reason or "phase-checker FAILED",
+                 hint="announce the reason and STOP; edit spec/plan then re-invoke to re-run the phase"))
+    else:
+        out(dict(error=f"unrecognized status: {verdict!r}", track_dir=td,
+                 hint="PASSED | FAILED (from ---CHECKPOINT RESULT--- STATUS)"))
 
 
 # --------------------------------------------------------------------------- #

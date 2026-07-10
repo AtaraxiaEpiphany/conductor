@@ -994,50 +994,46 @@ def cmd_post_loop_status(track_dir):
     ))
 
 
-def cmd_add_checkpoint(track_dir, p, sha):
-    """Add or update checkpoint SHA for a phase in plan.md."""
+def _stamp_checkpoint_in_plan(track_dir, p, sha):
+    """Add or update the ``[checkpoint: <sha>]`` marker on Phase <p>'s heading in
+    plan.md. Returns a result dict (no printing) so both the ``add-checkpoint``
+    CLI command and the phase-checkpoint handshake (``cmd_phase_checkpoint_review``)
+    can stamp without double-printing. ``ok`` on success; ``error`` on a missing
+    plan.md, malformed SHA, or phase heading not found."""
     plan_path = Path(track_dir) / "plan.md"
-
     if not plan_path.exists():
-        out(dict(error="plan.md not found"))
-        return
-
-    # Validate sha format
+        return dict(error="plan.md not found")
     if not re.match(r"^[0-9a-f]{7}$", sha):
-        out(dict(error="Invalid SHA format: must be 7 hex characters"))
-        return
+        return dict(error="Invalid SHA format: must be 7 hex characters")
 
     with open(plan_path) as f:
         lines = f.readlines()
 
     result = []
-    phase_num = int(p)  # Caller passes 1-based phase number, matches "## Phase N" in plan.md
+    phase_num = int(p)  # 1-based phase number, matches "## Phase N" in plan.md
     found = False
-
     for line in lines:
         stripped = line.rstrip("\n")
-        # Match phase heading: ## Phase 1: ... or ## Phase 1
-        pm = re.match(rf"^##\s+Phase\s+{phase_num}\b", stripped)
-        if pm:
-            # Remove existing checkpoint if present
+        if re.match(rf"^##\s+Phase\s+{phase_num}\b", stripped):
+            # Remove existing checkpoint if present, then add the new one.
             base = re.sub(r"\s+\[checkpoint:\s*[0-9a-f]+\]$", "", stripped)
-            # Add new checkpoint
-            updated = f"{base} [checkpoint: {sha}]"
-            result.append(updated)
+            result.append(f"{base} [checkpoint: {sha}]")
             found = True
         else:
             result.append(stripped)
-
     if not found:
-        out(dict(error=f"Phase {phase_num} heading not found in plan.md"))
-        return
+        return dict(error=f"Phase {phase_num} heading not found in plan.md")
 
     with open(plan_path, "w") as f:
         f.write("\n".join(result))
         if result and not result[-1].endswith("\n"):
             f.write("\n")
+    return dict(ok=True, phase=p, sha=sha)
 
-    out(dict(ok=True, phase=p, sha=sha))
+
+def cmd_add_checkpoint(track_dir, p, sha):
+    """Add or update checkpoint SHA for a phase in plan.md (CLI wrapper)."""
+    out(_stamp_checkpoint_in_plan(track_dir, p, sha))
 
 
 def cmd_deferred_report(track_dir):

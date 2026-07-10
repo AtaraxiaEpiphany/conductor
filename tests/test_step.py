@@ -20,7 +20,8 @@ from pathlib import Path
 from unittest import TestCase, main
 
 from scripts.track_state.core import save, load
-from scripts.track_state.dispatch import cmd_step
+from scripts.track_state.dispatch import (
+    cmd_step, _phase_cp_write_marker, _phase_cp_read_marker, _phase_cp_marker_path)
 
 
 def _recent_iso():
@@ -303,6 +304,86 @@ class StepTerminalTests(TestCase):
         self.addCleanup(shutil.rmtree, d, ignore_errors=True)
         o = _step(d)
         self.assertEqual(o["action"], "done")
+
+
+def _cp_marker(track_dir, **fields):
+    """Write a phase-checkpoint marker (defaults to a valid synth_pending P1)."""
+    base = {"phase": 1, "stage": "synth_pending", "ac_verdict": "passed",
+            "ac_gate": None, "ac_n_ungrounded": None,
+            "l1_status": "passed", "l1_command": "pytest -q"}
+    base.update(fields)
+    _phase_cp_write_marker(track_dir, base)
+
+
+class StepCheckpointMarkerTests(TestCase):
+    """The synth_pending marker discriminates 'verifiers fanned, awaiting the
+    synthesizer' from 'nothing fanned yet' — the open design point of WM2-2.
+    `_any_phase_needs_checkpoint` can't tell them apart (it only sees 'checkpoint
+    absent'); the marker routing in `_emit_quiescent_leaf` does."""
+
+    def test_synth_pending_marker_emits_dispatch_phase_checker(self):
+        # Verifiers fanned, verdicts on disk → spine dispatches the synthesizer
+        # (phase-checker) with a pre-assembled prompt, NOT a re-fan.
+        d = _phase_complete_track()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        _cp_marker(d)
+        o = _step(d)
+        self.assertEqual(o["action"], "dispatch_phase_checker")
+        self.assertEqual(o["agent"], "phase-checker")
+        self.assertEqual(o["phase"], 1)
+        self.assertEqual(o["execution_mode"], "interactive")
+
+    def test_dispatch_phase_checker_prompt_assembles_verdict_fields(self):
+        # The prompt is the exact §3.2 Step-3 field set, assembled from the marker.
+        d = _phase_complete_track()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        _cp_marker(d, ac_verdict="passed", l1_status="failed",
+                   l1_command="pytest -q tests/")
+        o = _step(d)
+        self.assertIn("TRACK_ID=step", o["prompt"])
+        self.assertIn("PHASE_INDEX=1", o["prompt"])
+        self.assertIn("EXECUTION_MODE=interactive", o["prompt"])
+        self.assertIn("AC_TRACE_VERDICT=passed", o["prompt"])
+        self.assertIn("L1_VERIFY_STATUS=failed", o["prompt"])
+        self.assertIn("L1_VERIFY_COMMAND=pytest -q tests/", o["prompt"])
+        # passed verdict → no GATE / N_UNGROUNDED lines emitted.
+        self.assertNotIn("AC_TRACE_GATE=", o["prompt"])
+        self.assertNotIn("AC_TRACE_N_UNGROUNDED=", o["prompt"])
+
+    def test_failed_ac_verdict_includes_gate(self):
+        d = _phase_complete_track()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        _cp_marker(d, ac_verdict="FAILED", ac_gate="AC1: missing grounding")
+        o = _step(d)
+        self.assertIn("AC_TRACE_VERDICT=FAILED", o["prompt"])
+        self.assertIn("AC_TRACE_GATE=AC1: missing grounding", o["prompt"])
+
+    def test_warn_ac_verdict_includes_n_ungrounded(self):
+        d = _phase_complete_track()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        _cp_marker(d, ac_verdict="warn", ac_n_ungrounded=2)
+        o = _step(d)
+        self.assertIn("AC_TRACE_VERDICT=warn", o["prompt"])
+        self.assertIn("AC_TRACE_N_UNGROUNDED=2", o["prompt"])
+
+    def test_stale_marker_phase_mismatch_clears_and_fans(self):
+        # A marker for a DIFFERENT phase than the one needing a checkpoint is
+        # stale (e.g. left by a crash) → cleared, verifiers re-fan.
+        d = _phase_complete_track()  # phase 1 needs the checkpoint
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        _cp_marker(d, phase=2)  # wrong phase
+        o = _step(d)
+        self.assertEqual(o["action"], "dispatch_batch")
+        self.assertFalse(_phase_cp_marker_path(d).exists(),
+                         "stale marker must be cleared so it can't block re-fan")
+
+    def test_unknown_stage_clears_and_fans(self):
+        d = _phase_complete_track()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        _cp_marker(d, stage="garbage")
+        o = _step(d)
+        self.assertEqual(o["action"], "dispatch_batch")
+        self.assertFalse(_phase_cp_marker_path(d).exists())
 
 
 class StepManualTests(TestCase):

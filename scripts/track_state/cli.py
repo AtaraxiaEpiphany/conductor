@@ -11,6 +11,7 @@ from .cmd_complete import cmd_complete
 from .dispatch import (
     cmd_next, cmd_dispatch_next, cmd_dispatch_prepare, cmd_dispatch_finalize,
     cmd_recover, cmd_step, cmd_post_loop_step, cmd_post_loop_review,
+    cmd_phase_verdict, cmd_phase_checkpoint_review,
 )
 from .result import cmd_process_result, cmd_write_result
 from .validate import cmd_validate
@@ -46,6 +47,7 @@ _BOOL_FLAGS = {"--full", "--fix", "--check", "--force"}
 _TD_RESOLVING_COMMANDS = {
     "step", "wave-step", "post-loop-step", "post-loop-review", "recover",
     "start", "wave-finalize", "finalize", "archive",
+    "phase-verdict", "phase-checkpoint-review",
 }
 
 
@@ -232,6 +234,14 @@ COMMAND_HELP = {
     "post-loop-review": ("post-loop-review <track-dir> --status <APPROVE|APPROVE_WITH_COMMENTS|CHANGES_REQUESTED|FAILURE>",
                          "Stamp the reviewed-range sidecar from the code-reviewer STATUS (a real review stamps; "
                          "FAILURE does not → re-review). Owns the §7.0 gate-advance in code, not teleoperator prose."),
+    "phase-verdict": ("phase-verdict <track-dir> --ac-verdict <passed|warn|skipped|FAILED|ERROR> "
+                      "[--ac-gate <gate>] [--ac-n-ungrounded <N>] --l1-status <passed|failed|error> --l1-command <cmd>",
+                      "Transcribe the fanned ac-tracer + test-runner verdicts to the checkpoint marker "
+                      "(stage=synth_pending); the next `step` emits the phase-checker synth dispatch. "
+                      "Owns the §3.2 parse→assemble step in code, not teleoperator prose."),
+    "phase-checkpoint-review": ("phase-checkpoint-review <track-dir> --status <PASSED|FAILED> [--sha <7-hex>] [--reason <text>]",
+                                "Stamp the phase checkpoint from phase-checker's STATUS (PASSED stamps + clears; "
+                                "FAILED clears → halt). Owns the §3.7 stamp/halt step in code, not teleoperator prose."),
     "record-summary": ("record-summary <track-dir>",
                        "Record compact task summary (stdin JSON) for post-compaction recovery"),
     "dispatch-wave": ("dispatch-wave <track-dir> [--full]",
@@ -309,7 +319,8 @@ _COMMAND_GROUPS = [
     ("Handoff", ["get-handoff", "append-handoff", "harvest-candidates"]),
     ("Result Processing", ["write-result", "process-result"]),
     ("Dispatch Composites", ["dispatch-prepare", "dispatch-finalize", "record-summary"]),
-    ("Rail B-min Spines", ["step", "post-loop-step", "post-loop-review"]),
+    ("Rail B-min Spines", ["step", "post-loop-step", "post-loop-review",
+                           "phase-verdict", "phase-checkpoint-review"]),
     ("Wave Parallelism", ["dispatch-wave", "wave-status", "wave-finalize", "wave-abort", "wave-step"]),
     ("Naming", ["derive-name", "resolve-track", "check"]),
     ("New-Track Resume", ["new-track-resume", "new-track-init", "new-track-step",
@@ -485,6 +496,18 @@ def main():
             cmd_post_loop_step(track_dir, compact="--full" not in args)
         elif cmd == "post-loop-review":
             cmd_post_loop_review(track_dir, flag(args, "--status"))
+        elif cmd == "phase-verdict":
+            cmd_phase_verdict(
+                track_dir,
+                flag(args, "--ac-verdict"),
+                flag(args, "--ac-gate"),
+                flag(args, "--ac-n-ungrounded"),
+                flag(args, "--l1-status"),
+                flag(args, "--l1-command"))
+        elif cmd == "phase-checkpoint-review":
+            cmd_phase_checkpoint_review(
+                track_dir, flag(args, "--status"),
+                flag(args, "--sha"), flag(args, "--reason"))
         elif cmd == "record-summary":
             cmd_record_summary(track_dir)
         elif cmd == "dispatch-wave":
