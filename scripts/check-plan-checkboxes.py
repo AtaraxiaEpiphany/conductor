@@ -174,7 +174,7 @@ def main():
         permission_decision="deny",
         permission_decision_reason=(
             "plan.md task/subtask bullets must start with a [ ] checkbox marker "
-            "(e.g. '- [ ] Subtask: ...'). Rewrite each flagged line and retry."
+            "(e.g. '- [ ] ...'). Rewrite each flagged line and retry."
         ),
     )
 

@@ -97,12 +97,20 @@ def _preflight_result(track_dir):
             invalid_state = True
 
     # Project-level workflow files. Skipped (empty) when no conductor root is
-    # locatable — fail-open so this never blocks setup on an unusual layout.
+    # locatable — fail-open so this never blocks setup on an unusual layout. A
+    # registry placed at the project root (``<root>/tracks.md``) makes
+    # ``_resolve_conductor_root`` return the project root, but the workflow dir
+    # still canonically lives at ``<root>/conductor/workflow/`` — so probe BOTH
+    # ``<conductor_root>/<f>`` and ``<conductor_root>/conductor/<f>`` before
+    # declaring a file missing (mirrors ``_resolve_track_dir``'s candidate probe).
     conductor_root = _resolve_conductor_root(track_dir)
     missing_workflow = []
     if conductor_root is not None:
-        missing_workflow = [f for f in _WORKFLOW_FILES
-                            if not (conductor_root / f).exists()]
+        for f in _WORKFLOW_FILES:
+            if (conductor_root / f).exists():
+                continue
+            if not (conductor_root / "conductor" / f).exists():
+                missing_workflow.append(f)
 
     # Defense-in-depth: a mispassed track_dir (the registry file, or the
     # conductor root) yields the generic missing=[spec,plan,state] failure that
@@ -119,6 +127,15 @@ def _preflight_result(track_dir):
             not any((td_path / f).exists() for f in _TRACK_CORE_FILES):
         hint = ("track_dir looks like the conductor root (contains tracks.md but "
                 "no spec.md/plan.md/track-state.json). Pass conductor/tracks/<track_id>.")
+    elif td_path.is_dir() and "track-state.json" in missing:
+        # The dir exists (spec/plan may be there) but state was never written —
+        # the track was scaffolded but not init'd. Name the recovery command so
+        # the skill's HALT message is actionable, not "no track with status
+        # new/in_progress".
+        hint = ("track-state.json missing — the track dir exists but was never "
+                "initialized. Run /conductor:new-track, or: "
+                "track-state init-from-plan <td> --track-id <id> --type <type> "
+                "--description '<text>'.")
 
     return dict(
         ok=not missing and not invalid_state and not missing_workflow,
@@ -370,6 +387,60 @@ def cmd_derive_name(shortname):
     ))
 
 
+def _candidate_roots(conductor_root):
+    """Base dirs to probe when resolving a track dir, given the conductor root
+    (the directory holding ``tracks.md`` = ``reg.parent``).
+
+    The canonical registry ``<proj>/conductor/tracks.md`` has tracks at
+    ``<conductor_root>/tracks/<id>``. But a registry placed at the project root
+    (``<proj>/tracks.md`` — which ``_find_registry`` deliberately accepts) makes
+    ``conductor_root`` BE the project root, so the tracks still actually live at
+    ``<proj>/conductor/tracks/<id>`` = ``<conductor_root>/conductor/tracks/<id>``.
+    Probing ``<conductor_root>``, its parent, and ``<conductor_root>/conductor``
+    lets a track resolve regardless of where the registry file was placed,
+    instead of assuming ``conductor_root`` is always the real conductor root.
+    """
+    try:
+        p = Path(conductor_root).resolve(strict=False)
+    except OSError:
+        return [Path(conductor_root)]
+    seen, roots = set(), []
+    for cand in (p, p.parent, p / "conductor"):
+        try:
+            cc = cand.resolve(strict=False)
+        except OSError:
+            continue
+        if cc not in seen:
+            seen.add(cc)
+            roots.append(cc)
+    return roots or [p]
+
+
+def _resolve_track_dir(rel_or_id, roots):
+    """First existing track dir among probed candidates; else canonical fallback.
+
+    ``rel_or_id`` is a registry link (relative or absolute) or a bare track_id.
+    Probes the link as-is against each candidate root, plus the canonical
+    ``<root>/tracks/<id>`` form for bare ids. Returns the first dir that exists;
+    if none (stale entry / dir-name mismatch), returns ``roots[0]/tracks/<id>``
+    so the caller still has a deterministic path to surface in
+    ``track_dir_missing`` rather than crashing or silently dropping the entry.
+    """
+    link = Path(rel_or_id)
+    if link.is_absolute():
+        return str(link.resolve(strict=False))
+    rel = str(link).replace("\\", "/")
+    bare = "/" not in rel
+    tid = link.name
+    for root in roots:
+        if (root / rel).is_dir():
+            return str((root / rel).resolve(strict=False))
+        if bare and (root / "tracks" / tid).is_dir():
+            return str((root / "tracks" / tid).resolve(strict=False))
+    first = roots[0] if roots else Path.cwd()
+    return str((first / "tracks" / tid).resolve(strict=False))
+
+
 def _iter_registry_entries(text, conductor_root):
     """Parse registry text into a list of ``{track_id, track_dir, marker, status_str}``.
 
@@ -377,22 +448,26 @@ def _iter_registry_entries(text, conductor_root):
     single source of truth for the registry file's three formats). Handles:
 
     - **checkbox**: ``- [marker] desc (path/)`` — ``track_dir`` from the link
-      path (resolved against ``conductor_root``); ``marker`` captured directly.
+      path (probed against candidate roots, so a registry at the project root
+      still resolves); ``marker`` captured directly.
     - **section**: ``### <id>`` + ``- **Status:** <status>`` — ``track_dir``
       derived as ``<conductor_root>/tracks/<id>`` (sections carry no path).
     - **table**: ``| id | type | status | desc |`` — ``track_dir`` derived.
 
     Only checkbox entries carry a path; section/table entries derive it from
     ``track_id`` via the canonical ``conductor/tracks/<track_id>`` layout.
-    Returns entries in document order; malformed lines are silently skipped.
+    Directory resolution goes through :func:`_resolve_track_dir`, which probes
+    :func:`_candidate_roots` so a registry placed anywhere (project root vs
+    ``conductor/``) resolves the same track. Returns entries in document order;
+    malformed lines are silently skipped.
     """
     entries = []
-    root = Path(conductor_root)
+    roots = _candidate_roots(conductor_root)
     in_section_id = None
     section_status = None
 
     def _derived_dir(track_id):
-        return str(root / "tracks" / track_id)
+        return _resolve_track_dir(track_id, roots)
 
     def _flush(tid, status):
         if tid:
@@ -427,23 +502,19 @@ def _iter_registry_entries(text, conductor_root):
                 # (``Path(None)`` -> TypeError), or pollute ``ambiguous``
                 # candidates with nulls the skill can't render as labels.
                 continue
-            # Registry checkbox links are written either project-root-relative
-            # ("conductor/tracks/<id>/") — the canonical form ``cmd_derive_name``
-            # emits — or conductor-root-relative ("tracks/<id>/"). ``root`` is
-            # the conductor root (parent of tracks.md = <project>/conductor);
-            # resolving a project-root-relative link against it doubles
-            # "conductor/" and yields a non-existent path. Pick the base by
-            # form: absolute as-is, "conductor/"-prefixed against the project
-            # root (root.parent), else against the conductor root.
-            link = Path(lp)
-            lp_norm = lp.replace("\\", "/").lower()
-            if link.is_absolute():
-                track_dir = str(link.resolve())
-            elif lp_norm.startswith("conductor/"):
-                track_dir = str((root.parent / lp).resolve())
-            else:
-                track_dir = str((root / lp).resolve())
-            track_id = link.name  # full id incl. _YYYYMMDD; shortname derived at match time
+            # Resolve the link via ``_resolve_track_dir``, which probes the
+            # candidate roots (conductor root, its parent, and ``<root>/conductor``)
+            # and returns the first dir that exists. This is robust to BOTH link
+            # forms (project-root-relative ``conductor/tracks/<id>/`` and
+            # conductor-root-relative ``tracks/<id>/``) AND to the registry being
+            # placed at the project root instead of ``conductor/`` — the old
+            # form-based pick resolved against a single guessed base and silently
+            # produced non-existent paths when the registry location didn't match
+            # the assumption. Falls back to the canonical derivation when no
+            # candidate exists (stale entry), so the entry is still surfaced for
+            # ``track_dir_missing`` diagnosis instead of being dropped.
+            track_dir = _resolve_track_dir(lp, roots)
+            track_id = Path(lp).name  # full id incl. _YYYYMMDD; shortname derived at match time
             entries.append(dict(track_id=track_id, track_dir=track_dir,
                                 marker=marker,
                                 status_str=_REGISTRY_MARKER_TO_STATUS.get(marker)))
@@ -499,8 +570,18 @@ def _resolve_core(reg, query):
       ``<td>`` (the resolved dir) verbatim; a path's basename is the track_id, so
       reduce it and fall through to the exact-id tier instead of ``no_match``.
 
-    Status is authoritative — read from each entry's ``track-state.json`` via
-    ``load()``; the registry marker is the fallback when state is unreadable.
+    Each entry is classified by ``state`` (not just status), so a track that
+    exists on disk but won't load is diagnosed precisely instead of silently
+    dropping out and collapsing to the useless "no track with status
+    new/in_progress":
+
+    - ``loadable`` — ``track-state.json`` read OK; ``status`` is authoritative
+      (the registry marker is the fallback projection only).
+    - ``uninit`` — dir EXISTS but state won't load (no/unreadable
+      ``track-state.json``). Selectable by identity so preflight can report
+      ``track_not_initialized``.
+    - ``missing`` — dir does NOT exist (stale entry / dir-name mismatch).
+    - ``ghost`` — no ``track_dir`` (empty link). Unselectable.
     """
     if reg is None or not reg.is_file():
         return dict(ok=False, reason="no_registry",
@@ -508,18 +589,25 @@ def _resolve_core(reg, query):
     conductor_root = reg.parent
     entries = _iter_registry_entries(reg.read_text(), conductor_root)
 
-    # Authoritative status per entry (registry projection is the fallback).
+    # Classify each entry. ``state`` is the selection key; ``status`` is
+    # authoritative when loadable, else the registry-marker projection (kept
+    # for display only — it never drives selection of an uninit/missing entry).
     resolved = []
     for e in entries:
-        status = e.get("status_str")
         td = e.get("track_dir")
+        status = e.get("status_str")
+        state = "ghost"
         if td:
-            try:
-                status = load(td).get("status") or status
-            except Exception:
-                pass  # keep the registry projection
+            if Path(td).is_dir():
+                try:
+                    status = load(td).get("status") or status
+                    state = "loadable"
+                except Exception:
+                    state = "uninit"  # dir exists, state unreadable -> needs init
+            else:
+                state = "missing"  # derived/linked dir doesn't exist
         resolved.append(dict(track_id=e.get("track_id"), track_dir=td,
-                             status=status, marker=e.get("marker")))
+                             status=status, marker=e.get("marker"), state=state))
 
     q = (query or "").strip()
     if q.lower() in ("$arguments", "${arguments}"):
@@ -551,31 +639,121 @@ def _resolve_core(reg, query):
                         hint=f"No registry entry matches '{query}'. "
                              "List tracks with 'cat conductor/tracks.md'.")
 
-    # Auto-select: the active (non-terminal) tracks.
-    live = [r for r in resolved if r["status"] in _TRACK_NON_TERMINAL]
-    if not live:
+    # Auto-select (no query). Priority: a live (loadable + non-terminal) track
+    # first; then a single on-disk-but-uninitialized track (selected by identity
+    # so preflight can report ``track_not_initialized`` instead of the useless
+    # "no track with status new/in_progress"); then precise diagnosis.
+    live = [r for r in resolved if r["state"] == "loadable"
+            and r["status"] in _TRACK_NON_TERMINAL]
+    if live:
+        if len(live) == 1:
+            r = live[0]
+            return dict(ok=True, track_id=r["track_id"], track_dir=r["track_dir"],
+                        status=r["status"], via="auto_single")
+        # >1 live: prefer resuming a SINGLE in_progress track over starting one
+        # of several new ones — work-in-flight beats fresh work, and this
+        # dissolves the common "one track running + a freshly-created new track"
+        # ambiguous prompt. Only ask on a genuine tie (multiple in_progress, or
+        # several new with none in flight).
+        in_prog = [r for r in live if r["status"] == "in_progress"]
+        if len(in_prog) == 1:
+            r = in_prog[0]
+            return dict(ok=True, track_id=r["track_id"], track_dir=r["track_dir"],
+                        status=r["status"], via="auto_prefer_in_progress")
+        return dict(ok=False, reason="ambiguous", candidates=live)
+
+    # No live track. A single uninitialized-but-on-disk track is the obvious
+    # target — resolve it so ``cmd_check``'s preflight reports the missing state
+    # precisely. >1 uninit is a genuine "which do you want to init?" ambiguity.
+    uninit = [r for r in resolved if r["state"] == "uninit"]
+    if len(uninit) == 1:
+        r = uninit[0]
+        return dict(ok=True, track_id=r["track_id"], track_dir=r["track_dir"],
+                    status=r["status"], via="auto_uninit")
+    if len(uninit) > 1:
+        return dict(ok=False, reason="ambiguous", candidates=uninit)
+
+    # No live, no uninit. Distinguish a registry of only-done tracks from a
+    # stale registry whose every dir is missing (the dir-name-mismatch / orphan
+    # case). An empty registry (no entries parsed — e.g. a lone ``- [~] x ()``
+    # ghost) stays ``no_non_terminal`` to preserve the contract callers test.
+    if any(r["state"] == "loadable" for r in resolved):
         return dict(ok=False, reason="no_non_terminal",
-                    hint="No track with status new/in_progress. Pass a track_id query.")
-    if len(live) == 1:
-        r = live[0]
-        return dict(ok=True, track_id=r["track_id"], track_dir=r["track_dir"],
-                    status=r["status"], via="auto_single")
-    # >1 live: prefer resuming a SINGLE in_progress track over starting one of
-    # several new ones — work-in-flight beats fresh work, and this dissolves the
-    # common "one track running + a freshly-created new track" ambiguous prompt.
-    # Only ask on a genuine tie (multiple in_progress, or several new with none
-    # in flight).
-    in_prog = [r for r in live if r["status"] == "in_progress"]
-    if len(in_prog) == 1:
-        r = in_prog[0]
-        return dict(ok=True, track_id=r["track_id"], track_dir=r["track_dir"],
-                    status=r["status"], via="auto_prefer_in_progress")
-    return dict(ok=False, reason="ambiguous", candidates=live)
+                    hint="No track with status new/in_progress — all registered "
+                         "tracks are completed/archived. Start a new track with "
+                         "/conductor:new-track, or pass a track_id to re-open one.")
+    if resolved:
+        missing_ids = [r["track_id"] for r in resolved if r["track_id"]]
+        return dict(ok=False, reason="track_dir_missing", track_ids=missing_ids,
+                    hint="Registry lists track(s) but their directories don't "
+                         "exist (" + ", ".join(missing_ids) + "). Check the link "
+                         "or dir names in conductor/tracks.md.")
+    return dict(ok=False, reason="no_non_terminal",
+                hint="No track with status new/in_progress. Pass a track_id, or "
+                     "run /conductor:new-track.")
 
 
 def _resolve_registry(registry_path):
     """The registry path: an explicit ``--registry`` arg, else auto-located."""
     return Path(registry_path) if registry_path else _find_registry()
+
+
+def _resolve_track_dir_or_halt(track_dir, command=None):
+    """Resolve the ``<track-dir>`` positional for the Rail B-min spine commands.
+
+    ``check`` returns BOTH ``td`` (an absolute path) and ``track_id``; a
+    small-window teleoperator sometimes hands the bare ``track_id`` to the next
+    command (``step`` / ``wave-step`` / ``recover`` / ...), which then crashes
+    inside ``conductor_dir().mkdir(exist_ok=True)`` with a confusing
+    ``FileNotFoundError: <track_id>/.conductor`` — the literal id is treated as
+    a relative path whose parent doesn't exist. "but actually the file exists"
+    is the symptom: the track dir is fine, the *argument* was wrong.
+
+    Accept BOTH forms so the model's fumble is harmless:
+
+      - an existing path (the normal ``td`` fast path — a single ``is_dir()``
+        check, no registry walk), or
+      - a bare track_id / shortname / relative link, resolved through the SAME
+        registry machinery ``check`` uses. ``_resolve_core`` already collapses
+        the literal-placeholder and full-path-arg defenses, so this extends the
+        small-window robustness ``check`` established to the downstream step.
+
+    Returns the resolved path on success. On a bare id that can't be resolved,
+    emits a structured ``{error}`` and exits 1 (matching the CLI's existing
+    spine-error contract) instead of the raw ``mkdir`` traceback.
+    """
+    if track_dir is None:
+        return None
+    if Path(track_dir).is_dir():
+        return track_dir
+    core = _resolve_core(_resolve_registry(None), track_dir)
+    if core.get("ok"):
+        td = core.get("track_dir")
+        if td and Path(td).is_dir():
+            return td
+        reason = "track_dir_missing"
+    else:
+        reason = core.get("reason", "no_match")
+    if reason == "no_registry":
+        msg = (f"'{track_dir}' is not an existing directory and no "
+               "conductor/tracks.md was found to resolve it from. Re-run the "
+               "skill ('track-state check' locates the track), or pass the "
+               "track directory path.")
+    elif reason == "ambiguous":
+        msg = (f"'{track_dir}' is not an existing directory and matches "
+               "multiple registry entries. Pass the full track directory "
+               "path, or run 'track-state check' to disambiguate.")
+    elif reason == "track_dir_missing":
+        msg = (f"'{track_dir}' resolved to a registry entry whose directory "
+               f"doesn't exist ({core.get('track_dir')}). Check the link/dir "
+               "names in conductor/tracks.md.")
+    else:  # no_match / no_non_terminal / etc.
+        msg = (f"'{track_dir}' is not an existing track directory and no "
+               "registry entry matches it. Re-run the skill — "
+               f"'track-state check \"{track_dir}\"' resolves the track — or "
+               "pass the track directory path (the 'td' field check returns).")
+    out(dict(error=msg, command=command, reason=reason, hint=core.get("hint")))
+    sys.exit(1)
 
 
 def cmd_resolve_track(query=None, registry_path=None):
@@ -593,7 +771,7 @@ def cmd_resolve_track(query=None, registry_path=None):
     out(_resolve_core(reg, query))
 
 
-def cmd_setup(query=None, registry_path=None):
+def cmd_check(query=None, registry_path=None):
     """Resolve + preflight a track in one call; ALWAYS exits 0.
 
     Collapses the skill §1.0 ``resolve-track`` + ``preflight`` pair into a single
@@ -601,9 +779,9 @@ def cmd_setup(query=None, registry_path=None):
     last path-handoff in setup, and the exact mishandling class that motivated
     ``resolve-track``. Mirrors ``cmd_preflight`` / ``cmd_resolve_track``: outcome
     in JSON, never the exit code. Composes ``_resolve_core`` (resolve + the
-    placeholder / full-path defenses) with ``_preflight_result`` (the readiness
-    check). Read-only — the ``new`` -> ``start`` transition stays with
-    ``recover``, where the status comes from.
+    placeholder / full-path defenses + the per-entry ``state`` classification)
+    with ``_preflight_result`` (the readiness check). Read-only — the ``new``
+    -> ``start`` transition stays with ``recover``, where the status comes from.
 
     The skill switches on ``action`` (a ready-to-execute directive, not a status
     to re-interpret) — this is what keeps the 5 skills' §1.0 a 3-arm switch
@@ -616,9 +794,18 @@ def cmd_setup(query=None, registry_path=None):
       - ``action:"ask"`` — ambiguous. ``{ok:false, reason:"ambiguous",
         candidates, announce}``. ``AskUserQuestion`` over ``candidates``.
       - ``action:"halt"`` — anything that stops the skill.
-        ``{ok:false, reason, message, hint?, missing?, missing_workflow?}``.
-        Print ``message``; HALT. ``reason`` is one of ``preflight`` /
-        ``no_registry`` / ``no_match`` / ``no_non_terminal``.
+        ``{ok:false, reason, message, hint?, recover?, missing?,
+        missing_workflow?}``. Print ``message``; HALT (if ``recover`` is present
+        it is a suggested command the user may run, not something the skill
+        auto-executes). ``reason`` is one of ``track_not_initialized`` /
+        ``track_dir_missing`` / ``preflight`` / ``no_registry`` / ``no_match`` /
+        ``no_non_terminal``.
+
+    The diagnostic reasons matter: a track that exists on disk but lacks state,
+    or whose registry dir doesn't exist, used to collapse to the useless "no
+    track with status new/in_progress". They now surface as
+    ``track_not_initialized`` (with a ready ``recover`` command) and
+    ``track_dir_missing`` respectively.
 
     The legacy ``ok`` / ``reason`` / ``td`` / ``candidates`` / ``missing`` /
     ``missing_workflow`` / ``hint`` fields are all preserved alongside ``action``
@@ -638,6 +825,13 @@ def cmd_setup(query=None, registry_path=None):
                  message="Conductor environment incomplete. Run /conductor:setup.",
                  hint=core.get("hint")))
         return
+    if reason == "track_dir_missing":
+        out(dict(action="halt", ok=False, reason="track_dir_missing",
+                 track_ids=core.get("track_ids", []),
+                 message=core.get("hint")
+                 or "Registry lists track(s) whose directories don't exist.",
+                 hint=core.get("hint")))
+        return
     if reason in ("no_match", "no_non_terminal"):
         out(dict(action="halt", ok=False, reason=reason,
                  message=core.get("hint")
@@ -646,6 +840,7 @@ def cmd_setup(query=None, registry_path=None):
         return
 
     td = core.get("track_dir")
+    track_id = core.get("track_id")
     if not td:
         # Defense-in-depth: ``_resolve_core`` should never return ok:true
         # without a track_dir (empty-link registry entries are skipped in
@@ -657,13 +852,38 @@ def cmd_setup(query=None, registry_path=None):
                          "link paths in conductor/tracks.md."))
         return
 
+    # A resolved-but-nonexistent dir (query path: the registry entry's derived
+    # dir doesn't exist on disk). Diagnose distinctly from a real preflight gap.
+    if not Path(td).is_dir():
+        out(dict(action="halt", ok=False, reason="track_dir_missing", td=td,
+                 track_id=track_id,
+                 message=(f"Track '{track_id}' is registered but its directory "
+                          f"doesn't exist: {td}. Check the link or dir name in "
+                          "conductor/tracks.md.")))
+        return
+
     pf = _preflight_result(td)
     if not pf["ok"]:
+        missing = pf.get("missing", [])
+        # The on-disk-but-uninitialized case: the track was scaffolded but never
+        # had init-from-plan run. Hand back a ready ``recover`` command rather
+        # than the generic "environment incomplete" message.
+        if "track-state.json" in missing:
+            recover = (f'track-state init-from-plan "{td}" --track-id {track_id} '
+                       f'--type feature --description "<short description>"')
+            out(dict(action="halt", ok=False, reason="track_not_initialized",
+                     td=td, track_id=track_id, recover=recover,
+                     message=(f"Track '{track_id}' directory exists but "
+                              "track-state.json is missing — it was scaffolded "
+                              "but never initialized. Run /conductor:new-track, "
+                              f"or:\n  {recover}"),
+                     missing=missing))
+            return
         out(dict(action="halt", ok=False, reason="preflight", td=td,
                  message="Conductor environment incomplete. Run /conductor:setup.",
                  hint=pf.get("hint")
                  or "Conductor environment incomplete. Run /conductor:setup.",
-                 missing=pf.get("missing"),
+                 missing=missing,
                  missing_workflow=pf.get("missing_workflow")))
         return
 
@@ -674,6 +894,13 @@ def cmd_setup(query=None, registry_path=None):
     announce = f"Track '{core['track_id']}' ({status}) — {how}."
     out(dict(action="proceed", ok=True, td=td, track_id=core["track_id"],
              status=status, via=via, announce=announce))
+
+
+# Backward-compat alias: the command was renamed ``setup`` -> ``check`` (it is
+# read-only; "setup" implied mutation). The ``setup`` CLI string and any internal
+# refs keep resolving through this alias so existing skills/tests don't break
+# during the transition.
+cmd_setup = cmd_check
 
 
 def _get_all_shas(state):
@@ -784,7 +1011,7 @@ def cmd_add_checkpoint(track_dir, p, sha):
         lines = f.readlines()
 
     result = []
-    phase_num = int(p)  # Already 1-based
+    phase_num = int(p)  # Caller passes 1-based phase number, matches "## Phase N" in plan.md
     found = False
 
     for line in lines:
@@ -802,7 +1029,7 @@ def cmd_add_checkpoint(track_dir, p, sha):
             result.append(stripped)
 
     if not found:
-        out(dict(error=f"Phase {int(p)} heading not found in plan.md"))
+        out(dict(error=f"Phase {phase_num} heading not found in plan.md"))
         return
 
     with open(plan_path, "w") as f:

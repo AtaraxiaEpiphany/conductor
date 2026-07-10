@@ -40,10 +40,10 @@ Wave loop: `DISPATCH-WAVE → FAN OUT → INTEGRATE (per member) → (drained) �
 
 ## 1.0 SETUP + TRACK SELECTION
 
-1. `track-state setup "$ARGUMENTS"` — always exits 0; outcome is in `action`:
-   - `proceed` → `<track_dir>` = `td`; **print `announce`**; continue to step 2.
-   - `ask` → `AskUserQuestion` over `candidates` (label = `track_id`), then re-run `track-state setup "<chosen track_id>"`.
-   - `halt` → print `message`; HALT. (`reason: "preflight"` carries `missing`/`missing_workflow` — missing spec/plan/state, or missing `conductor/workflow/`.)
+1. `track-state check "$ARGUMENTS"` — always exits 0; outcome is in `action`:
+   - `proceed` → `<td>` = `td`; **print `announce`**; continue to step 2.
+   - `ask` → `AskUserQuestion` over `candidates` (label = `track_id`), then re-run `track-state check "<chosen track_id>"`.
+   - `halt` → print `message`; HALT.
 2. `track-state recover "<track_dir>"`.
    - `status: "wave_active"` → an interrupted wave has in-flight members. Go to **§2.5** (resume the wave — integrate members before anything else).
    - error → HALT.

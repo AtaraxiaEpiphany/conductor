@@ -91,6 +91,14 @@ class ScanTests(TestCase):
         # ``- [ ] implement login <!-- AC-1 -->`` is valid (keyword optional).
         self.assertEqual(_mod._scan("- [ ] implement login <!-- AC-1 -->\n"), [])
 
+    def test_scan_keywordless_task_with_full_ac_tc_not_flagged(self):
+        # The new spec-planner default (§4.2): no Task:/Subtask: prefix, full
+        # AC/TC annotation. Must parse as a valid task — no missing-checkbox hit.
+        self.assertEqual(
+            _mod._scan("- [ ] build the API <!-- AC-1, TC-1.1 -->\n"), [])
+        self.assertEqual(
+            _mod._scan("  - [ ] create the data model\n"), [])
+
     def test_scan_plain_prose_bullet_without_annotation_not_flagged(self):
         self.assertEqual(_mod._scan("- a plain markdown bullet\n"), [])
 

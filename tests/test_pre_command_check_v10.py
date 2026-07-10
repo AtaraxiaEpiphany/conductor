@@ -39,7 +39,7 @@ class PreCommandCheckV10GateTests(TestCase):
     def test_no_space_bad_message_is_flagged(self):
         # THE BYPASS: -m"…" with no space used to skip validation.
         out = _run('git commit -m"random wip junk"')
-        self.assertEqual("ask", self._decision(out))
+        self.assertEqual("deny", self._decision(out))
 
     def test_no_space_good_message_is_allowed(self):
         out = _run('git commit -m"feat(auth): add login"')
@@ -48,7 +48,7 @@ class PreCommandCheckV10GateTests(TestCase):
     def test_spaced_bad_message_still_flagged(self):
         # Regression guard for the original whitespace path.
         out = _run('git commit -m "bad subject line"')
-        self.assertEqual("ask", self._decision(out))
+        self.assertEqual("deny", self._decision(out))
 
     def test_non_commit_command_allowed(self):
         out = _run("echo hello")

@@ -5,9 +5,9 @@ plan.md grammar (see agents/spec-planner.md §4.2):
     # Implementation Plan: <title>                 (ignored)
 
     ## Phase <N>: <Phase Name>                      (N starts at 1, contiguous)
-    - [ ] Task: <desc> <!-- AC-1, TC-1.1 -->         (top-level task)
-      - [ ] Subtask: <desc>                          (indented = subtask)
-    - [ ] [Manual] Task: ...                         (each phase ends with one)
+    - [ ] <desc> <!-- AC-1, TC-1.1 -->               (top-level task)
+      - [ ] <desc>                                   (indented = subtask)
+    - [ ] [Manual] ...                               (each phase ends with one)
 
 Checkbox marker chars are the values of constants.MARKER_MAP:
     ' ' pending   x completed   ~ in_progress   ! failed

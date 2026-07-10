@@ -75,27 +75,71 @@ Interactive. Write to `conductor/product/product-guidelines.md`. Save state: `2.
 | HTML/CSS | `html-css.md` |
 | *(any)* | `general.md` (always) |
 
-Confirm with user. Copy from `${CLAUDE_PLUGIN_ROOT}/templates/code-styleguides/` to `conductor/workflow/code-styleguides/`.
+Confirm the set with the user, then copy the selected guides into place with one Bash call. These are pure copies (no placeholders), so `cp` keeps the guide bodies out of the orchestrator context:
+```bash
+mkdir -p conductor/workflow/code-styleguides
+cp "${CLAUDE_PLUGIN_ROOT}/templates/code-styleguides/"{general,<detected-langs>}.md conductor/workflow/code-styleguides/
+```
+`general.md` is always included; `<detected-langs>` is the brace-expansion list of detected languages' basenames (e.g. `python,typescript`).
 Save state: `2.3_tech_stack_styleguides`.
 
 ### 2.4 Workflow
 
-1. Copy `${CLAUDE_PLUGIN_ROOT}/templates/template.md` → `conductor/workflow/template.md`
-2. Inject dev commands: for each language, append `${CLAUDE_PLUGIN_ROOT}/templates/dev-commands/<lang>.md` into the `## Development Commands` section.
-3. Copy `task-workflow.md`, `phase-checkpoint.md`, and `post-loop.md` from templates.
-4. **Testing strategy:** Copy `${CLAUDE_PLUGIN_ROOT}/templates/testing/strategy.md` → `conductor/workflow/testing/strategy.md`. Replace `{TEST_ROOT}` with the detected test directory (scan project for `tests/`, `__tests__/`, `test/`; default: `tests/`).
-5. Generate `conductor/workflow/index.md` listing all created files.
-6. Verify all referenced files exist.
-7. **Wiki Overview:** Read `${CLAUDE_PLUGIN_ROOT}/templates/wiki-overview.md`, write to `conductor/overview.md`. Replace `{TIMESTAMP}` with current ISO-8601 timestamp.
-8. **Wiki Purpose:** Read `${CLAUDE_PLUGIN_ROOT}/templates/wiki-purpose.md`, write to `conductor/purpose.md`. Replace `{TIMESTAMP}`. Seed the **Goals** section from the product guide (§2.1) — the other sections (Key Questions, Thesis, Decisions) start as placeholders and are co-evolved by the user (`/conductor:wiki purpose`) and wiki-synthesizer (Phase 2 of the doc-sync split) over time. This is the wiki's directional intent — *why* the project exists, distinct from the structural overview.
-9. **Wiki Log:** Read `${CLAUDE_PLUGIN_ROOT}/templates/wiki-log.md`, write to `conductor/log.md`.
+Copy the workflow templates into `conductor/workflow/` with Bash (`cp`/`sed`) rather than Read+Write. These are pure file copies — `phase-checkpoint.md` and `post-loop.md` carry runtime tokens (`{TRACK_DIR}`/`{PHASE_INDEX}`/`{CLAUDE_PLUGIN_ROOT}`) that agents substitute later, so they pass through **verbatim and must NOT be sed'd**. Routing them through `cp` keeps their contents out of the orchestrator context.
+
+1. **Core workflow files** (pure copies):
+   ```bash
+   mkdir -p conductor/workflow/testing
+   cp "${CLAUDE_PLUGIN_ROOT}/templates/"{template,task-workflow,phase-checkpoint,post-loop}.md conductor/workflow/
+   ```
+
+2. **Inject dev commands:** concatenate the detected languages' dev-command files and insert them at the `<!-- DEV_COMMANDS:` anchor in `template.md` (pure Bash keeps the lang files out of context):
+   ```bash
+   cat "${CLAUDE_PLUGIN_ROOT}/templates/dev-commands/"{<lang1>,<lang2>}.md > /tmp/.devcmds
+   sed -i '/<!-- DEV_COMMANDS:/r /tmp/.devcmds' conductor/workflow/template.md
+   rm -f /tmp/.devcmds
+   ```
+
+3. **Testing strategy:** copy, then substitute the detected test root for `{TEST_ROOT}` (scan for `tests/`, `__tests__/`, `test/`; default `tests`):
+   ```bash
+   cp "${CLAUDE_PLUGIN_ROOT}/templates/testing/strategy.md" conductor/workflow/testing/strategy.md
+   sed -i "s/{TEST_ROOT}/<detected-test-root>/g" conductor/workflow/testing/strategy.md
+   ```
+
+4. **Workflow index:** generate `conductor/workflow/index.md` listing the created files (per-project content — not a template copy).
+
+5. **Verify** every referenced file exists before continuing.
+
+6. **Wiki overview/purpose/log** — copy each to its renamed target, then stamp the current ISO-8601 timestamp over `{TIMESTAMP}`:
+   ```bash
+   ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+   cp "${CLAUDE_PLUGIN_ROOT}/templates/wiki-overview.md" conductor/overview.md
+   cp "${CLAUDE_PLUGIN_ROOT}/templates/wiki-purpose.md"  conductor/purpose.md
+   cp "${CLAUDE_PLUGIN_ROOT}/templates/wiki-log.md"      conductor/log.md
+   sed -i "s/{TIMESTAMP}/$ts/g" conductor/overview.md conductor/purpose.md conductor/log.md
+   ```
+
+7. **Seed `conductor/purpose.md` Goals** — the one content edit in this phase: `Edit` `conductor/purpose.md` to replace the Goals placeholder with the goals gathered in §2.1. The other sections (Key Questions, Thesis, Decisions) start as placeholders and co-evolve via `/conductor:wiki purpose` and the wiki-synthesizer over time. This file is the wiki's directional intent — *why* the project exists, distinct from the structural overview.
 Save state: `2.4_workflow`.
 
 ### 2.5 Finalization
 
-1. **CLAUDE.md TOC (idempotent):** Read `${CLAUDE_PLUGIN_ROOT}/templates/claude-md-toc.md`. If the project's `CLAUDE.md` already contains the `<!-- conductor:toc begin -->` sentinel, skip the append — a setup re-run must never duplicate the block. Otherwise append the template (it carries the `<!-- conductor:toc begin -->` … `<!-- conductor:toc end -->` sentinels bracketing the block); create `CLAUDE.md` if missing.
-2. **Project index:** Read `${CLAUDE_PLUGIN_ROOT}/templates/project-index.md`, write to `conductor/index.md`.
-3. **Tracks Registry:** Create `conductor/tracks.md` if missing (empty registry with header `# Tracks Registry`).
+1. **CLAUDE.md TOC (idempotent, sentinel-guarded append — NOT a `cp`, which would clobber a brownfield `CLAUDE.md`):** the template carries the `<!-- conductor:toc begin -->` … `<!-- conductor:toc end -->` sentinels bracketing its block. If the project's `CLAUDE.md` already contains the `<!-- conductor:toc begin -->` sentinel, skip the append — a setup re-run must never duplicate the block; otherwise append the template (create `CLAUDE.md` if missing). The template has no placeholders, so a single Bash guard keeps it out of context:
+   ```bash
+   grep -q '<!-- conductor:toc begin -->' CLAUDE.md 2>/dev/null \
+     || cat "${CLAUDE_PLUGIN_ROOT}/templates/claude-md-toc.md" >> CLAUDE.md
+   ```
+
+2. **Project index** (pure copy, no placeholders):
+   ```bash
+   cp "${CLAUDE_PLUGIN_ROOT}/templates/project-index.md" conductor/index.md
+   ```
+
+3. **Tracks Registry:** create `conductor/tracks.md` if missing (header `# Tracks Registry`):
+   ```bash
+   [ -f conductor/tracks.md ] || printf '# Tracks Registry\n' > conductor/tracks.md
+   ```
+
 4. Save state: `2.5_finalization`.
 5. Ask user: "Create an initial track now, or later?" If later → commit Phase 1 → HALT.
 6. Summarize Phase 1 actions.

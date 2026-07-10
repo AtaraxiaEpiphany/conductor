@@ -176,6 +176,139 @@ class StateLockIntegrationTests(TestCase):
             root, "rm -f conductor/tracks/auth_20260706/track-state.json")
         self.assertEqual(v, [])
 
+    # --- Issue 1 regressions: state-lock false positive on sanctioned channels ---
+
+    def test_sanctioned_append_handoff_with_remove_in_findings_not_flagged(self):
+        """The explorer's exact channel — a read-only ``append-handoff`` whose
+        heredoc JSON mentions remove/move/delete — must NOT trip the gate on an
+        in_progress track (Layer A allowlist). This is the reported bug."""
+        root = self._project("in_progress", "in_progress")
+        command = (
+            'track-state append-handoff "conductor/tracks/auth_20260706" '
+            'P1 T1 --type explore << \'EOF\'\n'
+            '{"findings":["remove the handler","move helper to utils","delete the cache"]}\n'
+            'EOF'
+        )
+        self.assertEqual(self.pcc.find_track_state_violations(root, command), [])
+
+    def test_heredoc_body_delete_ignored_for_nonsanctioned(self):
+        """A non-sanctioned ``track-state <typo>`` still gets Layer B protection,
+        but the delete verb inside its heredoc body is not scanned (argv-only)."""
+        root = self._project("in_progress", "in_progress")
+        command = (
+            "track-state bogus handoff << 'EOF'\n"
+            "delete this line\n"
+            "EOF"
+        )
+        self.assertEqual(self.pcc.find_track_state_violations(root, command), [])
+
+    def test_word_boundary_move_not_matching_remove(self):
+        """``\\bmove\\b`` must not match ``remove``/``removed`` — the load-bearing
+        false-positive vector (``'move' in 'remove'`` was True). Whole-word
+        ``remove`` in a non-sanctioned argv is not a move op."""
+        root = self._project("in_progress", "in_progress")
+        command = 'track-state zz --reason "remove the stale cache"'
+        self.assertEqual(self.pcc.find_track_state_violations(root, command), [])
+
+    def test_non_sanctioned_rm_in_argv_still_flagged(self):
+        """Layer B still catches a real rm in a non-sanctioned argv (regression
+        guard that the allowlist did not neuter the broad scan entirely)."""
+        root = self._project("in_progress", "in_progress")
+        command = 'track-state bogus && rm conductor/tracks/auth_20260706/plan.md'
+        v = self.pcc.find_track_state_violations(root, command)
+        self.assertEqual(len(v), 1)
+        self.assertIn("deletion", v[0])
+
+
+class SetupScaffoldingHookCleanTests(TestCase):
+    """setup §2.3/§2.4/§2.5 scaffold templates via ``cp``/``sed`` (not Read+Write)
+    to keep template bodies out of the orchestrator context. These commands must
+    NEVER trip the PreToolUse gates — neither the state-lock verb scan (even with
+    an in_progress task) nor is_direct_track_state_modification. Locks the
+    cp/sed-ification so a future hook change can't silently break setup."""
+
+    @classmethod
+    def setUpClass(cls):
+        spec = importlib.util.spec_from_file_location(
+            "pre_command_check_setup", _scripts / "pre-command-check.py")
+        cls.pcc = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.pcc)
+
+    def setUp(self):
+        root = Path(tempfile.mkdtemp())
+        td = root / "conductor" / "tracks" / "x_20260708"
+        td.mkdir(parents=True)
+        (td / "track-state.json").write_text(json.dumps({
+            "track_id": "x", "status": "in_progress",
+            "phases": [{"name": "P1", "status": "in_progress",
+                        "tasks": [{"name": "T1", "status": "in_progress"}]}]}))
+        (root / "conductor" / "tracks.md").write_text(
+            "- [~] x (conductor/tracks/x_20260708/)\n")
+        self.addCleanup(lambda: __import__("shutil").rmtree(root, ignore_errors=True))
+        self.root = root
+
+    def _clean(self, command):
+        return (self.pcc.find_track_state_violations(self.root, command) == []
+                and not self.pcc.is_direct_track_state_modification(command))
+
+    def test_cp_styleguides_clean(self):
+        self.assertTrue(self._clean(
+            'cp "${CLAUDE_PLUGIN_ROOT}/templates/code-styleguides/"{general,python}.md '
+            'conductor/workflow/code-styleguides/'))
+
+    def test_cp_core_workflow_files_clean(self):
+        self.assertTrue(self._clean(
+            'cp "${CLAUDE_PLUGIN_ROOT}/templates/"{template,task-workflow,'
+            'phase-checkpoint,post-loop}.md conductor/workflow/'))
+
+    def test_devcommands_cat_and_sed_insert_clean(self):
+        cmd = ('cat "${CLAUDE_PLUGIN_ROOT}/templates/dev-commands/"python.md > /tmp/.devcmds\n'
+               "sed -i '/<!-- DEV_COMMANDS:/r /tmp/.devcmds' conductor/workflow/template.md")
+        self.assertTrue(self._clean(cmd))
+
+    def test_sed_test_root_clean(self):
+        self.assertTrue(self._clean(
+            'sed -i "s/{TEST_ROOT}/tests/g" conductor/workflow/testing/strategy.md'))
+
+    def test_cp_and_sed_timestamp_clean(self):
+        cmd = ('cp "${CLAUDE_PLUGIN_ROOT}/templates/wiki-overview.md" conductor/overview.md\n'
+               'sed -i "s/{TIMESTAMP}/2026-07-08T00:00:00Z/g" conductor/overview.md')
+        self.assertTrue(self._clean(cmd))
+
+    def test_claudemd_toc_append_clean(self):
+        self.assertTrue(self._clean(
+            'grep -q \'<!-- conductor:toc begin -->\' CLAUDE.md 2>/dev/null '
+            '|| cat "${CLAUDE_PLUGIN_ROOT}/templates/claude-md-toc.md" >> CLAUDE.md'))
+
+    def test_printf_tracks_registry_clean(self):
+        self.assertTrue(self._clean(
+            "[ -f conductor/tracks.md ] || printf '# Tracks Registry\\n' > conductor/tracks.md"))
+
+
+class SanctionedSubcommandDriftTests(TestCase):
+    """Guard against allowlist drift: ``_SANCTIONED_TS_SUBCOMMANDS`` must cover
+    every subcommand the CLI actually exposes (``_COMMAND_GROUPS`` + the hidden
+    ``setup`` alias + ``help``). The set is hardcoded in the hook (importing the
+    full track_state package into every Bash PreToolUse call is too heavy), so
+    this test is what catches the day a new subcommand ships without being
+    allowlisted."""
+
+    def test_allowlist_covers_every_cli_subcommand(self):
+        from scripts.track_state.cli import _COMMAND_GROUPS
+        declared = {cmd for _group, cmds in _COMMAND_GROUPS for cmd in cmds}
+        declared |= {"setup", "help"}  # hidden alias + help command
+        missing = declared - set(self.pcc._SANCTIONED_TS_SUBCOMMANDS)
+        self.assertFalse(
+            missing,
+            f"_SANCTIONED_TS_SUBCOMMANDS is missing CLI subcommands: {sorted(missing)}")
+
+    @classmethod
+    def setUpClass(cls):
+        spec = importlib.util.spec_from_file_location(
+            "pre_command_check_drift", _scripts / "pre-command-check.py")
+        cls.pcc = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.pcc)
+
 
 if __name__ == "__main__":
     main()

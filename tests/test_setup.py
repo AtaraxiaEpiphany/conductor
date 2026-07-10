@@ -19,7 +19,7 @@ from pathlib import Path
 from unittest import TestCase, main
 
 from scripts.track_state import core
-from scripts.track_state.misc import cmd_setup
+from scripts.track_state.misc import cmd_setup, cmd_check, _resolve_core
 
 _scripts = Path(__file__).resolve().parent.parent / "scripts"
 _CLI = _scripts / "track-state"
@@ -65,6 +65,13 @@ class _Project:
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             cmd_setup(query=query, registry_path=registry_path or str(self.registry))
+        return json.loads(buf.getvalue())
+
+    def check(self, query=None, registry_path=None):
+        # Canonical entry point (``cmd_setup`` is the pre-rename alias for it).
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            cmd_check(query=query, registry_path=registry_path or str(self.registry))
         return json.loads(buf.getvalue())
 
 
@@ -187,14 +194,17 @@ class SetupCLITests(TestCase):
         proc = _run([sys.executable, str(_CLI), "setup"])
         self.assertEqual(proc.returncode, 0, proc.stderr)
 
-    def test_help_lists_setup(self):
-        proc = _run([sys.executable, str(_CLI), "help", "setup"])
+    def test_help_lists_check(self):
+        proc = _run([sys.executable, str(_CLI), "help", "check"])
         self.assertEqual(proc.returncode, 0)
-        self.assertIn("setup", proc.stdout)
+        self.assertIn("check", proc.stdout)
+        # ``setup`` is the pre-rename alias — no longer in the help listing.
+        alias = _run([sys.executable, str(_CLI), "help", "setup"])
+        self.assertEqual(alias.returncode, 1)
 
     def test_cli_auto_select_from_cwd(self):
         os.chdir(self.d)
-        proc = _run([sys.executable, str(_CLI), "setup"])
+        proc = _run([sys.executable, str(_CLI), "check"])
         self.assertEqual(proc.returncode, 0, proc.stderr)
         r = json.loads(proc.stdout)
         self.assertTrue(r["ok"])
@@ -324,6 +334,98 @@ class SetupActionDirectiveTests(TestCase):
         finally:
             os.chdir(self._cwd)
             shutil.rmtree(bare, ignore_errors=True)
+
+
+class CheckDiagnosticsTests(TestCase):
+    """The diagnostic-collapse fix: a track that exists on disk but lacks state,
+    or whose registry dir doesn't exist, used to collapse to the useless
+    ``no_non_terminal`` ("No track with status new/in_progress. Pass a track_id
+    query."). Each now surfaces a precise, actionable reason.
+    """
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.p = _Project(self.d)
+
+    def tearDown(self):
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    def test_check_track_not_initialized(self):
+        # Scenario 1: dir exists with spec/plan but NO track-state.json — the
+        # track was scaffolded but init-from-plan never ran.
+        td = self.p.tracks_dir / "feat_20260706"
+        td.mkdir(parents=True, exist_ok=True)
+        (td / "spec.md").write_text("x")
+        (td / "plan.md").write_text("x")
+        self.p.registry.write_text(
+            "- [ ] feat_20260706 (conductor/tracks/feat_20260706/)\n")
+        r = self.p.check()
+        self.assertEqual(r["action"], "halt")
+        self.assertEqual(r["reason"], "track_not_initialized")
+        self.assertEqual(r["track_id"], "feat_20260706")
+        self.assertEqual(r["td"], str(td))
+        self.assertIn("track-state.json", r["missing"])
+        self.assertIn("recover", r)
+        self.assertIn("init-from-plan", r["recover"])
+
+    def test_check_track_dir_missing(self):
+        # Scenario 3: registry lists a track_id whose dir doesn't exist
+        # (bare-line entry, dir-name mismatch / orphan).
+        self.p.registry.write_text("ghost_20260706 some description\n")
+        r = self.p.check()
+        self.assertEqual(r["action"], "halt")
+        self.assertEqual(r["reason"], "track_dir_missing")
+        self.assertIn("ghost_20260706", r["track_ids"])
+
+    def test_check_registry_at_root_resolves(self):
+        # Scenario 2: tracks.md at the PROJECT ROOT (not conductor/). The
+        # candidate-root probe must still find <root>/conductor/tracks/<id>.
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        td = root / "conductor" / "tracks" / "feat_20260706"
+        td.mkdir(parents=True)
+        (td / "spec.md").write_text("x")
+        (td / "plan.md").write_text("x")
+        core.save(str(td), {"track_id": "feat_20260706",
+                            "status": "in_progress", "phases": []})
+        wf = root / "conductor" / "workflow"
+        wf.mkdir(parents=True)
+        (wf / "index.md").write_text("i")
+        (wf / "post-loop.md").write_text("p")
+        (root / "tracks.md").write_text("feat_20260706 desc\n")  # at root
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            cmd_check(query=None, registry_path=str(root / "tracks.md"))
+        r = json.loads(buf.getvalue())
+        self.assertEqual(r["action"], "proceed")
+        self.assertEqual(r["track_id"], "feat_20260706")
+        self.assertEqual(r["td"], str(td))
+
+    def test_resolve_core_auto_selects_uninit_by_identity(self):
+        # The "smart auto-select": a single on-disk-but-uninitialized track is
+        # selected by identity (via:auto_uninit) so preflight can diagnose it,
+        # instead of being dropped as a non-terminal-status miss.
+        td = self.p.tracks_dir / "feat_20260706"
+        td.mkdir(parents=True, exist_ok=True)
+        (td / "spec.md").write_text("x")
+        (td / "plan.md").write_text("x")
+        self.p.registry.write_text(
+            "- [ ] feat_20260706 (conductor/tracks/feat_20260706/)\n")
+        core_out = _resolve_core(self.p.registry, None)
+        self.assertTrue(core_out["ok"])
+        self.assertEqual(core_out["via"], "auto_uninit")
+        self.assertEqual(core_out["track_id"], "feat_20260706")
+
+    def test_check_alias_setup_identical(self):
+        # The rename keeps ``setup`` as a hidden alias with identical output.
+        self.p.add_track("auth_20260706", "in_progress")
+        a = _run([sys.executable, str(_CLI), "check", "",
+                  "--registry", str(self.p.registry)])
+        b = _run([sys.executable, str(_CLI), "setup", "",
+                  "--registry", str(self.p.registry)])
+        self.assertEqual(a.returncode, 0, a.stderr)
+        self.assertEqual(b.returncode, 0, b.stderr)
+        self.assertEqual(json.loads(a.stdout), json.loads(b.stdout))
 
 
 if __name__ == "__main__":

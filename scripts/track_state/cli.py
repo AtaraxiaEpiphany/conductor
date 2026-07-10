@@ -20,7 +20,7 @@ from .misc import (
     cmd_deferred_report, cmd_phase_done, cmd_registry_update, cmd_registry_add,
     cmd_record_summary, cmd_preflight, cmd_quality_snapshot,
     cmd_spec_integrity, cmd_derive_name, cmd_post_loop_status,
-    cmd_resolve_track, cmd_setup,
+    cmd_resolve_track, cmd_check, _resolve_track_dir_or_halt,
 )
 from .handoff import cmd_get_handoff, cmd_sync_handoff, cmd_append_handoff, cmd_harvest_candidates
 from .sync import cmd_sync_plan
@@ -31,6 +31,18 @@ from .wave import (
 
 
 _BOOL_FLAGS = {"--full", "--fix", "--check", "--force"}
+
+# Commands the Rail B-min step skills (implement-step / parallel-step /
+# post-loop-step) call downstream of ``check`` with the resolved ``<td>``. A
+# small-window teleoperator sometimes passes the bare ``track_id`` instead (``check``
+# returns both), which crashes these in ``conductor_dir().mkdir()`` with a
+# misleading ``FileNotFoundError: <track_id>/.conductor``. Resolve a bare id
+# through the registry first (existing-path fast path skips resolution), so
+# either argument form works. See ``_resolve_track_dir_or_halt``.
+_TD_RESOLVING_COMMANDS = {
+    "step", "wave-step", "post-loop-step", "recover", "start", "wave-finalize",
+    "finalize", "archive",
+}
 
 
 def positional(args):
@@ -263,10 +275,12 @@ COMMAND_HELP = {
                       "Resolve a track_dir from conductor/tracks.md (exact id / shortname "
                       "prefix / auto-select the single active track). ALWAYS exits 0 — "
                       "switch on ok/reason (ambiguous→ask, no_registry→setup)."),
-    "setup": ("setup [<query>] [--registry <path>]",
-              "Resolve + preflight in one call — returns {ok, td, track_id, status, via} "
-              "or {ok:false, reason:preflight/ambiguous/no_match/no_non_terminal/no_registry}. "
-              "ALWAYS exits 0 — the skill §1.0 single setup step."),
+    "check": ("check [<query>] [--registry <path>]",
+              "Resolve + preflight in one call — returns {action:proceed|ask|halt} "
+              "with {td, track_id, status, via} or a precise halt reason "
+              "(track_not_initialized/track_dir_missing/preflight/ambiguous/no_match/"
+              "no_non_terminal/no_registry). ALWAYS exits 0 — the skill §1.0 single "
+              "readiness step. ('setup' is kept as a hidden alias.)"),
 }
 
 _COMMAND_GROUPS = [
@@ -279,7 +293,7 @@ _COMMAND_GROUPS = [
     ("Dispatch Composites", ["dispatch-prepare", "dispatch-finalize", "record-summary"]),
     ("Rail B-min Spines", ["step", "post-loop-step"]),
     ("Wave Parallelism", ["dispatch-wave", "wave-status", "wave-finalize", "wave-abort", "wave-step"]),
-    ("Naming", ["derive-name", "resolve-track", "setup"]),
+    ("Naming", ["derive-name", "resolve-track", "check"]),
     ("Diagnostics", ["validate", "gc", "shas", "post-loop-status", "checklist-verify",
                      "deferred-report", "phase-done", "add-checkpoint", "preflight",
                      "quality-snapshot", "spec-integrity"]),
@@ -321,7 +335,7 @@ def main():
 
     # Commands that take no track-dir positional (their [optional] positional is
     # a query/shortname, not a path). They may legally run with len(argv) == 2.
-    _NO_TRACK_DIR_COMMANDS = {"resolve-track", "setup"}
+    _NO_TRACK_DIR_COMMANDS = {"resolve-track", "check", "setup"}
 
     cmd = sys.argv[1]
     if len(sys.argv) < 3 and cmd not in _NO_TRACK_DIR_COMMANDS:
@@ -332,6 +346,12 @@ def main():
     track_dir = sys.argv[2] if len(sys.argv) >= 3 else None
     args = sys.argv[3:]
     pos = positional(args)
+
+    # Rail B-min spine defense: accept a bare track_id where these commands
+    # expect a <track-dir>. No-op for a real path (the fast path in
+    # ``_resolve_track_dir_or_halt`` is a single is_dir() check).
+    if cmd in _TD_RESOLVING_COMMANDS and track_dir is not None:
+        track_dir = _resolve_track_dir_or_halt(track_dir, cmd)
 
     _INDEX_COMMANDS = {"lock", "complete", "fail", "skip", "block", "defer"}
 
@@ -493,14 +513,16 @@ def main():
             cmd_preflight(track_dir)
         elif cmd == "derive-name":
             cmd_derive_name(sys.argv[2])  # shortname — the one positional that isn't a track-dir
-        elif cmd in ("resolve-track", "setup"):
+        elif cmd in ("resolve-track", "check", "setup"):
             # Re-derive from argv[2:] (not the shared track_dir/args split):
-            # `resolve-track --registry X` would otherwise eat the flag name
-            # into the track_dir slot. Both commands share the query/flag shape.
+            # `check --registry X` would otherwise eat the flag name into the
+            # track_dir slot. All three share the query/flag shape; ``setup`` is
+            # the pre-rename alias routed to the same ``cmd_check``.
             raw = sys.argv[2:]
             query = None if (not raw or raw[0].startswith("--")) else raw[0]
-            _SETUP_FNS = {"resolve-track": cmd_resolve_track, "setup": cmd_setup}
-            _SETUP_FNS[cmd](query=query, registry_path=flag(raw, "--registry"))
+            _CHECK_FNS = {"resolve-track": cmd_resolve_track,
+                          "check": cmd_check, "setup": cmd_check}
+            _CHECK_FNS[cmd](query=query, registry_path=flag(raw, "--registry"))
         else:
             print(f"Unknown command: {cmd}", file=sys.stderr)
             sys.exit(1)

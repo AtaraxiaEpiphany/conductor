@@ -67,12 +67,15 @@ class ClaudeMdTocIdempotencyTests(TestCase):
 
 
 def _bash_fence():
-    """The §3.6 fenced bash command (indented under its list item, so tolerate
-    leading whitespace on the fence markers)."""
+    """The §3.6 fenced bash command (the scoped scaffold commit). Targeted to the
+    commit fence: setup §2.3/§2.4/§2.5 now carry their own cp/sed bash fences, so
+    the first ``bash`` fence in the skill is no longer the commit one. Enumerate
+    every fenced block and pick the one whose body runs ``git commit``."""
     import re
-    m = re.search(r"[ \t]*```bash\n(.*?)\n[ \t]*```", SKILL, re.S)
-    assert m, "§3.6 must keep its bash command fence"
-    return m.group(1)
+    blocks = re.findall(r"[ \t]*```bash\n(.*?)\n[ \t]*```", SKILL, re.S)
+    commit_blocks = [b for b in blocks if "git commit" in b]
+    assert commit_blocks, "§3.6 must keep its scoped-commit bash command fence"
+    return commit_blocks[0]
 
 
 class ScopedGitAddTests(TestCase):

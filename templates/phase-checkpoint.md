@@ -22,7 +22,7 @@
 
 3.6.  **AC Evidence Trace (spec-bearing tracks):**
     -   **Decide applicability:** if `{TRACK_DIR}/spec.md` does not exist, or has no `## Acceptance Criteria` section, skip this step (record `AC_TRACE: skipped (no spec/ACs)`) and proceed to Step 4 — tracks without a formal spec are not penalized.
-    -   Run `track-state spec-integrity "{TRACK_DIR}"` (the `track-state` CLI — not a raw `python3` invocation) and parse the JSON.
+    -   Run `track-state spec-integrity "{TRACK_DIR}"` and parse the JSON.
     -   **Gate verdict:** if `ac_integrity_gate` is `FAILED` → **STOP**. Paste the gate string verbatim as the failure reason — it names the offending AC IDs and the exact authoring fix (e.g. "add a `TC-{n}.{m} | AC-{n}` row under ## Test Scenarios", "annotate the implementing task in plan.md with a `<!-- AC-n -->`"). This is a **spec/plan authoring defect, not a code defect** — fix `spec.md` / `plan.md`, then re-run the phase; do not retry the implementing task.
     -   **Evidence grounding:** from the `ac_evidence` list, record the per-AC grounding summary into the Step 7 verification report — TCs `measured` (grounded by a real `def test_TC_{n}_{m}_*`) vs `claimed` (in `evidence.tc_coverage` but no named test) vs `missing`. By default ungrounded TCs are advisory (`AC_TRACE: warn (N ungrounded)`); under `CONDUCTOR_AC_VERIFY_STRICT=1`, any ungrounded TC fails the checkpoint. `AC_TRACE: passed` when every AC's TCs are grounded.
 

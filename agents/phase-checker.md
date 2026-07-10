@@ -115,7 +115,7 @@ The git-notes verification report must include the **L2 E2E outcome** from Step 
 
 ### Addendum — Step 8: checkpoint gate (binding)
 
-Get the short SHA (`git log -1 --format="%h"`), run `track-state add-checkpoint {TRACK_DIR} {PHASE_INDEX} {sha}` (the `track-state` CLI — not a raw `python3` invocation), and **verify the JSON output contains `ok: true`** before proceeding.
+Get the short SHA (`git log -1 --format="%h"`), run `track-state add-checkpoint {TRACK_DIR} {PHASE_INDEX} {sha}`, and **verify the JSON output contains `ok: true`** before proceeding.
 
 ---
 

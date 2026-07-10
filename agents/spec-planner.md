@@ -105,15 +105,15 @@ Structure:
 # Implementation Plan: {Track Description}
 
 ## Phase 1: {Phase Name}
-- [ ] Task: {task description} <!-- AC-1, TC-1.1, TC-1.2 -->
-- [ ] Task: {task description} <!-- AC-2, TC-2.1 -->
-  - [ ] Subtask: {subtask description}
-  - [ ] Subtask: {subtask description}
-- [ ] [Manual] Task: Conductor - User Manual Verification 'Phase 1' (Protocol in task-workflow.md)
+- [ ] {task description} <!-- AC-1, TC-1.1, TC-1.2 -->
+- [ ] {task description} <!-- AC-2, TC-2.1 -->
+  - [ ] {subtask description}
+  - [ ] {subtask description}
+- [ ] [Manual] Conductor - User Manual Verification 'Phase 1' (Protocol in task-workflow.md)
 
 ## Phase 2: {Phase Name}
-- [ ] Task: {task description} <!-- AC-3, TC-3.1 --> <!-- deps: P1.T1 -->
-- [ ] [Manual] Task: Conductor - User Manual Verification 'Phase 2' (Protocol in task-workflow.md)
+- [ ] {task description} <!-- AC-3, TC-3.1 --> <!-- deps: P1.T1 -->
+- [ ] [Manual] Conductor - User Manual Verification 'Phase 2' (Protocol in task-workflow.md)
 ```
 
 **Within-track parallelism is flat-only (v1).** `conductor:parallel` fans out worktree-isolated waves, but a task with **subtasks can never be a wave member** — the wave scheduler rejects subtasked tasks before checking deps (plan-format-contract.md §8 rule 6). The planner's default is to decompose non-trivial work into subtasks, so by default *nothing* is wave-eligible. When the user asks for parallelism (or you see genuinely disjoint, independent units of work in one phase), author those tasks **flat** — no subtasks, the steps inlined as the task body — and add an empty `<!-- deps: -->` (independent) or `<!-- deps: P1.T1 -->` (depends on a sibling). Independent tasks you want concurrent must BOTH be flat and BOTH carry a deps comment.

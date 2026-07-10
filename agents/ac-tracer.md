@@ -56,8 +56,7 @@ fails, halt immediately and report as FAILURE.
      `REASON: no spec/ACs` (the integrity CLI returns `ac_integrity_gate: N/A`
      here; tracks without a formal spec are not penalized — WARN-only posture).
      Stop.
-2. Run the integrity CLI (the `track-state` CLI — **not** a raw `python3`
-   invocation) and capture JSON:
+2. Run the integrity CLI and capture JSON:
 
    ```bash
    track-state spec-integrity "{TRACK_DIR}"

@@ -23,9 +23,9 @@ is precious; this skill body is deliberately tiny.
 
 ## 1.0 SETUP (once)
 
-1. `track-state setup "$ARGUMENTS"` — always exits 0; outcome is in `action`:
+1. `track-state check "$ARGUMENTS"` — always exits 0; outcome is in `action`:
    - `proceed` → `<td>` = `td`; **print `announce`**; continue to step 2.
-   - `ask` → `AskUserQuestion` over `candidates` (label = `track_id`), then re-run `track-state setup "<chosen track_id>"`.
+   - `ask` → `AskUserQuestion` over `candidates` (label = `track_id`), then re-run `track-state check "<chosen track_id>"`.
    - `halt` → print `message`; HALT.
 2. `track-state recover "<td>"`. If `status == "new"` → `track-state start "<td>"` + commit.
 3. If recover surfaces an interrupted wave (`wave_active`), just enter §2.0 — `wave-step` integrates in-flight members before anything else.

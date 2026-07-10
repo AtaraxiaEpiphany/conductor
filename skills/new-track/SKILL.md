@@ -88,7 +88,7 @@ plan.md/spec.md" case (issue #2). Skip this guard when resuming via §0.5 with
      - **Regenerate (overwrite)** → continue to dispatch spec-planner below.
      - **Cancel** → halt.
    - `ok: false` → the existing plan.md is malformed (missing `## Phase N:`
-     headings or `Task:`/`Subtask:` lines — the same defect that caused the
+     headings or task `- [ ]` checkbox lines — the same defect that caused the
      false-completion bug, issue #4). Announce the reported `errors`, then
      `AskUserQuestion`: **Regenerate** (dispatch spec-planner below) or
      **Cancel** (halt). Never reuse a broken plan.
@@ -105,7 +105,7 @@ RELATED_DOCS={paths or N/A}
 
 Parse `---SPEC PLAN RESULT---` block. Confirm `STATUS: SUCCESS` (halt on FAILURE and announce `SUMMARY`). `plan.md` and `spec.md` are now on disk — `PLAN_STRUCTURE` is **no longer required**: Section 2.6 derives the full task/subtask structure mechanically from `plan.md`, eliminating manual transcription.
 
-**Validate the generated plan + spec (catch format AND acceptance-criteria defects now, not at §2.6).** `plan.md` is sometimes written with a format defect the LLM does not self-catch — a task/subtask line missing its `- [ ]` checkbox or `Task:`/`Subtask:` marker, or a missing `## Phase N:` heading. Such a plan reads fine to a human but fails `init-from-plan` at §2.6, halting the whole track. And a plan can conform syntactically while an Acceptance Criterion in `spec.md` is never traced to a task or lacks a Test Scenario — a completeness hole the format check cannot see (completeness-critic). Validate **both** now and re-dispatch spec-planner with the exact defects if either fails.
+**Validate the generated plan + spec (catch format AND acceptance-criteria defects now, not at §2.6).** `plan.md` is sometimes written with a format defect the LLM does not self-catch — a task/subtask line missing its `- [ ]` checkbox, or a missing `## Phase N:` heading. Such a plan reads fine to a human but fails `init-from-plan` at §2.6, halting the whole track. And a plan can conform syntactically while an Acceptance Criterion in `spec.md` is never traced to a task or lacks a Test Scenario — a completeness hole the format check cannot see (completeness-critic). Validate **both** now and re-dispatch spec-planner with the exact defects if either fails.
 
 Loop — max **2 re-dispatches (3 total attempts)**, counting from the first dispatch above:
 

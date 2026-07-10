@@ -762,6 +762,31 @@ class TestInitFromPlan(TestCase):
         self.assertEqual(parsed["phases"][0]["tasks"][1]["subtasks"],
                          ["Subtask: GET endpoint", "Subtask: POST endpoint"])
 
+    def test_parse_keywordless_task_lines(self):
+        """The ``Task:``/``Subtask:`` prefix is optional convention — a plan
+        written without it parses cleanly and stores the bare description as the
+        name, so no 'Task:'/'Subtask:' noise pollutes track-state.json. Contrast
+        test_parse_extracts_structure, where the legacy keyword leaked into the
+        stored subtask name. This is the new spec-planner default (§4.2)."""
+        body = (
+            "# Implementation Plan: Demo\n\n"
+            "## Phase 1: Foundation\n"
+            "- [ ] build the API <!-- AC-1, TC-1.1 -->\n"
+            "  - [ ] create the data model\n"
+            "  - [ ] create the route handlers\n"
+            "- [ ] [Manual] Conductor - User Manual Verification 'Phase 1'\n"
+        )
+        parsed = parse_plan(Path(self._plan(body), "plan.md"))
+        self.assertEqual(parsed["errors"], [])
+        task = parsed["phases"][0]["tasks"][0]
+        self.assertEqual(task["name"], "build the API")
+        self.assertEqual(task["ac_refs"], ["AC-1"])
+        self.assertEqual(task["tc_refs"], ["TC-1.1"])
+        self.assertEqual(task["subtasks"],
+                         ["create the data model", "create the route handlers"])
+        # The [Manual] verification line still parses as a task without the keyword.
+        self.assertIn("[Manual]", parsed["phases"][0]["tasks"][1]["name"])
+
     def test_parse_strips_html_comments_keeps_tags(self):
         d = self._plan("## Phase 1: P\n- [ ] [Config] Task: thing <!-- AC-1 -->\n"
                        "- [ ] [Manual] Task: verify\n")

@@ -114,6 +114,29 @@ class MainAuditIntegrationTests(TestCase):
         log = _run_main('git commit -m "added a thing"', tempfile.mkdtemp())
         self.assertIn("gate=v10_commit", log)
 
+    def test_sanctioned_append_handoff_not_state_locked(self):
+        """Issue 1 end-to-end: the explorer's read-only append-handoff (whose
+        heredoc findings mention remove/move/delete) must reach the allow path
+        over an in_progress track — no state_lock ask, no audit entry."""
+        root = tempfile.mkdtemp()
+        td = Path(root) / "conductor" / "tracks" / "auth_20260706"
+        td.mkdir(parents=True)
+        (td / "track-state.json").write_text(json.dumps({
+            "track_id": "auth_20260706", "status": "in_progress",
+            "phases": [{"name": "P1", "status": "in_progress",
+                        "tasks": [{"name": "T1", "status": "in_progress"}]}]}))
+        (Path(root) / "conductor" / "tracks.md").write_text(
+            "- [~] Auth (OAuth2) login (conductor/tracks/auth_20260706/)\n")
+        command = (
+            'track-state append-handoff "conductor/tracks/auth_20260706" '
+            'P1 T1 --type explore << \'EOF\'\n'
+            '{"findings":["remove the handler","move helper to utils","delete the cache"]}\n'
+            'EOF'
+        )
+        log = _run_main(command, root)
+        self.assertNotIn("state_lock", log)
+        self.assertNotIn("dangerous_git", log)
+
 
 if __name__ == "__main__":
     main()

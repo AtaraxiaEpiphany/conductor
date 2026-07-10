@@ -67,28 +67,86 @@ def has_in_progress_task(state_file: Path) -> bool:
     return False
 
 
+_SANCTIONED_TS_SUBCOMMANDS = {
+    # Every subcommand in cli.py _COMMAND_GROUPS plus the hidden "setup" alias
+    # and "help". A sanctioned subcommand bypasses the broad rm/mv/delete/move
+    # verb scan (Layer A below): the track-state CLI never deletes/moves track
+    # files, and the one catastrophic op (mutating track-state.json itself) is
+    # already caught by is_direct_track_state_modification(). Keep in sync with
+    # _COMMAND_GROUPS — the test suite asserts this set covers it.
+    "add-checkpoint", "append-handoff", "archive", "block", "check",
+    "checklist-verify", "complete", "defer", "deferred-report", "derive-name",
+    "dispatch-finalize", "dispatch-next", "dispatch-prepare", "dispatch-wave",
+    "fail", "finalize", "gc", "get-handoff", "harvest-candidates", "help",
+    "indices", "init-from-plan", "lock", "next", "phase-done", "post-loop-status",
+    "post-loop-step", "preflight", "process-result", "quality-snapshot",
+    "record-summary", "recover", "registry-add", "registry-update", "reset",
+    "resolve-track", "set-mode", "setup", "shas", "skip", "spec-integrity",
+    "start", "step", "sync-handoff", "sync-plan", "validate", "wave-abort",
+    "wave-finalize", "wave-status", "wave-step", "write-result",
+}
+
+
+def _track_state_subcommand(command: str):
+    """Subcommand token of a ``track-state <sub> ...`` segment, else None.
+
+    Segment-aware via _iter_command_segments so ``rm x; track-state append-handoff``
+    resolves per-segment (the rm segment is irrelevant here). Only a segment whose
+    command word is ``track-state`` counts — a stray "track-state" inside an
+    argument or heredoc body does not. Leading sudo is stripped.
+    """
+    for seg in _iter_command_segments(command):
+        toks = _LEADING_NOISE.sub("", seg).split()
+        if len(toks) >= 2 and toks[0].lower() == "track-state":
+            return toks[1].lower()
+    return None
+
+
+def _argv_only(command: str) -> str:
+    """Drop a trailing heredoc body from ``command``.
+
+    A heredoc (``<< 'EOF' ... EOF``) is stdin, not argv — findings/JSON piped to
+    e.g. ``append-handoff`` live there and must not be verb-scanned. Keeps the
+    command word and flags (everything before the ``<<``), discards the body.
+    """
+    m = re.search(r"<<-?\s*['\"]?(\w+)", command)
+    return command[: m.start()] if m else command
+
+
 def find_track_state_violations(cwd: Path, command: str) -> list[str]:
-    """Find tracks with state lock violations"""
+    """Find tracks with state lock violations.
+
+    Layer A — sanctioned-subcommand allowlist: a track-state CLI subcommand never
+    deletes/moves track files, so it never violates the lock even when its argv
+    or piped heredoc body happens to contain rm/delete/mv/move. The explorer's
+    ``append-handoff ... << EOF {"findings":["remove the handler"]} EOF`` is the
+    load-bearing false positive this fixes. The catastrophic op — mutating
+    track-state.json — is separately caught by is_direct_track_state_modification.
+
+    Layer B — for any other command that still mentions track-state, scan only
+    the argv (heredoc body stripped) with word-boundary verbs so ``move`` no
+    longer matches ``remove``/``removed``/``movement``.
+    """
     tracks_file = find_tracks_registry(cwd)
     if not tracks_file:
         return []
 
+    if _track_state_subcommand(command) in _SANCTIONED_TS_SUBCOMMANDS:
+        return []  # Layer A
+
     dirs = extract_track_dirs(tracks_file)
+    scan = _argv_only(command).lower()  # Layer B: ignore heredoc bodies
 
     violations = []
-    cmd_lower = command.lower()
-
     for d in dirs:
         state_file = cwd / d / "track-state.json"
         if not state_file.exists():
             continue
 
-        has_in_progress = has_in_progress_task(state_file)
-
-        if has_in_progress:
-            if 'rm ' in cmd_lower or 'delete' in cmd_lower:
+        if has_in_progress_task(state_file):
+            if re.search(r'\brm\b', scan) or re.search(r'\bdelete\b', scan):
                 violations.append(f'{d}: in_progress task + deletion command')
-            elif ' mv ' in cmd_lower or 'move' in cmd_lower:
+            elif re.search(r'\bmv\b', scan) or re.search(r'\bmove\b', scan):
                 violations.append(f'{d}: in_progress task + move operation')
 
     return violations
@@ -506,7 +564,7 @@ def main():
             write_hook_output(
                 hook_event_name="PreToolUse",
                 additional_context=additional_context,
-                permission_decision="ask",
+                permission_decision="deny",
                 permission_decision_reason=permission_reason,
             )
             return
