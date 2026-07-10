@@ -74,5 +74,5 @@ without burning a retry.
 **Spike status:** the spine (`dispatch` / `dispatch_batch` / `ask` / `done` /
 `error`) is fully code-driven and tested. The two non-spine branches
 deliberately defer to `/conductor:implement` — that is the measured B-min
-boundary, not a gap. See `conductor/design/rail-b-step.md` for the action
+boundary, not a gap. See `${CLAUDE_PLUGIN_ROOT}/conductor/design/rail-b-step.md` for the action
 contract and the B-full options.

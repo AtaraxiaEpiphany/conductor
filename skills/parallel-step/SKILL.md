@@ -76,4 +76,4 @@ retry), but yielding at a drained boundary is always cleaner.
 `error`) is fully code-driven and tested. `seam_review`, `serial`, and
 `phase_checkpoint` deliberately defer to `/conductor:parallel` / `/conductor:implement`
 prose — that is the measured B-min boundary, not a gap. See
-`conductor/design/rail-b-wave-step.md` for the action contract and the B-full options.
+`${CLAUDE_PLUGIN_ROOT}/conductor/design/rail-b-wave-step.md` for the action contract and the B-full options.

@@ -86,5 +86,5 @@ gates make `post-loop-step` pick up exactly where it stopped.
 **Spike status:** the spine (`deferred_ask` / `finalize` / `dispatch` /
 `dispatch_advisory` / `digest` / `archive_ask` / `done` / `halt` / `error`) is
 fully code-driven and tested, covering finalize → doc-sync (Phase 1+2) → advisory
-→ lint → review+stamp → digest → archive. See `conductor/design/rail-b-step.md`
+→ lint → review+stamp → digest → archive. See `${CLAUDE_PLUGIN_ROOT}/conductor/design/rail-b-step.md`
 for the action contract.

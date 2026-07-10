@@ -269,7 +269,7 @@ On user confirmation, persist the answer presented in §4.3 using the merged `SO
 
 ## 5.0 ERROR HANDLING
 
-Fetch and execute `conductor/design/agent-error-handling.md`. Substitute the relevant agent + result-block delimiter for the current path: query (§4) → `conductor:wiki-researcher` / `---WIKI RESEARCH RESULT---`; ingest (§6) and build (§7) → `conductor:corpus-writer` then `conductor:wiki-synthesizer` (then advisory `conductor:wiki-differ` plus advisory `conductor:doc-linter`) / `---DOC SYNC RESULT---` (plus the `---DOC LINT RESULT---` block). (The `wiki` skill dispatches `doc-linter` only as the §6.2/§7.3 post-ingest advisory lint; the full loop-until-dry plus refute repair loop lives in `/conductor:wiki-doctor lint`.)
+Fetch and execute `${CLAUDE_PLUGIN_ROOT}/conductor/design/agent-error-handling.md`. Substitute the relevant agent + result-block delimiter for the current path: query (§4) → `conductor:wiki-researcher` / `---WIKI RESEARCH RESULT---`; ingest (§6) and build (§7) → `conductor:corpus-writer` then `conductor:wiki-synthesizer` (then advisory `conductor:wiki-differ` plus advisory `conductor:doc-linter`) / `---DOC SYNC RESULT---` (plus the `---DOC LINT RESULT---` block). (The `wiki` skill dispatches `doc-linter` only as the §6.2/§7.3 post-ingest advisory lint; the full loop-until-dry plus refute repair loop lives in `/conductor:wiki-doctor lint`.)
 
 ---
 

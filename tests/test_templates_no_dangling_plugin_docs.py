@@ -39,6 +39,10 @@ PLUGIN_DESIGN = REPO / "conductor" / "design"
 # `<rest>` stops at any char outside [A-Za-z0-9_./-] — so `]]`, `)`, backticks,
 # spaces, and crucially the `*` in a `decision-*.md` glob all terminate it.
 _REF = re.compile(r"conductor/design/([A-Za-z0-9_./\-]+)")
+# Correct plugin-rooted refs — masked out first so they are never flagged. This
+# keeps the guard consistent with its own endorsed remedy (below), which tells
+# callers to use exactly ${CLAUDE_PLUGIN_ROOT}/conductor/design/... .
+_PLUGIN_ROOTED = re.compile(r"\$\{CLAUDE_PLUGIN_ROOT\}/conductor/design/[A-Za-z0-9_./\-]+")
 
 
 def _stem(rest: str) -> str:
@@ -55,7 +59,8 @@ class TemplatesNoDanglingPluginDocsTests(TestCase):
     def test_no_template_references_a_plugin_internal_design_doc(self):
         offenders = []
         for tpl in sorted(TEMPLATES.rglob("*.md")):
-            for m in _REF.finditer(tpl.read_text()):
+            text = _PLUGIN_ROOTED.sub("", tpl.read_text())
+            for m in _REF.finditer(text):
                 stem = _stem(m.group(1))
                 if not stem:
                     continue

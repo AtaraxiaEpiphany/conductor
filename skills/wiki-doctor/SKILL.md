@@ -221,4 +221,4 @@ Branch on the **accumulated survivor counts** (post-refute):
 
 ## 5.0 ERROR HANDLING
 
-Fetch and execute `conductor/design/agent-error-handling.md`. Substitute the relevant agent + result-block delimiter for the current path: lint (§3) → `conductor:doc-linter` / `---DOC LINT RESULT---`; diff (§4) → `conductor:wiki-differ` / `---WIKI DIFF RESULT---`.
+Fetch and execute `${CLAUDE_PLUGIN_ROOT}/conductor/design/agent-error-handling.md`. Substitute the relevant agent + result-block delimiter for the current path: lint (§3) → `conductor:doc-linter` / `---DOC LINT RESULT---`; diff (§4) → `conductor:wiki-differ` / `---WIKI DIFF RESULT---`.
