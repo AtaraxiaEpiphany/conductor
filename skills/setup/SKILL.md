@@ -131,21 +131,27 @@ Save state: `2.4_workflow`.
      || cat "${CLAUDE_PLUGIN_ROOT}/templates/claude-md-toc.md" >> CLAUDE.md
    ```
 
-2. **Project index** (pure copy, no placeholders):
+2. **`.gitignore` conductor block (idempotent, sentinel-guarded append — NOT a clobber):** `/conductor:wiki-doctor` lint/diff write transient scratch (`wiki-lint-findings-*.json`, `wiki-diff-findings-*.json`, `wiki-diff-report.md`) to the **project-root** `.conductor/` — distinct from the per-track `.conductor/` that track commits own. That scratch is never `git add`-ed, so without this rule it shows as untracked noise in every `git status`. The rule is **root-anchored** (`/.conductor/`) so it does NOT match the committed per-track `conductor/tracks/*/.conductor/`. If `.gitignore` already carries the `# conductor:gitignore begin` sentinel → skip the append (a re-run must never duplicate the block); otherwise append (create `.gitignore` if missing). The template has no placeholders, so a single Bash guard keeps it out of context:
+   ```bash
+   grep -q '# conductor:gitignore begin' .gitignore 2>/dev/null \
+     || cat "${CLAUDE_PLUGIN_ROOT}/templates/conductor-gitignore.md" >> .gitignore
+   ```
+
+3. **Project index** (pure copy, no placeholders):
    ```bash
    cp "${CLAUDE_PLUGIN_ROOT}/templates/project-index.md" conductor/index.md
    ```
 
-3. **Wiki cold-start (brownfield only — optional, never blocks).** The scaffolded wiki (§2.4 step 6) is placeholder text until a track runs or sources are filed — which is why a fresh project's wiki reads as empty. If this is brownfield (analyzer ran / `conductor/.conductor/analysis.json` exists) AND the project has pre-existing docs worth filing, offer to populate the wiki from them now so it compounds from day one. Detect candidates with `Glob`: `README.md`, `docs/**/*.md`, and root `*.md` — excluding anything under `conductor/` (never re-ingest the wiki into itself). If candidates exist → `AskUserQuestion`: "Populate the wiki from your existing docs now via `/wiki build`?" → **Yes** → invoke `/conductor:wiki build <path>` (`docs/` if a docs tree exists, else the project root, else `README.md`). **No, or no candidates** → skip. `/wiki build` is idempotent, so a setup re-run that re-offers it is a safe no-op; the wiki can also be built any time later via `/conductor:wiki build`.
+4. **Wiki cold-start (brownfield only — optional, never blocks).** The scaffolded wiki (§2.4 step 6) is placeholder text until a track runs or sources are filed — which is why a fresh project's wiki reads as empty. If this is brownfield (analyzer ran / `conductor/.conductor/analysis.json` exists) AND the project has pre-existing docs worth filing, offer to populate the wiki from them now so it compounds from day one. Detect candidates with `Glob`: `README.md`, `docs/**/*.md`, and root `*.md` — excluding anything under `conductor/` (never re-ingest the wiki into itself). If candidates exist → `AskUserQuestion`: "Populate the wiki from your existing docs now via `/wiki build`?" → **Yes** → invoke `/conductor:wiki build <path>` (`docs/` if a docs tree exists, else the project root, else `README.md`). **No, or no candidates** → skip. `/wiki build` is idempotent, so a setup re-run that re-offers it is a safe no-op; the wiki can also be built any time later via `/conductor:wiki build`.
 
-4. **Tracks Registry:** create `conductor/tracks.md` if missing (header `# Tracks Registry`):
+5. **Tracks Registry:** create `conductor/tracks.md` if missing (header `# Tracks Registry`):
    ```bash
    [ -f conductor/tracks.md ] || printf '# Tracks Registry\n' > conductor/tracks.md
    ```
 
-5. Save state: `2.5_finalization`.
-6. Ask user: "Create an initial track now, or later?" If later → commit Phase 1 → HALT.
-7. Summarize Phase 1 actions.
+6. Save state: `2.5_finalization`.
+7. Ask user: "Create an initial track now, or later?" If later → commit Phase 1 → HALT.
+8. Summarize Phase 1 actions.
 
 ---
 
@@ -169,7 +175,7 @@ Interactive (up to 5 questions).
 
 ### 3.2 Delegate to /conductor:new-track
 
-1. If the user chose "later" at §2.5 step 5 → Phase 1 is already committed → HALT.
+1. If the user chose "later" at §2.5 step 7 → Phase 1 is already committed → HALT.
 2. Gather the track description: greenfield → synthesize from the §3.1 answers;
    brownfield → one short description (the analyzer's top recommendation). Pass
    the greenfield product answers as context.
@@ -191,12 +197,12 @@ Interactive (up to 5 questions).
 2. Commit setup artifacts — **scoped, never `git add -A`**. A brownfield project
    may carry unrelated WIP that must not be swept into the scaffold commit, so
    stage only what setup owns: the `conductor/` tree (incl. `setup_state.json`
-   and `.conductor/analysis.json`) plus the `CLAUDE.md` TOC append. The
-   `git diff --cached --quiet ||` guard makes the commit a no-op **only** when
-   those artifacts are already committed (a defensive re-run) — it does NOT skip
-   this step:
+   and `.conductor/analysis.json`), the `CLAUDE.md` TOC append, and the `.gitignore`
+   conductor block. The `git diff --cached --quiet ||` guard makes the commit a
+   no-op **only** when those artifacts are already committed (a defensive re-run)
+   — it does NOT skip this step:
    ```bash
-   git add conductor/ CLAUDE.md
+   git add conductor/ CLAUDE.md .gitignore
    git diff --cached --quiet || git commit -m "chore(conductor): Scaffold conductor setup"
    ```
 3. Announce: `"Setup complete. Run /conductor:implement to begin."`

@@ -29,6 +29,7 @@ from unittest import TestCase, main
 ROOT = Path(__file__).resolve().parent.parent
 SKILL = (ROOT / "skills" / "setup" / "SKILL.md").read_text(encoding="utf-8")
 TOC = (ROOT / "templates" / "claude-md-toc.md").read_text(encoding="utf-8")
+GITIGNORE = (ROOT / "templates" / "conductor-gitignore.md").read_text(encoding="utf-8")
 
 BEGIN_SENTINEL = "<!-- conductor:toc begin -->"
 END_SENTINEL = "<!-- conductor:toc end -->"
@@ -98,6 +99,60 @@ class ScopedGitAddTests(TestCase):
     def test_diff_cached_guard_preserved(self):
         # The defensive re-run no-op guard must survive the rescoping.
         self.assertIn("git diff --cached --quiet", SKILL)
+
+    def test_final_commit_stages_gitignore(self):
+        # §2.5 now appends a conductor block to the project-root .gitignore; the
+        # scoped scaffold commit must stage it or the append is left uncommitted.
+        self.assertIn(".gitignore", _bash_fence())
+
+
+class ConductorGitignoreTests(TestCase):
+    """§2.5 step 2 scaffolds a sentinel-guarded .gitignore block so wiki-doctor's
+    project-root .conductor/ scratch (wiki-lint-findings-*.json, wiki-diff-*.json,
+    wiki-diff-report.md) stops showing as untracked noise in every git status.
+    The rule must be ROOT-anchored so the committed per-track
+    conductor/tracks/*/.conductor/ is unaffected. (End-to-end git semantics are
+    pinned in test_conductor_gitignore.py.)"""
+
+    GI_BEGIN = "# conductor:gitignore begin"
+    GI_END = "# conductor:gitignore end"
+
+    def test_template_exists_and_carries_sentinels(self):
+        self.assertIn(self.GI_BEGIN, GITIGNORE)
+        self.assertIn(self.GI_END, GITIGNORE)
+
+    def test_template_rule_is_root_anchored(self):
+        # Drift guard: the rule must be ``/.conductor/`` (leading slash), NOT
+        # ``.conductor/`` — the un-anchored form would also ignore the per-track
+        # conductor/tracks/*/.conductor/ that track commits own.
+        self.assertIn("/.conductor/\n", GITIGNORE)
+        for line in GITIGNORE.splitlines():
+            stripped = line.strip()
+            if stripped.endswith(".conductor/"):
+                self.assertTrue(stripped.startswith("/"),
+                                f"gitignore rule must be root-anchored: {stripped!r}")
+
+    def test_template_uses_hash_comment_sentinels(self):
+        # .gitignore has no HTML-comment syntax — a ``<!-- -->`` sentinel would be
+        # parsed as a (junk) ignore pattern. Sentinels must be ``#`` comments.
+        self.assertNotIn("<!--", GITIGNORE)
+
+    def test_skill_has_sentinel_guarded_append(self):
+        # The idempotent append: grep the begin sentinel, skip if present, else
+        # cat the template into the project-root .gitignore (>> creates if absent).
+        self.assertIn(self.GI_BEGIN, SKILL)
+        self.assertIn("templates/conductor-gitignore.md", SKILL)
+        self.assertIn(">> .gitignore", SKILL)
+
+    def test_skill_append_is_idempotent(self):
+        # A setup re-run must never duplicate the block — the grep sentinel gate
+        # must skip the append when the begin sentinel is already present.
+        self.assertIn("skip the append", SKILL)
+
+    def test_skill_states_root_anchored_rationale(self):
+        # The skill prose must explain WHY the rule is root-anchored, so a future
+        # edit does not drop the anchor and silently ignore per-track scratch.
+        self.assertIn("root-anchored", SKILL)
 
 
 class AnalysisJsonResumabilityTests(TestCase):
