@@ -69,6 +69,7 @@ Interactive. Write to `conductor/product/product-guidelines.md`. Save state: `2.
 | TypeScript | `typescript.md` + `javascript.md` |
 | Python | `python.md` |
 | Go | `go.md` |
+| Java | `java.md` |
 | C++ | `cpp.md` |
 | C# | `csharp.md` |
 | Dart | `dart.md` |

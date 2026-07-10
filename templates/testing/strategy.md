@@ -21,6 +21,7 @@ All test files MUST be created under `{TEST_ROOT}`. NEVER co-locate test files w
 | Go | Same package | `{name}_test.go` | `Test{Function}` | Go convention: co-located |
 | C++ | `tests/` | `{module}_test.cc` | `TEST_F({Class}Test, {Scenario})` | Mirror `src/` structure |
 | C# | `{Project}.Tests/` | `{Class}Tests.cs` | `[Fact] {Method}_{Scenario}_{Outcome}()` | Mirror project structure |
+| Java | `src/test/java/` | `{Name}Test.java` | `@Test void {method}_{scenario}_{outcome}()` | Mirror `src/main/java/` package structure |
 | Dart | `test/` | `{name}_test.dart` | `group` + `test` | Mirror `lib/` structure |
 
 ### Mirror Rule
@@ -36,6 +37,7 @@ Examples:
 - `src/components/Button.tsx` → `__tests__/components/Button.test.tsx`
 - `lib/src/models/user.dart` → `test/models/user_test.dart`
 - `MyApp/Services/UserService.cs` → `MyApp.Tests/Services/UserServiceTests.cs`
+- `src/main/java/com/acme/user/UserService.java` → `src/test/java/com/acme/user/UserServiceTest.java`
 
 ### Existing Convention Rule
 
@@ -78,6 +80,7 @@ Keep test artifacts out of the source tree:
 - Go: `GOCACHE` redirects build cache to `/tmp/`.
 - C++: Build artifacts stay in `build/` (out-of-source CMake).
 - C#: `bin/` and `obj/` stay in per-project directories (gitignored).
+- Java: `target/` (Maven) and `build/` (Gradle) gitignored.
 - JS/TS: `coverage/` and `.nyc_output/` gitignored.
 - Dart: `.dart_tool/` and `build/` gitignored.
 

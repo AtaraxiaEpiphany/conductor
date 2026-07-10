@@ -16,6 +16,6 @@ Table of contents for all workflow resources. This file is the single entry poin
 
 <!-- DYNAMIC: This section is generated per-project during setup. -->
 <!-- Only style guides matching the project's tech stack are included. -->
-<!-- Available sources: general, cpp, csharp, dart, go, html-css, javascript, python, typescript -->
+<!-- Available sources: general, cpp, csharp, dart, go, html-css, java, javascript, python, typescript -->
 
 No style guides configured yet. Run `conductor:setup` to select guides for your tech stack.
