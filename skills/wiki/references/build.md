@@ -42,29 +42,12 @@ A preview the human approves **once**, before any merge. Classification is **adv
 
 ### 7.3 Execute (Phase B — batched corpus-writer → one synthesizer → advisory)
 
-Apply the approved plan. Sources are **batched into chunks** so corpus-writer confirms once per chunk (not once per source), keeping the batch tractable.
+Apply the approved plan. The pipeline contract (ad-hoc Phase 1 / Phase 2 / advisory tail) is owned once in **`${CLAUDE_PLUGIN_ROOT}/skills/wiki/references/doc-sync-pipeline.md`** (single source of truth, shared with `ingest` §6.0) — read it. For `build` (a batch), sources are **batched into chunks** so corpus-writer confirms once per chunk (not once per source), and Phase 1 is dispatched once per chunk:
 
 1. **Chunk** the approved sources into groups of **≤ 8** (announce "Filing `<N>` sources in `<C>` chunks."). Concatenate each chunk's normalized sources into one chunk file with `<!-- source: <slug> (<origin>) -->` separators (preserves per-source identity for provenance).
-2. **Per chunk — dispatch `conductor:corpus-writer` Phase 1** (ad-hoc mode; the same §6.2 Phase 1 prompt), prompt:
-   ```
-   SOURCE_TYPE=ad-hoc
-   SOURCE_PATH={absolute path to the chunk file}
-   SOURCE_NAME=wiki-build
-   ```
-   corpus-writer analyzes the chunk against the corpus, proposes + applies user-confirmed edits (its normal per-chunk confirmation), graduates durable findings, and commits (`[wiki-ingest]`). Parse `---DOC SYNC RESULT---` (`PHASE: 1`); `STATUS: FAILURE` → announce reason, continue to the next chunk (non-blocking; prior chunk commits stand). Collect each chunk's `UPDATED_FILES` / `GRADUATED_FINDINGS`.
-3. **Once after all chunks — dispatch `conductor:wiki-synthesizer` Phase 2** (ad-hoc mode), prompt:
-   ```
-   SOURCE_TYPE=ad-hoc
-   SOURCE_PATH={absolute path to the plan file}
-   SOURCE_NAME=wiki-build
-   ```
-   It re-reads the plan for direction, regenerates `overview.md` from the now-updated full corpus, co-edits `purpose.md`, appends the log (one `INGEST` row for the batch + `WIKI_REGEN` / `PURPOSE_UPDATE`), and commits (`[wiki-ingest]`). Parse `---DOC SYNC RESULT---` (`PHASE: 2`); `STATUS: FAILURE` → announce, continue (non-blocking; Phase 1 commits already landed).
-4. **Advisory verify — `conductor:wiki-differ`** scoped to the regenerated overview (`PROJECT_DIR={project root}`, target `conductor/overview.md`). Parse `---WIKI DIFF RESULT---`; non-zero STALE/MOVED/UNCOVERED → surface counts, recommend `/conductor:wiki-doctor diff` for the repair loop. Advisory, non-blocking.
-5. **Advisory lint — `conductor:doc-linter`** on the merged corpus (default `MODE=full`), prompt:
-   ```
-   PROJECT_DIR={project root}
-   ```
-   Parse `---DOC LINT RESULT---`; `STATUS: WARN`/`FAIL` → surface counts, recommend `/conductor:wiki-doctor lint` for the repair loop. Advisory, non-blocking — this is the one-shot advisory, not the loop-until-dry repair loop (that lives in `/conductor:wiki-doctor lint`).
+2. **Per chunk — `conductor:corpus-writer` Phase 1** (ad-hoc contract per `doc-sync-pipeline.md`) with `SOURCE_PATH={absolute path to the chunk file}`, `SOURCE_NAME=wiki-build`. `STATUS: FAILURE` → announce reason, continue to the next chunk (non-blocking; prior chunk commits stand — a partial build). Collect each chunk's `UPDATED_FILES` / `GRADUATED_FINDINGS`.
+3. **Once after all chunks — `conductor:wiki-synthesizer` Phase 2** (ad-hoc contract per `doc-sync-pipeline.md`) with `SOURCE_PATH={absolute path to the plan file}`, `SOURCE_NAME=wiki-build` (it re-reads the plan for direction).
+4. **Advisory tail** — the `conductor:wiki-differ` + `conductor:doc-linter` advisory per `doc-sync-pipeline.md`.
 
 ### 7.4 Parse Results & Clean Up
 

@@ -102,3 +102,6 @@ feature.
 - [[runtime/contracts/doc-conventions]] — `resource` type → `conductor/resource/` placement.
 - [[conductor/design/agent-error-handling]] — `build` shares the ingest row
   (`corpus-writer` → `wiki-synthesizer` / `---DOC SYNC RESULT---`).
+- `skills/wiki/references/doc-sync-pipeline.md` — the ad-hoc Phase 1/2 contract
+  + advisory tail, shared once by `ingest` (§6.0) and `build` (§7.0) so the two
+  can't drift apart (single source of truth).

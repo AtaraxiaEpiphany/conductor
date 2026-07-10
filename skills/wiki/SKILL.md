@@ -87,8 +87,9 @@ The heavy sub-command bodies live off-page under `skills/wiki/references/`. Each
 | File | Sub-command | What it does |
 |---|---|---|
 | `references/query.md` | `query` | Validate topic → fan-out `wiki-researcher` per corner → synthesize + citation-verify → present + offer save |
-| `references/ingest.md` | `ingest` | Normalize one source → corpus-writer → wiki-synthesizer → advisory wiki-differ/doc-linter |
-| `references/build.md` | `build` | Enumerate a batch → advisory plan + one confirm → chunked corpus-writer → synthesizer → advisory tail |
+| `references/ingest.md` | `ingest` | Normalize one source → dispatch the ad-hoc doc-sync pipeline → clean up |
+| `references/build.md` | `build` | Enumerate a batch → advisory plan + one confirm → chunked pipeline dispatch → clean up |
+| `references/doc-sync-pipeline.md` | `ingest` + `build` (shared) | The ad-hoc Phase 1/2 doc-sync contract + advisory tail — single source of truth both call into (no ingest↔build drift) |
 
 ---
 

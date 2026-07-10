@@ -29,29 +29,11 @@
 
 ### 6.2 Dispatch the Doc-Sync Pipeline (ad-hoc mode)
 
-The pipeline is the same two sequenced agents post-track ingest uses, plus an advisory drift verify — all run in ad-hoc mode (synthetic assignment with no `TRACK_DIR` / `TRACK_ID`). Dispatch them in order:
+The canonical ad-hoc doc-sync run — Phase 1 (`corpus-writer`) → Phase 2 (`wiki-synthesizer`) → advisory tail (`wiki-differ` + `doc-linter`) — is owned once in **`${CLAUDE_PLUGIN_ROOT}/skills/wiki/references/doc-sync-pipeline.md`** (single source of truth, shared with `build` §7.0). Read it for the per-phase contract, result-block parsing, and the advisory tail. For `ingest` (a single source), dispatch in order:
 
-**Phase 1 — `conductor:corpus-writer`**, prompt:
-
-```
-SOURCE_TYPE=ad-hoc
-SOURCE_PATH={absolute path to "$SRC"}
-SOURCE_NAME={slug}
-```
-
-corpus-writer runs Phase 1 in ad-hoc mode: the source IS the "spec" (§3.1 reads `SOURCE_PATH`), there are no handoffs to harvest, and commits are tagged `[wiki-ingest]` instead of `[{TRACK_ID}]` (no `track-state archive` gate applies — ad-hoc ingest never touches `track-state.json`). Parse `---DOC SYNC RESULT---` (`PHASE: 1`). `STATUS: FAILURE` → announce the reason, clean up `$SRC`, HALT.
-
-**Phase 2 — `conductor:wiki-synthesizer`**, same ad-hoc prompt (`SOURCE_TYPE=ad-hoc SOURCE_PATH={absolute path to "$SRC"} SOURCE_NAME={slug}`). It regenerates overview, updates purpose, appends the log, and commits (`[wiki-ingest]`). Parse `---DOC SYNC RESULT---` (`PHASE: 2`). `STATUS: FAILURE` → announce, continue (non-blocking; Phase 1's commit already landed).
-
-**Advisory verify — `conductor:wiki-differ`** scoped to the regenerated overview (`PROJECT_DIR={project root}`, target `conductor/overview.md`). Parse `---WIKI DIFF RESULT---`; non-zero STALE/MOVED/UNCOVERED → surface counts, recommend `/conductor:wiki-doctor diff` for the repair loop. Advisory and non-blocking — this is the **drift** gate (the **lint** gate follows).
-
-**Advisory lint — `conductor:doc-linter`** on the merged corpus. Ad-hoc ingest of an arbitrary source (file / URL / paste) is precisely when lint violations land — the source rarely follows doc conventions, and corpus-writer merges it as-is. This one-shot advisory catches the orphans / stale claims / contradictions / missing frontmatter the merge may introduce; it is **not** the loop-until-dry plus refute repair loop (that lives in `/conductor:wiki-doctor lint`). Dispatch `conductor:doc-linter` (default `MODE=full`), prompt:
-
-```
-PROJECT_DIR={project root}
-```
-
-Parse `---DOC LINT RESULT---`; `STATUS: WARN`/`FAIL` → surface the counts and recommend `/conductor:wiki-doctor lint` for the repair loop. Advisory and non-blocking — `STATUS: FAILURE` → announce, continue.
+1. **Phase 1 — `conductor:corpus-writer`** with `SOURCE_PATH={absolute path to "$SRC"}`, `SOURCE_NAME={slug}`. `STATUS: FAILURE` → announce the reason, clean up `$SRC`, HALT (a single-source ingest is fatal on failure). `STATUS: SKIPPED` → §6.4.
+2. **Phase 2 — `conductor:wiki-synthesizer`** with the same `SOURCE_PATH={absolute path to "$SRC"}`, `SOURCE_NAME={slug}`.
+3. **Advisory tail** — the `conductor:wiki-differ` + `conductor:doc-linter` advisory per `doc-sync-pipeline.md`.
 
 ### 6.3 Parse Result & Clean Up
 
