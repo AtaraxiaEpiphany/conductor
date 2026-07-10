@@ -20,7 +20,9 @@ from pathlib import Path
 from unittest import TestCase, main
 
 from scripts.track_state.core import save, load
-from scripts.track_state.dispatch import cmd_step
+from scripts.track_state.dispatch import (
+    cmd_step, _phase_cp_write_marker, _phase_cp_read_marker, _phase_cp_marker_path,
+    _skip_analysis_write_marker, _skip_analysis_marker_path)
 
 
 def _recent_iso():
@@ -227,7 +229,10 @@ class StepExhaustedTests(TestCase):
         # Block → HALT (the only non-continue outcome)
         self.assertEqual(dec["next"]["Block"], "HALT")
 
-    def test_failed_exhausted_continuous_emits_skip_analyze(self):
+    def test_failed_exhausted_continuous_emits_dispatch_skip_analyst(self):
+        # WM2-3: continuous failed+exhausted now emits dispatch_skip_analyst (the
+        # spine owns the §3.6 skip-analyst→refute→route handshake), not the old
+        # non-spine skip_analyze leaf.
         state = _make_state(
             execution_mode="continuous",
             current_phase_index=0, current_task_index=0,
@@ -238,8 +243,11 @@ class StepExhaustedTests(TestCase):
         d = _git_track_dir(state, plan_content=plan)
         self.addCleanup(shutil.rmtree, d, ignore_errors=True)
         o = _step(d)
-        self.assertEqual(o["action"], "skip_analyze")
+        self.assertEqual(o["action"], "dispatch_skip_analyst")
+        self.assertEqual(o["agent"], "skip-analyst")
         self.assertEqual(o["name"], "Task A")
+        self.assertIn("TASK_INDEX=1", o["prompt"])
+        self.assertIn("TASK_NAME=Task A", o["prompt"])
 
 
 class StepTerminalTests(TestCase):
@@ -305,6 +313,86 @@ class StepTerminalTests(TestCase):
         self.assertEqual(o["action"], "done")
 
 
+def _cp_marker(track_dir, **fields):
+    """Write a phase-checkpoint marker (defaults to a valid synth_pending P1)."""
+    base = {"phase": 1, "stage": "synth_pending", "ac_verdict": "passed",
+            "ac_gate": None, "ac_n_ungrounded": None,
+            "l1_status": "passed", "l1_command": "pytest -q"}
+    base.update(fields)
+    _phase_cp_write_marker(track_dir, base)
+
+
+class StepCheckpointMarkerTests(TestCase):
+    """The synth_pending marker discriminates 'verifiers fanned, awaiting the
+    synthesizer' from 'nothing fanned yet' — the open design point of WM2-2.
+    `_any_phase_needs_checkpoint` can't tell them apart (it only sees 'checkpoint
+    absent'); the marker routing in `_emit_quiescent_leaf` does."""
+
+    def test_synth_pending_marker_emits_dispatch_phase_checker(self):
+        # Verifiers fanned, verdicts on disk → spine dispatches the synthesizer
+        # (phase-checker) with a pre-assembled prompt, NOT a re-fan.
+        d = _phase_complete_track()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        _cp_marker(d)
+        o = _step(d)
+        self.assertEqual(o["action"], "dispatch_phase_checker")
+        self.assertEqual(o["agent"], "phase-checker")
+        self.assertEqual(o["phase"], 1)
+        self.assertEqual(o["execution_mode"], "interactive")
+
+    def test_dispatch_phase_checker_prompt_assembles_verdict_fields(self):
+        # The prompt is the exact §3.2 Step-3 field set, assembled from the marker.
+        d = _phase_complete_track()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        _cp_marker(d, ac_verdict="passed", l1_status="failed",
+                   l1_command="pytest -q tests/")
+        o = _step(d)
+        self.assertIn("TRACK_ID=step", o["prompt"])
+        self.assertIn("PHASE_INDEX=1", o["prompt"])
+        self.assertIn("EXECUTION_MODE=interactive", o["prompt"])
+        self.assertIn("AC_TRACE_VERDICT=passed", o["prompt"])
+        self.assertIn("L1_VERIFY_STATUS=failed", o["prompt"])
+        self.assertIn("L1_VERIFY_COMMAND=pytest -q tests/", o["prompt"])
+        # passed verdict → no GATE / N_UNGROUNDED lines emitted.
+        self.assertNotIn("AC_TRACE_GATE=", o["prompt"])
+        self.assertNotIn("AC_TRACE_N_UNGROUNDED=", o["prompt"])
+
+    def test_failed_ac_verdict_includes_gate(self):
+        d = _phase_complete_track()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        _cp_marker(d, ac_verdict="FAILED", ac_gate="AC1: missing grounding")
+        o = _step(d)
+        self.assertIn("AC_TRACE_VERDICT=FAILED", o["prompt"])
+        self.assertIn("AC_TRACE_GATE=AC1: missing grounding", o["prompt"])
+
+    def test_warn_ac_verdict_includes_n_ungrounded(self):
+        d = _phase_complete_track()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        _cp_marker(d, ac_verdict="warn", ac_n_ungrounded=2)
+        o = _step(d)
+        self.assertIn("AC_TRACE_VERDICT=warn", o["prompt"])
+        self.assertIn("AC_TRACE_N_UNGROUNDED=2", o["prompt"])
+
+    def test_stale_marker_phase_mismatch_clears_and_fans(self):
+        # A marker for a DIFFERENT phase than the one needing a checkpoint is
+        # stale (e.g. left by a crash) → cleared, verifiers re-fan.
+        d = _phase_complete_track()  # phase 1 needs the checkpoint
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        _cp_marker(d, phase=2)  # wrong phase
+        o = _step(d)
+        self.assertEqual(o["action"], "dispatch_batch")
+        self.assertFalse(_phase_cp_marker_path(d).exists(),
+                         "stale marker must be cleared so it can't block re-fan")
+
+    def test_unknown_stage_clears_and_fans(self):
+        d = _phase_complete_track()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        _cp_marker(d, stage="garbage")
+        o = _step(d)
+        self.assertEqual(o["action"], "dispatch_batch")
+        self.assertFalse(_phase_cp_marker_path(d).exists())
+
+
 class StepManualTests(TestCase):
     def test_manual_interactive_emits_ask_defer_skip(self):
         state = _make_state(phases=[{"name": "Phase 1", "status": "pending", "tasks": [
@@ -349,6 +437,100 @@ class StepParentTests(TestCase):
         self.assertEqual(o["action"], "dispatch")
         self.assertEqual(o["name"], "After parent")
         self.assertEqual(load(d)["phases"][0]["tasks"][0]["status"], "completed")
+
+
+def _failed_exhausted_track(checkpoint=False):
+    """A continuous track whose Phase 1 Task A is failed+exhausted (retry_count=3)
+    — the state that surfaces the skip_analyze handshake. ``checkpoint`` stamps
+    Phase 1 so a post-skip advance reaches ``done`` (not ``dispatch_batch``)."""
+    state = _make_state(
+        execution_mode="continuous",
+        current_phase_index=0, current_task_index=0,
+        phases=[{"name": "Phase 1", "status": "pending", "tasks": [
+            {"name": "Task A", "status": "failed", "retry_count": 3,
+             "commit_sha": "abc1234"}]}])
+    cp = " [checkpoint: abc1234]" if checkpoint else ""
+    plan = f"# Plan\n\n## Phase 1: Build{cp}\n- [!] Task A [abc1234]\n"
+    return _git_track_dir(state, plan_content=plan)
+
+
+def _sa_marker(track_dir, **fields):
+    """Write a skip-analysis marker (defaults to a valid analyzed P1T1)."""
+    base = {"phase": 1, "task": 1, "subtask": None, "name": "Task A",
+            "stage": "analyzed", "recommendation": "skip",
+            "reasoning": "r", "impact": "i", "can_skip": True,
+            "refute_status": None, "refute_reasoning": None}
+    base.update(fields)
+    _skip_analysis_write_marker(track_dir, base)
+
+
+class SkipAnalyzeRoutingTests(TestCase):
+    """The skip-analysis marker routes the §3.6 handshake in the spine (WM2-3):
+    analyzed→(dispatch_refuter | halt); refuted→(skip+advance | halt)."""
+
+    def test_analyzed_skip_emits_dispatch_refuter(self):
+        d = _failed_exhausted_track()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        _sa_marker(d, recommendation="skip", reasoning="no downstream deps")
+        o = _step(d)
+        self.assertEqual(o["action"], "dispatch_refuter")
+        self.assertEqual(o["agent"], "refuter")
+        self.assertIn("DOMAIN=skip", o["prompt"])
+        self.assertIn("no downstream deps", o["prompt"])  # reasoning embedded in CLAIM
+        self.assertIn("P1T1", o["prompt"])
+
+    def test_analyzed_pause_emits_halt_and_clears_marker(self):
+        d = _failed_exhausted_track()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        _sa_marker(d, recommendation="pause_and_escalate",
+                   reasoning="downstream impact", impact="breaks phase 2")
+        o = _step(d)
+        self.assertEqual(o["action"], "halt")
+        self.assertEqual(o["reason"], "pause_and_escalate")
+        self.assertEqual(o["impact"], "breaks phase 2")
+        self.assertFalse(_skip_analysis_marker_path(d).exists(),
+                         "halt must clear the marker so re-invoke re-analyzes")
+
+    def test_analyzed_retry_emits_halt(self):
+        d = _failed_exhausted_track()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        _sa_marker(d, recommendation="retry_with_modification",
+                   reasoning="add a null guard")
+        o = _step(d)
+        self.assertEqual(o["action"], "halt")
+        self.assertEqual(o["reason"], "retry_with_modification")
+        self.assertFalse(_skip_analysis_marker_path(d).exists())
+
+    def test_refuted_refuted_executes_skip_and_advances(self):
+        d = _failed_exhausted_track(checkpoint=True)
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        _sa_marker(d, stage="refuted", recommendation="skip",
+                   refute_status="REFUTED", refute_reasoning="safe to skip")
+        o = _step(d)
+        # Skip executed in-spine → phase terminal + checkpoint present → done.
+        self.assertEqual(o["action"], "done")
+        self.assertEqual(load(d)["phases"][0]["tasks"][0]["status"], "skipped")
+        self.assertFalse(_skip_analysis_marker_path(d).exists())
+
+    def test_refuted_failure_executes_skip(self):
+        # A crashed refute defers to skip-analyst (§3.6): skip still stands.
+        d = _failed_exhausted_track(checkpoint=True)
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        _sa_marker(d, stage="refuted", recommendation="skip", refute_status="FAILURE")
+        o = _step(d)
+        self.assertEqual(o["action"], "done")
+        self.assertEqual(load(d)["phases"][0]["tasks"][0]["status"], "skipped")
+
+    def test_refuted_sustained_emits_halt(self):
+        d = _failed_exhausted_track()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        _sa_marker(d, stage="refuted", recommendation="skip",
+                   refute_status="SUSTAINED", refute_reasoning="AC1 not actually met")
+        o = _step(d)
+        self.assertEqual(o["action"], "halt")
+        self.assertEqual(o["reason"], "pause_and_escalate")
+        self.assertEqual(o["evidence"], "AC1 not actually met")
+        self.assertFalse(_skip_analysis_marker_path(d).exists())
 
 
 if __name__ == "__main__":

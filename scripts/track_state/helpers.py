@@ -129,7 +129,8 @@ COMPACT_FIELDS = {
     # Error envelopes bypass the allowlist (emit's error carve-out).
     "step": ("action", "phase", "task", "subtask", "name", "execution_mode",
              "agent", "prompt", "attempt", "max_retries", "is_resume",
-             "decision", "sha", "wave"),
+             "decision", "sha", "wave",
+             "reason", "recommendation", "reasoning", "impact", "evidence"),
     # Wave parallelism (skills/parallel/SKILL.md). dispatch-wave carries the
     # member list (worktree/branch/worktree_track_dir) so the orchestrator can
     # fan out pinned task-executor agents; `deferred` surfaces the eligible-but-

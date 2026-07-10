@@ -1,12 +1,22 @@
 # Rail B-min: `track-state step` (dispatch-loop spike)
 
-**Status:** spike, branch `feat/serial-spine-dispatch-batch`. The serial spine
-now collapses the §3.2 verifier fan-out into `dispatch_batch` — the parallel
-`ac-tracer` + `test-runner` dispatch is pre-assembled in code, retiring the
-`phase_checkpoint` non-spine hand-off for the verifier prompts. Only
-verdict-collect + `phase-checker` synthesize stay in prose §3.2 (Partial scope).
-The Rail A prose loop (`skills/implement/SKILL.md`) is untouched — `step` is an
-additive, A/B alternative.
+**Status:** spike. The serial spine now collapses **both** multi-agent handoffs into
+code, closing the verdict-on-disk gate:
+
+- **Phase checkpoint (WM2-2):** `dispatch_batch` fans `ac-tracer` + `test-runner`
+  (pre-assembled) → teleoperator transcribes verdicts to `phase-verdict` (`synth_pending`
+  marker) → spine dispatches `phase-checker` (prompt from the marker) → teleoperator
+  transcribes `STATUS` to `phase-checkpoint-review` (PASSED stamps; FAILED → halt).
+- **skip_analyze (WM2-3):** `dispatch_skip_analyst` → teleoperator transcribes the
+  `recommendation` to `skip-analyst-verdict` (`analyzed` marker) → spine routes
+  (`skip` → `dispatch_refuter`, else → `halt`) → teleoperator transcribes the refute
+  `STATUS` to `skip-refute-review` (`refuted` marker) → spine routes (REFUTED/FAILURE →
+  in-spine `_do_skip` + advance; SUSTAINED → `halt`).
+
+Both give read-only agents' verdicts a disk channel the spine consumes (mirroring
+`wave-finalize` reading `result.json`). The only remaining non-spine branch is
+`wave_active` (a different spine). The Rail A prose loop (`skills/implement/SKILL.md`)
+is untouched — `step` is an additive, A/B alternative.
 
 ## The thesis
 
@@ -29,30 +39,21 @@ extracted from the CLI wrappers) plus `recover`-equivalent routing.
 | action | carrier fields | model's job | rail |
 |---|---|---|---|
 | `dispatch` | `agent`, `prompt` (verbatim), `attempt`, `is_resume` | Dispatch `conductor:<agent>` with the pre-assembled prompt. | **spine** |
-| `dispatch_batch` | `phase`, `wave` (per-member `agent` + `prompt`) | Fire each `wave` member's `conductor:<agent>` in ONE parallel message; then prose §3.2 collects verdicts + dispatches `phase-checker`. | **spine** |
+| `dispatch_batch` | `phase`, `wave` (per-member `agent` + `prompt`) | Fire each `wave` member's `conductor:<agent>` in ONE parallel message; transcribe the two RESULT blocks to `phase-verdict`; loop. | **spine** |
+| `dispatch_phase_checker` | `agent` (`phase-checker`), `phase`, `prompt` (verbatim, assembled from the marker) | Dispatch `conductor:phase-checker`; transcribe its `STATUS` to `phase-checkpoint-review`; PASSED loops, FAILED halts. | **spine** |
+| `dispatch_skip_analyst` | `agent` (`skip-analyst`), `phase`,`task`,`name`, `prompt` (verbatim) | Dispatch `conductor:skip-analyst`; transcribe `recommendation`/`reasoning`/`impact`/`can_skip` to `skip-analyst-verdict`; loop. | **spine** |
+| `dispatch_refuter` | `agent` (`refuter`), `phase`,`task`,`name`, `prompt` (verbatim, CLAIM embeds skip-analyst's reasoning) | Dispatch `conductor:refuter`; transcribe `STATUS`/`reasoning` to `skip-refute-review`; loop. | **spine** |
 | `ask` | `decision` (question/header/options/commands/next) | `AskUserQuestion` → run `commands[choice]` verbatim → HALT or loop. | **spine** |
-| `skip_analyze` | `phase`,`task`,`name` | Hand to skill §3.6 (skip-analyst → refute → route). | non-spine |
+| `halt` | `reason`, `recommendation`, `reasoning`, `impact`, `evidence` | Deliberate stop-for-human (skip pause/retry, or refute-SUSTAINED). Announce reasoning → STOP. | terminal |
 | `wave_active` | `phase` | Hand to wave spine. | non-spine |
 | `done` | — | Enter post-loop (skill §4.0). | terminal |
 | `error` | `error`/`errors` | HALT. | terminal |
 
 ## What stayed in the skill (the B-min boundary)
 
-The synthesize half of the phase checkpoint, plus two judgment branches, are not
-collapsed:
-
-1. **Phase-checker synthesize** — `dispatch_batch` (spine) pre-assembles and
-   fires the read-only `ac-tracer` + `test-runner` verifiers in parallel, but
-   their RESULT blocks are collected in the orchestrator's context and feed a
-   dependent `phase-checker` dispatch. Verdicts don't flow through disk, so the
-   collect + synthesize stays in prose §3.2 (skill §3.2 Step 2 onward). The
-   deterministic *fan-out* — the part a weak model fumbles — is in code.
-2. **`skip_analyze`** — `skip-analyst` → `refuter` refute → route on the verdict.
-   The refute is a conditional dispatch whose result feeds routing (judgment).
-3. **post-loop** (§4.0–§8.0) — doc-sync, code-review, comprehension digest.
-
-`skip_analyze` / `wave_active` surface as named `action`s and defer to
-`/conductor:implement`. That is the measured boundary, not a gap.
+The only branch not collapsed is `wave_active` — it hands to a *different* spine
+(`/conductor:parallel`), not a graduation target. The post-loop (§4.0–§8.0) has its
+own spine (`post-loop-step`); `step` hands off at `done`.
 
 ## The two subtle spine behaviors
 
@@ -76,32 +77,33 @@ recover→dispatch-next semantics:
 
 1. If there is dispatchable work → route it (parent-complete/stuck auto-resolve,
    manual→ask/defer, explore/execute→dispatch).
-2. Else if a failed+exhausted task exists → `ask`/`skip_analyze` (recover §2.0
-   surfaces the decision *before* a phase checkpoint).
-3. Else if an earlier phase needs a checkpoint → `dispatch_batch` (gates before
-   later-phase dispatch; dispatch-next §3.0's first check). The wave spine still
-   emits `phase_checkpoint` here — its §3.2 hand-off is the parallel-step skill's
+2. Else if a failed+exhausted task exists → `ask` (interactive) /
+   `dispatch_skip_analyst` (continuous) (recover §2.0 surfaces the decision *before*
+   a phase checkpoint). *(Top of `cmd_step`, a `skip-analysis` marker short-circuits
+   all of this — the §3.6 handshake routes by marker stage.)*
+3. Else if an earlier phase needs a checkpoint → fan or synthesize (gates before
+   later-phase dispatch; dispatch-next §3.0's first check). No `synth_pending`
+   marker (or a stale one) → `dispatch_batch` (fan) and clear any stale marker; a
+   `synth_pending` marker for this phase → `dispatch_phase_checker` (the verifiers
+   already fanned; verdicts are on disk). The wave spine still emits
+   `phase_checkpoint` here — its §3.2 hand-off is the parallel-step skill's
    contract.
 4. Else `done`.
 
-## B-full options (not built — decision deferred to the spike's verdict)
+## B-full options
 
-`dispatch_batch` shipped (serial spine only): the §3.2 verifier fan-out is now
-code-assembled. What remains if empirical A/B shows the other non-spine branches
-fire often enough to matter:
+Both multi-agent handoffs shipped (serial spine only): the §3.2 phase-checkpoint
+fan-out + synthesize (WM2-2, via the `phase-checkpoint.json` marker) AND the §3.6
+skip_analyze skip-analyst → refute → route (WM2-3, via the `skip-analysis.json`
+marker). The verdict-on-disk gate is closed. What remains if empirical A/B shows
+it matters:
 
-- **Phase-checker synthesize as a teleoperation** — `dispatch_batch` + a verdict
-  sidecar + synthesizer dispatch as a 3-call spine sequence. Deferred because
-  verdicts would have to cross `step` calls (a sidecar or staged field), and the
-  Partial-scope win — killing the weak-model fan-out failure — is already banked.
 - **`review_round`** — a `step --review` sub-mode that drives the self-review
   loop, persisting the `seen`-signature set to a conductor-owned file (currently
   model-resident in §3.6b). Loop-until-dry in code.
-- **post-loop stepping** — `step` continues past `done` into §5.0–§8.0 as
-  `dispatch` leaves (doc-sync/code-review are mostly single-agent).
 
-The remaining options are model-judgment loops that benefit less from
-determinism than the fan-out did.
+The remaining option is a model-judgment loop that benefits less from determinism
+than the fan-out + synthesize + skip-refute did.
 
 ## What this spike does NOT change
 
@@ -115,5 +117,5 @@ determinism than the fan-out did.
 Run the same track twice on the target small-window model: once via
 `/conductor:implement`, once via `/conductor:implement-step`. Compare: routing
 errors, mis-constructed prompts, stuck-lock abandons, and context consumed per
-task. The spine-only path (flat tasks, no checkpoints) is the cleanest
-comparison; the non-spine branches reveal whether B-full is worth it.
+task. The spine now owns the full dispatch + phase-checkpoint path; the remaining
+non-spine branch (`skip_analyze`) reveals whether WM2-3 is worth it.

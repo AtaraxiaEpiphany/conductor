@@ -7,12 +7,12 @@ from pathlib import Path
 
 from .core import load
 from .helpers import (
-    emit, now_iso, extract_tags, _inherit_tags,
+    out, emit, now_iso, extract_tags, _inherit_tags,
     conductor_dir, _store_evidence, _last_subtask_sha, _any_phase_needs_checkpoint,
     flag, _normalize_sha, target, _extract_tags_for_task, _resolve_conductor_root,
 )
 from .constants import AUTO_COMPLETE_OK, MAX_RETRIES
-from .mutations import _do_lock, _do_complete, _do_fail, _do_fail_parent, _do_defer
+from .mutations import _do_lock, _do_complete, _do_fail, _do_fail_parent, _do_defer, _do_skip
 from .result import _advisory_gates
 from .sync import _do_sync_plan
 from .git_ops import (
@@ -20,11 +20,12 @@ from .git_ops import (
     _has_sibling_sha, _update_task_sha, _recover_git_notes,
     _is_start_commit, _git_uncommitted_files, _finalize_parent,
     docs_synced_for_track, wiki_phase2_committed_for_track,
+    _git_rev_parse_toplevel,
 )
 from .handoff import (
     _append_execution_record, _append_deviation_legacy, _append_failure_legacy,
 )
-from .misc import _get_all_shas
+from .misc import _get_all_shas, _stamp_checkpoint_in_plan
 from .quality import _finalize_track
 from .validate import _fix_plan_mismatches, ensure_healthy
 
@@ -975,6 +976,171 @@ def _step_assemble_verifier_prompt(track_dir, state, phase, agent):
     return "\n".join(lines)
 
 
+# --------------------------------------------------------------------------- #
+# Phase-checkpoint handshake marker (WM2 verdict-on-disk, step 2).
+#
+# ``_any_phase_needs_checkpoint`` only sees "checkpoint absent in plan.md" — it
+# can't tell *verifiers fanned, awaiting the synthesizer* from *nothing fanned
+# yet*. This transient marker discriminates the sub-states. The teleoperator
+# transcribes the fanned verifier verdicts to ``cmd_phase_verdict`` (writes the
+# marker), then the spine emits the phase-checker synth dispatch; after the synth
+# returns, ``cmd_phase_checkpoint_review`` stamps the checkpoint (PASSED) or
+# clears it (FAILED → teleoperator halts) and deletes the marker either way.
+# Mirrors ``new_track.py``'s tolerant read/write helpers and lifecycle. Single
+# file per track — only one checkpoint is pending at a time (the first needing
+# one); the phase lives inside the JSON so a stale post-crash file self-clears.
+# --------------------------------------------------------------------------- #
+_PHASE_CP_MARKER = "phase-checkpoint.json"
+
+
+def _phase_cp_marker_path(track_dir):
+    """Pure path to the marker — deliberately does NOT mkdir, so a read never
+    creates directories as a side effect (mirrors ``_nt_marker_path``)."""
+    return Path(track_dir) / ".conductor" / _PHASE_CP_MARKER
+
+
+def _phase_cp_read_marker(track_dir):
+    """Tolerant reader: ``None`` on missing/corrupt, so the routing branch on the
+    marker without existence checks and a half-written file never crashes the
+    spine (mirrors ``_nt_read_marker``)."""
+    path = _phase_cp_marker_path(track_dir)
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text())
+        if isinstance(data, dict):
+            return data
+    except (ValueError, OSError):
+        pass
+    return None
+
+
+def _phase_cp_write_marker(track_dir, data):
+    """Write the whole marker dict; ``parents=True`` ensures ``.conductor/`` exists."""
+    cdir = Path(track_dir) / ".conductor"
+    cdir.mkdir(parents=True, exist_ok=True)
+    _phase_cp_marker_path(track_dir).write_text(json.dumps(data, ensure_ascii=False))
+
+
+def _phase_cp_clear_marker(track_dir):
+    """Delete the marker; idempotent (a missing file is a no-op success)."""
+    path = _phase_cp_marker_path(track_dir)
+    if path.exists():
+        path.unlink()
+
+
+def _step_assemble_phase_checker_prompt(track_dir, state, phase, marker):
+    """Build the ready-to-paste prompt for ``conductor:phase-checker`` (the
+    synthesizer) from the fanned verifier verdicts stored in the marker.
+
+    Pre-assembled in code so a weak orchestrator can't fumble the §3.2 Step-3
+    field interpolation — the prompt is pasted verbatim into the Agent dispatch.
+    Adjacent to ``_step_assemble_verifier_prompt`` (the fan-out prompts). Emits
+    the exact §3.2 Step-3 field set: ``AC_TRACE_GATE`` only when the ac-tracer
+    FAILED, ``AC_TRACE_N_UNGROUNDED`` only on warn (byte-for-byte the prose it
+    retires). Verdicts come from the marker (transcribed by the teleoperator from
+    the two RESULT blocks), not re-derived — the read-only verifiers already ran.
+    """
+    td = str(track_dir)
+    ac = marker.get("ac_verdict", "")
+    lines = [
+        f"TRACK_DIR={td}",
+        f"TRACK_ID={state.get('track_id', '')}",
+        f"PHASE_INDEX={phase}",
+        f"EXECUTION_MODE={state.get('execution_mode', 'interactive')}",
+        f"AC_TRACE_VERDICT={ac}",
+    ]
+    if ac == "FAILED" and marker.get("ac_gate"):
+        lines.append(f"AC_TRACE_GATE={marker['ac_gate']}")
+    if ac == "warn" and marker.get("ac_n_ungrounded") is not None:
+        lines.append(f"AC_TRACE_N_UNGROUNDED={marker['ac_n_ungrounded']}")
+    lines.append(f"L1_VERIFY_STATUS={marker.get('l1_status', '')}")
+    if marker.get("l1_command"):
+        lines.append(f"L1_VERIFY_COMMAND={marker['l1_command']}")
+    return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------- #
+# skip_analyze handshake (WM2 verdict-on-disk, step 3). Two agents — skip-analyst,
+# then conditionally refuter — same marker shape as the phase-checkpoint handshake
+# (the refuter prompt embeds skip-analyst's reasoning, so it can't be pre-assembled
+# before that verdict is on disk). The spine routes between the two agents and owns
+# the route judgment (skip / halt-for-human); the teleoperator only transcribes.
+# Fires only in continuous mode (interactive uses the `ask` failed-task blob).
+# --------------------------------------------------------------------------- #
+_SKIP_ANALYSIS_MARKER = "skip-analysis.json"
+
+
+def _skip_analysis_marker_path(track_dir):
+    """Pure path — deliberately no mkdir (mirrors ``_phase_cp_marker_path``)."""
+    return Path(track_dir) / ".conductor" / _SKIP_ANALYSIS_MARKER
+
+
+def _skip_analysis_read_marker(track_dir):
+    """Tolerant reader: ``None`` on missing/corrupt (mirrors ``_phase_cp_read_marker``)."""
+    path = _skip_analysis_marker_path(track_dir)
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text())
+        if isinstance(data, dict):
+            return data
+    except (ValueError, OSError):
+        pass
+    return None
+
+
+def _skip_analysis_write_marker(track_dir, data):
+    cdir = Path(track_dir) / ".conductor"
+    cdir.mkdir(parents=True, exist_ok=True)
+    _skip_analysis_marker_path(track_dir).write_text(json.dumps(data, ensure_ascii=False))
+
+
+def _skip_analysis_clear_marker(track_dir):
+    path = _skip_analysis_marker_path(track_dir)
+    if path.exists():
+        path.unlink()
+
+
+def _step_assemble_skip_analyst_prompt(track_dir, state, pi, ti, si, name):
+    """Pre-assemble the ``conductor:skip-analyst`` prompt (skills/implement §3.6).
+    Parent-scoped (no subtask line), mirroring the prose."""
+    td = str(track_dir)
+    return "\n".join([
+        f"TRACK_DIR={td}",
+        f"TRACK_ID={state.get('track_id', '')}",
+        f"PHASE_INDEX={pi}",
+        f"TASK_INDEX={ti}",
+        f"TASK_NAME={name}",
+    ])
+
+
+def _step_assemble_refuter_prompt(track_dir, marker):
+    """Pre-assemble the ``conductor:refuter`` skip-refute prompt from the marker
+    (skills/implement §3.6). The CLAIM embeds skip-analyst's reasoning verbatim —
+    assembled in code (not by the model) so a weak orchestrator can't fumble it.
+    ``PROJECT_DIR`` is the repo root (``_git_rev_parse_toplevel``); the
+    SUSTAINED-when-uncertain default makes this refute block-when-uncertain (the
+    conservative direction for a skip, since skipping is the riskier action)."""
+    td = str(track_dir)
+    pi, ti = marker.get("phase"), marker.get("task")
+    name = marker.get("name", "?")
+    reasoning = marker.get("reasoning") or "(none given)"
+    project_dir = _git_rev_parse_toplevel(track_dir) or td
+    claim = (f'Skip-analyst recommended skipping task P{pi}T{ti} ("{name}"), '
+             f'reasoning: "{reasoning}". Challenge framing: this skip is UNSAFE '
+             f"— a dependency marked completed is only superficially done (its own "
+             f"ACs not actually met), or the failure handoff describes a fix cheap "
+             f"relative to the cost of skipping.")
+    return "\n".join([
+        f"PROJECT_DIR={project_dir}",
+        "DOMAIN=skip",
+        f"CLAIM={claim}",
+        f"CONTEXT_PATHS={td}/plan.md {td}/track-state.json "
+        f"{td}/.conductor/handoff/P{pi}T{ti}.md",
+    ])
+
+
 def _step_emit_dispatch_batch(track_dir, state, phase, execution_mode, compact):
     """Emit ``dispatch_batch`` — the pre-assembled ac-tracer + test-runner
     fan-out that retires the serial spine's ``phase_checkpoint`` non-spine
@@ -1049,10 +1215,88 @@ def _step_emit_dispatch(track_dir, compact):
          "step", compact)
 
 
+def _step_route_skip_analysis(track_dir, marker, compact):
+    """Route the skip_analyze handshake from the on-disk marker (WM2-3). The
+    teleoperator transcribed a verdict (``skip-analyst-verdict`` → stage=analyzed,
+    or ``skip-refute-review`` → stage=refuted); this decides + executes the next
+    leaf, owning the §3.6 route judgment in code.
+
+    stage=analyzed:
+      skip → dispatch the refuter (prompt pre-assembled from skip-analyst's reasoning).
+      pause_and_escalate / retry_with_modification → clear + ``halt`` (surface reasoning).
+    stage=refuted:
+      REFUTED / FAILURE → execute the skip in-spine (``_do_skip`` + sync + commit) + advance.
+      SUSTAINED → clear + ``halt`` (override-to-block; surface refuter evidence).
+    Unknown stage/recommendation/refute-status are defensive re-dispatches (never loop).
+    """
+    td = str(track_dir)
+    stage = marker.get("stage")
+    pi, ti = marker.get("phase"), marker.get("task")
+    si = marker.get("subtask")
+    name = marker.get("name", "?")
+
+    def _redispatch_skip_analyst():
+        state = load(track_dir)
+        emit(dict(action="dispatch_skip_analyst", agent="skip-analyst",
+                  phase=pi, task=ti, subtask=si, name=name,
+                  execution_mode=state.get("execution_mode", "continuous"),
+                  prompt=_step_assemble_skip_analyst_prompt(
+                      track_dir, state, pi, ti, si, name)),
+             "step", compact)
+
+    def _redispatch_refuter():
+        emit(dict(action="dispatch_refuter", agent="refuter",
+                  phase=pi, task=ti, subtask=si, name=name,
+                  prompt=_step_assemble_refuter_prompt(track_dir, marker)),
+             "step", compact)
+
+    if stage == "analyzed":
+        rec = marker.get("recommendation")
+        if rec == "skip":
+            _redispatch_refuter()
+            return
+        if rec in ("pause_and_escalate", "retry_with_modification"):
+            _skip_analysis_clear_marker(track_dir)
+            emit(dict(action="halt", reason=rec, recommendation=rec,
+                      reasoning=marker.get("reasoning"), impact=marker.get("impact"),
+                      phase=pi, task=ti, subtask=si, name=name), "step", compact)
+            return
+        _skip_analysis_clear_marker(track_dir)  # unknown recommendation → re-analyze
+        _redispatch_skip_analyst()
+        return
+
+    if stage == "refuted":
+        rstatus = marker.get("refute_status")
+        if rstatus in ("REFUTED", "FAILURE"):
+            # Skip stands → execute in-spine (mirrors _do_complete in
+            # _step_emit_next_leaf), then advance to the next leaf.
+            _do_skip(track_dir, pi, ti, si,
+                     reason=f"skip-analyst: skip; refute {rstatus}")
+            _do_sync_plan(track_dir, load(track_dir))
+            _git_commit_ensured(
+                track_dir, f"chore(conductor): Skip '{name}' [P{pi}T{ti}] (skip-analyze)")
+            _skip_analysis_clear_marker(track_dir)
+            return _step_emit_next_leaf(track_dir, load(track_dir), compact)
+        if rstatus == "SUSTAINED":
+            _skip_analysis_clear_marker(track_dir)
+            emit(dict(action="halt", reason="pause_and_escalate",
+                      recommendation="pause_and_escalate",
+                      reasoning=marker.get("reasoning"),
+                      evidence=marker.get("refute_reasoning"),
+                      phase=pi, task=ti, subtask=si, name=name), "step", compact)
+            return
+        _redispatch_refuter()  # unknown refute status → re-refute
+        return
+
+    _skip_analysis_clear_marker(track_dir)  # unknown stage → re-analyze
+    _redispatch_skip_analyst()
+
+
 def _step_emit_exhausted(track_dir, outcome, execution_mode, retry_count, compact):
     """Surface a retries-exhausted failure: interactive → ``ask`` (Retry/Skip/Block
-    via the shared failed-task decision blob), continuous → ``skip_analyze``
-    (skill §3.6 owns skip-analyst→refute→route)."""
+    via the shared failed-task decision blob), continuous → ``dispatch_skip_analyst``
+    (the spine owns the §3.6 skip-analyst→refute→route handshake via the
+    skip-analysis marker, WM2-3)."""
     state = load(track_dir)
     pi, ti, si = outcome.get("phase"), outcome.get("task"), outcome.get("subtask")
     name, rc = "?", retry_count
@@ -1068,8 +1312,11 @@ def _step_emit_exhausted(track_dir, outcome, execution_mode, retry_count, compac
         emit(dict(action="ask", phase=pi, task=ti, subtask=si, name=name,
                   decision=decision, execution_mode=execution_mode), "step", compact)
     else:
-        emit(dict(action="skip_analyze", phase=pi, task=ti, subtask=si,
-                  name=name, execution_mode=execution_mode), "step", compact)
+        emit(dict(action="dispatch_skip_analyst", agent="skip-analyst",
+                  phase=pi, task=ti, subtask=si, name=name,
+                  execution_mode=execution_mode,
+                  prompt=_step_assemble_skip_analyst_prompt(
+                      track_dir, state, pi, ti, si, name)), "step", compact)
 
 
 def _step_route_after_finalize(track_dir, outcome, compact):
@@ -1121,19 +1368,43 @@ def _emit_quiescent_leaf(track_dir, state, compact, command):
                           decision=decision, execution_mode=execution_mode),
                      command, compact)
             else:
-                emit(dict(action="skip_analyze", phase=fpi, task=fti, subtask=fsi,
-                          name=fname, execution_mode=execution_mode),
-                     command, compact)
+                if command == "step":
+                    # Step spine owns the §3.6 handshake (WM2-3); wave-step keeps
+                    # the non-spine skip_analyze leaf (parallel-step's contract).
+                    emit(dict(action="dispatch_skip_analyst", agent="skip-analyst",
+                              phase=fpi, task=fti, subtask=fsi, name=fname,
+                              execution_mode=execution_mode,
+                              prompt=_step_assemble_skip_analyst_prompt(
+                                  track_dir, state, fpi, fti, fsi, fname)),
+                         "step", compact)
+                else:
+                    emit(dict(action="skip_analyze", phase=fpi, task=fti, subtask=fsi,
+                              name=fname, execution_mode=execution_mode),
+                         command, compact)
             return None
 
     cp = _any_phase_needs_checkpoint(track_dir, state)
     if cp is not None:
         if command == "step":
-            # Serial spine: pre-assemble the verifier batch (deterministic
-            # fan-out) instead of the non-spine phase_checkpoint hand-off. The
-            # wave spine keeps phase_checkpoint — its §3.2 hand-off is the
-            # parallel-step skill's contract.
-            _step_emit_dispatch_batch(track_dir, state, cp, execution_mode, compact)
+            # Serial spine. If a synth_pending marker exists for THIS phase, the
+            # verifiers already fanned and their verdicts are on disk (written by
+            # ``cmd_phase_verdict``) → dispatch the synthesizer (phase-checker)
+            # with a pre-assembled prompt. Otherwise (no marker, or a stale one
+            # for another phase) fan the verifiers. The wave spine keeps the
+            # non-spine ``phase_checkpoint`` leaf — its §3.2 hand-off is the
+            # parallel-step skill's contract (command == "wave-step" arm below).
+            marker = _phase_cp_read_marker(track_dir)
+            if (marker and marker.get("stage") == "synth_pending"
+                    and marker.get("phase") == cp):
+                emit(dict(action="dispatch_phase_checker", agent="phase-checker",
+                          phase=cp, execution_mode=execution_mode,
+                          prompt=_step_assemble_phase_checker_prompt(
+                              track_dir, state, cp, marker)),
+                     "step", compact)
+            else:
+                if marker:  # stale (phase mismatch / unknown stage) → clear + fan
+                    _phase_cp_clear_marker(track_dir)
+                _step_emit_dispatch_batch(track_dir, state, cp, execution_mode, compact)
         else:
             emit(dict(action="phase_checkpoint", phase=cp, execution_mode=execution_mode),
                  command, compact)
@@ -1201,18 +1472,21 @@ def cmd_step(track_dir, compact=True):
     then returns. The orchestrator's entire job is to read ``action`` and do
     exactly that — dispatch the named agent with the pre-assembled ``prompt``,
     fan out a ``dispatch_batch`` of verifier prompts in one parallel message,
-    relay an ``ask`` blob, hand off to a named skill branch (``skip_analyze``
-    / ``wave_active``), ``halt`` on ``error``, or enter the post-loop on
-    ``done`` — then call ``step`` again.
+    relay an ``ask`` blob, hand off to the wave spine (``wave_active``),
+    ``halt`` for human judgment, or enter the post-loop on ``done`` — then call
+    ``step`` again.
 
     Action set:
-      - ``dispatch``         : run one subagent (explorer/task-executor) with ``prompt``. [spine]
-      - ``dispatch_batch``   : fan out the pre-assembled ac-tracer + test-runner verifier prompts in ONE parallel message; then prose §3.2 (skills/implement) collects verdicts + dispatches phase-checker. [spine]
-      - ``ask``              : AskUserQuestion(decision…) → run decision.commands[choice] → step. [spine]
-      - ``skip_analyze``     : hand to skill §3.6 (skip-analyst → refute → route). [non-spine]
-      - ``wave_active``      : hand to the wave spine. [non-spine]
-      - ``done``             : track finalized → enter post-loop (skill §4.0). [terminal]
-      - ``error``            : unrecoverable; HALT.
+      - ``dispatch``             : run one subagent (explorer/task-executor) with ``prompt``. [spine]
+      - ``dispatch_batch``       : fan out the ac-tracer + test-runner verifier prompts in ONE parallel message; then ``phase-verdict`` (WM2-2). [spine]
+      - ``dispatch_phase_checker``: dispatch the synthesizer; then ``phase-checkpoint-review`` (WM2-2). [spine]
+      - ``dispatch_skip_analyst``: dispatch skip-analyst; then ``skip-analyst-verdict`` (WM2-3). [spine]
+      - ``dispatch_refuter``     : dispatch the skip-refute; then ``skip-refute-review`` (WM2-3). [spine]
+      - ``ask``                  : AskUserQuestion(decision…) → run decision.commands[choice] → step. [spine]
+      - ``halt``                 : deliberate stop-for-human (skip-analyze pause/retry/refute-sustained); announce reasoning → STOP. [terminal]
+      - ``wave_active``          : hand to the wave spine. [non-spine]
+      - ``done``                 : track finalized → enter post-loop (skill §4.0). [terminal]
+      - ``error``                : unrecoverable; HALT.
 
     Internal-only transitions (parent-complete/stuck auto-resolution, continuous
     [Manual] auto-defer) are fully resolved before emitting, so the model never
@@ -1229,6 +1503,13 @@ def cmd_step(track_dir, compact=True):
     if state is None:
         emit(dict(action="error", errors=verrors), "step", compact)
         return
+
+    # skip_analyze handshake in progress? (WM2-3) A skip-analysis marker means the
+    # teleoperator transcribed a skip-analyst/refuter verdict since the last dispatch;
+    # route it before any other state-based logic (mirrors the checkpoint marker).
+    sa = _skip_analysis_read_marker(track_dir)
+    if sa is not None:
+        return _step_route_skip_analysis(track_dir, sa, compact)
 
     # If the current task is in_progress, the model just returned from a dispatch
     # (or was interrupted mid-dispatch). Decide finalize vs re-dispatch.
@@ -1253,6 +1534,195 @@ def cmd_step(track_dir, compact=True):
 
     # No in_progress task awaiting finalize → resolve the next leaf.
     return _step_emit_next_leaf(track_dir, state, compact)
+
+
+# --------------------------------------------------------------------------- #
+# Phase-checkpoint handshake commands (WM2 verdict-on-disk, step 2).
+#
+# Stamp-only (return JSON, never emit a leaf) — the teleoperator transcribes a
+# read-only agent's fixed-format RESULT line to one of these, then re-calls
+# ``step``; the spine re-derives the next leaf from the marker it just wrote.
+# Mirrors ``cmd_post_loop_review`` (WM2-1): the agent firewall stays intact (no
+# read-only agent writes state); the judgment the prose §3.2/§3.7 hand-off asked
+# the model to make now lives in code.
+# --------------------------------------------------------------------------- #
+
+# Verdict enums — the exact tokens the read-only agents emit (agents/ac-tracer.md
+# §4.0, agents/test-runner.md §3.0). Mixed case is the agent contract: ac-tracer
+# distinguishes passed/warn/skipped (ok-ish) from FAILED/ERROR (terminal).
+_AC_VERDICTS = ("passed", "warn", "skipped", "FAILED", "ERROR")
+_L1_STATUSES = ("passed", "failed", "error")
+
+
+def cmd_phase_verdict(track_dir, ac_verdict, ac_gate, ac_n_ungrounded,
+                      l1_status, l1_command):
+    """Transcribe the fanned verifier verdicts to the checkpoint marker (WM2-2).
+
+    After ``dispatch_batch`` fans ac-tracer + test-runner, the teleoperator parses
+    both RESULT blocks and runs this with ``VERDICT``/``GATE``/``N_UNGROUNDED``
+    (ac-tracer) and ``STATUS``/``COMMAND`` (test-runner). Writes
+    ``stage=synth_pending`` so the next ``step`` emits the phase-checker synth
+    dispatch (pre-assembled from the stored verdicts) instead of re-fanning.
+
+    Validates the verdict enums (a code guard: a transcription typo HALTs with a
+    clear error rather than handing the synthesizer garbage) and confirms a
+    checkpoint is actually pending for this track. Idempotent — overwriting with
+    fresh verdicts after a re-fan is harmless.
+    """
+    td = str(track_dir)
+    if ac_verdict not in _AC_VERDICTS:
+        out(dict(error=f"unrecognized ac-verdict: {ac_verdict!r}", track_dir=td,
+                 hint=f"one of: {', '.join(_AC_VERDICTS)} (from ---AC TRACE RESULT--- VERDICT)"))
+        return
+    if l1_status not in _L1_STATUSES:
+        out(dict(error=f"unrecognized l1-status: {l1_status!r}", track_dir=td,
+                 hint=f"one of: {', '.join(_L1_STATUSES)} (from ---L1 VERIFY RESULT--- STATUS)"))
+        return
+    state, _fixes, verrors = ensure_healthy(track_dir)
+    if state is None:
+        out(dict(error="track state unhealthy", errors=verrors, track_dir=td))
+        return
+    cp = _any_phase_needs_checkpoint(track_dir, state)
+    if cp is None:
+        out(dict(error="no pending phase checkpoint — nothing to synthesize",
+                 track_dir=td,
+                 hint="run `track-state step` to advance; phase-verdict follows a dispatch_batch"))
+        return
+    marker = {
+        "phase": cp, "stage": "synth_pending",
+        "ac_verdict": ac_verdict,
+        "ac_gate": ac_gate or None,
+        "ac_n_ungrounded": ac_n_ungrounded,
+        "l1_status": l1_status,
+        "l1_command": l1_command or None,
+    }
+    _phase_cp_write_marker(track_dir, marker)
+    out(dict(ok=True, phase=cp, stage="synth_pending", track_dir=td))
+
+
+def cmd_phase_checkpoint_review(track_dir, status, sha, reason):
+    """Stamp or clear the checkpoint from phase-checker's STATUS (WM2-2).
+
+    After the synthesizer (``dispatch_phase_checker``) returns, the teleoperator
+    transcribes its ``---CHECKPOINT RESULT---`` ``STATUS`` to this command.
+    ``PASSED`` stamps ``[checkpoint: <sha>]`` in plan.md (via
+    ``_stamp_checkpoint_in_plan``) and deletes the marker → the next ``step``
+    sees the checkpoint present and advances. ``FAILED`` deletes the marker → the
+    teleoperator halts (an AC-trace authoring defect needs spec/plan edits, not a
+    retry); re-invocation after the fix re-fans fresh, matching §3.7. Both
+    outcomes delete the marker, so no terminal stage persists.
+    """
+    td = str(track_dir)
+    verdict = (status or "").strip()
+    state, _fixes, verrors = ensure_healthy(track_dir)
+    if state is None:
+        out(dict(error="track state unhealthy", errors=verrors, track_dir=td))
+        return
+    cp = _any_phase_needs_checkpoint(track_dir, state)
+    if cp is None:
+        # Already stamped (e.g. a duplicate review call after a PASSED) — clean.
+        _phase_cp_clear_marker(track_dir)
+        out(dict(ok=True, stamped=False, reason="no_pending_checkpoint", phase=None,
+                 track_dir=td,
+                 hint="checkpoint already present — nothing to review"))
+        return
+    if verdict == "PASSED":
+        if not sha or not re.match(r"^[0-9a-f]{7}$", sha):
+            out(dict(error="PASSED requires a valid --sha (7 hex)",
+                     track_dir=td, hint="CHECKPOINT_SHA from ---CHECKPOINT RESULT---"))
+            return
+        result = _stamp_checkpoint_in_plan(track_dir, cp, sha)
+        if "error" in result:
+            out(dict(error=result["error"], track_dir=td))
+            return
+        _phase_cp_clear_marker(track_dir)
+        out(dict(ok=True, stamped=True, phase=cp, sha=sha, track_dir=td))
+    elif verdict == "FAILED":
+        _phase_cp_clear_marker(track_dir)
+        out(dict(ok=True, stamped=False, phase=cp, track_dir=td,
+                 reason=reason or "phase-checker FAILED",
+                 hint="announce the reason and STOP; edit spec/plan then re-invoke to re-run the phase"))
+    else:
+        out(dict(error=f"unrecognized status: {verdict!r}", track_dir=td,
+                 hint="PASSED | FAILED (from ---CHECKPOINT RESULT--- STATUS)"))
+
+
+# skip_analyze handshake transcribe commands (WM2 verdict-on-disk, step 3).
+_SKIP_RECOMMENDATIONS = ("skip", "pause_and_escalate", "retry_with_modification")
+_REFUTE_STATUSES = ("SUSTAINED", "REFUTED", "FAILURE")
+
+
+def cmd_skip_analyst_verdict(track_dir, recommendation, reasoning, impact, can_skip):
+    """Transcribe skip-analyst's ``recommendation`` to the skip-analysis marker
+    (WM2-3). After ``dispatch_skip_analyst`` returns, the teleoperator parses the
+    ``---SKIP ANALYSIS---`` JSON and runs this. Writes ``stage=analyzed`` so the
+    next ``step`` routes: ``skip`` → ``dispatch_refuter``; ``pause_and_escalate``
+    / ``retry_with_modification`` → ``halt``.
+
+    The failed+exhausted task (phase/task/subtask/name) is re-derived from state
+    via ``_find_failed_exhausted`` — the spine owns the indices, so the
+    teleoperator transcribes only the verdict fields (no index fumble surface).
+    Validates the recommendation enum; idempotent overwrite on a re-analyze.
+    """
+    td = str(track_dir)
+    if recommendation not in _SKIP_RECOMMENDATIONS:
+        out(dict(error=f"unrecognized recommendation: {recommendation!r}", track_dir=td,
+                 hint=f"one of: {', '.join(_SKIP_RECOMMENDATIONS)} "
+                      "(from ---SKIP ANALYSIS--- recommendation)"))
+        return
+    state, _fixes, verrors = ensure_healthy(track_dir)
+    if state is None:
+        out(dict(error="track state unhealthy", errors=verrors, track_dir=td))
+        return
+    found = _find_failed_exhausted(state)
+    if found is None:
+        _skip_analysis_clear_marker(track_dir)
+        out(dict(error="no failed+exhausted task to skip-analyze", track_dir=td,
+                 hint="run `track-state step` to advance"))
+        return
+    fpi, fti, fsi, _ftgt, fname = found
+    marker = {
+        "phase": fpi, "task": fti, "subtask": fsi, "name": fname,
+        "stage": "analyzed", "recommendation": recommendation,
+        "reasoning": reasoning, "impact": impact,
+        "can_skip": _parse_bool(can_skip),
+        "refute_status": None, "refute_reasoning": None,
+    }
+    _skip_analysis_write_marker(track_dir, marker)
+    out(dict(ok=True, recommendation=recommendation, stage="analyzed",
+             phase=fpi, task=fti, track_dir=td))
+
+
+def cmd_skip_refute_review(track_dir, status, reasoning):
+    """Transcribe the refuter's ``STATUS`` onto the skip-analysis marker (WM2-3).
+    After ``dispatch_refuter`` returns, the teleoperator parses the
+    ``---REFUTATION RESULT---`` ``STATUS`` and runs this. Writes ``stage=refuted``
+    so the next ``step`` routes: ``REFUTED`` / ``FAILURE`` → execute the skip +
+    advance; ``SUSTAINED`` → ``halt`` (override-to-block). Validates the enum;
+    requires an ``analyzed`` marker (the refute only follows a skip recommendation).
+    """
+    td = str(track_dir)
+    verdict = (status or "").strip()
+    if verdict not in _REFUTE_STATUSES:
+        out(dict(error=f"unrecognized refute status: {verdict!r}", track_dir=td,
+                 hint=f"one of: {', '.join(_REFUTE_STATUSES)} "
+                      "(from ---REFUTATION RESULT--- STATUS)"))
+        return
+    marker = _skip_analysis_read_marker(track_dir)
+    if marker is None:
+        out(dict(error="no skip-analysis marker — run skip-analyst-verdict first",
+                 track_dir=td))
+        return
+    marker["stage"] = "refuted"
+    marker["refute_status"] = verdict
+    marker["refute_reasoning"] = reasoning
+    _skip_analysis_write_marker(track_dir, marker)
+    out(dict(ok=True, stage="refuted", refute_status=verdict, track_dir=td))
+
+
+def _parse_bool(val):
+    """Lenient bool parse for transcribed ``--can-skip`` (``true``/``false``/``1``/``0``)."""
+    return str(val).strip().lower() in ("true", "1", "yes", "y")
 
 
 # --------------------------------------------------------------------------- #
@@ -1323,6 +1793,24 @@ def _post_loop_stamp_line(track_dir, updates):
         "p.write_text(json.dumps(d))"
     )
     return f"python3 -c {shlex.quote(code)} {sidecar}"
+
+
+def _post_loop_merge_sidecar(track_dir, updates):
+    """In-process read-modify-WRITE MERGE into the sidecar — the twin of
+    ``_post_loop_stamp_line`` (which emits the same merge as bash for the
+    teleoperator's ``post``). Used by commands that do a gate-advance IN CODE
+    (e.g. ``cmd_post_loop_review``), so the stamp is never handed back to prose.
+    Preserves every prior marker (lossless-resume invariant). Tolerant of a
+    missing/corrupt file (starts from ``{}``)."""
+    path = conductor_dir(track_dir) / _POST_LOOP_SIDECAR
+    try:
+        data = json.loads(path.read_text()) if path.exists() else {}
+        if not isinstance(data, dict):
+            data = {}
+    except (ValueError, OSError):
+        data = {}
+    data.update(updates)
+    path.write_text(json.dumps(data, ensure_ascii=False))
 
 
 def _post_loop_project_root(track_dir):
@@ -1473,22 +1961,6 @@ def _post_loop_finalize_post(track_dir):
         f'track-state sync-plan "{td}"',
         f'track-state registry-update "{td}" "conductor/tracks.md"',
         "git commit -m " + shlex.quote("chore(conductor): Complete track"),
-    ]
-
-
-def _post_loop_review_post(track_dir, range_str):
-    """§7.0 ``post`` lines — stamp the reviewed-range sidecar after code-reviewer.
-
-    MERGES into the sidecar (preserves advisory/lint/digest markers stamped
-    later); the range equality is the lossless-resume discriminator, so a
-    changed SHA range forces a re-review. ``post_on`` defaults to non_failure —
-    the stamp must NOT fire on a failed review (no real review ran).
-    """
-    td = str(track_dir)
-    return [
-        _post_loop_stamp_line(td, {"schema": 2, "reviewed_range": range_str}),
-        "git commit -am " + shlex.quote(
-            f"chore(conductor): Stamp post-loop reviewed range [{range_str}]"),
     ]
 
 
@@ -1658,7 +2130,8 @@ def cmd_post_loop_step(track_dir, compact=True):
       - ``dispatch``       : §6.0 Phase 1/2 — dispatch corpus-writer / wiki-synthesizer → loop. [spine]
       - ``dispatch_advisory``: §6.0 advisory — dispatch wiki-differ → loop. [spine]
       - ``dispatch`` (lint): §6.5 — dispatch doc-linter → loop. [spine]
-      - ``dispatch`` (review): §7.0 — dispatch code-reviewer, then run ``post`` (stamp) → loop. [spine]
+      - ``dispatch_review``: §7.0 — dispatch code-reviewer; the skill then runs
+                            ``post-loop-review --status`` (stamp) → loop. [spine]
       - ``apply_fixes``    : §7.0 step 4 — dispatch apply-fixes for one Critical/High
                              chunk, then run ``post`` (sentinel) → loop until drained. [spine]
       - ``digest``         : §7.5 — announce the pre-assembled digest, run ``post`` → loop. [spine]
@@ -1669,9 +2142,13 @@ def cmd_post_loop_step(track_dir, compact=True):
 
     Every dispatch/digest leaf that completes a gate carries a ``post`` (the
     deterministic bash that MERGES the gate's sidecar marker) and a ``post_on``
-    rule: ``"non_failure"`` (default — the §7.0 review stamp must NOT fire on a
-    failed review) or ``"always"`` (advisory / lint / digest — non-blocking gates
-    that advance on any return, including agent FAILURE).
+    rule: ``"non_failure"`` (default — a failed agent does not advance the gate)
+    or ``"always"`` (advisory / lint / digest — non-blocking gates that advance
+    on any return, including agent FAILURE). The §7.0 review leaf is the
+    exception: it emits ``dispatch_review`` with NO ``post`` — the skill runs
+    ``track-state post-loop-review --status`` instead, so the FAILURE→no-stamp
+    judgment lives in code, not prose (the old ``post_on=non_failure`` rule
+    relied on the teleoperator correctly detecting a failed review).
     """
     state, _fixes, verrors = ensure_healthy(track_dir)
     if state is None:
@@ -1759,11 +2236,16 @@ def cmd_post_loop_step(track_dir, compact=True):
         review_done = bool(sidecar.get("reviewed_range")
                            and sidecar["reviewed_range"] == range_str)
         if not review_done:
-            emit(dict(action="dispatch", agent="code-reviewer", track_dir=td,
+            # `dispatch_review` (not `dispatch`): the §7.0 gate-advance is owned
+            # by `track-state post-loop-review --status`, NOT a teleoperator-
+            # judged `post`. The skill transcribes the review's STATUS line to
+            # that command, which stamps reviewed_range only on a real review (a
+            # FAILURE does not stamp → next call re-reviews) — moving the failure
+            # judgment out of prose (WM2 verdict-on-disk, step 1).
+            emit(dict(action="dispatch_review", agent="code-reviewer", track_dir=td,
                       range=range_str, shas_count=len(shas),
                       prompt=(f"TRACK_DIR={td}\nTRACK_ID={track_id}\n"
-                              f"REVISION_RANGE={range_str}\n"),
-                      post=_post_loop_review_post(td, range_str)),
+                              f"REVISION_RANGE={range_str}\n")),
                  "post-loop-step", compact)
             return
 
@@ -1793,4 +2275,48 @@ def cmd_post_loop_step(track_dir, compact=True):
 
     # Every gate satisfied.
     emit(dict(action="done", track_dir=td), "post-loop-step", compact)
+
+
+def cmd_post_loop_review(track_dir, status):
+    """Stamp the §7.0 reviewed-range sidecar from the code-reviewer's STATUS —
+    the FAILURE judgment moved OUT of the teleoperator's prose ``post`` rule into
+    code (WM2 verdict-on-disk, step 1).
+
+    The §7.0 leaf emits ``dispatch_review`` with NO ``post``: after the review
+    returns, the teleoperator transcribes the ``STATUS:`` line from the
+    ``---REVIEW RESULT---`` block to this command. A REAL review
+    (APPROVE / APPROVE_WITH_COMMENTS / CHANGES_REQUESTED — the review ran,
+    regardless of verdict) MERGE-stamps ``reviewed_range`` = the current SHA
+    range (re-derived from state, identical to the spine's gate) and commits, so
+    the next ``post-loop-step`` advances past §7.0. A FAILURE does NOT stamp →
+    the next call re-emits the review (a crashed review is never silently treated
+    as done — the silent-correctness bug this replaces). Re-deriving the range in
+    code (not from a teleoperator-passed value) keeps the stamp byte-identical to
+    the gate's equality check.
+    """
+    state, _fixes, verrors = ensure_healthy(track_dir)
+    if state is None:
+        out(dict(error="track state unhealthy", errors=verrors,
+                 track_dir=str(track_dir)))
+        return
+    td = str(track_dir)
+    shas = _get_all_shas(state)
+    if not shas:
+        out(dict(error="no implementation SHAs — nothing to review", track_dir=td))
+        return
+    range_str = f"{shas[0]}~1..{shas[-1]}"
+    verdict = (status or "").strip().upper()
+    if verdict == "FAILURE":
+        out(dict(ok=True, stamped=False, reason="review_failure", track_dir=td,
+                 hint="review did not complete — re-run post-loop-step to re-review"))
+        return
+    if verdict not in ("APPROVE", "APPROVE_WITH_COMMENTS", "CHANGES_REQUESTED"):
+        out(dict(error=f"unrecognized review STATUS: {verdict!r}", track_dir=td,
+                 hint="APPROVE | APPROVE_WITH_COMMENTS | CHANGES_REQUESTED | FAILURE "
+                      "(from the ---REVIEW RESULT--- block)"))
+        return
+    _post_loop_merge_sidecar(td, {"schema": 2, "reviewed_range": range_str})
+    _git_commit(td, f"chore(conductor): Stamp post-loop reviewed range [{range_str}]")
+    out(dict(ok=True, stamped=True, reviewed_range=range_str,
+             status=verdict, track_dir=td))
 

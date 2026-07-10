@@ -24,7 +24,8 @@ from unittest import TestCase, main
 
 from scripts.track_state.core import save, load
 from scripts.track_state.dispatch import (
-    cmd_post_loop_step, _post_loop_stamp_line, _post_loop_advisory_post,
+    cmd_post_loop_step, cmd_post_loop_review,
+    _post_loop_stamp_line, _post_loop_advisory_post,
     _post_loop_fix_sentinel,
 )
 
@@ -78,6 +79,17 @@ def _pls(track_dir):
     sys.stdout, sys.stderr = io.StringIO(), io.StringIO()
     try:
         cmd_post_loop_step(track_dir)
+        return json.loads(sys.stdout.getvalue())
+    finally:
+        sys.stdout, sys.stderr = old_out, old_err
+
+
+def _review(track_dir, status):
+    """Capture cmd_post_loop_review stdout as a dict."""
+    old_out, old_err = sys.stdout, sys.stderr
+    sys.stdout, sys.stderr = io.StringIO(), io.StringIO()
+    try:
+        cmd_post_loop_review(track_dir, status)
         return json.loads(sys.stdout.getvalue())
     finally:
         sys.stdout, sys.stderr = old_out, old_err
@@ -210,7 +222,7 @@ class DocSyncGateTests(TestCase):
         _sidecar_post_sync(self.d)
         out = _pls(self.d)
         # Past doc-sync → advisory → lint → review gate (shas present, not reviewed).
-        self.assertEqual(out["action"], "dispatch")
+        self.assertEqual(out["action"], "dispatch_review")
         self.assertEqual(out["agent"], "code-reviewer")
 
 
@@ -224,17 +236,16 @@ class ReviewGateTests(TestCase):
         _sidecar_post_sync(self.d)
         self.addCleanup(shutil.rmtree, self.d, ignore_errors=True)
 
-    def test_shas_not_reviewed_dispatches_code_reviewer_with_post(self):
+    def test_shas_not_reviewed_emits_dispatch_review_no_post(self):
         out = _pls(self.d)
-        self.assertEqual(out["action"], "dispatch")
+        self.assertEqual(out["action"], "dispatch_review")
         self.assertEqual(out["agent"], "code-reviewer")
         self.assertEqual(out["range"], "aaa0001~1..aaa0002")
         self.assertEqual(out["shas_count"], 2)
         self.assertIn("REVISION_RANGE=aaa0001~1..aaa0002", out["prompt"])
-        # The stamp `post` MERGES the reviewed-range into the sidecar.
-        self.assertIn("post", out)
-        self.assertTrue(any("reviewed_range" in c for c in out["post"]))
-        # post_on defaults to non_failure (omitted) — a failed review must not stamp.
+        # No `post`: the §7.0 gate-stamp is owned by `post-loop-review --status`,
+        # not a teleoperator-judged post (the FAILURE→no-stamp call is in code).
+        self.assertNotIn("post", out)
         self.assertNotIn("post_on", out)
 
     def test_review_done_skips_to_archive(self):
@@ -246,7 +257,7 @@ class ReviewGateTests(TestCase):
         # A stale reviewed_range (range shifted) → re-review, not skip.
         _sidecar_post_sync(self.d, reviewed_range="aaa0001~1..aaa0000")
         out = _pls(self.d)
-        self.assertEqual(out["action"], "dispatch")
+        self.assertEqual(out["action"], "dispatch_review")
         self.assertEqual(out["agent"], "code-reviewer")
 
 
@@ -376,7 +387,7 @@ class LintGateTests(TestCase):
         # Stamp lint_done too → spine reaches §7.0 review (shas present, unsynced).
         _sidecar_post_sync(self.d, digest_shown=True)
         out = _pls(self.d)
-        self.assertEqual(out["action"], "dispatch")
+        self.assertEqual(out["action"], "dispatch_review")
         self.assertEqual(out["agent"], "code-reviewer")
 
 
@@ -442,7 +453,7 @@ class GateOrderingTests(TestCase):
         # Lint stamped → review (shas present).
         _sidecar_post_sync(d, digest_shown=True)
         out = _pls(d)
-        self.assertEqual(out["action"], "dispatch")
+        self.assertEqual(out["action"], "dispatch_review")
         self.assertEqual(out["agent"], "code-reviewer")
 
 
@@ -552,6 +563,72 @@ class SidecarMergeTests(TestCase):
         merged = json.loads(sidecar.read_text())
         self.assertEqual(merged["reviewed_range"], "aaa0001~1..aaa0002")
         self.assertTrue(merged["advisory_diff_shown"])
+
+
+class PostLoopReviewCommandTests(TestCase):
+    """§7.0 gate-stamp moved into code (WM2 verdict-on-disk, step 1).
+
+    ``cmd_post_loop_review`` owns the FAILURE→no-stamp judgment the
+    teleoperator's prose ``post`` rule used to make: a real review
+    (APPROVE/APPROVE_WITH_COMMENTS/CHANGES_REQUESTED) MERGE-stamps
+    ``reviewed_range``; a FAILURE does not, so the spine re-reviews instead of
+    silently treating a crashed review as done.
+    """
+
+    def setUp(self):
+        self.d = _git_track_dir(_make_state())
+        _docs_commit(self.d)
+        _wiki_commit(self.d)
+        # Advisory + lint + digest stamped → the spine lands at §7.0 review.
+        _sidecar_post_sync(self.d)
+        self.addCleanup(shutil.rmtree, self.d, ignore_errors=True)
+
+    def _reviewed_range(self):
+        path = Path(self.d, ".conductor", "post-loop.json")
+        if not path.exists():
+            return None
+        try:
+            return json.loads(path.read_text()).get("reviewed_range")
+        except (ValueError, OSError):
+            return None
+
+    def test_failure_does_not_stamp_and_spine_re_reviews(self):
+        out = _review(self.d, "FAILURE")
+        self.assertTrue(out["ok"])
+        self.assertFalse(out["stamped"])
+        self.assertIsNone(self._reviewed_range())  # no stamp left behind
+        # The spine, still unreviewed, re-emits the review (not silently done).
+        self.assertEqual(_pls(self.d)["action"], "dispatch_review")
+
+    def test_approve_stamps_current_range(self):
+        out = _review(self.d, "APPROVE")
+        self.assertTrue(out["ok"])
+        self.assertTrue(out["stamped"])
+        self.assertEqual(out["reviewed_range"], "aaa0001~1..aaa0002")
+        self.assertEqual(self._reviewed_range(), "aaa0001~1..aaa0002")
+
+    def test_changes_requested_also_stamps(self):
+        # A review that requested changes still RAN → stamp (apply_fixes follows).
+        out = _review(self.d, "CHANGES_REQUESTED")
+        self.assertTrue(out["stamped"])
+        self.assertEqual(self._reviewed_range(), "aaa0001~1..aaa0002")
+
+    def test_approve_with_comments_stamps(self):
+        self.assertTrue(_review(self.d, "APPROVE_WITH_COMMENTS")["stamped"])
+
+    def test_lowercase_status_accepted(self):
+        # The command upper-cases — teleoperator transcription is forgiving.
+        self.assertTrue(_review(self.d, "approve")["stamped"])
+
+    def test_unknown_status_errors_without_stamp(self):
+        out = _review(self.d, "BOGUS")
+        self.assertIn("error", out)
+        self.assertIsNone(self._reviewed_range())
+
+    def test_after_stamp_spine_advances_past_review(self):
+        _review(self.d, "APPROVE")  # stamps reviewed_range
+        # Review done + advisory/lint/digest already stamped → reaches §8.0 archive.
+        self.assertEqual(_pls(self.d)["action"], "archive_ask")
 
 
 if __name__ == "__main__":

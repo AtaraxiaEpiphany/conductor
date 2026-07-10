@@ -136,14 +136,16 @@ Save state: `2.4_workflow`.
    cp "${CLAUDE_PLUGIN_ROOT}/templates/project-index.md" conductor/index.md
    ```
 
-3. **Tracks Registry:** create `conductor/tracks.md` if missing (header `# Tracks Registry`):
+3. **Wiki cold-start (brownfield only — optional, never blocks).** The scaffolded wiki (§2.4 step 6) is placeholder text until a track runs or sources are filed — which is why a fresh project's wiki reads as empty. If this is brownfield (analyzer ran / `conductor/.conductor/analysis.json` exists) AND the project has pre-existing docs worth filing, offer to populate the wiki from them now so it compounds from day one. Detect candidates with `Glob`: `README.md`, `docs/**/*.md`, and root `*.md` — excluding anything under `conductor/` (never re-ingest the wiki into itself). If candidates exist → `AskUserQuestion`: "Populate the wiki from your existing docs now via `/wiki build`?" → **Yes** → invoke `/conductor:wiki build <path>` (`docs/` if a docs tree exists, else the project root, else `README.md`). **No, or no candidates** → skip. `/wiki build` is idempotent, so a setup re-run that re-offers it is a safe no-op; the wiki can also be built any time later via `/conductor:wiki build`.
+
+4. **Tracks Registry:** create `conductor/tracks.md` if missing (header `# Tracks Registry`):
    ```bash
    [ -f conductor/tracks.md ] || printf '# Tracks Registry\n' > conductor/tracks.md
    ```
 
-4. Save state: `2.5_finalization`.
-5. Ask user: "Create an initial track now, or later?" If later → commit Phase 1 → HALT.
-6. Summarize Phase 1 actions.
+5. Save state: `2.5_finalization`.
+6. Ask user: "Create an initial track now, or later?" If later → commit Phase 1 → HALT.
+7. Summarize Phase 1 actions.
 
 ---
 

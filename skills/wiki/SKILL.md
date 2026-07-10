@@ -1,8 +1,8 @@
 ---
 name: wiki
-description: Queries the Conductor documentation wiki — status snapshots and topic search with citations
-when_to_use: User wants to check wiki health overview or search the wiki for a topic
-argument-hint: "<status|query> [args]"
+description: Reads and builds the Conductor documentation wiki — health/status, topic search with citations, directional intent, single-source ingest, and bulk organize-and-file (build)
+when_to_use: User wants to check wiki health, search the wiki, edit purpose.md, ingest one source, or build (organize and file) the wiki from a folder/file/URL
+argument-hint: "<status|purpose|query|ingest|build> [args]"
 allowed-tools: Bash, Read, Grep, Glob, Agent, AskUserQuestion, Write, Edit, WebFetch
 model: sonnet
 ---
@@ -17,7 +17,8 @@ You are a **Conductor Wiki Agent** — a specialized skill that reads and querie
 - `status` — Health snapshot of wiki infrastructure and coverage
 - `purpose` — Read / co-edit the project's directional intent (`purpose.md`)
 - `query <topic>` — Search wiki and synthesize an answer with citations
-- `ingest <source>` — Build the wiki from an arbitrary source (file path / URL / pasted block) — no track required
+- `ingest <source>` — Ingest a single source (file path / URL / pasted block) into the wiki — no track required
+- `build <source>` — Organize and file a **batch** of sources (dir / file / URL / pasted block) into the wiki in one plan-then-execute pass — no track required
 
 **For health audits and drift detection**, use `/conductor:wiki-doctor` instead.
 
@@ -51,6 +52,7 @@ Parse `$ARGUMENTS` and dispatch to the appropriate sub-command.
 | `purpose` | **Section 3.5** |
 | `query` | **Section 4.0** (requires `SUB_ARGS` as topic) |
 | `ingest` | **Section 6.0** (requires `SUB_ARGS` as source) |
+| `build` | **Section 7.0** (requires `SUB_ARGS` as source — dir/file/URL/block) |
 | empty / unrecognized | **Usage help** (below) → HALT |
 
 ### 2.3 Usage Help
@@ -66,7 +68,8 @@ Sub-commands:
   status           Health snapshot of wiki infrastructure and coverage
   purpose          Read / co-edit the project's directional intent (purpose.md)
   query <topic>    Search wiki and synthesize an answer with [[wikilink]] citations
-  ingest <source>  Build the wiki from an arbitrary source (no track needed)
+  ingest <source>  Ingest a single source (file path / URL / pasted block) into the wiki
+  build <source>   Organize and file a batch of sources (dir/file/URL/block) into the wiki
 
 Health diagnostics:
   /conductor:wiki-doctor lint     Full wiki health audit (see doc-linter §4)
@@ -266,13 +269,13 @@ On user confirmation, persist the answer presented in §4.3 using the merged `SO
 
 ## 5.0 ERROR HANDLING
 
-Fetch and execute `conductor/design/agent-error-handling.md`. Substitute the relevant agent + result-block delimiter for the current path: query (§4) → `conductor:wiki-researcher` / `---WIKI RESEARCH RESULT---`; ingest (§6) → `conductor:corpus-writer` then `conductor:wiki-synthesizer` (then advisory `conductor:wiki-differ` plus advisory `conductor:doc-linter`) / `---DOC SYNC RESULT---` (plus the `---DOC LINT RESULT---` block). (The `wiki` skill dispatches `doc-linter` only as the §6.2 post-ingest advisory lint; the full loop-until-dry plus refute repair loop lives in `/conductor:wiki-doctor lint`.)
+Fetch and execute `${CLAUDE_PLUGIN_ROOT}/conductor/design/agent-error-handling.md`. Substitute the relevant agent + result-block delimiter for the current path: query (§4) → `conductor:wiki-researcher` / `---WIKI RESEARCH RESULT---`; ingest (§6) and build (§7) → `conductor:corpus-writer` then `conductor:wiki-synthesizer` (then advisory `conductor:wiki-differ` plus advisory `conductor:doc-linter`) / `---DOC SYNC RESULT---` (plus the `---DOC LINT RESULT---` block). (The `wiki` skill dispatches `doc-linter` only as the §6.2/§7.3 post-ingest advisory lint; the full loop-until-dry plus refute repair loop lives in `/conductor:wiki-doctor lint`.)
 
 ---
 
 ## 6.0 INGEST
 
-**Build the wiki from an arbitrary source — uncoupled from the track lifecycle.** This is the missing "drop a source → build the wiki" path: it routes the source through the *same* canonical doc-sync pipeline (corpus-writer + wiki-synthesizer) that post-track ingest uses, preserving the merge-not-append / idempotent / drift-gated discipline. The wiki skill stays a thin router; corpus-writer remains the single corpus writer, wiki-synthesizer the single wiki synthesizer.
+**Ingest a single source into the wiki — uncoupled from the track lifecycle.** This is the "drop one source → file it" path: it routes the source through the *same* canonical doc-sync pipeline (corpus-writer + wiki-synthesizer) that post-track ingest uses, preserving the merge-not-append / idempotent / drift-gated discipline. For a **batch** of sources (a folder, many files, a URL list), use `build` (§7.0) instead — it loops this same pipeline over the batch with one plan and per-chunk confirmation. The wiki skill stays a thin router; corpus-writer remains the single corpus writer, wiki-synthesizer the single wiki synthesizer.
 
 ### 6.1 Resolve & Normalize the Source
 
@@ -329,3 +332,78 @@ Parse `---DOC LINT RESULT---`; `STATUS: WARN`/`FAIL` → surface the counts and 
 ### 6.4 No-Op Path
 
 If corpus-writer reports `STATUS: SKIPPED` (the source added nothing the corpus didn't already contain — idempotent ingest), Phase 2 (wiki-synthesizer) still runs — it regenerates overview from the current corpus (a no-op if nothing changed) and reports its own status. Announce "Source `<slug>` already reflected in the wiki; no changes." if both phases report no work. Clean up `$SRC`. This is correct behavior, not an error.
+
+---
+
+## 7.0 BUILD
+
+**Organize and file a batch of sources into the wiki — uncoupled from the track lifecycle.** `ingest` (§6.0) files *one* source; `build` files a *pile* — a directory (walked recursively), a single file, a URL, or a pasted block — in one plan-then-execute pass. This is the "point me at a folder of docs and file them properly" operation. It reuses the *same* canonical doc-sync pipeline (corpus-writer Phase 1 + wiki-synthesizer Phase 2 + advisory wiki-differ/doc-linter) as ingest and post-track sync: sources are batched into chunks and corpus-writer is dispatched once per chunk, so there is still exactly **one** ingestion engine (no parallel path to drift). The wiki skill stays a thin router.
+
+### 7.1 Resolve & Enumerate the Target
+
+`SUB_ARGS` is the target. Determine its kind and enumerate sources:
+
+| Target form | How to enumerate |
+|---|---|
+| Directory | `find <dir> -type f` filtered to text docs (`.md`, `.txt`, `.markdown`, `.org`, `.rst`); skip binaries; skip any `conductor/` nested inside it (never re-ingest the wiki into itself). |
+| Existing file | One source (the file). |
+| URL (`http://`/`https://`) | One source; `WebFetch` it as markdown. |
+| Pasted block / bare text | One source; verbatim. |
+
+For each source, derive a **slug** (lowercase, hyphenate, strip specials, from heading / filename / URL-path) and **normalize to markdown** into a transient file. Accumulate `(slug, source_kind, origin, normalized_temp_path, first_heading)`. If enumeration yields zero sources → HALT: "No sources found at `<target>`."
+
+> **Raw sources are working memory, never tracked corpus files** (the 3-channel model): normalize to `/tmp`, not under `conductor/`. Validate every tool call; halt on failure.
+
+### 7.2 Plan (Phase A — classify + preview + confirm)
+
+A preview the human approves **once**, before any merge. Classification is **advisory** — corpus-writer's own merge judgment is authoritative at execution (§7.3); this plan orients the human and bounds the batch.
+
+1. **Classify each source** against `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/doc-routing.md` signal table — propose a target home:
+   - endpoint / API signal → `conductor/design/api-specs/`
+   - table / migration / entity → `conductor/design/database/`
+   - component / service / flow → `conductor/design/architecture/`
+   - screen / UX / view → `conductor/requirement/ux-ui/`
+   - domain term / acronym → `conductor/resource/glossary.md`
+   - tech / framework / version → `conductor/design/tech-stack.md`
+   - **no signal (external reference, background reading)** → `conductor/resource/` as `type: resource` (query-only; deliberately not routed into task-executor context).
+2. **Write the plan** to a transient file (mktemp), one row per source: `slug | origin | proposed home | action {merge|seed} | one-line rationale`.
+3. **Cap (no silent caps).** If enumeration yields more than **40** sources, keep the 40 highest-signal (named-doc signal match beats keyword density) and announce "Found <N> sources; building the top 40 (`<slugs>`). Re-run on a narrower target for the rest." The truncation is surfaced, not silent.
+4. **Present + confirm once.** Show a plan summary (counts per target home + a few example rows; full detail at the plan-file path). `AskUserQuestion`: "File `<N>` sources per this plan?" → **Yes** → §7.3. **Edit** → accept edits (drop sources, retarget) → proceed. **Cancel** → clean up temp files → HALT.
+
+### 7.3 Execute (Phase B — batched corpus-writer → one synthesizer → advisory)
+
+Apply the approved plan. Sources are **batched into chunks** so corpus-writer confirms once per chunk (not once per source), keeping the batch tractable.
+
+1. **Chunk** the approved sources into groups of **≤ 8** (announce "Filing `<N>` sources in `<C>` chunks."). Concatenate each chunk's normalized sources into one chunk file with `<!-- source: <slug> (<origin>) -->` separators (preserves per-source identity for provenance).
+2. **Per chunk — dispatch `conductor:corpus-writer` Phase 1** (ad-hoc mode; the same §6.2 Phase 1 prompt), prompt:
+   ```
+   SOURCE_TYPE=ad-hoc
+   SOURCE_PATH={absolute path to the chunk file}
+   SOURCE_NAME=wiki-build
+   ```
+   corpus-writer analyzes the chunk against the corpus, proposes + applies user-confirmed edits (its normal per-chunk confirmation), graduates durable findings, and commits (`[wiki-ingest]`). Parse `---DOC SYNC RESULT---` (`PHASE: 1`); `STATUS: FAILURE` → announce reason, continue to the next chunk (non-blocking; prior chunk commits stand). Collect each chunk's `UPDATED_FILES` / `GRADUATED_FINDINGS`.
+3. **Once after all chunks — dispatch `conductor:wiki-synthesizer` Phase 2** (ad-hoc mode), prompt:
+   ```
+   SOURCE_TYPE=ad-hoc
+   SOURCE_PATH={absolute path to the plan file}
+   SOURCE_NAME=wiki-build
+   ```
+   It re-reads the plan for direction, regenerates `overview.md` from the now-updated full corpus, co-edits `purpose.md`, appends the log (one `INGEST` row for the batch + `WIKI_REGEN` / `PURPOSE_UPDATE`), and commits (`[wiki-ingest]`). Parse `---DOC SYNC RESULT---` (`PHASE: 2`); `STATUS: FAILURE` → announce, continue (non-blocking; Phase 1 commits already landed).
+4. **Advisory verify — `conductor:wiki-differ`** scoped to the regenerated overview (`PROJECT_DIR={project root}`, target `conductor/overview.md`). Parse `---WIKI DIFF RESULT---`; non-zero STALE/MOVED/UNCOVERED → surface counts, recommend `/conductor:wiki-doctor diff` for the repair loop. Advisory, non-blocking.
+5. **Advisory lint — `conductor:doc-linter`** on the merged corpus (default `MODE=full`), prompt:
+   ```
+   PROJECT_DIR={project root}
+   ```
+   Parse `---DOC LINT RESULT---`; `STATUS: WARN`/`FAIL` → surface counts, recommend `/conductor:wiki-doctor lint` for the repair loop. Advisory, non-blocking — this is the one-shot advisory, not the loop-until-dry repair loop (that lives in `/conductor:wiki-doctor lint`).
+
+### 7.4 Parse Results & Clean Up
+
+1. Clean up all transient files:
+   ```bash
+   rm -f /tmp/wiki-build-*   # chunk files + plan file
+   ```
+2. **Summarize:** sources filed (union of chunks' `UPDATED_FILES` / `GRADUATED_FINDINGS`, grouped by target home), whether overview/purpose were regenerated (Phase 2 `OVERVIEW_REGENERATED` / `PURPOSE_UPDATED` / `LOG_ENTRIES_ADDED`), any advisory drift (the `---WIKI DIFF RESULT---` STALE/MOVED/UNCOVERED counts), and any advisory lint counts. The tracked artifacts are the corpus + wiki pages the agents committed — the raw sources and the plan are gone by design.
+
+### 7.5 No-Op / Partial Path
+
+If every chunk's corpus-writer reports `STATUS: SKIPPED` (the batch added nothing the corpus didn't already contain — idempotent), Phase 2 still runs (regenerates overview from the current corpus; a no-op if nothing changed). Announce "Batch already reflected in the wiki; no changes." if both phases report no work. Clean up temp files. Correct behavior, not an error. A chunk that `FAILURE`s while others succeed is a *partial* build — announce which chunks filed and which failed; the failed chunks' sources remain available at their origin for a re-run.

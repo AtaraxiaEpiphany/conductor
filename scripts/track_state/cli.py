@@ -10,7 +10,9 @@ from .mutations import cmd_lock, cmd_fail, cmd_skip, cmd_block, cmd_defer
 from .cmd_complete import cmd_complete
 from .dispatch import (
     cmd_next, cmd_dispatch_next, cmd_dispatch_prepare, cmd_dispatch_finalize,
-    cmd_recover, cmd_step, cmd_post_loop_step,
+    cmd_recover, cmd_step, cmd_post_loop_step, cmd_post_loop_review,
+    cmd_phase_verdict, cmd_phase_checkpoint_review,
+    cmd_skip_analyst_verdict, cmd_skip_refute_review,
 )
 from .result import cmd_process_result, cmd_write_result
 from .validate import cmd_validate
@@ -28,6 +30,10 @@ from .wave import (
     cmd_dispatch_wave, cmd_wave_status, cmd_wave_finalize, cmd_wave_abort,
     cmd_wave_step,
 )
+from .new_track import (
+    cmd_new_track_init, cmd_new_track_step, cmd_new_track_set_mode,
+    cmd_new_track_resume, cmd_new_track_finalize,
+)
 
 
 _BOOL_FLAGS = {"--full", "--fix", "--check", "--force"}
@@ -40,8 +46,10 @@ _BOOL_FLAGS = {"--full", "--fix", "--check", "--force"}
 # through the registry first (existing-path fast path skips resolution), so
 # either argument form works. See ``_resolve_track_dir_or_halt``.
 _TD_RESOLVING_COMMANDS = {
-    "step", "wave-step", "post-loop-step", "recover", "start", "wave-finalize",
-    "finalize", "archive",
+    "step", "wave-step", "post-loop-step", "post-loop-review", "recover",
+    "start", "wave-finalize", "finalize", "archive",
+    "phase-verdict", "phase-checkpoint-review",
+    "skip-analyst-verdict", "skip-refute-review",
 }
 
 
@@ -223,8 +231,26 @@ COMMAND_HELP = {
              "Driven by skills/implement-step/SKILL.md; see conductor/design/rail-b-step.md."),
     "post-loop-step": ("post-loop-step <track-dir> [--full]",
                        "Rail B-min post-loop spine: collapses the prose post-loop (§5.0–§8.0) into ONE leaf "
-                       "action (deferred_ask / finalize / dispatch / dispatch_advisory / digest / archive_ask / "
-                       "done / halt / error). Driven by skills/post-loop-step/SKILL.md."),
+                       "action (deferred_ask / finalize / dispatch / dispatch_advisory / dispatch_review / digest / "
+                       "archive_ask / done / halt / error). Driven by skills/post-loop-step/SKILL.md."),
+    "post-loop-review": ("post-loop-review <track-dir> --status <APPROVE|APPROVE_WITH_COMMENTS|CHANGES_REQUESTED|FAILURE>",
+                         "Stamp the reviewed-range sidecar from the code-reviewer STATUS (a real review stamps; "
+                         "FAILURE does not → re-review). Owns the §7.0 gate-advance in code, not teleoperator prose."),
+    "phase-verdict": ("phase-verdict <track-dir> --ac-verdict <passed|warn|skipped|FAILED|ERROR> "
+                      "[--ac-gate <gate>] [--ac-n-ungrounded <N>] --l1-status <passed|failed|error> --l1-command <cmd>",
+                      "Transcribe the fanned ac-tracer + test-runner verdicts to the checkpoint marker "
+                      "(stage=synth_pending); the next `step` emits the phase-checker synth dispatch. "
+                      "Owns the §3.2 parse→assemble step in code, not teleoperator prose."),
+    "phase-checkpoint-review": ("phase-checkpoint-review <track-dir> --status <PASSED|FAILED> [--sha <7-hex>] [--reason <text>]",
+                                "Stamp the phase checkpoint from phase-checker's STATUS (PASSED stamps + clears; "
+                                "FAILED clears → halt). Owns the §3.7 stamp/halt step in code, not teleoperator prose."),
+    "skip-analyst-verdict": ("skip-analyst-verdict <track-dir> --recommendation <skip|pause_and_escalate|retry_with_modification> "
+                             "[--reasoning <text>] [--impact <text>] [--can-skip <bool>]",
+                             "Transcribe skip-analyst's recommendation to the skip-analysis marker (stage=analyzed); "
+                             "the next `step` routes (skip→dispatch_refuter; pause/retry→halt). Owns the §3.6 route in code."),
+    "skip-refute-review": ("skip-refute-review <track-dir> --status <SUSTAINED|REFUTED|FAILURE> [--reasoning <text>]",
+                           "Transcribe the refuter's STATUS onto the skip-analysis marker (stage=refuted); the next `step` "
+                           "routes (REFUTED/FAILURE→skip+advance; SUSTAINED→halt). Owns the §3.6 skip-refute in code."),
     "record-summary": ("record-summary <track-dir>",
                        "Record compact task summary (stdin JSON) for post-compaction recovery"),
     "dispatch-wave": ("dispatch-wave <track-dir> [--full]",
@@ -281,6 +307,17 @@ COMMAND_HELP = {
               "(track_not_initialized/track_dir_missing/preflight/ambiguous/no_match/"
               "no_non_terminal/no_registry). ALWAYS exits 0 — the skill §1.0 single "
               "readiness step. ('setup' is kept as a hidden alias.)"),
+    "new-track-init": ("new-track-init <track-dir> --track-id <id> --description <text> --type <feature|bugfix|chore|docs>",
+                       "Write the new-track resume marker (idempotent — no-op if one exists)"),
+    "new-track-step": ("new-track-step <track-dir> <spec_planned|reviewed|state_created|registry_updated>",
+                       "Stamp a resume step done (idempotent, order-preserving)"),
+    "new-track-set-mode": (f"new-track-set-mode <track-dir> --mode <{_EXEC_MODE_CHOICES}>",
+                          "Write execution_mode into the new-track resume marker"),
+    "new-track-resume": ("new-track-resume",
+                         "Detect any interrupted new-track (committed:false marker) and emit its "
+                         "resume directive. ALWAYS exits 0 — action:none|resume"),
+    "new-track-finalize": ("new-track-finalize <track-dir>",
+                           "Delete the new-track resume marker (track is durable; idempotent)"),
 }
 
 _COMMAND_GROUPS = [
@@ -291,9 +328,13 @@ _COMMAND_GROUPS = [
     ("Handoff", ["get-handoff", "append-handoff", "harvest-candidates"]),
     ("Result Processing", ["write-result", "process-result"]),
     ("Dispatch Composites", ["dispatch-prepare", "dispatch-finalize", "record-summary"]),
-    ("Rail B-min Spines", ["step", "post-loop-step"]),
+    ("Rail B-min Spines", ["step", "post-loop-step", "post-loop-review",
+                           "phase-verdict", "phase-checkpoint-review",
+                           "skip-analyst-verdict", "skip-refute-review"]),
     ("Wave Parallelism", ["dispatch-wave", "wave-status", "wave-finalize", "wave-abort", "wave-step"]),
     ("Naming", ["derive-name", "resolve-track", "check"]),
+    ("New-Track Resume", ["new-track-resume", "new-track-init", "new-track-step",
+                          "new-track-set-mode", "new-track-finalize"]),
     ("Diagnostics", ["validate", "gc", "shas", "post-loop-status", "checklist-verify",
                      "deferred-report", "phase-done", "add-checkpoint", "preflight",
                      "quality-snapshot", "spec-integrity"]),
@@ -335,7 +376,7 @@ def main():
 
     # Commands that take no track-dir positional (their [optional] positional is
     # a query/shortname, not a path). They may legally run with len(argv) == 2.
-    _NO_TRACK_DIR_COMMANDS = {"resolve-track", "check", "setup"}
+    _NO_TRACK_DIR_COMMANDS = {"resolve-track", "check", "setup", "new-track-resume"}
 
     cmd = sys.argv[1]
     if len(sys.argv) < 3 and cmd not in _NO_TRACK_DIR_COMMANDS:
@@ -463,6 +504,28 @@ def main():
             cmd_step(track_dir, compact="--full" not in args)
         elif cmd == "post-loop-step":
             cmd_post_loop_step(track_dir, compact="--full" not in args)
+        elif cmd == "post-loop-review":
+            cmd_post_loop_review(track_dir, flag(args, "--status"))
+        elif cmd == "phase-verdict":
+            cmd_phase_verdict(
+                track_dir,
+                flag(args, "--ac-verdict"),
+                flag(args, "--ac-gate"),
+                flag(args, "--ac-n-ungrounded"),
+                flag(args, "--l1-status"),
+                flag(args, "--l1-command"))
+        elif cmd == "phase-checkpoint-review":
+            cmd_phase_checkpoint_review(
+                track_dir, flag(args, "--status"),
+                flag(args, "--sha"), flag(args, "--reason"))
+        elif cmd == "skip-analyst-verdict":
+            cmd_skip_analyst_verdict(
+                track_dir, flag(args, "--recommendation"),
+                flag(args, "--reasoning"), flag(args, "--impact"),
+                flag(args, "--can-skip"))
+        elif cmd == "skip-refute-review":
+            cmd_skip_refute_review(
+                track_dir, flag(args, "--status"), flag(args, "--reasoning"))
         elif cmd == "record-summary":
             cmd_record_summary(track_dir)
         elif cmd == "dispatch-wave":
@@ -513,6 +576,23 @@ def main():
             cmd_preflight(track_dir)
         elif cmd == "derive-name":
             cmd_derive_name(sys.argv[2])  # shortname — the one positional that isn't a track-dir
+        elif cmd == "new-track-init":
+            cmd_new_track_init(track_dir,
+                               flag(args, "--track-id") or "track",
+                               flag(args, "--description") or "",
+                               flag(args, "--type") or "feature")
+        elif cmd == "new-track-step":
+            if not pos:
+                out(dict(error="Missing resume step key",
+                         hint="one of: spec_planned|reviewed|state_created|registry_updated"))
+                sys.exit(1)
+            cmd_new_track_step(track_dir, pos[0])
+        elif cmd == "new-track-set-mode":
+            cmd_new_track_set_mode(track_dir, flag(args, "--mode"))
+        elif cmd == "new-track-resume":
+            cmd_new_track_resume()
+        elif cmd == "new-track-finalize":
+            cmd_new_track_finalize(track_dir)
         elif cmd in ("resolve-track", "check", "setup"):
             # Re-derive from argv[2:] (not the shared track_dir/args split):
             # `check --registry X` would otherwise eat the flag name into the
