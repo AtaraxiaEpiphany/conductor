@@ -100,11 +100,11 @@ Copy the workflow templates into `conductor/workflow/` with Bash (`cp`/`sed`) ra
    rm -f /tmp/.devcmds
    ```
 
-3. **Testing strategy:** copy, then substitute the detected test root for `{TEST_ROOT}` (scan for `tests/`, `__tests__/`, `test/`; default `tests`):
+3. **Testing strategy:** run the scaffold script — it resolves the test root (`conductor/.conductor/analysis.json` → `structure.test_dirs[0]`; greenfield → `tests`), writes `conductor/workflow/testing/strategy.md` byte-exact, and self-verifies (non-zero exit + remediation hint on any failure). Promoted to code so the `{TEST_ROOT}` substitution can't be skipped or drifted:
    ```bash
-   cp "${CLAUDE_PLUGIN_ROOT}/templates/testing/strategy.md" conductor/workflow/testing/strategy.md
-   sed -i "s/{TEST_ROOT}/<detected-test-root>/g" conductor/workflow/testing/strategy.md
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/scaffold-strategy.py"
    ```
+   Override the detected root with `--test-root <path>` if the scan missed it.
 
 4. **Workflow index:** generate `conductor/workflow/index.md` listing the created files (per-project content — not a template copy).
 
