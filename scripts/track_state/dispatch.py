@@ -12,7 +12,7 @@ from .helpers import (
     flag, _normalize_sha, target, _extract_tags_for_task, _resolve_conductor_root,
 )
 from .constants import AUTO_COMPLETE_OK, MAX_RETRIES
-from .mutations import _do_lock, _do_complete, _do_fail, _do_fail_parent, _do_defer
+from .mutations import _do_lock, _do_complete, _do_fail, _do_fail_parent, _do_defer, _do_skip
 from .result import _advisory_gates
 from .sync import _do_sync_plan
 from .git_ops import (
@@ -20,6 +20,7 @@ from .git_ops import (
     _has_sibling_sha, _update_task_sha, _recover_git_notes,
     _is_start_commit, _git_uncommitted_files, _finalize_parent,
     docs_synced_for_track, wiki_phase2_committed_for_track,
+    _git_rev_parse_toplevel,
 )
 from .handoff import (
     _append_execution_record, _append_deviation_legacy, _append_failure_legacy,
@@ -1059,6 +1060,87 @@ def _step_assemble_phase_checker_prompt(track_dir, state, phase, marker):
     return "\n".join(lines)
 
 
+# --------------------------------------------------------------------------- #
+# skip_analyze handshake (WM2 verdict-on-disk, step 3). Two agents — skip-analyst,
+# then conditionally refuter — same marker shape as the phase-checkpoint handshake
+# (the refuter prompt embeds skip-analyst's reasoning, so it can't be pre-assembled
+# before that verdict is on disk). The spine routes between the two agents and owns
+# the route judgment (skip / halt-for-human); the teleoperator only transcribes.
+# Fires only in continuous mode (interactive uses the `ask` failed-task blob).
+# --------------------------------------------------------------------------- #
+_SKIP_ANALYSIS_MARKER = "skip-analysis.json"
+
+
+def _skip_analysis_marker_path(track_dir):
+    """Pure path — deliberately no mkdir (mirrors ``_phase_cp_marker_path``)."""
+    return Path(track_dir) / ".conductor" / _SKIP_ANALYSIS_MARKER
+
+
+def _skip_analysis_read_marker(track_dir):
+    """Tolerant reader: ``None`` on missing/corrupt (mirrors ``_phase_cp_read_marker``)."""
+    path = _skip_analysis_marker_path(track_dir)
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text())
+        if isinstance(data, dict):
+            return data
+    except (ValueError, OSError):
+        pass
+    return None
+
+
+def _skip_analysis_write_marker(track_dir, data):
+    cdir = Path(track_dir) / ".conductor"
+    cdir.mkdir(parents=True, exist_ok=True)
+    _skip_analysis_marker_path(track_dir).write_text(json.dumps(data, ensure_ascii=False))
+
+
+def _skip_analysis_clear_marker(track_dir):
+    path = _skip_analysis_marker_path(track_dir)
+    if path.exists():
+        path.unlink()
+
+
+def _step_assemble_skip_analyst_prompt(track_dir, state, pi, ti, si, name):
+    """Pre-assemble the ``conductor:skip-analyst`` prompt (skills/implement §3.6).
+    Parent-scoped (no subtask line), mirroring the prose."""
+    td = str(track_dir)
+    return "\n".join([
+        f"TRACK_DIR={td}",
+        f"TRACK_ID={state.get('track_id', '')}",
+        f"PHASE_INDEX={pi}",
+        f"TASK_INDEX={ti}",
+        f"TASK_NAME={name}",
+    ])
+
+
+def _step_assemble_refuter_prompt(track_dir, marker):
+    """Pre-assemble the ``conductor:refuter`` skip-refute prompt from the marker
+    (skills/implement §3.6). The CLAIM embeds skip-analyst's reasoning verbatim —
+    assembled in code (not by the model) so a weak orchestrator can't fumble it.
+    ``PROJECT_DIR`` is the repo root (``_git_rev_parse_toplevel``); the
+    SUSTAINED-when-uncertain default makes this refute block-when-uncertain (the
+    conservative direction for a skip, since skipping is the riskier action)."""
+    td = str(track_dir)
+    pi, ti = marker.get("phase"), marker.get("task")
+    name = marker.get("name", "?")
+    reasoning = marker.get("reasoning") or "(none given)"
+    project_dir = _git_rev_parse_toplevel(track_dir) or td
+    claim = (f'Skip-analyst recommended skipping task P{pi}T{ti} ("{name}"), '
+             f'reasoning: "{reasoning}". Challenge framing: this skip is UNSAFE '
+             f"— a dependency marked completed is only superficially done (its own "
+             f"ACs not actually met), or the failure handoff describes a fix cheap "
+             f"relative to the cost of skipping.")
+    return "\n".join([
+        f"PROJECT_DIR={project_dir}",
+        "DOMAIN=skip",
+        f"CLAIM={claim}",
+        f"CONTEXT_PATHS={td}/plan.md {td}/track-state.json "
+        f"{td}/.conductor/handoff/P{pi}T{ti}.md",
+    ])
+
+
 def _step_emit_dispatch_batch(track_dir, state, phase, execution_mode, compact):
     """Emit ``dispatch_batch`` — the pre-assembled ac-tracer + test-runner
     fan-out that retires the serial spine's ``phase_checkpoint`` non-spine
@@ -1133,10 +1215,88 @@ def _step_emit_dispatch(track_dir, compact):
          "step", compact)
 
 
+def _step_route_skip_analysis(track_dir, marker, compact):
+    """Route the skip_analyze handshake from the on-disk marker (WM2-3). The
+    teleoperator transcribed a verdict (``skip-analyst-verdict`` → stage=analyzed,
+    or ``skip-refute-review`` → stage=refuted); this decides + executes the next
+    leaf, owning the §3.6 route judgment in code.
+
+    stage=analyzed:
+      skip → dispatch the refuter (prompt pre-assembled from skip-analyst's reasoning).
+      pause_and_escalate / retry_with_modification → clear + ``halt`` (surface reasoning).
+    stage=refuted:
+      REFUTED / FAILURE → execute the skip in-spine (``_do_skip`` + sync + commit) + advance.
+      SUSTAINED → clear + ``halt`` (override-to-block; surface refuter evidence).
+    Unknown stage/recommendation/refute-status are defensive re-dispatches (never loop).
+    """
+    td = str(track_dir)
+    stage = marker.get("stage")
+    pi, ti = marker.get("phase"), marker.get("task")
+    si = marker.get("subtask")
+    name = marker.get("name", "?")
+
+    def _redispatch_skip_analyst():
+        state = load(track_dir)
+        emit(dict(action="dispatch_skip_analyst", agent="skip-analyst",
+                  phase=pi, task=ti, subtask=si, name=name,
+                  execution_mode=state.get("execution_mode", "continuous"),
+                  prompt=_step_assemble_skip_analyst_prompt(
+                      track_dir, state, pi, ti, si, name)),
+             "step", compact)
+
+    def _redispatch_refuter():
+        emit(dict(action="dispatch_refuter", agent="refuter",
+                  phase=pi, task=ti, subtask=si, name=name,
+                  prompt=_step_assemble_refuter_prompt(track_dir, marker)),
+             "step", compact)
+
+    if stage == "analyzed":
+        rec = marker.get("recommendation")
+        if rec == "skip":
+            _redispatch_refuter()
+            return
+        if rec in ("pause_and_escalate", "retry_with_modification"):
+            _skip_analysis_clear_marker(track_dir)
+            emit(dict(action="halt", reason=rec, recommendation=rec,
+                      reasoning=marker.get("reasoning"), impact=marker.get("impact"),
+                      phase=pi, task=ti, subtask=si, name=name), "step", compact)
+            return
+        _skip_analysis_clear_marker(track_dir)  # unknown recommendation → re-analyze
+        _redispatch_skip_analyst()
+        return
+
+    if stage == "refuted":
+        rstatus = marker.get("refute_status")
+        if rstatus in ("REFUTED", "FAILURE"):
+            # Skip stands → execute in-spine (mirrors _do_complete in
+            # _step_emit_next_leaf), then advance to the next leaf.
+            _do_skip(track_dir, pi, ti, si,
+                     reason=f"skip-analyst: skip; refute {rstatus}")
+            _do_sync_plan(track_dir, load(track_dir))
+            _git_commit_ensured(
+                track_dir, f"chore(conductor): Skip '{name}' [P{pi}T{ti}] (skip-analyze)")
+            _skip_analysis_clear_marker(track_dir)
+            return _step_emit_next_leaf(track_dir, load(track_dir), compact)
+        if rstatus == "SUSTAINED":
+            _skip_analysis_clear_marker(track_dir)
+            emit(dict(action="halt", reason="pause_and_escalate",
+                      recommendation="pause_and_escalate",
+                      reasoning=marker.get("reasoning"),
+                      evidence=marker.get("refute_reasoning"),
+                      phase=pi, task=ti, subtask=si, name=name), "step", compact)
+            return
+        _redispatch_refuter()  # unknown refute status → re-refute
+        return
+
+    _skip_analysis_clear_marker(track_dir)  # unknown stage → re-analyze
+    _redispatch_skip_analyst()
+
+
 def _step_emit_exhausted(track_dir, outcome, execution_mode, retry_count, compact):
     """Surface a retries-exhausted failure: interactive → ``ask`` (Retry/Skip/Block
-    via the shared failed-task decision blob), continuous → ``skip_analyze``
-    (skill §3.6 owns skip-analyst→refute→route)."""
+    via the shared failed-task decision blob), continuous → ``dispatch_skip_analyst``
+    (the spine owns the §3.6 skip-analyst→refute→route handshake via the
+    skip-analysis marker, WM2-3)."""
     state = load(track_dir)
     pi, ti, si = outcome.get("phase"), outcome.get("task"), outcome.get("subtask")
     name, rc = "?", retry_count
@@ -1152,8 +1312,11 @@ def _step_emit_exhausted(track_dir, outcome, execution_mode, retry_count, compac
         emit(dict(action="ask", phase=pi, task=ti, subtask=si, name=name,
                   decision=decision, execution_mode=execution_mode), "step", compact)
     else:
-        emit(dict(action="skip_analyze", phase=pi, task=ti, subtask=si,
-                  name=name, execution_mode=execution_mode), "step", compact)
+        emit(dict(action="dispatch_skip_analyst", agent="skip-analyst",
+                  phase=pi, task=ti, subtask=si, name=name,
+                  execution_mode=execution_mode,
+                  prompt=_step_assemble_skip_analyst_prompt(
+                      track_dir, state, pi, ti, si, name)), "step", compact)
 
 
 def _step_route_after_finalize(track_dir, outcome, compact):
@@ -1205,9 +1368,19 @@ def _emit_quiescent_leaf(track_dir, state, compact, command):
                           decision=decision, execution_mode=execution_mode),
                      command, compact)
             else:
-                emit(dict(action="skip_analyze", phase=fpi, task=fti, subtask=fsi,
-                          name=fname, execution_mode=execution_mode),
-                     command, compact)
+                if command == "step":
+                    # Step spine owns the §3.6 handshake (WM2-3); wave-step keeps
+                    # the non-spine skip_analyze leaf (parallel-step's contract).
+                    emit(dict(action="dispatch_skip_analyst", agent="skip-analyst",
+                              phase=fpi, task=fti, subtask=fsi, name=fname,
+                              execution_mode=execution_mode,
+                              prompt=_step_assemble_skip_analyst_prompt(
+                                  track_dir, state, fpi, fti, fsi, fname)),
+                         "step", compact)
+                else:
+                    emit(dict(action="skip_analyze", phase=fpi, task=fti, subtask=fsi,
+                              name=fname, execution_mode=execution_mode),
+                         command, compact)
             return None
 
     cp = _any_phase_needs_checkpoint(track_dir, state)
@@ -1299,18 +1472,21 @@ def cmd_step(track_dir, compact=True):
     then returns. The orchestrator's entire job is to read ``action`` and do
     exactly that — dispatch the named agent with the pre-assembled ``prompt``,
     fan out a ``dispatch_batch`` of verifier prompts in one parallel message,
-    relay an ``ask`` blob, hand off to a named skill branch (``skip_analyze``
-    / ``wave_active``), ``halt`` on ``error``, or enter the post-loop on
-    ``done`` — then call ``step`` again.
+    relay an ``ask`` blob, hand off to the wave spine (``wave_active``),
+    ``halt`` for human judgment, or enter the post-loop on ``done`` — then call
+    ``step`` again.
 
     Action set:
-      - ``dispatch``         : run one subagent (explorer/task-executor) with ``prompt``. [spine]
-      - ``dispatch_batch``   : fan out the pre-assembled ac-tracer + test-runner verifier prompts in ONE parallel message; then prose §3.2 (skills/implement) collects verdicts + dispatches phase-checker. [spine]
-      - ``ask``              : AskUserQuestion(decision…) → run decision.commands[choice] → step. [spine]
-      - ``skip_analyze``     : hand to skill §3.6 (skip-analyst → refute → route). [non-spine]
-      - ``wave_active``      : hand to the wave spine. [non-spine]
-      - ``done``             : track finalized → enter post-loop (skill §4.0). [terminal]
-      - ``error``            : unrecoverable; HALT.
+      - ``dispatch``             : run one subagent (explorer/task-executor) with ``prompt``. [spine]
+      - ``dispatch_batch``       : fan out the ac-tracer + test-runner verifier prompts in ONE parallel message; then ``phase-verdict`` (WM2-2). [spine]
+      - ``dispatch_phase_checker``: dispatch the synthesizer; then ``phase-checkpoint-review`` (WM2-2). [spine]
+      - ``dispatch_skip_analyst``: dispatch skip-analyst; then ``skip-analyst-verdict`` (WM2-3). [spine]
+      - ``dispatch_refuter``     : dispatch the skip-refute; then ``skip-refute-review`` (WM2-3). [spine]
+      - ``ask``                  : AskUserQuestion(decision…) → run decision.commands[choice] → step. [spine]
+      - ``halt``                 : deliberate stop-for-human (skip-analyze pause/retry/refute-sustained); announce reasoning → STOP. [terminal]
+      - ``wave_active``          : hand to the wave spine. [non-spine]
+      - ``done``                 : track finalized → enter post-loop (skill §4.0). [terminal]
+      - ``error``                : unrecoverable; HALT.
 
     Internal-only transitions (parent-complete/stuck auto-resolution, continuous
     [Manual] auto-defer) are fully resolved before emitting, so the model never
@@ -1327,6 +1503,13 @@ def cmd_step(track_dir, compact=True):
     if state is None:
         emit(dict(action="error", errors=verrors), "step", compact)
         return
+
+    # skip_analyze handshake in progress? (WM2-3) A skip-analysis marker means the
+    # teleoperator transcribed a skip-analyst/refuter verdict since the last dispatch;
+    # route it before any other state-based logic (mirrors the checkpoint marker).
+    sa = _skip_analysis_read_marker(track_dir)
+    if sa is not None:
+        return _step_route_skip_analysis(track_dir, sa, compact)
 
     # If the current task is in_progress, the model just returned from a dispatch
     # (or was interrupted mid-dispatch). Decide finalize vs re-dispatch.
@@ -1462,6 +1645,84 @@ def cmd_phase_checkpoint_review(track_dir, status, sha, reason):
     else:
         out(dict(error=f"unrecognized status: {verdict!r}", track_dir=td,
                  hint="PASSED | FAILED (from ---CHECKPOINT RESULT--- STATUS)"))
+
+
+# skip_analyze handshake transcribe commands (WM2 verdict-on-disk, step 3).
+_SKIP_RECOMMENDATIONS = ("skip", "pause_and_escalate", "retry_with_modification")
+_REFUTE_STATUSES = ("SUSTAINED", "REFUTED", "FAILURE")
+
+
+def cmd_skip_analyst_verdict(track_dir, recommendation, reasoning, impact, can_skip):
+    """Transcribe skip-analyst's ``recommendation`` to the skip-analysis marker
+    (WM2-3). After ``dispatch_skip_analyst`` returns, the teleoperator parses the
+    ``---SKIP ANALYSIS---`` JSON and runs this. Writes ``stage=analyzed`` so the
+    next ``step`` routes: ``skip`` → ``dispatch_refuter``; ``pause_and_escalate``
+    / ``retry_with_modification`` → ``halt``.
+
+    The failed+exhausted task (phase/task/subtask/name) is re-derived from state
+    via ``_find_failed_exhausted`` — the spine owns the indices, so the
+    teleoperator transcribes only the verdict fields (no index fumble surface).
+    Validates the recommendation enum; idempotent overwrite on a re-analyze.
+    """
+    td = str(track_dir)
+    if recommendation not in _SKIP_RECOMMENDATIONS:
+        out(dict(error=f"unrecognized recommendation: {recommendation!r}", track_dir=td,
+                 hint=f"one of: {', '.join(_SKIP_RECOMMENDATIONS)} "
+                      "(from ---SKIP ANALYSIS--- recommendation)"))
+        return
+    state, _fixes, verrors = ensure_healthy(track_dir)
+    if state is None:
+        out(dict(error="track state unhealthy", errors=verrors, track_dir=td))
+        return
+    found = _find_failed_exhausted(state)
+    if found is None:
+        _skip_analysis_clear_marker(track_dir)
+        out(dict(error="no failed+exhausted task to skip-analyze", track_dir=td,
+                 hint="run `track-state step` to advance"))
+        return
+    fpi, fti, fsi, _ftgt, fname = found
+    marker = {
+        "phase": fpi, "task": fti, "subtask": fsi, "name": fname,
+        "stage": "analyzed", "recommendation": recommendation,
+        "reasoning": reasoning, "impact": impact,
+        "can_skip": _parse_bool(can_skip),
+        "refute_status": None, "refute_reasoning": None,
+    }
+    _skip_analysis_write_marker(track_dir, marker)
+    out(dict(ok=True, recommendation=recommendation, stage="analyzed",
+             phase=fpi, task=fti, track_dir=td))
+
+
+def cmd_skip_refute_review(track_dir, status, reasoning):
+    """Transcribe the refuter's ``STATUS`` onto the skip-analysis marker (WM2-3).
+    After ``dispatch_refuter`` returns, the teleoperator parses the
+    ``---REFUTATION RESULT---`` ``STATUS`` and runs this. Writes ``stage=refuted``
+    so the next ``step`` routes: ``REFUTED`` / ``FAILURE`` → execute the skip +
+    advance; ``SUSTAINED`` → ``halt`` (override-to-block). Validates the enum;
+    requires an ``analyzed`` marker (the refute only follows a skip recommendation).
+    """
+    td = str(track_dir)
+    verdict = (status or "").strip()
+    if verdict not in _REFUTE_STATUSES:
+        out(dict(error=f"unrecognized refute status: {verdict!r}", track_dir=td,
+                 hint=f"one of: {', '.join(_REFUTE_STATUSES)} "
+                      "(from ---REFUTATION RESULT--- STATUS)"))
+        return
+    marker = _skip_analysis_read_marker(track_dir)
+    if marker is None:
+        out(dict(error="no skip-analysis marker — run skip-analyst-verdict first",
+                 track_dir=td))
+        return
+    marker["stage"] = "refuted"
+    marker["refute_status"] = verdict
+    marker["refute_reasoning"] = reasoning
+    _skip_analysis_write_marker(track_dir, marker)
+    out(dict(ok=True, stage="refuted", refute_status=verdict, track_dir=td))
+
+
+def _parse_bool(val):
+    """Lenient bool parse for transcribed ``--can-skip`` (``true``/``false``/``1``/``0``)."""
+    return str(val).strip().lower() in ("true", "1", "yes", "y")
 
 
 # --------------------------------------------------------------------------- #

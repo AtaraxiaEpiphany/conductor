@@ -84,7 +84,8 @@ _SANCTIONED_TS_SUBCOMMANDS = {
     "post-loop-review", "post-loop-status",
     "post-loop-step", "preflight", "process-result", "quality-snapshot",
     "record-summary", "recover", "registry-add", "registry-update", "reset",
-    "resolve-track", "set-mode", "setup", "shas", "skip", "spec-integrity",
+    "resolve-track", "set-mode", "setup", "shas", "skip",
+    "skip-analyst-verdict", "skip-refute-review", "spec-integrity",
     "start", "step", "sync-handoff", "sync-plan", "validate", "wave-abort",
     "wave-finalize", "wave-status", "wave-step", "write-result",
 }

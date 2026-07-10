@@ -81,6 +81,10 @@ def _validate_plan_structure(plan):
 # cmd_phase_verdict/cmd_phase_checkpoint_review): carries the fanned verifier verdicts
 # between dispatch_batch and the phase-checker synth dispatch, then deleted on both
 # terminal outcomes (PASSED also stamps plan.md; FAILED re-fans on re-invoke). Transient.
+# skip-analysis.json is the step-spine skip_analyze handshake marker (dispatch.py
+# cmd_skip_analyst_verdict/cmd_skip_refute_review): carries skip-analyst's recommendation
+# (+reasoning) between dispatch_skip_analyst and the conditional refuter dispatch, then the
+# refute STATUS; deleted on both terminal outcomes (skip executes + advances; halt re-analyzes).
 # parallel.json + wave-agent.marker are the worktree-wave parallelism runtime
 # state (scripts/track_state/wave.py): the sidecar ledger tracks in-flight members
 # and the marker short-circuits the SubagentStop hook for wave agents. Both are
@@ -95,6 +99,7 @@ result.json
 .result.tmp.*
 new-track-progress.json
 phase-checkpoint.json
+skip-analysis.json
 parallel.json
 wave-agent.marker
 .wave-drain-processed

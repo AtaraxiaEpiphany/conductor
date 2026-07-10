@@ -12,6 +12,7 @@ from .dispatch import (
     cmd_next, cmd_dispatch_next, cmd_dispatch_prepare, cmd_dispatch_finalize,
     cmd_recover, cmd_step, cmd_post_loop_step, cmd_post_loop_review,
     cmd_phase_verdict, cmd_phase_checkpoint_review,
+    cmd_skip_analyst_verdict, cmd_skip_refute_review,
 )
 from .result import cmd_process_result, cmd_write_result
 from .validate import cmd_validate
@@ -48,6 +49,7 @@ _TD_RESOLVING_COMMANDS = {
     "step", "wave-step", "post-loop-step", "post-loop-review", "recover",
     "start", "wave-finalize", "finalize", "archive",
     "phase-verdict", "phase-checkpoint-review",
+    "skip-analyst-verdict", "skip-refute-review",
 }
 
 
@@ -242,6 +244,13 @@ COMMAND_HELP = {
     "phase-checkpoint-review": ("phase-checkpoint-review <track-dir> --status <PASSED|FAILED> [--sha <7-hex>] [--reason <text>]",
                                 "Stamp the phase checkpoint from phase-checker's STATUS (PASSED stamps + clears; "
                                 "FAILED clears → halt). Owns the §3.7 stamp/halt step in code, not teleoperator prose."),
+    "skip-analyst-verdict": ("skip-analyst-verdict <track-dir> --recommendation <skip|pause_and_escalate|retry_with_modification> "
+                             "[--reasoning <text>] [--impact <text>] [--can-skip <bool>]",
+                             "Transcribe skip-analyst's recommendation to the skip-analysis marker (stage=analyzed); "
+                             "the next `step` routes (skip→dispatch_refuter; pause/retry→halt). Owns the §3.6 route in code."),
+    "skip-refute-review": ("skip-refute-review <track-dir> --status <SUSTAINED|REFUTED|FAILURE> [--reasoning <text>]",
+                           "Transcribe the refuter's STATUS onto the skip-analysis marker (stage=refuted); the next `step` "
+                           "routes (REFUTED/FAILURE→skip+advance; SUSTAINED→halt). Owns the §3.6 skip-refute in code."),
     "record-summary": ("record-summary <track-dir>",
                        "Record compact task summary (stdin JSON) for post-compaction recovery"),
     "dispatch-wave": ("dispatch-wave <track-dir> [--full]",
@@ -320,7 +329,8 @@ _COMMAND_GROUPS = [
     ("Result Processing", ["write-result", "process-result"]),
     ("Dispatch Composites", ["dispatch-prepare", "dispatch-finalize", "record-summary"]),
     ("Rail B-min Spines", ["step", "post-loop-step", "post-loop-review",
-                           "phase-verdict", "phase-checkpoint-review"]),
+                           "phase-verdict", "phase-checkpoint-review",
+                           "skip-analyst-verdict", "skip-refute-review"]),
     ("Wave Parallelism", ["dispatch-wave", "wave-status", "wave-finalize", "wave-abort", "wave-step"]),
     ("Naming", ["derive-name", "resolve-track", "check"]),
     ("New-Track Resume", ["new-track-resume", "new-track-init", "new-track-step",
@@ -508,6 +518,14 @@ def main():
             cmd_phase_checkpoint_review(
                 track_dir, flag(args, "--status"),
                 flag(args, "--sha"), flag(args, "--reason"))
+        elif cmd == "skip-analyst-verdict":
+            cmd_skip_analyst_verdict(
+                track_dir, flag(args, "--recommendation"),
+                flag(args, "--reasoning"), flag(args, "--impact"),
+                flag(args, "--can-skip"))
+        elif cmd == "skip-refute-review":
+            cmd_skip_refute_review(
+                track_dir, flag(args, "--status"), flag(args, "--reasoning"))
         elif cmd == "record-summary":
             cmd_record_summary(track_dir)
         elif cmd == "dispatch-wave":
