@@ -28,6 +28,10 @@ from .wave import (
     cmd_dispatch_wave, cmd_wave_status, cmd_wave_finalize, cmd_wave_abort,
     cmd_wave_step,
 )
+from .new_track import (
+    cmd_new_track_init, cmd_new_track_step, cmd_new_track_set_mode,
+    cmd_new_track_resume, cmd_new_track_finalize,
+)
 
 
 _BOOL_FLAGS = {"--full", "--fix", "--check", "--force"}
@@ -281,6 +285,17 @@ COMMAND_HELP = {
               "(track_not_initialized/track_dir_missing/preflight/ambiguous/no_match/"
               "no_non_terminal/no_registry). ALWAYS exits 0 — the skill §1.0 single "
               "readiness step. ('setup' is kept as a hidden alias.)"),
+    "new-track-init": ("new-track-init <track-dir> --track-id <id> --description <text> --type <feature|bugfix|chore|docs>",
+                       "Write the new-track resume marker (idempotent — no-op if one exists)"),
+    "new-track-step": ("new-track-step <track-dir> <spec_planned|reviewed|state_created|registry_updated>",
+                       "Stamp a resume step done (idempotent, order-preserving)"),
+    "new-track-set-mode": (f"new-track-set-mode <track-dir> --mode <{_EXEC_MODE_CHOICES}>",
+                          "Write execution_mode into the new-track resume marker"),
+    "new-track-resume": ("new-track-resume",
+                         "Detect any interrupted new-track (committed:false marker) and emit its "
+                         "resume directive. ALWAYS exits 0 — action:none|resume"),
+    "new-track-finalize": ("new-track-finalize <track-dir>",
+                           "Delete the new-track resume marker (track is durable; idempotent)"),
 }
 
 _COMMAND_GROUPS = [
@@ -294,6 +309,8 @@ _COMMAND_GROUPS = [
     ("Rail B-min Spines", ["step", "post-loop-step"]),
     ("Wave Parallelism", ["dispatch-wave", "wave-status", "wave-finalize", "wave-abort", "wave-step"]),
     ("Naming", ["derive-name", "resolve-track", "check"]),
+    ("New-Track Resume", ["new-track-resume", "new-track-init", "new-track-step",
+                          "new-track-set-mode", "new-track-finalize"]),
     ("Diagnostics", ["validate", "gc", "shas", "post-loop-status", "checklist-verify",
                      "deferred-report", "phase-done", "add-checkpoint", "preflight",
                      "quality-snapshot", "spec-integrity"]),
@@ -335,7 +352,7 @@ def main():
 
     # Commands that take no track-dir positional (their [optional] positional is
     # a query/shortname, not a path). They may legally run with len(argv) == 2.
-    _NO_TRACK_DIR_COMMANDS = {"resolve-track", "check", "setup"}
+    _NO_TRACK_DIR_COMMANDS = {"resolve-track", "check", "setup", "new-track-resume"}
 
     cmd = sys.argv[1]
     if len(sys.argv) < 3 and cmd not in _NO_TRACK_DIR_COMMANDS:
@@ -513,6 +530,23 @@ def main():
             cmd_preflight(track_dir)
         elif cmd == "derive-name":
             cmd_derive_name(sys.argv[2])  # shortname — the one positional that isn't a track-dir
+        elif cmd == "new-track-init":
+            cmd_new_track_init(track_dir,
+                               flag(args, "--track-id") or "track",
+                               flag(args, "--description") or "",
+                               flag(args, "--type") or "feature")
+        elif cmd == "new-track-step":
+            if not pos:
+                out(dict(error="Missing resume step key",
+                         hint="one of: spec_planned|reviewed|state_created|registry_updated"))
+                sys.exit(1)
+            cmd_new_track_step(track_dir, pos[0])
+        elif cmd == "new-track-set-mode":
+            cmd_new_track_set_mode(track_dir, flag(args, "--mode"))
+        elif cmd == "new-track-resume":
+            cmd_new_track_resume()
+        elif cmd == "new-track-finalize":
+            cmd_new_track_finalize(track_dir)
         elif cmd in ("resolve-track", "check", "setup"):
             # Re-derive from argv[2:] (not the shared track_dir/args split):
             # `check --registry X` would otherwise eat the flag name into the

@@ -20,15 +20,22 @@ Key paths (resolve via `conductor/index.md` if non-default):
 ## 0.5 RESUME CHECK
 
 A new-track run can be interrupted before state artifacts exist (§2.6). A lightweight
-progress marker lets an interrupted run resume instead of starting over.
+progress marker — created, advanced, and deleted by the `track-state new-track-*`
+commands (the orchestrator **never** hand-edits the JSON) — lets an interrupted run
+resume instead of starting over.
 
-1. Glob `conductor/tracks/*/.conductor/new-track-progress.json` for any file with `"committed": false`.
-2. **Found** → `AskUserQuestion`: *"Found an incomplete track `<track_id>` ('<description>'), last reached `<last_step>`. Resume?"*
-   - **Yes (resume)** → read the JSON, re-derive `description`, `type`, `track_id`, `track_dir`, `execution_mode` from it, then **jump to the first section whose step key is NOT in `steps_done`** (keys, in order: `spec_planned` → §2.3, `reviewed` → §2.4, `state_created` → §2.6, `registry_updated` → §2.6). Skip sections already marked done.
-   - **No** → warn the user an orphaned partial track exists at that path, then proceed to a fresh track (§1.0).
-3. **Not found** → fresh track → proceed to §1.0.
+1. Detect any interrupted track:
+   ```bash
+   track-state new-track-resume
+   ```
+   Parse the JSON. Switch on `action`:
+   - `none` → fresh track → proceed to §1.0.
+   - `resume` → `candidates[]` is the partial track(s). For each candidate, `AskUserQuestion`:
+     *"Found an incomplete track `<track_id>` ('<description>'), last reached `<last_step>`. Resume?"*
+     - **Yes (resume)** → adopt the candidate's `track_id` / `track_dir` / `description` / `type` / `execution_mode` for everything below, then **jump to the candidate's `resume_target`** — the first section whose step key is NOT in `steps_done` (`spec_planned` → §2.3, `reviewed` → §2.4, `state_created` → §2.6, `registry_updated` → §2.6). Skip sections already marked done.
+     - **No** → warn the user an orphaned partial track exists at that `track_dir`, then proceed to a fresh track (§1.0).
 
-The progress file is written in §2.1 and deleted once the track is committed (end of §2.6).
+The marker is created in §2.1 (`new-track-init`) and deleted once the track is committed (`new-track-finalize`, end of §2.6).
 
 ## 1.0 SETUP CHECK
 
@@ -54,9 +61,9 @@ CRITICAL: Validate every tool call. On failure → halt → announce.
    track-state derive-name <slug>
    ```
    Parse the JSON. Use `track_id` and `track_dir` from the result for **everything** below (resume marker, spec-planner `TRACK_DIR`, §2.6 init `--track-id` and `<track_dir>`). Never hand-write the date — the command stamps it from the clock.
-4. **Initialize resume marker** (skip if resuming — the file already exists): create `<track_dir>/.conductor/` and write `new-track-progress.json`:
-   ```json
-   {"track_id":"<id>","track_dir":"<track_dir>","description":"<desc>","type":"<type>","execution_mode":null,"steps_done":[],"committed":false}
+4. **Initialize resume marker** (skip if resuming — `new-track-resume` already found it). Creates `<track_dir>/.conductor/` and the marker in one call (idempotent — a no-op if the marker already exists):
+   ```bash
+   track-state new-track-init "<track_dir>" --track-id <id> --description "<desc>" --type <type>
    ```
 
 ### 2.2 Context Discovery (Paths Only)
@@ -164,7 +171,10 @@ Parse the `---REFUTATION RESULT---` block:
 - **STATUS: REFUTED** (positive, grounded defect, with `file:line` citations in EVIDENCE) → re-dispatch `conductor:spec-planner` ONCE with the refuter's challenges appended to `PREVIOUS_ERRORS` (reuse the §2.3 regen envelope; `REGEN_FOCUS` = the refuter's EVIDENCE + REASONING). Re-run this refuter once on the regenerated plan. If still `REFUTED`, announce the sustained challenges and proceed to §2.4 **non-blocking** — the spec-reviewer and user assess them there. A semantic disagreement the deterministic pipeline cannot close is a human-judgment call, not a hard halt.
 - **STATUS: FAILURE** → treat as SUSTAINED (the refuter could not complete; the plan stands) and proceed to §2.4.
 
-> **Resume:** append `"spec_planned"` to `steps_done` in `<track_dir>/.conductor/new-track-progress.json` **only after BOTH the `--check` and `spec-integrity` checks pass AND the §2.3b refute completes** — a plan/spec that has not yet validated and been semantically vetted is not "planned".
+> **Resume:** stamp the step **only after BOTH the `--check` and `spec-integrity` checks pass AND the §2.3b refute completes** — a plan/spec that has not yet validated and been semantically vetted is not "planned":
+> ```bash
+> track-state new-track-step "<track_dir>" spec_planned
+> ```
 
 ### 2.4 Dispatch Spec-Reviewer
 
@@ -180,7 +190,7 @@ Parse `---REVIEW RESULT---` block. If `STATUS: CANCELLED` → halt. If `STRUCTUR
 
 > Full file review happens in the subagent. The orchestrator only sees the compact result.
 
-> **Resume:** append `"reviewed"` to `steps_done` in `<track_dir>/.conductor/new-track-progress.json`.
+> **Resume:** `track-state new-track-step "<track_dir>" reviewed`
 
 ### 2.5 Execution Mode Selection
 
@@ -196,7 +206,7 @@ Options:
 
 Store the user's choice as `$EXECUTION_MODE` for use in Section 2.6.
 
-> **Resume:** write `execution_mode` into `<track_dir>/.conductor/new-track-progress.json`.
+> **Resume:** `track-state new-track-set-mode "<track_dir>" --mode <interactive|continuous>`
 
 ### 2.6 Create State Artifacts
 
@@ -213,14 +223,14 @@ Store the user's choice as `$EXECUTION_MODE` for use in Section 2.6.
      --execution-mode <interactive|continuous>
    ```
    This validates `plan.md` syntax and creates `track-state.json` + `index.md` in one call, extracting every task and subtask deterministically. On `ok: false` (malformed `plan.md`) → halt → announce the reported `errors`.
-   > **Resume:** append `"state_created"` to `steps_done`.
+   > **Resume:** `track-state new-track-step "<track_dir>" state_created`
 4. **Update Tracks Registry:** `track-state registry-add "<track_dir>"` — appends the canonical entry (`- [<marker>] <description> (conductor/tracks/<track_id>/)`) from `track-state.json`; idempotent and auto-locates `conductor/tracks.md`. **Never hand-write the line** — a freeform entry (no `(link)`, plain bullet, bold id) is silently dropped by `setup`/`resolve-track`, which breaks auto-select AND explicit `setup <track>`.
-   > **Resume:** append `"registry_updated"` to `steps_done`.
+   > **Resume:** `track-state new-track-step "<track_dir>" registry_updated`
 5. **Commit:**
    ```bash
    git add -A && git commit -m "chore(conductor): Add track '<track_id>'"
    ```
-6. **Finalize resume marker:** set `"committed": true` in `new-track-progress.json`, then delete the file (track is durable now).
+6. **Finalize resume marker:** delete it (track is durable now) — `track-state new-track-finalize "<track_dir>"` (idempotent).
 7. Announce: `"New track '<track_id>' created at <track_dir> (mode: $EXECUTION_MODE)."`
 
 ### 2.7 Offer Auto-Start
