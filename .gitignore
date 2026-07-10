@@ -77,3 +77,8 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 references/
+# …but skill reference bodies ARE shipped with the plugin — `references/` is the
+# skills-standard subdirectory for on-demand-loaded bodies (claude-code-skills §2.1).
+# Un-ignore it under skills/ so the blanket rule above can't drop them on commit.
+!skills/**/references/
+!skills/**/references/**

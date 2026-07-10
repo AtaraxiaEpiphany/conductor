@@ -25,8 +25,24 @@ from pathlib import Path
 from unittest import TestCase, main
 
 ROOT = Path(__file__).resolve().parent.parent
-SKILL = (ROOT / "skills" / "wiki" / "SKILL.md").read_text(encoding="utf-8")
+_WIKI = ROOT / "skills" / "wiki"
+
+
+def _read(*parts: str) -> str:
+    return _WIKI.joinpath(*parts).read_text(encoding="utf-8")
+
+
+# The wiki skill is a thin router (SKILL.md) whose heavy sub-command bodies
+# (query/ingest/build) live in references/*.md (progressive disclosure). Wiring
+# may sit in either file after the split; assert against the UNION so a pinned
+# invariant is not silently moved off-page.
+SKILL = "\n\n".join([_read("SKILL.md"),
+                     _read("references", "query.md"),
+                     _read("references", "ingest.md"),
+                     _read("references", "build.md")])
 RESEARCHER = (ROOT / "agents" / "wiki-researcher.md").read_text(encoding="utf-8")
+_QUERY_REF = _read("references", "query.md")
+_INGEST_REF = _read("references", "ingest.md")
 
 
 def _frontmatter_value(agent_text: str, key: str) -> str:
@@ -51,9 +67,8 @@ def _section(text: str, start: str, end: str) -> str:
     return text[i : j if j >= 0 else len(text)]
 
 
-QUERY_SECTION = _section(SKILL, "### 4.2 Research", "### 4.3 Present Answer")
-INGEST_SECTION = _section(SKILL, "## 6.0 INGEST", "## 5.0 ERROR HANDLING") \
-    or _section(SKILL, "## 6.0 INGEST", "### 6.3")
+QUERY_SECTION = _section(_QUERY_REF, "### 4.2 Research", "### 4.3 Present Answer")
+INGEST_SECTION = _section(_INGEST_REF, "## 6.0 INGEST", "### 6.3")
 
 
 class QueryFanoutTopologyTests(TestCase):
