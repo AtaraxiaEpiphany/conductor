@@ -7,7 +7,7 @@ from pathlib import Path
 
 from .core import load
 from .helpers import (
-    emit, now_iso, extract_tags, _inherit_tags,
+    out, emit, now_iso, extract_tags, _inherit_tags,
     conductor_dir, _store_evidence, _last_subtask_sha, _any_phase_needs_checkpoint,
     flag, _normalize_sha, target, _extract_tags_for_task, _resolve_conductor_root,
 )
@@ -1325,6 +1325,24 @@ def _post_loop_stamp_line(track_dir, updates):
     return f"python3 -c {shlex.quote(code)} {sidecar}"
 
 
+def _post_loop_merge_sidecar(track_dir, updates):
+    """In-process read-modify-WRITE MERGE into the sidecar — the twin of
+    ``_post_loop_stamp_line`` (which emits the same merge as bash for the
+    teleoperator's ``post``). Used by commands that do a gate-advance IN CODE
+    (e.g. ``cmd_post_loop_review``), so the stamp is never handed back to prose.
+    Preserves every prior marker (lossless-resume invariant). Tolerant of a
+    missing/corrupt file (starts from ``{}``)."""
+    path = conductor_dir(track_dir) / _POST_LOOP_SIDECAR
+    try:
+        data = json.loads(path.read_text()) if path.exists() else {}
+        if not isinstance(data, dict):
+            data = {}
+    except (ValueError, OSError):
+        data = {}
+    data.update(updates)
+    path.write_text(json.dumps(data, ensure_ascii=False))
+
+
 def _post_loop_project_root(track_dir):
     """Best-effort project root for wiki-differ / doc-linter ``PROJECT_DIR``.
 
@@ -1473,22 +1491,6 @@ def _post_loop_finalize_post(track_dir):
         f'track-state sync-plan "{td}"',
         f'track-state registry-update "{td}" "conductor/tracks.md"',
         "git commit -m " + shlex.quote("chore(conductor): Complete track"),
-    ]
-
-
-def _post_loop_review_post(track_dir, range_str):
-    """§7.0 ``post`` lines — stamp the reviewed-range sidecar after code-reviewer.
-
-    MERGES into the sidecar (preserves advisory/lint/digest markers stamped
-    later); the range equality is the lossless-resume discriminator, so a
-    changed SHA range forces a re-review. ``post_on`` defaults to non_failure —
-    the stamp must NOT fire on a failed review (no real review ran).
-    """
-    td = str(track_dir)
-    return [
-        _post_loop_stamp_line(td, {"schema": 2, "reviewed_range": range_str}),
-        "git commit -am " + shlex.quote(
-            f"chore(conductor): Stamp post-loop reviewed range [{range_str}]"),
     ]
 
 
@@ -1658,7 +1660,8 @@ def cmd_post_loop_step(track_dir, compact=True):
       - ``dispatch``       : §6.0 Phase 1/2 — dispatch corpus-writer / wiki-synthesizer → loop. [spine]
       - ``dispatch_advisory``: §6.0 advisory — dispatch wiki-differ → loop. [spine]
       - ``dispatch`` (lint): §6.5 — dispatch doc-linter → loop. [spine]
-      - ``dispatch`` (review): §7.0 — dispatch code-reviewer, then run ``post`` (stamp) → loop. [spine]
+      - ``dispatch_review``: §7.0 — dispatch code-reviewer; the skill then runs
+                            ``post-loop-review --status`` (stamp) → loop. [spine]
       - ``apply_fixes``    : §7.0 step 4 — dispatch apply-fixes for one Critical/High
                              chunk, then run ``post`` (sentinel) → loop until drained. [spine]
       - ``digest``         : §7.5 — announce the pre-assembled digest, run ``post`` → loop. [spine]
@@ -1669,9 +1672,13 @@ def cmd_post_loop_step(track_dir, compact=True):
 
     Every dispatch/digest leaf that completes a gate carries a ``post`` (the
     deterministic bash that MERGES the gate's sidecar marker) and a ``post_on``
-    rule: ``"non_failure"`` (default — the §7.0 review stamp must NOT fire on a
-    failed review) or ``"always"`` (advisory / lint / digest — non-blocking gates
-    that advance on any return, including agent FAILURE).
+    rule: ``"non_failure"`` (default — a failed agent does not advance the gate)
+    or ``"always"`` (advisory / lint / digest — non-blocking gates that advance
+    on any return, including agent FAILURE). The §7.0 review leaf is the
+    exception: it emits ``dispatch_review`` with NO ``post`` — the skill runs
+    ``track-state post-loop-review --status`` instead, so the FAILURE→no-stamp
+    judgment lives in code, not prose (the old ``post_on=non_failure`` rule
+    relied on the teleoperator correctly detecting a failed review).
     """
     state, _fixes, verrors = ensure_healthy(track_dir)
     if state is None:
@@ -1759,11 +1766,16 @@ def cmd_post_loop_step(track_dir, compact=True):
         review_done = bool(sidecar.get("reviewed_range")
                            and sidecar["reviewed_range"] == range_str)
         if not review_done:
-            emit(dict(action="dispatch", agent="code-reviewer", track_dir=td,
+            # `dispatch_review` (not `dispatch`): the §7.0 gate-advance is owned
+            # by `track-state post-loop-review --status`, NOT a teleoperator-
+            # judged `post`. The skill transcribes the review's STATUS line to
+            # that command, which stamps reviewed_range only on a real review (a
+            # FAILURE does not stamp → next call re-reviews) — moving the failure
+            # judgment out of prose (WM2 verdict-on-disk, step 1).
+            emit(dict(action="dispatch_review", agent="code-reviewer", track_dir=td,
                       range=range_str, shas_count=len(shas),
                       prompt=(f"TRACK_DIR={td}\nTRACK_ID={track_id}\n"
-                              f"REVISION_RANGE={range_str}\n"),
-                      post=_post_loop_review_post(td, range_str)),
+                              f"REVISION_RANGE={range_str}\n")),
                  "post-loop-step", compact)
             return
 
@@ -1793,4 +1805,48 @@ def cmd_post_loop_step(track_dir, compact=True):
 
     # Every gate satisfied.
     emit(dict(action="done", track_dir=td), "post-loop-step", compact)
+
+
+def cmd_post_loop_review(track_dir, status):
+    """Stamp the §7.0 reviewed-range sidecar from the code-reviewer's STATUS —
+    the FAILURE judgment moved OUT of the teleoperator's prose ``post`` rule into
+    code (WM2 verdict-on-disk, step 1).
+
+    The §7.0 leaf emits ``dispatch_review`` with NO ``post``: after the review
+    returns, the teleoperator transcribes the ``STATUS:`` line from the
+    ``---REVIEW RESULT---`` block to this command. A REAL review
+    (APPROVE / APPROVE_WITH_COMMENTS / CHANGES_REQUESTED — the review ran,
+    regardless of verdict) MERGE-stamps ``reviewed_range`` = the current SHA
+    range (re-derived from state, identical to the spine's gate) and commits, so
+    the next ``post-loop-step`` advances past §7.0. A FAILURE does NOT stamp →
+    the next call re-emits the review (a crashed review is never silently treated
+    as done — the silent-correctness bug this replaces). Re-deriving the range in
+    code (not from a teleoperator-passed value) keeps the stamp byte-identical to
+    the gate's equality check.
+    """
+    state, _fixes, verrors = ensure_healthy(track_dir)
+    if state is None:
+        out(dict(error="track state unhealthy", errors=verrors,
+                 track_dir=str(track_dir)))
+        return
+    td = str(track_dir)
+    shas = _get_all_shas(state)
+    if not shas:
+        out(dict(error="no implementation SHAs — nothing to review", track_dir=td))
+        return
+    range_str = f"{shas[0]}~1..{shas[-1]}"
+    verdict = (status or "").strip().upper()
+    if verdict == "FAILURE":
+        out(dict(ok=True, stamped=False, reason="review_failure", track_dir=td,
+                 hint="review did not complete — re-run post-loop-step to re-review"))
+        return
+    if verdict not in ("APPROVE", "APPROVE_WITH_COMMENTS", "CHANGES_REQUESTED"):
+        out(dict(error=f"unrecognized review STATUS: {verdict!r}", track_dir=td,
+                 hint="APPROVE | APPROVE_WITH_COMMENTS | CHANGES_REQUESTED | FAILURE "
+                      "(from the ---REVIEW RESULT--- block)"))
+        return
+    _post_loop_merge_sidecar(td, {"schema": 2, "reviewed_range": range_str})
+    _git_commit(td, f"chore(conductor): Stamp post-loop reviewed range [{range_str}]")
+    out(dict(ok=True, stamped=True, reviewed_range=range_str,
+             status=verdict, track_dir=td))
 

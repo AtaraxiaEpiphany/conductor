@@ -80,7 +80,7 @@ _SANCTIONED_TS_SUBCOMMANDS = {
     "fail", "finalize", "gc", "get-handoff", "harvest-candidates", "help",
     "indices", "init-from-plan", "lock", "new-track-finalize", "new-track-init",
     "new-track-resume", "new-track-set-mode", "new-track-step", "next",
-    "phase-done", "post-loop-status",
+    "phase-done", "post-loop-review", "post-loop-status",
     "post-loop-step", "preflight", "process-result", "quality-snapshot",
     "record-summary", "recover", "registry-add", "registry-update", "reset",
     "resolve-track", "set-mode", "setup", "shas", "skip", "spec-integrity",
