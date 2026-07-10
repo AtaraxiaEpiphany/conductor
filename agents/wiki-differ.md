@@ -32,7 +32,7 @@ CRITICAL: You must validate the success of every tool call. If any tool call fai
 | `SCOPE`         | Optional wiki page or topic area to restrict the diff. Empty = full diff     |
 | `MODE`          | Optional. `full` (default) / `refute` — see §2.5. Omitting it is identical to `full` (backward-compatible). |
 | `FINDINGS_JSON` | Optional. Path to a prior diff result JSON; consumed only by `refute` mode.  |
-| `REPORT_PATH`   | Optional. Output path for the full markdown report (full mode only). Defaults to `{PROJECT_DIR}/.conductor/wiki-diff-report.md`; distinct paths let a multi-pass caller keep reports separate. |
+| `REPORT_PATH`   | Optional. Output path for the full markdown report (full mode only). Defaults to `{PROJECT_DIR}/.conductor/wiki-diff-report.md`; distinct paths let a multi-pass caller keep reports separate. The default location is **root-anchored `.conductor/`** — `/conductor:setup` gitignores it (`templates/conductor-gitignore.md`), so the report is transient on-disk scratch (read + presented by the caller, overwritten on re-run), never `git add`-ed. |
 
 ---
 

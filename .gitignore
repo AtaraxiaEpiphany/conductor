@@ -65,6 +65,12 @@ tool_query
 *.temp
 .cache/
 
+# Conductor runtime scratch (wiki-doctor lint/diff diagnostics). Root-anchored
+# so per-track conductor/tracks/*/.conductor/ (committed by track commits) is
+# NOT ignored — mirrors templates/conductor-gitignore.md scaffolded into target
+# projects by /conductor:setup.
+/.conductor/
+
 # Node (if future frontend uses it)
 node_modules/
 npm-debug.log*

@@ -130,19 +130,25 @@ Save state: `2.4_workflow`.
      || cat "${CLAUDE_PLUGIN_ROOT}/templates/claude-md-toc.md" >> CLAUDE.md
    ```
 
-2. **Project index** (pure copy, no placeholders):
+2. **`.gitignore` conductor block (idempotent, sentinel-guarded append — NOT a clobber):** `/conductor:wiki-doctor` lint/diff write transient scratch (`wiki-lint-findings-*.json`, `wiki-diff-findings-*.json`, `wiki-diff-report.md`) to the **project-root** `.conductor/` — distinct from the per-track `.conductor/` that track commits own. That scratch is never `git add`-ed, so without this rule it shows as untracked noise in every `git status`. The rule is **root-anchored** (`/.conductor/`) so it does NOT match the committed per-track `conductor/tracks/*/.conductor/`. If `.gitignore` already carries the `# conductor:gitignore begin` sentinel → skip the append (a re-run must never duplicate the block); otherwise append (create `.gitignore` if missing). The template has no placeholders, so a single Bash guard keeps it out of context:
+   ```bash
+   grep -q '# conductor:gitignore begin' .gitignore 2>/dev/null \
+     || cat "${CLAUDE_PLUGIN_ROOT}/templates/conductor-gitignore.md" >> .gitignore
+   ```
+
+3. **Project index** (pure copy, no placeholders):
    ```bash
    cp "${CLAUDE_PLUGIN_ROOT}/templates/project-index.md" conductor/index.md
    ```
 
-3. **Tracks Registry:** create `conductor/tracks.md` if missing (header `# Tracks Registry`):
+4. **Tracks Registry:** create `conductor/tracks.md` if missing (header `# Tracks Registry`):
    ```bash
    [ -f conductor/tracks.md ] || printf '# Tracks Registry\n' > conductor/tracks.md
    ```
 
-4. Save state: `2.5_finalization`.
-5. Ask user: "Create an initial track now, or later?" If later → commit Phase 1 → HALT.
-6. Summarize Phase 1 actions.
+5. Save state: `2.5_finalization`.
+6. Ask user: "Create an initial track now, or later?" If later → commit Phase 1 → HALT.
+7. Summarize Phase 1 actions.
 
 ---
 
@@ -166,7 +172,7 @@ Interactive (up to 5 questions).
 
 ### 3.2 Delegate to /conductor:new-track
 
-1. If the user chose "later" at §2.5 step 5 → Phase 1 is already committed → HALT.
+1. If the user chose "later" at §2.5 step 6 → Phase 1 is already committed → HALT.
 2. Gather the track description: greenfield → synthesize from the §3.1 answers;
    brownfield → one short description (the analyzer's top recommendation). Pass
    the greenfield product answers as context.
@@ -188,12 +194,12 @@ Interactive (up to 5 questions).
 2. Commit setup artifacts — **scoped, never `git add -A`**. A brownfield project
    may carry unrelated WIP that must not be swept into the scaffold commit, so
    stage only what setup owns: the `conductor/` tree (incl. `setup_state.json`
-   and `.conductor/analysis.json`) plus the `CLAUDE.md` TOC append. The
-   `git diff --cached --quiet ||` guard makes the commit a no-op **only** when
-   those artifacts are already committed (a defensive re-run) — it does NOT skip
-   this step:
+   and `.conductor/analysis.json`), the `CLAUDE.md` TOC append, and the `.gitignore`
+   conductor block. The `git diff --cached --quiet ||` guard makes the commit a
+   no-op **only** when those artifacts are already committed (a defensive re-run)
+   — it does NOT skip this step:
    ```bash
-   git add conductor/ CLAUDE.md
+   git add conductor/ CLAUDE.md .gitignore
    git diff --cached --quiet || git commit -m "chore(conductor): Scaffold conductor setup"
    ```
 3. Announce: `"Setup complete. Run /conductor:implement to begin."`
