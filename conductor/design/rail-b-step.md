@@ -99,8 +99,10 @@ marker). The verdict-on-disk gate is closed. What remains if empirical A/B shows
 it matters:
 
 - **`review_round`** — a `step --review` sub-mode that drives the self-review
-  loop, persisting the `seen`-signature set to a conductor-owned file (currently
-  model-resident in §3.6b). Loop-until-dry in code.
+  loop in code (loop-until-dry). The `seen`-signature set is **already persisted**
+  to `.conductor/review-seen.json` (keyed by `task_sha`) in §3.6b of the Rail A
+  skill — so what remains for the B-full graduation is the loop *control flow*
+  (review → fix → re-review routing), not the compaction-resilience of `seen`.
 
 The remaining option is a model-judgment loop that benefits less from determinism
 than the fan-out + synthesize + skip-refute did.

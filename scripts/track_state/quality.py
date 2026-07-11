@@ -100,6 +100,7 @@ result.json
 new-track-progress.json
 phase-checkpoint.json
 skip-analysis.json
+review-seen.json
 parallel.json
 wave-agent.marker
 .wave-drain-processed

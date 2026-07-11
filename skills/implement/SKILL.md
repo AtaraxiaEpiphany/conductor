@@ -261,6 +261,8 @@ When opted in (after a SUCCESSFUL `dispatch-finalize`, before §3.7), run a **co
 
 Maintain a `seen` set of finding **signatures** (`severity+title+file+lines`). Dedup **new** findings vs `seen` (NOT vs the set you just fixed) — a finding that re-appears unchanged after a fix is a *residual*, counted separately, not "new".
 
+**Persist `seen` across compaction.** The set is loop state a mid-loop context compaction would otherwise lose (→ redundant re-review of already-triaged findings, wasting fix iterations). At loop **entry**, load `.conductor/review-seen.json` (conductor-owned, gitignored): if its `task_sha` matches this task, restore its `seen` list (you are resuming a compacted loop); otherwise start `seen` empty (a different/new task — never inherit another task's set). After each round that adds signatures, write the file back as `{"task_sha": "<this task's sha>", "seen": [...]}`. On **any terminal exit** (dry/clean OR budget-exhausted/escalate), delete the file so a later `[Review]` task starts clean.
+
 1. **Reviewer pass** — dispatch `conductor:code-reviewer` (read-only) on the task's own commit range `<task_sha>~1..<task_sha>`, prompt:
 
    ```
@@ -269,9 +271,9 @@ Maintain a `seen` set of finding **signatures** (`severity+title+file+lines`). D
    REVISION_RANGE={sha}~1..{sha}
    ```
 2. **Decide from the `---REVIEW RESULT---` block** (substring-check the severities), counting only NEW `Critical`/`High` (signatures not already in `seen`):
-   - **Zero NEW `Critical`/`High`** — a dry round (K=1 empty pass) → loop satisfied → announce `"🔍 Self-review [Review]: clean"` → §3.7.
-   - **NEW `Critical`/`High` present** → add their signatures to `seen`; re-dispatch `conductor:task-executor` with `ATTEMPT={n+1}` and the NEW findings as remediation context (the agent fixes its own changes), `dispatch-finalize` again, then loop back to step 1.
-3. **Budget guard — max 3 fix iterations.** No runaway loop. If still not dry after 3 fix iterations, stop iterating and announce: `"🔍 Self-review [Review]: {N} findings → 3 fix iterations → {M} residual"`.
+   - **Zero NEW `Critical`/`High`** — a dry round (K=1 empty pass) → loop satisfied → announce `"🔍 Self-review [Review]: clean"` → delete `.conductor/review-seen.json` → §3.7.
+   - **NEW `Critical`/`High` present** → add their signatures to `seen` and **write `review-seen.json` back**; re-dispatch `conductor:task-executor` with `ATTEMPT={n+1}` and the NEW findings as remediation context (the agent fixes its own changes), `dispatch-finalize` again, then loop back to step 1.
+3. **Budget guard — max 3 fix iterations.** No runaway loop. If still not dry after 3 fix iterations, stop iterating and announce: `"🔍 Self-review [Review]: {N} findings → 3 fix iterations → {M} residual"` → delete `.conductor/review-seen.json` → step 4.
 4. **Escalate on residual judgment only** — if `Critical` findings persist once the budget is spent (or at any dry stop that still leaves residual Critical), surface them via `AskUserQuestion` (fix-guidance / accept-with-debt / block). Medium/Low residual → note and proceed (do not block the loop on nits).
 
 ### 3.7 Phase Boundary
