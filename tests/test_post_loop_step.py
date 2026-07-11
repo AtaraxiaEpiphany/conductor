@@ -84,12 +84,12 @@ def _pls(track_dir):
         sys.stdout, sys.stderr = old_out, old_err
 
 
-def _review(track_dir, status):
+def _review(track_dir, status, critical=None, high=None):
     """Capture cmd_post_loop_review stdout as a dict."""
     old_out, old_err = sys.stdout, sys.stderr
     sys.stdout, sys.stderr = io.StringIO(), io.StringIO()
     try:
-        cmd_post_loop_review(track_dir, status)
+        cmd_post_loop_review(track_dir, status, critical=critical, high=high)
         return json.loads(sys.stdout.getvalue())
     finally:
         sys.stdout, sys.stderr = old_out, old_err
@@ -592,6 +592,13 @@ class PostLoopReviewCommandTests(TestCase):
         except (ValueError, OSError):
             return None
 
+    def _sidecar_json(self):
+        path = Path(self.d, ".conductor", "post-loop.json")
+        try:
+            return json.loads(path.read_text())
+        except (ValueError, OSError):
+            return {}
+
     def test_failure_does_not_stamp_and_spine_re_reviews(self):
         out = _review(self.d, "FAILURE")
         self.assertTrue(out["ok"])
@@ -629,6 +636,38 @@ class PostLoopReviewCommandTests(TestCase):
         _review(self.d, "APPROVE")  # stamps reviewed_range
         # Review done + advisory/lint/digest already stamped → reaches §8.0 archive.
         self.assertEqual(_pls(self.d)["action"], "archive_ask")
+
+    # --- verdict + counts persistence (non-blocking audit; "done is a claim") ---
+    def test_verdict_and_counts_stamped_to_sidecar(self):
+        out = _review(self.d, "CHANGES_REQUESTED", critical="2", high="1")
+        sc = self._sidecar_json()
+        self.assertEqual(out["review_verdict"], "CHANGES_REQUESTED")
+        self.assertEqual(sc["review_verdict"], "CHANGES_REQUESTED")
+        self.assertEqual(sc["review_critical"], 2)
+        self.assertEqual(sc["review_high"], 1)
+        # The gate still advances (non-blocking) — verdict persistence is for audit.
+        self.assertTrue(out["stamped"])
+
+    def test_verdict_stamped_without_counts_when_none_passed(self):
+        # Absent counts must NOT be fabricated as 0 — only stamp what was given.
+        _review(self.d, "APPROVE_WITH_COMMENTS")
+        sc = self._sidecar_json()
+        self.assertEqual(sc["review_verdict"], "APPROVE_WITH_COMMENTS")
+        self.assertNotIn("review_critical", sc)
+        self.assertNotIn("review_high", sc)
+
+    def test_unparsable_counts_not_stamped(self):
+        # A garbage count transcription must not become a misleading 0.
+        _review(self.d, "CHANGES_REQUESTED", critical="abc", high="")
+        sc = self._sidecar_json()
+        self.assertEqual(sc["review_verdict"], "CHANGES_REQUESTED")
+        self.assertNotIn("review_critical", sc)
+        self.assertNotIn("review_high", sc)
+
+    def test_failure_does_not_stamp_verdict(self):
+        _review(self.d, "FAILURE", critical="3", high="2")
+        sc = self._sidecar_json()
+        self.assertNotIn("review_verdict", sc)
 
 
 if __name__ == "__main__":

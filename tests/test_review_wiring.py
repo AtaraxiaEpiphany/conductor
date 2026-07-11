@@ -135,5 +135,40 @@ class ReviewLensedWiringTests(TestCase):
         self.assertIn("review-result.json", self.skill)
 
 
+class ReviewVerdictPersistenceTests(TestCase):
+    """The review VERDICT (APPROVE / CHANGES_REQUESTED / …) was ephemeral stdout —
+    only the agent-RUN ``status`` reached disk, so a completed track's review
+    judgment was nowhere auditable. These pin the persistence contract: the schema
+    distinguishes verdict from run-status, code-reviewer writes verdict, and the
+    post-loop teleoperator transcribes verdict + counts to the (committed, audited)
+    sidecar. Non-blocking — the gate still advances on any non-FAILURE verdict."""
+
+    def setUp(self):
+        self.schema = (ROOT / "runtime" / "contracts" / "review-result-schema.md").read_text(encoding="utf-8")
+        self.agent = (ROOT / "agents" / "code-reviewer.md").read_text(encoding="utf-8")
+        self.post_loop_step = (ROOT / "skills" / "post-loop-step" / "SKILL.md").read_text(encoding="utf-8")
+
+    def test_schema_distinguishes_verdict_from_run_status(self):
+        # `status` is the agent-RUN status; `verdict` is the review judgment.
+        # Both must appear and the doc must call out they are not the same thing.
+        self.assertIn('"verdict"', self.schema)
+        self.assertIn("APPROVE_WITH_COMMENTS", self.schema)
+        lower = self.schema.lower()
+        self.assertIn("agent-run", lower)  # status = agent-run; verdict = judgment
+        self.assertTrue("do not confuse" in lower or "distinct" in lower)
+
+    def test_code_reviewer_writes_verdict(self):
+        # The agent must carry `verdict` in the JSON it writes (mirroring stdout).
+        self.assertIn('"verdict"', self.agent)
+
+    def test_post_loop_teleoperator_transcribes_counts(self):
+        # The dispatch_review row transcribes STATUS + CRITICAL/HIGH counts so the
+        # spine can stamp verdict + counts to the sidecar for audit.
+        row = self.post_loop_step.split("`dispatch_review`", 1)[1].split("\n|", 1)[0]
+        self.assertIn("--status", row)
+        self.assertIn("--critical", row)
+        self.assertIn("--high", row)
+
+
 if __name__ == "__main__":
     main()

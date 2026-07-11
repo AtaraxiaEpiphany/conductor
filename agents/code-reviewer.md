@@ -160,7 +160,7 @@ Dual output: result file + terse stdout.
 
 Write the full review JSON to `{RESULT_PATH}` (defaults to `{TRACK_DIR}/.conductor/review-result.json`) via a Bash heredoc (`mkdir -p "$(dirname "{RESULT_PATH}")"` then `cat > "{RESULT_PATH}" << 'EOF'`).
 
-**Canonical schema + field/mode semantics:** `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/review-result-schema.md` — reproduce its JSON structure verbatim. Carry `"lens"` (the pass's lens, or `null`) and `"mode"` so the orchestrator's synthesis can group per-lens result files and know which pass wrote each. The schema doc holds the `mode`-specific `findings` semantics: `refute` → survivors + a `"refuted": <count>` (default to refuted when uncertain); `critique` → only newly-discovered defect classes the producer missed (may be empty).
+**Canonical schema + field/mode semantics:** `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/review-result-schema.md` — reproduce its JSON structure verbatim. Carry `"lens"` (the pass's lens, or `null`) and `"mode"` so the orchestrator's synthesis can group per-lens result files and know which pass wrote each. Carry `"verdict"` (the review judgment — identical to your §4.2 stdout `STATUS:`) and `"status"` (the agent-run status); these are **distinct** fields and must not be conflated (see the schema doc). The schema doc holds the `mode`-specific `findings` semantics: `refute` → survivors + a `"refuted": <count>` (default to refuted when uncertain); `critique` → only newly-discovered defect classes the producer missed (may be empty).
 
 ### 4.2 Stdout (terse — parsed by orchestrator)
 

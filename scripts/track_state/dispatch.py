@@ -1742,16 +1742,22 @@ def _post_loop_read_sidecar(track_dir):
     Schema 1 carried only ``reviewed_range``; schema 2 adds ``deferred_resolved``
     (§5.0 gate), ``advisory_diff_shown`` / ``lint_done`` / ``digest_shown``
     (§6.0 advisory / §6.5 / §7.5 gates — fired-markers: truthy ⇒ the gate ran,
-    so the spine advances). ``lint_status`` is reserved for a future richer
-    model-written value; the gate keys on ``lint_done`` so the deterministic
-    ``post`` (which can't read the agent's RESULT STATUS) only needs to stamp a
-    boolean. All stamps MERGE (see ``_post_loop_stamp_line``) so a later gate
-    never clobbers an earlier gate's marker — the lossless-resume invariant.
+    so the spine advances), and ``review_verdict`` / ``review_critical`` /
+    ``review_high`` (the §7.0 review outcome, stamped by ``cmd_post_loop_review``
+    alongside ``reviewed_range`` so a completed track's verdict + finding counts
+    are auditable on the committed sidecar — non-blocking; the gate still
+    advances on any non-FAILURE verdict). ``lint_status`` is reserved for a future
+    richer model-written value; the gate keys on ``lint_done`` so the
+    deterministic ``post`` (which can't read the agent's RESULT STATUS) only
+    needs to stamp a boolean. All stamps MERGE (see ``_post_loop_stamp_line``)
+    so a later gate never clobbers an earlier gate's marker — the
+    lossless-resume invariant.
     """
     path = conductor_dir(track_dir) / _POST_LOOP_SIDECAR
     defaults = dict(reviewed_range=None, deferred_resolved=False,
                     advisory_diff_shown=None, lint_status=None, lint_done=False,
-                    digest_shown=None)
+                    digest_shown=None,
+                    review_verdict=None, review_critical=None, review_high=None)
     if not path.exists():
         return defaults
     try:
@@ -1888,6 +1894,22 @@ def _compose_digest(track_dir, state, desc, shas, range_str):
             lines.append(f"  - [{sev}] {title} ({file})")
     else:
         lines.append("Review: none flagged")
+    # The review VERDICT + at-review Critical/High counts (stamped by
+    # cmd_post_loop_review) — makes the completed track's review judgment
+    # auditable in the digest, not just the ephemeral review pass. Counts are
+    # measured at review time (the §7.0 apply_fixes step runs AFTER, so some may
+    # be resolved by the time the track archives).
+    sidecar = _post_loop_read_sidecar(track_dir)
+    rverdict = sidecar.get("review_verdict")
+    if rverdict:
+        parts = [f"Review verdict: {rverdict}"]
+        if sidecar.get("review_critical") is not None:
+            parts.append(f"Critical: {sidecar.get('review_critical')}")
+        if sidecar.get("review_high") is not None:
+            parts.append(f"High: {sidecar.get('review_high')}")
+        if rverdict != "APPROVE":
+            parts.append("counts at-review (apply_fixes ran after)")
+        lines.append(" · ".join(parts))
     return "\n".join(lines)
 
 
@@ -2277,7 +2299,17 @@ def cmd_post_loop_step(track_dir, compact=True):
     emit(dict(action="done", track_dir=td), "post-loop-step", compact)
 
 
-def cmd_post_loop_review(track_dir, status):
+def _to_int_or_none(v):
+    """Parse a CLI flag value to int; None / unparsable → None (never fabricate 0)."""
+    if v is None:
+        return None
+    try:
+        return int(str(v).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def cmd_post_loop_review(track_dir, status, critical=None, high=None):
     """Stamp the §7.0 reviewed-range sidecar from the code-reviewer's STATUS —
     the FAILURE judgment moved OUT of the teleoperator's prose ``post`` rule into
     code (WM2 verdict-on-disk, step 1).
@@ -2293,6 +2325,17 @@ def cmd_post_loop_review(track_dir, status):
     as done — the silent-correctness bug this replaces). Re-deriving the range in
     code (not from a teleoperator-passed value) keeps the stamp byte-identical to
     the gate's equality check.
+
+    The review VERDICT and Critical/High counts are also MERGE-stamped
+    (``review_verdict`` / ``review_critical`` / ``review_high``), transcribed from
+    the same RESULT block's ``STATUS:`` / ``CRITICAL:`` / ``HIGH:`` lines. This
+    makes a completed track's review outcome **auditable on the committed sidecar**
+    — "done is a claim": the verdict + counts the claim rests on now survive on
+    disk (and surface in the §7.5 digest) — **without gating**. The gate still
+    advances on any non-FAILURE verdict; the plugin's long-standing non-blocking
+    review posture is unchanged (this is persistence-for-audit, NOT a blocking
+    DONE gate). Counts are optional; an unparsed/absent count is not stamped
+    (never fabricated as 0).
     """
     state, _fixes, verrors = ensure_healthy(track_dir)
     if state is None:
@@ -2315,8 +2358,16 @@ def cmd_post_loop_review(track_dir, status):
                  hint="APPROVE | APPROVE_WITH_COMMENTS | CHANGES_REQUESTED | FAILURE "
                       "(from the ---REVIEW RESULT--- block)"))
         return
-    _post_loop_merge_sidecar(td, {"schema": 2, "reviewed_range": range_str})
+    c = _to_int_or_none(critical)
+    h = _to_int_or_none(high)
+    stamp = {"schema": 2, "reviewed_range": range_str, "review_verdict": verdict}
+    if c is not None:
+        stamp["review_critical"] = c
+    if h is not None:
+        stamp["review_high"] = h
+    _post_loop_merge_sidecar(td, stamp)
     _git_commit(td, f"chore(conductor): Stamp post-loop reviewed range [{range_str}]")
     out(dict(ok=True, stamped=True, reviewed_range=range_str,
-             status=verdict, track_dir=td))
+             status=verdict, review_verdict=verdict,
+             review_critical=c, review_high=h, track_dir=td))
 
