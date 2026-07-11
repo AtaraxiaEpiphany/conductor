@@ -1,9 +1,10 @@
-r"""Gap #11 — override audit. Each PreToolUse ``ask`` site appends a
+r"""Gap #11 — override audit. Each PreToolUse ``deny`` site appends a
 ``gate=<dangerous_git|state_lock|v10_commit|f2_tdd>`` line (plus a 12-char
-command digest) to ``.data/logs/override-audit.log``. The hook returns before
-the user's allow/deny decision is known, so we log that an ask was *issued* —
-the actionable signal of which gates fire how often (and thus which gates users
-routinely override). The command is stored as a digest, never verbatim.
+command digest) to ``.data/logs/override-audit.log``. The hook denies outright
+(no allow/deny prompt to wait on), so we log that a gate *fired* — the
+actionable signal of which gates fire how often (and thus which denials a
+long-running session routinely adapts around). The command is stored as a
+digest, never verbatim.
 """
 import importlib.util
 import io
@@ -52,12 +53,12 @@ def _run_main(command, cwd):
     return log.read_text() if log.exists() else ""
 
 
-class AuditAskUnitTests(TestCase):
+class AuditGateUnitTests(TestCase):
     def test_writes_gate_and_hex_digest(self):
         td = tempfile.mkdtemp()
         os.environ["CLAUDE_PLUGIN_DATA"] = td
         try:
-            _pcc._audit_ask("dangerous_git", "git reset --hard HEAD~1")
+            _pcc._audit_gate("dangerous_git", "git reset --hard HEAD~1")
         finally:
             os.environ.pop("CLAUDE_PLUGIN_DATA", None)
         log = (Path(td) / "logs" / "override-audit.log").read_text()
@@ -70,18 +71,18 @@ class AuditAskUnitTests(TestCase):
         td = tempfile.mkdtemp()
         os.environ["CLAUDE_PLUGIN_DATA"] = td
         try:
-            _pcc._audit_ask("f2_tdd", "git commit -m 'feat: super secret thing'")
+            _pcc._audit_gate("f2_tdd", "git commit -m 'feat: super secret thing'")
         finally:
             os.environ.pop("CLAUDE_PLUGIN_DATA", None)
         log = (Path(td) / "logs" / "override-audit.log").read_text()
         self.assertNotIn("super secret thing", log)
 
     def test_write_failure_does_not_raise(self):
-        """_audit_ask is best-effort — it must never block the gate decision."""
+        """_audit_gate is best-effort — it must never block the gate decision."""
         # Point CLAUDE_PLUGIN_DATA at a path that can't be created.
         os.environ["CLAUDE_PLUGIN_DATA"] = "/proc/cannot/create/here"
         try:
-            _pcc._audit_ask("v10_commit", "git commit -m 'bad'")
+            _pcc._audit_gate("v10_commit", "git commit -m 'bad'")
         finally:
             os.environ.pop("CLAUDE_PLUGIN_DATA", None)
 

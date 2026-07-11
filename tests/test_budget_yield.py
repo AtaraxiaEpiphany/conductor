@@ -2,9 +2,10 @@ r"""Tests for the deterministic context-budget yield gate (#3).
 
 ``on-batch-complete.py`` counts per-session ``track-state dispatch-finalize``
 cycles (the per-cycle accounting seat named by decision-loop-heartbeat.md) into
-``{data_dir}/budget-yield.json`` and, once the count crosses
-``CONDUCTOR_BUDGET_YIELD_N`` (default 4), injects a yield instruction telling
-the orchestrator to finish the in-flight task to a terminal state and emit the
+``{data_dir}/budget-yield.json`` and, when enabled (``CONDUCTOR_BUDGET_YIELD_N``
+set to a positive int; disabled by default), injects a yield instruction once
+the count crosses that threshold telling the orchestrator to finish the
+in-flight task to a terminal state and emit the
 §5 checkpoint string. This replaces the orchestrator's fuzzy "~6+ dispatches"
 self-assessment — a weak model cannot reliably budget itself, so the hook does
 it deterministically.
@@ -57,6 +58,8 @@ def _run_hook(data_dir: Path, payload: dict, env_n: int = None) -> dict:
     env["CONDUCTOR_DOC_LINT_HEARTBEAT_H"] = "0"
     if env_n is not None:
         env["CONDUCTOR_BUDGET_YIELD_N"] = str(env_n)
+    else:
+        env.pop("CONDUCTOR_BUDGET_YIELD_N", None)  # ensure disabled-by-default
     proc = subprocess.run(
         [sys.executable, str(_HOOK)],
         input=json.dumps(payload),
@@ -162,12 +165,19 @@ class BudgetYieldMessageTests(TestCase):
             os.environ.pop("CONDUCTOR_BUDGET_YIELD_N", None)
 
     def test_below_default_threshold_is_none(self):
+        os.environ["CONDUCTOR_BUDGET_YIELD_N"] = str(DEFAULT_BUDGET_YIELD_N)
         self.assertIsNone(budget_yield_message(DEFAULT_BUDGET_YIELD_N - 1))
 
-    def test_at_default_threshold_yields(self):
+    def test_at_default_threshold_yields_when_enabled(self):
+        # Disabled by default — opt in via CONDUCTOR_BUDGET_YIELD_N.
+        os.environ["CONDUCTOR_BUDGET_YIELD_N"] = str(DEFAULT_BUDGET_YIELD_N)
         msg = budget_yield_message(DEFAULT_BUDGET_YIELD_N)
         self.assertIsNotNone(msg)
         self.assertIn(str(DEFAULT_BUDGET_YIELD_N), msg)
+
+    def test_disabled_by_default(self):
+        # Env unset ⇒ threshold 0 ⇒ never yields, regardless of count.
+        self.assertIsNone(budget_yield_message(100))
 
     def test_zero_is_none(self):
         self.assertIsNone(budget_yield_message(0))
@@ -207,6 +217,15 @@ class MainYieldGateTests(TestCase):
             # 1 of 2 → below threshold, no additionalContext.
             out = _run_hook(data_dir, self._payload(), env_n=2)
             self.assertNotIn("hookSpecificOutput", out)
+
+    def test_disabled_by_default_no_yield(self):
+        # Env unset ⇒ disabled ⇒ no yield no matter how many finalizes fire.
+        with tempfile.TemporaryDirectory() as d:
+            data_dir = Path(d)
+            out = {}
+            for _ in range(6):
+                out = _run_hook(data_dir, self._payload())  # env_n=None ⇒ disabled
+        self.assertNotIn("hookSpecificOutput", out)
 
     def test_yield_surfaces_at_threshold(self):
         with tempfile.TemporaryDirectory() as d:

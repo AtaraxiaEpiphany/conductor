@@ -370,9 +370,12 @@ def verify_phase_checkpoint(cwd: Path) -> Optional[str]:
 # under a track's .conductor/, which would race the orchestrator's commit and
 # violate single-writer (decision-serial-execution.md).
 BUDGET_YIELD_FILE = "budget-yield.json"
-# Conservative small-window default — a small-context model exhausts its budget
-# well before 8 cycles. Override via CONDUCTOR_BUDGET_YIELD_N for a larger
-# window (the original 8 suits a strong model on a long phase).
+# Disabled by default — long-running sessions run uninterrupted (per-task
+# atomic commits + ``track-state recover`` already make a mid-session
+# interruption benign). Opt back INTO the deterministic pacing yield by setting
+# ``CONDUCTOR_BUDGET_YIELD_N`` to this suggested small-window value (a
+# small-context model exhausts its budget well before 8 cycles; 8 suits a
+# strong model on a long phase).
 DEFAULT_BUDGET_YIELD_N = 4
 
 
@@ -387,13 +390,19 @@ def _detect_dispatch_finalize(tool_calls: list[dict]) -> bool:
 
 
 def _budget_threshold() -> int:
-    """dispatch-finalize count at which to recommend a yield. Env-overridable."""
+    """dispatch-finalize count at which to recommend a yield; 0 = disabled.
+
+    Disabled by default (long-running sessions run uninterrupted): when
+    ``CONDUCTOR_BUDGET_YIELD_N`` is unset/invalid, returns 0. Set it to a
+    positive int (``DEFAULT_BUDGET_YIELD_N`` = 4 is the suggested window for a
+    small-context model) to re-enable the deterministic pacing yield.
+    """
     raw = os.environ.get("CONDUCTOR_BUDGET_YIELD_N", "")
     try:
         n = int(raw)
-        return n if n > 0 else DEFAULT_BUDGET_YIELD_N
+        return n if n > 0 else 0
     except (TypeError, ValueError):
-        return DEFAULT_BUDGET_YIELD_N
+        return 0
 
 
 def bump_budget_counter(data_dir: Path, session_id: str,
@@ -426,11 +435,15 @@ def bump_budget_counter(data_dir: Path, session_id: str,
 
 
 def budget_yield_message(count: int) -> Optional[str]:
-    """The yield instruction when the count crosses threshold, else None."""
+    """The yield instruction when the count crosses threshold, else None.
+
+    None when disabled (threshold <= 0, the default) — long-running sessions
+    are not forced to checkpoint-and-stop.
+    """
     if count <= 0:
         return None
     threshold = _budget_threshold()
-    if count < threshold:
+    if threshold <= 0 or count < threshold:
         return None
     return (
         "[Conductor] Context-budget threshold reached: " + str(count) +

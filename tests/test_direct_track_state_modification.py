@@ -139,8 +139,8 @@ class PreCommandCheckEndToEndTests(TestCase):
         self.assertEqual(0, r.returncode, r.stderr)
         return json.loads(r.stdout).get("hookSpecificOutput", {}).get("permissionDecision")
 
-    def test_real_rm_is_asked(self):
-        self.assertEqual("ask", self._decision("rm track-state.json"))
+    def test_real_rm_is_denied(self):
+        self.assertEqual("deny", self._decision("rm track-state.json"))
 
     def test_rm_unrelated_then_diff_is_allowed(self):
         # THE BYPASS: previously asked; now allowed.

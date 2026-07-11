@@ -24,9 +24,7 @@ You are a **thin state machine** that routes between subagents — the parallel 
 2. **Parse only the compact envelope's emitted fields** (`COMPACT_FIELDS` in `scripts/track_state/helpers.py`). Pass `--full` only to debug.
 3. **Keep dispatch prompts minimal** — task identity + paths only (~100 tokens). The only additions over serial are `WORKTREE_DIR` and a worktree-pinned `TRACK_DIR`.
 4. **Announce actions tersely** — one line per action, no narrative.
-5. **Yield cleanly when context runs low.** A wave (fan-out + integrate ALL its members) is the yield unit — it is bounded. If context runs low, finish integrating every in-flight member to `drained`, then stop with exactly:
-   `"⏸️ Conductor wave checkpoint — wave drained, state committed. Re-invoke /conductor:parallel to resume (dispatch-wave refuses with wave_active if a member is still in_flight, signaling an interrupted wave to integrate first)."`
-   **NEVER stop mid-wave** — between `dispatch-wave` returning members and the last `wave-finalize` returning `drained`, every member's worktree is live and its branch unmerged. Yield only after `drained: true`.
+5. **Never abandon a mid-wave state machine.** The loop runs uninterrupted, but a harness compaction can pause you mid-wave — never stop between `dispatch-wave` returning members and the last `wave-finalize` returning `drained`, when every member's worktree is live and its branch unmerged. `dispatch-wave` refuses with `wave_active` if a member is still in_flight (signaling an interrupted wave to integrate first); only rest at `drained: true`.
 
 Wave loop: `DISPATCH-WAVE → FAN OUT → INTEGRATE (per member) → (drained) → repeat → NO_READY_TASKS → SERIAL FALLBACK or PHASE BOUNDARY → (repeat) → FINALIZE → POST-LOOP`
 
@@ -226,7 +224,7 @@ Then run the shared post-loop — identical to `implement` §4.0:
 track-state post-loop-status "<track_dir>"
 ```
 
-Read `conductor/workflow/post-loop.md` and execute sections 5.0–8.0 (doc-sync, review, etc.). Yield discipline is the same as `implement`: yield at a post-loop phase boundary if context runs low, never between a review and its reviewed-range stamp.
+Read `conductor/workflow/post-loop.md` and execute sections 5.0–8.0 (doc-sync, review, etc.). Same lock discipline as `implement`: never stop between a review and its reviewed-range stamp (a harness compaction mid-transaction loses the review-done signal and forces an expensive re-review).
 
 ---
 

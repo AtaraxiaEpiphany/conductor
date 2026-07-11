@@ -70,14 +70,9 @@ The §7.0 code-reviewer leaf no longer uses `post` at all — `dispatch_review` 
 `post_on=non_failure` rule relied on you correctly detecting a failed review).
 When in doubt, run `post`.
 
-## 3.0 CONTEXT-BUDGET YIELD
+## 3.0 STATE-LOCK INVARIANTS (resume safety)
 
-The post-loop is long-running (doc-sync alone is 2 sequenced agents + review).
-If context runs low: finish the in-flight leaf to a terminal state first (the
-agent returned AND its gate-advance has run — its `post`, or for `dispatch_review`
-the `post-loop-review --status` call), then stop with exactly:
-
-`"⏸️ Conductor post-loop checkpoint — state committed. Re-invoke /conductor:post-loop-step to resume (the spine gates skip completed phases automatically)."`
+The post-loop is long-running (doc-sync alone is 2 sequenced agents + review) and runs uninterrupted. Even so, a harness compaction can pause you mid-transaction — keep the gate sequence clean so resume is automatic:
 
 **NEVER stop between a `dispatch`/`dispatch_review` agent returning and running
 its gate-advance** — for the code-reviewer leaf that loses the reviewed-range

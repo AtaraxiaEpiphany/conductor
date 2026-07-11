@@ -163,6 +163,18 @@ class BareIdResolutionTests(TestCase):
         self.assertNotEqual(code, 1, f"shortname recover crashed: {parsed}")
         self.assertTrue((p.td / ".conductor").is_dir())
 
+    def test_non_spine_command_resolves_bare_id(self):
+        """Universal resolution: a NON-spine command (``indices``) also accepts
+        a bare track_id and shortname — not just the Rail B-min spine commands."""
+        p = _Project("auth_20260708")
+        self.addCleanup(p.cleanup)
+        parsed, code = _run(["track-state", "indices", p.track_id], p.root)
+        self.assertNotEqual(code, 1, f"indices bare-id crashed: {parsed}")
+        self.assertIn("indices", parsed)
+        parsed, code = _run(["track-state", "indices", "auth"], p.root)
+        self.assertNotEqual(code, 1, f"indices shortname crashed: {parsed}")
+        self.assertIn("indices", parsed)
+
 
 class UnresolvableArgTests(TestCase):
     """Defense-in-depth: an arg that can't be resolved yields a clean {error}

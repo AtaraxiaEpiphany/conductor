@@ -55,13 +55,10 @@ Read `action` and do **only** that:
 rather than collapsing it: hand the track to `/conductor:parallel` (the wave spine
 owns it). That is the measured B-min boundary, not a gap.
 
-## 3.0 CONTEXT-BUDGET YIELD
+## 3.0 STATE-LOCK INVARIANTS (resume safety)
 
-The loop is long-running. If context runs low (~6+ dispatches, or compaction
-approaching): finish the in-flight `dispatch` to a terminal state first, then
-stop with exactly:
-
-`"⏸️ Conductor checkpoint — state committed. Re-invoke /conductor:implement-step to resume (step is state-driven; it picks up here)."`
+The loop is long-running and runs uninterrupted.
+Even so, a harness compaction can pause you mid-transaction — keep the state machine clean so resume is automatic:
 
 **NEVER stop between a `dispatch` and the next `step` call** — that leaves a
 stale `[~]` lock. `step` is state-driven, so re-entry is automatic on the next

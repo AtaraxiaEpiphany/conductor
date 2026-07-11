@@ -57,18 +57,14 @@ A single-member `dispatch_batch` with `is_resume: true` is a **re-dispatch of on
 | `ask` | `AskUserQuestion(decision.question, decision.header, decision.options)`. Run `decision.commands[<chosen label>]` **verbatim** (one shell-safe line each). If `decision.next[<chosen label>] == "HALT"` → STOP. Else → §2.0. |
 | `skip_analyze` | `/conductor:implement` §3.6 — `skip-analyst` → `refuter` refute → route. Then resume §2.0. |
 
-## 3.0 CONTEXT-BUDGET YIELD
+## 3.0 STATE-LOCK INVARIANTS (resume safety)
 
-The yield unit is **one wave fully drained** — every in-flight member integrated to
-a terminal `member_status`. If context runs low: finish integrating every in-flight
-member (`wave_integrate` until the wave drains), then stop with exactly:
-
-`"⏸️ Conductor wave checkpoint — wave drained, state committed. Re-invoke /conductor:parallel-step to resume (wave-step is state-driven; it picks up here)."`
+The loop runs uninterrupted, but a harness compaction can pause you mid-wave. Keep the wave ledger clean so resume is automatic:
 
 **NEVER stop mid-wave** — between `dispatch_batch` and the last `wave_integrate`
 every member's worktree is live and its branch unmerged. The no-retry-burn
 discriminator protects an interrupted member (it re-dispatches without burning a
-retry), but yielding at a drained boundary is always cleaner.
+retry), but a drained boundary is always cleaner.
 
 ---
 

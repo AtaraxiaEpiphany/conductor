@@ -38,18 +38,23 @@ from .new_track import (
 
 _BOOL_FLAGS = {"--full", "--fix", "--check", "--force"}
 
-# Commands the Rail B-min step skills (implement-step / parallel-step /
-# post-loop-step) call downstream of ``check`` with the resolved ``<td>``. A
-# small-window teleoperator sometimes passes the bare ``track_id`` instead (``check``
-# returns both), which crashes these in ``conductor_dir().mkdir()`` with a
-# misleading ``FileNotFoundError: <track_id>/.conductor``. Resolve a bare id
-# through the registry first (existing-path fast path skips resolution), so
-# either argument form works. See ``_resolve_track_dir_or_halt``.
-_TD_RESOLVING_COMMANDS = {
-    "step", "wave-step", "post-loop-step", "post-loop-review", "recover",
-    "start", "wave-finalize", "finalize", "archive",
-    "phase-verdict", "phase-checkpoint-review",
-    "skip-analyst-verdict", "skip-refute-review",
+# Commands EXCLUDED from short-id resolution (their ``<track-dir>`` positional
+# is not "an existing track to locate"):
+#   * bootstrap/creation (``init-from-plan`` / ``new-track-*``): destination
+#     path for a not-yet-registered track — ``new-track-init`` even creates the
+#     dir, so ``is_dir()`` is False and a bare id would mis-resolve to
+#     ``no_match``, breaking creation;
+#   * ``preflight``: a diagnostic whose contract is "always exit 0 and diagnose
+#     the raw path" (is it a file? the conductor root? missing state?) —
+#     resolution's "exit 1 on unresolvable" would break that. ``check`` already
+#     does resolve + preflight in one call for the short-id case.
+# Every OTHER command with a <track-dir> positional resolves a bare track_id /
+# shortname through ``_resolve_track_dir_or_halt`` (existing-path fast path
+# skips resolution), so ``track-state next auth``, ``indices auth``,
+# ``validate auth`` all work. See ``_resolve_track_dir_or_halt``.
+_TD_NO_RESOLUTION_COMMANDS = {
+    "init-from-plan", "new-track-init", "new-track-step",
+    "new-track-set-mode", "new-track-finalize", "preflight",
 }
 
 
@@ -390,10 +395,15 @@ def main():
     args = sys.argv[3:]
     pos = positional(args)
 
-    # Rail B-min spine defense: accept a bare track_id where these commands
-    # expect a <track-dir>. No-op for a real path (the fast path in
-    # ``_resolve_track_dir_or_halt`` is a single is_dir() check).
-    if cmd in _TD_RESOLVING_COMMANDS and track_dir is not None:
+    # Universal short-id resolution: accept a bare track_id / shortname wherever
+    # a <track-dir> positional is an existing track to locate. Skipped for the
+    # query commands (resolve their own query / take no positional), the raw-path
+    # commands (destination/diagnostic, not a lookup — see
+    # ``_TD_NO_RESOLUTION_COMMANDS``), and ``derive-name`` (its positional is a
+    # shortname, not a track). No-op for a real path (single is_dir() fast path).
+    if track_dir is not None and cmd not in (
+        _NO_TRACK_DIR_COMMANDS | _TD_NO_RESOLUTION_COMMANDS | {"derive-name"}
+    ):
         track_dir = _resolve_track_dir_or_halt(track_dir, cmd)
 
     _INDEX_COMMANDS = {"lock", "complete", "fail", "skip", "block", "defer"}

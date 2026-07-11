@@ -24,13 +24,7 @@ You are a **thin state machine** that routes between subagents. Context budget i
 2. **Parse only the compact envelope's emitted fields** from track-state outputs. The dispatch commands (`next`, `recover`, `dispatch-next/prepare/finalize`) emit a **compact envelope by default** — the per-command allowlist in `scripts/track_state/helpers.py` (`COMPACT_FIELDS`) is the single source of truth for exactly which fields each command emits. Pass `--full` only to debug a raw envelope; the compact default is the contract.
 3. **Keep dispatch prompts minimal** — task identity + file paths only (~100 tokens).
 4. **Announce actions tersely** — one line per action, no narrative.
-5. **Yield cleanly when context runs low.** The dispatch loop is long-running; if your context budget is running low (heuristic: ~6+ subagent dispatches this session, or you sense compaction approaching), first finish the in-flight task to a terminal, committed state, then stop with exactly:
-   `"⏸️ Conductor checkpoint at P{phase}.T{task} — state committed. Re-invoke /conductor:implement to resume (recover picks up here)."`
-   **NEVER stop between `dispatch-prepare` and `dispatch-finalize`** — that abandons a stale `[~]` lock the next run's `recover` must reap (and the Stop hook will flag it). Yield only at a clean task boundary: after `dispatch-finalize` succeeds, after a phase boundary, or at a genuine HALT.
-
-6. **Yield cleanly mid-post-loop too.** The post-loop (§4.0–§8.0) is also long-running. If context runs low mid-post-loop, yield at a phase boundary — after the §5.5 finalize commit, after the §6.0 doc-sync commit, or after §7.0 review + reviewed-range stamp — with exactly:
-   `"⏸️ Conductor checkpoint in post-loop (after §X) — state committed. Re-invoke /conductor:implement to resume (post-loop-status skips completed phases)."`
-   **NEVER stop between `code-reviewer` returning and the `.conductor/post-loop.json` reviewed-range stamp** — that loses the review-done signal and forces an expensive re-review. Re-entry is automatic: `dispatch-next` re-emits `action=finalize` → §4.0 re-enters the post-loop, and `post-loop-status` gates skip what already ran.
+5. **Never abandon a mid-transaction state machine.** The loop runs uninterrupted, but a harness compaction can pause you mid-transaction — never stop between `dispatch-prepare` and `dispatch-finalize` (that abandons a stale `[~]` lock the next run's `recover` must reap, and the Stop hook will flag it), nor between `code-reviewer` returning and the `.conductor/post-loop.json` reviewed-range stamp in the post-loop (that loses the review-done signal and forces an expensive re-review). Re-entry is automatic: `recover` reaps stale locks, `dispatch-next` re-emits `action=finalize` → §4.0 re-enters the post-loop, and `post-loop-status` gates skip what already ran.
 
 Dispatch loop: `RECOVER → DISPATCH → PROCESS → PHASE_BOUNDARY → (repeat) → FINALIZE`
 

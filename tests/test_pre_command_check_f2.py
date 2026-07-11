@@ -2,7 +2,7 @@
 
 A feat/fix commit that stages source code without a test file is the real
 "implementation before test" signal in conductor's single-commit-per-task model
-(task-executor commits test+impl together at Step 8). The gate asks (overridable)
+(task-executor commits test+impl together at Step 8). The gate denies
 at commit time — a tighter loop than the F3 coverage gate at dispatch-finalize,
 which only fires at completion. Exempt by commit TYPE, so docs/chore/style/
 refactor/test and chore(conductor) bookkeeping never trip it.
@@ -102,10 +102,10 @@ class F2GateIntegrationTests(TestCase):
         # tmpdirs are under /tmp; shutil cleans them
         pass
 
-    def _expect_ask(self, rc, out):
+    def _expect_deny(self, rc, out):
         self.assertEqual(rc, 0)
         spec = out.get("hookSpecificOutput", {})
-        self.assertEqual(spec.get("permissionDecision"), "ask")
+        self.assertEqual(spec.get("permissionDecision"), "deny")
         self.assertIn("F2", spec.get("permissionDecisionReason", ""))
 
     def _expect_allow(self, rc, out):
@@ -122,21 +122,21 @@ class F2GateIntegrationTests(TestCase):
         finally:
             shutil.rmtree(d, ignore_errors=True)
 
-    def test_feat_source_only_asks(self):
+    def test_feat_source_only_denies(self):
         d = _git_repo()
         try:
             _stage(d, {"src/foo.ts": "x"})
             rc, out = _run_hook(d, 'git commit -m "feat(api): add foo"')
-            self._expect_ask(rc, out)
+            self._expect_deny(rc, out)
         finally:
             shutil.rmtree(d, ignore_errors=True)
 
-    def test_fix_source_only_asks(self):
+    def test_fix_source_only_denies(self):
         d = _git_repo()
         try:
             _stage(d, {"src/foo.py": "x"})
             rc, out = _run_hook(d, 'git commit -m "fix(api): handle null"')
-            self._expect_ask(rc, out)
+            self._expect_deny(rc, out)
         finally:
             shutil.rmtree(d, ignore_errors=True)
 
