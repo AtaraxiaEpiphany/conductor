@@ -47,7 +47,7 @@ user-invoked pulse** (the user is the clock).
    | `SessionStart` | state-consistency check; stale-temp GC; wiki-drift scan; comprehension-debt nudge (latest active track's Critical/High review findings) |
    | `SessionEnd` | `track-state gc`; session-handoff written |
    | `SubagentStop` | result validation / recovery gating |
-   | `dispatch-finalize` | per-cycle accounting — the natural seat for a quality-snapshot |
+   | `dispatch-finalize` | per-cycle accounting — the natural seat for a quality-snapshot; **doc-gardening heartbeat** — a throttled (default 24h, `CONDUCTOR_DOC_LINT_HEARTBEAT_H`) one-shot `doc-linter` advisory nudged from `on-batch-complete.py` (the hook nudges only; the orchestrator dispatches). Advisory + non-blocking, so it stays compliant with the "rides an event, not a clock" rule below. |
 
 ## Opt-in pulse (the autonomous-loop capability, without default churn)
 

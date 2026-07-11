@@ -50,6 +50,11 @@ def _run_hook(data_dir: Path, payload: dict, env_n: int = None) -> dict:
     """Run the hook with given stdin JSON + CLAUDE_PLUGIN_DATA; return stdout JSON."""
     env = os.environ.copy()
     env["CLAUDE_PLUGIN_DATA"] = str(data_dir)
+    # These tests isolate the YIELD gate; disable the doc-gardening heartbeat
+    # (a sibling dispatch-finalize gate in the same hook) so it can't emit on the
+    # same batch and mask the yield assertion. test_doc_lint_heartbeat.py
+    # reciprocally isolates from this gate.
+    env["CONDUCTOR_DOC_LINT_HEARTBEAT_H"] = "0"
     if env_n is not None:
         env["CONDUCTOR_BUDGET_YIELD_N"] = str(env_n)
     proc = subprocess.run(

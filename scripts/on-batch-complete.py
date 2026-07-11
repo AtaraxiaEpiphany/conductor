@@ -443,6 +443,87 @@ def budget_yield_message(count: int) -> Optional[str]:
     )
 
 
+# ---------------------------------------------------------------------------
+# Doc-gardening heartbeat (Pillar 3 — entropy-fighting on a cadence). The
+# freshness infra (doc-linter, last_verified frontmatter, lib/frontmatter.py)
+# otherwise only fires post-loop (once per completed track) or as a SessionStart
+# nudge; nothing fights corpus drift on a regular heartbeat. This gate nudges a
+# one-shot doc-linter dispatch at most once per N hours, riding the
+# dispatch-finalize event — the sanctioned per-cycle seat
+# (decision-loop-heartbeat.md) — NOT a wall clock (a cron is explicitly rejected
+# there; this rides a deterministic event, so it is compliant).
+#
+# The hook MUST NOT dispatch the agent itself: PostToolBatch runs with a 35s
+# budget vs doc-linter's 30 maxTurns. It emits one additional_context line and
+# the orchestrator acts on it. Advisory and non-blocking, consistent with the
+# plugin's long-standing non-blocking review posture. The throttle is
+# project-global (doc freshness is global, not per-session), so a single
+# last_run_iso gates every session — once nudged it stays quiet for the window
+# across resumes. Coordinate with the post-loop §6.5 lint + the SessionStart
+# drift nudge (both still run): at most one redundant nudge per window is the
+# accepted cost of keeping this decoupled from the track sidecar's boolean-only
+# `lint_done` marker.
+DOC_LINT_HEARTBEAT_FILE = "doc-lint-heartbeat.json"
+# 24h default: the corpus drifts on the scale of sessions/days, not minutes.
+# Override via CONDUCTOR_DOC_LINT_HEARTBEAT_H; 0 (or negative) disables.
+DEFAULT_DOC_LINT_HEARTBEAT_H = 24
+
+
+def _doc_lint_heartbeat_threshold_h() -> int:
+    """Hours between doc-lint heartbeat nudges. Env-overridable; <=0 disables."""
+    raw = os.environ.get("CONDUCTOR_DOC_LINT_HEARTBEAT_H", "")
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_DOC_LINT_HEARTBEAT_H
+
+
+def _doc_lint_heartbeat_due(data_dir: Path) -> bool:
+    """True if no nudge in the last threshold hours. Disabled threshold ⇒ False.
+
+    Best-effort: a missing/corrupt throttle file ⇒ due now (a fresh install or a
+    hand-corrupted ledger both surface the nudge rather than silently suppressing).
+    """
+    threshold = _doc_lint_heartbeat_threshold_h()
+    if threshold <= 0:
+        return False
+    data = load_json_safe(data_dir / DOC_LINT_HEARTBEAT_FILE)
+    last = data.get("last_run_iso") if isinstance(data, dict) else None
+    if not last:
+        return True
+    try:
+        then = datetime.fromisoformat(last)
+    except (ValueError, TypeError):
+        return True
+    if then.tzinfo is None:
+        then = then.replace(tzinfo=timezone.utc)
+    age_h = (datetime.now(timezone.utc) - then).total_seconds() / 3600.0
+    return age_h >= threshold
+
+
+def _doc_lint_mark_run(data_dir: Path) -> None:
+    """Stamp the heartbeat clock. Best-effort: a failed write re-nudges next cycle."""
+    try:
+        atomic_write_json(
+            data_dir / DOC_LINT_HEARTBEAT_FILE,
+            {"last_run_iso": datetime.now(timezone.utc).isoformat()},
+        )
+    except OSError:
+        pass
+
+
+def doc_lint_heartbeat_message() -> str:
+    """The one-line advisory nudge. The orchestrator dispatches conductor:doc-linter."""
+    threshold = _doc_lint_heartbeat_threshold_h()
+    return (
+        "[Conductor] Doc-gardening heartbeat: no doc-lint pass in >=" + str(threshold) +
+        "h. Dispatch `conductor:doc-linter` with prompt `PROJECT_DIR=<project root>` "
+        "(one-shot advisory — orphans / stale claims / contradictions / missing "
+        "frontmatter). For the loop-until-dry repair run `/conductor:wiki-doctor lint`. "
+        "Non-blocking; ignore if a pass ran recently."
+    )
+
+
 def main():
     """Main hook function"""
     # Read hook input
@@ -505,6 +586,16 @@ def main():
     yield_msg = budget_yield_message(budget_count)
     if yield_msg:
         write_simple_output(additional_context=yield_msg)
+        return
+
+    # Doc-gardening heartbeat (Pillar 3 entropy-fight; advisory, non-blocking).
+    # Rides the dispatch-finalize event — the sanctioned per-cycle seat — at most
+    # once per CONDUCTOR_DOC_LINT_HEARTBEAT_H (default 24h). The hook nudges only;
+    # it does NOT dispatch the agent (35s budget vs doc-linter's 30 maxTurns).
+    # Last gate so it can never starve the correctness/checkpoint/coverage gates.
+    if _detect_dispatch_finalize(tool_calls) and _doc_lint_heartbeat_due(get_data_dir()):
+        _doc_lint_mark_run(get_data_dir())
+        write_simple_output(additional_context=doc_lint_heartbeat_message())
         return
 
     # Default output
