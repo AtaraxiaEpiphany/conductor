@@ -53,5 +53,41 @@ class SelfReviewLoopWiringTests(TestCase):
         self.assertIn("AskUserQuestion", self.skill)
 
 
+class SeenSetPersistenceTests(TestCase):
+    """The `seen`-signature set is loop state. A mid-loop context compaction would
+    lose a model-resident set → redundant re-review of already-triaged findings
+    (wasted fix iterations). §3.6b persists it to a conductor-owned, gitignored
+    file keyed by task, so the loop survives compaction without a later `[Review]`
+    task inheriting a stale set."""
+
+    def setUp(self):
+        self.skill = (ROOT / "skills" / "implement" / "SKILL.md").read_text(encoding="utf-8")
+
+    def test_seen_persists_to_conductor_owned_file(self):
+        self.assertIn("review-seen.json", self.skill)
+        self.assertIn(".conductor/review-seen.json", self.skill)
+
+    def test_file_keyed_by_task_sha(self):
+        # A new/different task must NOT inherit another task's seen set — the file
+        # guards on task_sha so only a resume of the SAME task restores the set.
+        self.assertIn("task_sha", self.skill)
+
+    def test_cleared_on_terminal_exit(self):
+        # The file is deleted on every terminal exit (dry/clean or budget-spent)
+        # so a later [Review] task starts empty.
+        lower = self.skill.lower()
+        self.assertIn("delete", lower)
+
+
+class ReviewSeenGitignoreTests(TestCase):
+    """review-seen.json is transient loop state under .conductor/ — it must be in
+    the conductor-gitignore template so it is never staged by a conductor commit
+    (alongside the other transient markers)."""
+
+    def test_review_seen_in_conductor_gitignore(self):
+        quality = (ROOT / "scripts" / "track_state" / "quality.py").read_text(encoding="utf-8")
+        self.assertIn("review-seen.json", quality)
+
+
 if __name__ == "__main__":
     main()

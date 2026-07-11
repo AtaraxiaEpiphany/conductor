@@ -233,9 +233,11 @@ COMMAND_HELP = {
                        "Rail B-min post-loop spine: collapses the prose post-loop (§5.0–§8.0) into ONE leaf "
                        "action (deferred_ask / finalize / dispatch / dispatch_advisory / dispatch_review / digest / "
                        "archive_ask / done / halt / error). Driven by skills/post-loop-step/SKILL.md."),
-    "post-loop-review": ("post-loop-review <track-dir> --status <APPROVE|APPROVE_WITH_COMMENTS|CHANGES_REQUESTED|FAILURE>",
+    "post-loop-review": ("post-loop-review <track-dir> --status <APPROVE|APPROVE_WITH_COMMENTS|CHANGES_REQUESTED|FAILURE> [--critical <N>] [--high <N>]",
                          "Stamp the reviewed-range sidecar from the code-reviewer STATUS (a real review stamps; "
-                         "FAILURE does not → re-review). Owns the §7.0 gate-advance in code, not teleoperator prose."),
+                         "FAILURE does not → re-review). Also stamps the verdict + Critical/High counts "
+                         "(--critical/--high, transcribed from the RESULT block) for audit. Owns the §7.0 "
+                         "gate-advance in code, not teleoperator prose."),
     "phase-verdict": ("phase-verdict <track-dir> --ac-verdict <passed|warn|skipped|FAILED|ERROR> "
                       "[--ac-gate <gate>] [--ac-n-ungrounded <N>] --l1-status <passed|failed|error> --l1-command <cmd>",
                       "Transcribe the fanned ac-tracer + test-runner verdicts to the checkpoint marker "
@@ -505,7 +507,9 @@ def main():
         elif cmd == "post-loop-step":
             cmd_post_loop_step(track_dir, compact="--full" not in args)
         elif cmd == "post-loop-review":
-            cmd_post_loop_review(track_dir, flag(args, "--status"))
+            cmd_post_loop_review(track_dir, flag(args, "--status"),
+                                 critical=flag(args, "--critical"),
+                                 high=flag(args, "--high"))
         elif cmd == "phase-verdict":
             cmd_phase_verdict(
                 track_dir,

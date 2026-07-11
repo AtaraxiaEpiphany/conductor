@@ -14,11 +14,23 @@ from pathlib import Path
 from unittest import TestCase, main
 
 ROOT = Path(__file__).resolve().parent.parent
+_WIKI = ROOT / "skills" / "wiki"
+
+
+def _skill_surface() -> str:
+    """Router (SKILL.md) + reference bodies — after the references/ split a
+    sub-command's wiring may live in either file."""
+    parts = [(_WIKI / "SKILL.md").read_text(encoding="utf-8")]
+    for ref in ("query", "ingest", "build", "doc-sync-pipeline"):
+        p = _WIKI / "references" / f"{ref}.md"
+        if p.exists():
+            parts.append(p.read_text(encoding="utf-8"))
+    return "\n\n".join(parts)
 
 
 class WikiSkillBuildRoutingTests(TestCase):
     def setUp(self):
-        self.skill = (ROOT / "skills" / "wiki" / "SKILL.md").read_text(encoding="utf-8")
+        self.skill = _skill_surface()
 
     def test_build_subcommand_listed(self):
         self.assertIn("`build <source>`", self.skill)
@@ -44,7 +56,7 @@ class WikiSkillBuildPipelineTests(TestCase):
     wiki-synthesizer (Phase 2) once, then the advisory wiki-differ + doc-linter."""
 
     def setUp(self):
-        self.skill = (ROOT / "skills" / "wiki" / "SKILL.md").read_text(encoding="utf-8")
+        self.skill = _skill_surface()
 
     def test_reuses_corpus_writer_and_synthesizer(self):
         self.assertIn("conductor:corpus-writer", self.skill)
@@ -73,7 +85,7 @@ class WikiSkillBuildPlanThenExecuteTests(TestCase):
     not per source)."""
 
     def setUp(self):
-        self.skill = (ROOT / "skills" / "wiki" / "SKILL.md").read_text(encoding="utf-8")
+        self.skill = _skill_surface()
 
     def test_has_plan_and_execute_phases(self):
         self.assertIn("Phase A", self.skill)
@@ -108,7 +120,7 @@ class WikiSkillBuildReferencesLayerTests(TestCase):
     must-agree drift (D5) the design avoids."""
 
     def setUp(self):
-        self.skill = (ROOT / "skills" / "wiki" / "SKILL.md").read_text(encoding="utf-8")
+        self.skill = _skill_surface()
 
     def test_references_file_into_existing_resource_home(self):
         self.assertIn("conductor/resource/", self.skill)
@@ -120,7 +132,7 @@ class WikiSkillBuildReferencesLayerTests(TestCase):
 
 class WikiSkillBuildNoSilentCapsTests(TestCase):
     def setUp(self):
-        self.skill = (ROOT / "skills" / "wiki" / "SKILL.md").read_text(encoding="utf-8")
+        self.skill = _skill_surface()
 
     def test_source_cap_is_surfaced(self):
         # A cap on sources must be announced, not silent.
@@ -133,7 +145,7 @@ class WikiSkillIngestDisambiguationTests(TestCase):
     source' so the two are unambiguous."""
 
     def setUp(self):
-        self.skill = (ROOT / "skills" / "wiki" / "SKILL.md").read_text(encoding="utf-8")
+        self.skill = _skill_surface()
 
     def test_ingest_reworded_single_source(self):
         self.assertIn("Ingest a single source", self.skill)

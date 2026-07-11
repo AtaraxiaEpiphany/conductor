@@ -20,7 +20,13 @@ there was no first-class way to point the wiki at an existing corpus of docs.
 
 1. **Subcommand of the `wiki` skill, not a new skill.** Skills are auto-discovered
    from `skills/*/SKILL.md`; `build` shares the `wiki` skill's §1.1 setup-check and
-   §5.0 error-handling. One routing entry, one new section (§7.0).
+   §5.0 error-handling. One routing entry. The `## 7.0` section number is stable;
+   its body was later extracted to `skills/wiki/references/build.md` as part of the
+   wiki-skill **progressive-disclosure split** (query/ingest/build bodies each live
+   in their own `references/*.md`, read only when their sub-command is routed) — the
+   router stays thin, the heavy body loads only when `build` is invoked. Section
+   numbers are preserved so cross-references (`agent-error-handling.md`'s
+   `wiki query (§4)`, the §6.2/§7.3 advisory pointers) and the wiring tests stay valid.
 
 2. **Reuses `corpus-writer` + `wiki-synthesizer` UNCHANGED, in their existing
    `ad-hoc` mode.** No shared-agent change. This is the low-blast-radius choice:
@@ -96,3 +102,6 @@ feature.
 - [[runtime/contracts/doc-conventions]] — `resource` type → `conductor/resource/` placement.
 - [[conductor/design/agent-error-handling]] — `build` shares the ingest row
   (`corpus-writer` → `wiki-synthesizer` / `---DOC SYNC RESULT---`).
+- `skills/wiki/references/doc-sync-pipeline.md` — the ad-hoc Phase 1/2 contract
+  + advisory tail, shared once by `ingest` (§6.0) and `build` (§7.0) so the two
+  can't drift apart (single source of truth).

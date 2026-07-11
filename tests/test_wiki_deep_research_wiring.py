@@ -25,8 +25,26 @@ from pathlib import Path
 from unittest import TestCase, main
 
 ROOT = Path(__file__).resolve().parent.parent
-SKILL = (ROOT / "skills" / "wiki" / "SKILL.md").read_text(encoding="utf-8")
+_WIKI = ROOT / "skills" / "wiki"
+
+
+def _read(*parts: str) -> str:
+    return _WIKI.joinpath(*parts).read_text(encoding="utf-8")
+
+
+# The wiki skill is a thin router (SKILL.md) whose heavy sub-command bodies
+# (query/ingest/build) live in references/*.md (progressive disclosure). Wiring
+# may sit in either file after the split; assert against the UNION so a pinned
+# invariant is not silently moved off-page.
+SKILL = "\n\n".join([_read("SKILL.md"),
+                     _read("references", "query.md"),
+                     _read("references", "ingest.md"),
+                     _read("references", "build.md"),
+                     _read("references", "doc-sync-pipeline.md")])
 RESEARCHER = (ROOT / "agents" / "wiki-researcher.md").read_text(encoding="utf-8")
+_QUERY_REF = _read("references", "query.md")
+_INGEST_REF = _read("references", "ingest.md")
+_PIPELINE_REF = _read("references", "doc-sync-pipeline.md")
 
 
 def _frontmatter_value(agent_text: str, key: str) -> str:
@@ -51,9 +69,8 @@ def _section(text: str, start: str, end: str) -> str:
     return text[i : j if j >= 0 else len(text)]
 
 
-QUERY_SECTION = _section(SKILL, "### 4.2 Research", "### 4.3 Present Answer")
-INGEST_SECTION = _section(SKILL, "## 6.0 INGEST", "## 5.0 ERROR HANDLING") \
-    or _section(SKILL, "## 6.0 INGEST", "### 6.3")
+QUERY_SECTION = _section(_QUERY_REF, "### 4.2 Research", "### 4.3 Present Answer")
+INGEST_SECTION = _section(_INGEST_REF, "## 6.0 INGEST", "### 6.3")
 
 
 class QueryFanoutTopologyTests(TestCase):
@@ -155,21 +172,30 @@ class WikiResearcherUnchangedTests(TestCase):
 
 
 class PostIngestDocLinterAdvisoryTests(TestCase):
-    """§6.2 chains a one-shot doc-linter advisory after the doc-sync pipeline."""
+    """ingest chains a one-shot doc-linter advisory after the doc-sync pipeline.
+    The advisory tail is shared (doc-sync-pipeline.md); ingest §6.2 delegates to
+    it, so the advisory content lives in the pipeline reference, not §6.2."""
 
-    def test_doc_linter_dispatch_in_ingest(self):
-        self.assertIn("conductor:doc-linter", INGEST_SECTION)
+    def test_ingest_delegates_to_the_shared_pipeline(self):
+        # §6.2 routes the dispatch + advisory tail through the shared pipeline,
+        # and still names the advisory at the call site.
+        lower = INGEST_SECTION.lower()
+        self.assertIn("doc-sync-pipeline", lower)
+        self.assertIn("doc-linter", lower)
+
+    def test_pipeline_chains_doc_linter_advisory(self):
+        self.assertIn("conductor:doc-linter", _PIPELINE_REF)
 
     def test_it_is_advisory_not_the_repair_loop(self):
         # The advisory is one-shot; the loop-until-dry + refute repair loop
         # stays owned by /conductor:wiki-doctor lint.
-        lower = INGEST_SECTION.lower()
+        lower = _PIPELINE_REF.lower()
         self.assertIn("advisory", lower)
         self.assertIn("not", lower)
         self.assertIn("wiki-doctor lint", lower)
 
     def test_lint_result_block_referenced(self):
-        self.assertIn("---DOC LINT RESULT---", INGEST_SECTION)
+        self.assertIn("---DOC LINT RESULT---", _PIPELINE_REF)
 
 
 class ErrorHandlingRevisionTests(TestCase):

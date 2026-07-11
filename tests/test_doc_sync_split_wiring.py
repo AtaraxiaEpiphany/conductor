@@ -197,6 +197,25 @@ class DocSyncProcedureExtractionTests(TestCase):
             self.assertIn(token, self.proc)
 
 
+class DocSyncTwoLayerCrossReferenceTests(TestCase):
+    """The two-phase engine is described in two places: this procedure contract
+    (the *content/reference* layer — what to analyze + synthesize) and the wiki
+    skill's `references/doc-sync-pipeline.md` (the *orchestration* layer — how to
+    dispatch, sequence, and parse in ad-hoc mode). They are complementary, not
+    duplicative; bidirectional cross-refs keep a future edit from silently forking
+    the "what Phase 1/2 does" wording (the D5 two-files-must-agree hazard)."""
+
+    def setUp(self):
+        self.proc = (ROOT / "runtime" / "contracts" / "doc-sync-procedure.md").read_text(encoding="utf-8")
+        self.pipe = (ROOT / "skills" / "wiki" / "references" / "doc-sync-pipeline.md").read_text(encoding="utf-8")
+
+    def test_procedure_points_at_pipeline(self):
+        self.assertIn("doc-sync-pipeline", self.proc)
+
+    def test_pipeline_points_at_procedure(self):
+        self.assertIn("doc-sync-procedure", self.pipe)
+
+
 class HookAndDispatcherWiringTests(TestCase):
     """The split's mechanical wiring: hook matchers, recovery/reminder registries,
     and the two caller dispatch sequences (post-loop + wiki ingest)."""

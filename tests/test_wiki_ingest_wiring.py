@@ -12,11 +12,23 @@ from pathlib import Path
 from unittest import TestCase, main
 
 ROOT = Path(__file__).resolve().parent.parent
+_WIKI = ROOT / "skills" / "wiki"
+
+
+def _skill_surface() -> str:
+    """Router (SKILL.md) + reference bodies — after the references/ split a
+    sub-command's wiring may live in either file."""
+    parts = [(_WIKI / "SKILL.md").read_text(encoding="utf-8")]
+    for ref in ("query", "ingest", "build", "doc-sync-pipeline"):
+        p = _WIKI / "references" / f"{ref}.md"
+        if p.exists():
+            parts.append(p.read_text(encoding="utf-8"))
+    return "\n\n".join(parts)
 
 
 class WikiSkillIngestTests(TestCase):
     def setUp(self):
-        self.skill = (ROOT / "skills" / "wiki" / "SKILL.md").read_text(encoding="utf-8")
+        self.skill = _skill_surface()
 
     def test_ingest_routed_and_tooled(self):
         self.assertIn("`ingest`", self.skill)

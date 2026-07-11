@@ -16,6 +16,7 @@ Fixes" path and the post-loop auto-review, both of which parse this exact file.
 ```json
 {
   "status": "SUCCESS",
+  "verdict": "APPROVE|APPROVE_WITH_COMMENTS|CHANGES_REQUESTED",
   "summary": "<single sentence>",
   "mode": "full|refute|critique",
   "lens": "bugs|security|spec-compliance|tests|null",
@@ -36,6 +37,15 @@ Fixes" path and the post-loop auto-review, both of which parse this exact file.
   "stats": {"critical": 0, "high": 0, "medium": 0, "low": 0}
 }
 ```
+
+**`status` vs `verdict` (do not confuse them):** `status` is the **agent-run**
+status (`SUCCESS` the review completed / `FAILURE` it crashed) — it says nothing
+about the code. `verdict` is the **review judgment** of the code
+(`APPROVE` / `APPROVE_WITH_COMMENTS` / `CHANGES_REQUESTED`) — the same value the
+inline `---REVIEW RESULT---` block carries as `STATUS:`. Persisting `verdict`
+here (mirroring the stdout block) closes the gap where the review judgment lived
+only in ephemeral stdout; the post-loop spine also stamps it to the committed
+sidecar (`review_verdict`) so a completed track's verdict is auditable on disk.
 
 **`mode`-specific `findings` semantics:**
 
