@@ -47,3 +47,7 @@ Scoped to the regenerated overview: prompt `PROJECT_DIR={project root}`, target 
 ### Advisory lint — `conductor:doc-linter`
 
 Ad-hoc ingest of an arbitrary source (file / URL / paste, or a batch of them) is precisely when lint violations land — the sources rarely follow doc conventions, and corpus-writer merges them as-is. This one-shot advisory catches the orphans / stale claims / contradictions / missing frontmatter the merge may introduce. Dispatch `conductor:doc-linter` (default `MODE=full`), prompt `PROJECT_DIR={project root}`. Parse `---DOC LINT RESULT---`; `STATUS: WARN`/`FAIL` → surface the counts and recommend `/conductor:wiki-doctor lint` for the repair loop. `STATUS: FAILURE` → announce, continue. Advisory and non-blocking — **not** the loop-until-dry repair loop (that lives in `/conductor:wiki-doctor lint`).
+
+## See Also
+
+- [[runtime/contracts/doc-sync-procedure]] — the per-document analysis-criteria table, proposal template, and overview/purpose synthesis specs. This reference is the **orchestration** layer (ad-hoc dispatch + Phase 1/2 sequencing + advisory tail); the procedure contract is the **content/reference** layer (what corpus-writer analyzes and wiki-synthesizer regenerates). The two describe the same two-phase engine at different layers — keep them aligned.

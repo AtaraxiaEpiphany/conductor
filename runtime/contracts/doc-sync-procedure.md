@@ -87,3 +87,4 @@ If this run had **no** decisions, no spec-level direction change, and resolved/r
 
 - [[runtime/contracts/doc-conventions]] — provenance frontmatter + wikilink format used by the execute step.
 - [[runtime/contracts/doc-routing]] — scope→doc routing shared with task-executor, explorer, code-reviewer.
+- [[skills/wiki/references/doc-sync-pipeline]] — ad-hoc dispatch contract, Phase 1/2 sequencing, and advisory tail. This page is the **content/reference** layer (what to analyze + synthesize); the pipeline reference is the **orchestration** layer (how to dispatch, sequence, and parse in ad-hoc mode) for `wiki ingest` / `wiki build`.
