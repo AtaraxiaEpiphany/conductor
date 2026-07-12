@@ -376,7 +376,7 @@ BUDGET_YIELD_FILE = "budget-yield.json"
 # ``CONDUCTOR_BUDGET_YIELD_N`` to this suggested small-window value (a
 # small-context model exhausts its budget well before 8 cycles; 8 suits a
 # strong model on a long phase).
-DEFAULT_BUDGET_YIELD_N = 4
+SUGGESTED_BUDGET_YIELD_N = 4
 
 
 def _detect_dispatch_finalize(tool_calls: list[dict]) -> bool:
@@ -394,7 +394,7 @@ def _budget_threshold() -> int:
 
     Disabled by default (long-running sessions run uninterrupted): when
     ``CONDUCTOR_BUDGET_YIELD_N`` is unset/invalid, returns 0. Set it to a
-    positive int (``DEFAULT_BUDGET_YIELD_N`` = 4 is the suggested window for a
+    positive int (``SUGGESTED_BUDGET_YIELD_N`` = 4 is the suggested window for a
     small-context model) to re-enable the deterministic pacing yield.
     """
     raw = os.environ.get("CONDUCTOR_BUDGET_YIELD_N", "")

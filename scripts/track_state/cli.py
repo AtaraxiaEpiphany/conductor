@@ -48,13 +48,16 @@ _BOOL_FLAGS = {"--full", "--fix", "--check", "--force"}
 #     the raw path" (is it a file? the conductor root? missing state?) —
 #     resolution's "exit 1 on unresolvable" would break that. ``check`` already
 #     does resolve + preflight in one call for the short-id case.
+#   * ``derive-name``: its positional is a shortname to derive a track name
+#     from, not a track to locate — resolving a bare shortname would exit 1
+#     with ``no_match`` (the track it names doesn't exist yet).
 # Every OTHER command with a <track-dir> positional resolves a bare track_id /
 # shortname through ``_resolve_track_dir_or_halt`` (existing-path fast path
 # skips resolution), so ``track-state next auth``, ``indices auth``,
 # ``validate auth`` all work. See ``_resolve_track_dir_or_halt``.
 _TD_NO_RESOLUTION_COMMANDS = {
     "init-from-plan", "new-track-init", "new-track-step",
-    "new-track-set-mode", "new-track-finalize", "preflight",
+    "new-track-set-mode", "new-track-finalize", "preflight", "derive-name",
 }
 
 
@@ -397,12 +400,13 @@ def main():
 
     # Universal short-id resolution: accept a bare track_id / shortname wherever
     # a <track-dir> positional is an existing track to locate. Skipped for the
-    # query commands (resolve their own query / take no positional), the raw-path
-    # commands (destination/diagnostic, not a lookup — see
-    # ``_TD_NO_RESOLUTION_COMMANDS``), and ``derive-name`` (its positional is a
-    # shortname, not a track). No-op for a real path (single is_dir() fast path).
+    # query commands (resolve their own query / take no positional — see
+    # ``_NO_TRACK_DIR_COMMANDS``) and the raw-path commands (destination /
+    # diagnostic / shortname, not a lookup — see
+    # ``_TD_NO_RESOLUTION_COMMANDS``). No-op for a real path (single is_dir()
+    # fast path).
     if track_dir is not None and cmd not in (
-        _NO_TRACK_DIR_COMMANDS | _TD_NO_RESOLUTION_COMMANDS | {"derive-name"}
+        _NO_TRACK_DIR_COMMANDS | _TD_NO_RESOLUTION_COMMANDS
     ):
         track_dir = _resolve_track_dir_or_halt(track_dir, cmd)
 

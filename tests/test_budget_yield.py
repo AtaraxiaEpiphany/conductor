@@ -34,7 +34,7 @@ _spec.loader.exec_module(_mod)
 _detect_dispatch_finalize = _mod._detect_dispatch_finalize
 bump_budget_counter = _mod.bump_budget_counter
 budget_yield_message = _mod.budget_yield_message
-DEFAULT_BUDGET_YIELD_N = _mod.DEFAULT_BUDGET_YIELD_N
+SUGGESTED_BUDGET_YIELD_N = _mod.SUGGESTED_BUDGET_YIELD_N
 
 _HOOK = _scripts / "on-batch-complete.py"
 
@@ -165,15 +165,15 @@ class BudgetYieldMessageTests(TestCase):
             os.environ.pop("CONDUCTOR_BUDGET_YIELD_N", None)
 
     def test_below_default_threshold_is_none(self):
-        os.environ["CONDUCTOR_BUDGET_YIELD_N"] = str(DEFAULT_BUDGET_YIELD_N)
-        self.assertIsNone(budget_yield_message(DEFAULT_BUDGET_YIELD_N - 1))
+        os.environ["CONDUCTOR_BUDGET_YIELD_N"] = str(SUGGESTED_BUDGET_YIELD_N)
+        self.assertIsNone(budget_yield_message(SUGGESTED_BUDGET_YIELD_N - 1))
 
     def test_at_default_threshold_yields_when_enabled(self):
         # Disabled by default — opt in via CONDUCTOR_BUDGET_YIELD_N.
-        os.environ["CONDUCTOR_BUDGET_YIELD_N"] = str(DEFAULT_BUDGET_YIELD_N)
-        msg = budget_yield_message(DEFAULT_BUDGET_YIELD_N)
+        os.environ["CONDUCTOR_BUDGET_YIELD_N"] = str(SUGGESTED_BUDGET_YIELD_N)
+        msg = budget_yield_message(SUGGESTED_BUDGET_YIELD_N)
         self.assertIsNotNone(msg)
-        self.assertIn(str(DEFAULT_BUDGET_YIELD_N), msg)
+        self.assertIn(str(SUGGESTED_BUDGET_YIELD_N), msg)
 
     def test_disabled_by_default(self):
         # Env unset ⇒ threshold 0 ⇒ never yields, regardless of count.

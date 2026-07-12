@@ -50,6 +50,24 @@ def _audit_gate(gate: str, command: str) -> None:
         pass
 
 
+def _deny(gate: str, command: str, additional_context: str,
+          permission_decision_reason: str) -> None:
+    """Audit that ``gate`` fired, then deny the PreToolUse (exits the process).
+
+    Every conductor gate denies outright (never ``ask``) so a long-running
+    session is never blocked on a human prompt — the model adapts around the
+    denial. Pairing the audit with the deny keeps the decision policy in one
+    place. ``write_hook_output`` exits the process, so callers return nothing.
+    """
+    _audit_gate(gate, command)
+    write_hook_output(
+        hook_event_name="PreToolUse",
+        additional_context=additional_context,
+        permission_decision="deny",
+        permission_decision_reason=permission_decision_reason,
+    )
+
+
 def has_in_progress_task(state_file: Path) -> bool:
     """Check if state file has in_progress tasks"""
     state = load_json_safe(state_file)
@@ -411,8 +429,8 @@ def _check_f2_tdd_gate(cwd: Path, command: str) -> None:
     """F2 TDD gate: a feat/fix commit must stage a test alongside source code.
 
     Returns normally (caller proceeds to allow) when the gate passes or does
-    not apply; calls ``write_hook_output(permission_decision="deny")`` — which
-    exits the process — when it trips. Denied (not asked) so a long-running
+    not apply; calls ``_deny(...)`` — which exits the process — when it trips.
+    Denied (not asked) so a long-running
     session is never blocked on a human prompt; the model adapts by using a
     non-gated commit type (docs/chore/refactor) for the rare legitimate
     no-test feat/fix (test-infra, generated code).
@@ -442,13 +460,7 @@ def _check_f2_tdd_gate(cwd: Path, command: str) -> None:
         '(Step 3) before committing, or use a non-gated commit type '
         '(docs/chore/style/refactor) if no test applies.'
     )
-    _audit_gate("f2_tdd", command)
-    write_hook_output(
-        hook_event_name="PreToolUse",
-        additional_context=additional_context,
-        permission_decision="deny",
-        permission_decision_reason=permission_reason,
-    )
+    _deny("f2_tdd", command, additional_context, permission_reason)
 
 
 def main():
@@ -480,13 +492,7 @@ def main():
             'Use /conductor:revert workflow instead.'
         )
 
-        _audit_gate("dangerous_git", command)
-        write_hook_output(
-            hook_event_name="PreToolUse",
-            additional_context=additional_context,
-            permission_decision="deny",
-            permission_decision_reason=permission_reason,
-        )
+        _deny("dangerous_git", command, additional_context, permission_reason)
         return
 
     # Check for track-state lock violations
@@ -503,13 +509,7 @@ def main():
                 'Complete or revert first to maintain state consistency.'
             )
 
-            _audit_gate("state_lock", command)
-            write_hook_output(
-                hook_event_name="PreToolUse",
-                additional_context=additional_context,
-                permission_decision="deny",
-                permission_decision_reason=permission_reason,
-            )
+            _deny("state_lock", command, additional_context, permission_reason)
             return
 
     # Check for direct modifications to track-state.json
@@ -523,13 +523,7 @@ def main():
             'Use /conductor:revert or track-state CLI.'
         )
 
-        _audit_gate("state_lock", command)
-        write_hook_output(
-            hook_event_name="PreToolUse",
-            additional_context=additional_context,
-            permission_decision="deny",
-            permission_decision_reason=permission_reason,
-        )
+        _deny("state_lock", command, additional_context, permission_reason)
         return
 
     # Check for non-conventional commit messages (V10). The anchor matches the
@@ -543,13 +537,7 @@ def main():
         # orchestrator-placeholder mis-substitution class at the hook layer.
         broken = commit_arg_shell_broken_reason(command)
         if broken:
-            _audit_gate("commit_shell_broken", command)
-            write_hook_output(
-                hook_event_name="PreToolUse",
-                additional_context=f"[Conductor] {broken}",
-                permission_decision="deny",
-                permission_decision_reason=broken,
-            )
+            _deny("commit_shell_broken", command, f"[Conductor] {broken}", broken)
             return
         is_valid, suggested_fix = validate_commit_message(command)
         if not is_valid:
@@ -565,13 +553,7 @@ def main():
                 f'Suggested: {suggested_fix}'
             )
 
-            _audit_gate("v10_commit", command)
-            write_hook_output(
-                hook_event_name="PreToolUse",
-                additional_context=additional_context,
-                permission_decision="deny",
-                permission_decision_reason=permission_reason,
-            )
+            _deny("v10_commit", command, additional_context, permission_reason)
             return
 
     # F2 TDD gate: feat/fix commits must stage a test alongside source code.
