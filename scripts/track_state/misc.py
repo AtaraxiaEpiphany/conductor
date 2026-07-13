@@ -15,7 +15,7 @@ from .mutations import _do_complete
 from .sync import _do_sync_plan
 from .git_ops import _git_commit, _git_head_sha, _ensure_note, docs_synced_for_track
 from .constants import TERMINAL_FOR_PARENT
-from .quality import _checklist_status
+from .quality import _checklist_status, _to_number
 from .spec_integrity import compute_ac_integrity
 
 
@@ -198,8 +198,8 @@ def cmd_quality_snapshot(track_dir):
         if st == "completed":
             if not exempt:
                 code_tasks += 1
-                cov = ev.get("coverage_pct")
-                if isinstance(cov, (int, float)):
+                cov = _to_number(ev.get("coverage_pct"))
+                if cov is not None:
                     coverage_vals.append(cov)
                     if cov >= 80:
                         coverage_pass += 1

@@ -474,8 +474,9 @@ def _compute_quality_score(track_dir, state, statuses, checklist):
     # / manual edits — a bare ``sum()`` over a str does int(0) + str →
     # ``TypeError: unsupported operand type(s) for +: 'int' and 'str'``, which
     # crashes ``post-loop-step`` (via _finalize_track). Numeric strings still
-    # count (85 == "85"); non-numeric junk is skipped, matching the isinstance
-    # guard in ``misc._quality_grade`` (the other coverage_pct consumer).
+    # count (85 == "85"); non-numeric junk and bool are skipped. ``_to_number``
+    # is shared with ``misc.cmd_quality_snapshot`` so both coverage_pct
+    # consumers agree on what counts.
     coverage_values = []
     for phase in state.get("phases", []):
         for task in phase.get("tasks", []):

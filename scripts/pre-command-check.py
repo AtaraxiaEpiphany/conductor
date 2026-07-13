@@ -28,6 +28,7 @@ from lib.validation import (
 from lib.path_utils import find_tracks_registry, extract_track_dirs
 from lib.logging import log_entry
 from lib.env import get_logs_dir
+from lib.locked_task import _cursor_target, _iter_track_states
 
 
 def _audit_gate(gate: str, command: str) -> None:
@@ -394,11 +395,15 @@ def _is_source_file(path: str) -> bool:
     return Path(path).suffix.lower() in _SOURCE_EXTENSIONS
 
 
-def _staged_files(cwd: Path) -> list:
-    """Files staged for commit (``git diff --cached``). Empty on any git error."""
+def _git_diff_name_only(cwd: Path, *diff_args) -> list:
+    """Lines from ``git diff <diff_args> --name-only``; empty on any git error.
+
+    Shared plumbing for the commit gates' two file-set queries: staged files
+    (``--cached``) and a commit range's touched files (``--no-renames sha~1 sha``).
+    """
     try:
         proc = subprocess.run(
-            ["git", "diff", "--cached", "--name-only"],
+            ["git", "diff", *diff_args, "--name-only"],
             cwd=str(cwd), capture_output=True, text=True, timeout=3,
         )
         if proc.returncode != 0:
@@ -406,6 +411,11 @@ def _staged_files(cwd: Path) -> list:
         return [f for f in proc.stdout.splitlines() if f.strip()]
     except (OSError, subprocess.SubprocessError):
         return []
+
+
+def _staged_files(cwd: Path) -> list:
+    """Files staged for commit (``git diff --cached``). Empty on any git error."""
+    return _git_diff_name_only(cwd, "--cached")
 
 
 def _commit_type_from_command(command: str):
@@ -475,57 +485,34 @@ def _check_f2_tdd_gate(cwd: Path, command: str) -> None:
 # by mutations._do_complete; the SAME range §3.6c hands the refactorer).
 # Fail-open on any ambiguity (no resolvable track, >1 candidate, git error, empty
 # range) so the gate can never false-block legitimate work.
-_TRACKS_GLOB = "conductor/tracks/*/track-state.json"
-
-
 def _cursor_completed_code_sha(state):
     """commit_sha of the cursor-pointed task/subtask if it is `completed`, else None.
 
-    Mirrors lib.locked_task._locked_indices' index→target resolution but swaps
-    its ``status == "in_progress"`` gate for ``completed`` (the refactorer runs
-    AFTER dispatch-finalize, so its task is terminal) and additionally requires a
-    non-empty commit_sha (no code commit → no range to scope). A stale cursor
-    pointing at a non-completed target, or out-of-range indices, → None.
+    Thin facade over ``lib.locked_task._cursor_target`` (status="completed"):
+    the refactorer runs AFTER dispatch-finalize, so its task is terminal, and a
+    non-empty ``commit_sha`` is required (no code commit → no range to scope). A
+    stale cursor pointing at a non-completed target, or out-of-range indices,
+    → None.
     """
-    pi = state.get("current_phase_index", 0)
-    ti = state.get("current_task_index", 0)
-    if pi < 1 or ti < 1:
+    hit = _cursor_target(state, status="completed")
+    if hit is None:
         return None
-    try:
-        task = state["phases"][pi - 1]["tasks"][ti - 1]
-    except (IndexError, KeyError):
-        return None
-    si = state.get("current_subtask_index")
-    if si is not None:
-        try:
-            tgt = task["subtasks"][si - 1]
-        except (IndexError, KeyError):
-            tgt = task
-    else:
-        tgt = task
-    if tgt.get("status") != "completed":
-        return None
-    sha = (tgt.get("commit_sha") or "").strip()
+    sha = (hit[0].get("commit_sha") or "").strip()
     return sha or None
 
 
 def _resolve_refactor_bound(cwd: Path):
     """The single completed-task code_sha bounding this refactor, or None.
 
-    Globs conductor tracks under ``cwd`` and collects every track whose cursor
-    resolves to a completed task with a commit_sha. Exactly one → that sha; zero
-    or more than one → None (ambiguous → caller fails open). Conductor runs one
-    track per session, so "exactly one" is the normal case; multi-track repos
-    degrade to fail-open (unenforced, never a false block). Malformed/unreadable
-    state files are skipped, never raised.
+    Scans conductor tracks under ``cwd`` (via ``lib.locked_task._iter_track_states``)
+    and collects every track whose cursor resolves to a completed task with a
+    commit_sha. Exactly one → that sha; zero or more than one → None (ambiguous →
+    caller fails open). Conductor runs one track per session, so "exactly one" is
+    the normal case; multi-track repos degrade to fail-open (unenforced, never a
+    false block). Malformed/unreadable state files are skipped, never raised.
     """
     shas = []
-    for state_path in Path(cwd).glob(_TRACKS_GLOB):
-        try:
-            with open(state_path) as f:
-                state = json.load(f)
-        except (OSError, json.JSONDecodeError):
-            continue
+    for _state_path, state in _iter_track_states(cwd):
         sha = _cursor_completed_code_sha(state)
         if sha:
             shas.append(sha)
@@ -535,20 +522,11 @@ def _resolve_refactor_bound(cwd: Path):
 def _refactor_allowed_files(cwd: Path, code_sha: str) -> set:
     """File set the completed task's code commit touched (the refactorer's bound).
 
-    ``--no-renames`` for a stable set (matches git_ops._changed_files precedent).
-    Empty on any git error — callers treat an empty derived bound as fail-open
-    (the gate cannot decide what's in scope), NOT as "everything is out of scope".
+    ``--no-renames`` for a stable set across renames. Empty on any git error —
+    callers treat an empty derived bound as fail-open (the gate cannot decide
+    what's in scope), NOT as "everything is out of scope".
     """
-    try:
-        proc = subprocess.run(
-            ["git", "diff", "--no-renames", "--name-only", f"{code_sha}~1", code_sha],
-            cwd=str(cwd), capture_output=True, text=True, timeout=3,
-        )
-        if proc.returncode != 0:
-            return set()
-        return {f for f in proc.stdout.splitlines() if f.strip()}
-    except (OSError, subprocess.SubprocessError):
-        return set()
+    return set(_git_diff_name_only(cwd, "--no-renames", f"{code_sha}~1", code_sha))
 
 
 def _check_refactor_scope_gate(cwd: Path, command: str) -> None:

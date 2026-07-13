@@ -333,37 +333,21 @@ def _emit_no_active_or_decision(track_dir, state, fixes, compact):
 
 def _bookkeeping_commit_line(message):
     """A relayed-envelope commit one-liner: stage, then commit ONLY if something
-    is staged. The robust replacement for the ad-hoc ``git commit -m`` /
-    ``git commit -am`` lines the post-loop ``post`` and the implement-loop
-    ``decision`` blobs hand the teleoperator.
+    is staged — the robust replacement for the ad-hoc ``git commit -m`` /
+    ``git commit -am`` lines the post-loop ``post`` and implement-loop ``decision``
+    blobs hand the teleoperator.
 
-    Why this exists (the bug class it closes):
-      * Bare ``git commit -m "..."`` — the preceding ``track-state ...`` command
-        (sync-plan / registry-update / complete / skip / block / reset / defer /
-        archive) mutates TRACKED files but never stages them, so the commit found
-        nothing staged and FAILED ("no changes added to commit"). This first
-        surfaced on the post-loop ``finalize`` leaf — the very first commit after
-        the implement loop hands off at ``done`` — and hit every other bare-``-m``
-        decision leaf (failed-task Retry/Skip/Block, manual-task Defer/Skip,
-        deferred Verify/Skip, archive, delete) the same way.
-      * ``git commit -am "..."`` — ``-a`` stages only modifications to
-        ALREADY-TRACKED files, so the FIRST sidecar / fix-chunk sentinel (a
-        brand-new untracked file) was left out of its own commit; the
-        advisory / lint / digest gates committed nothing on first run.
-
-    ``git add -A`` stages new + modified + deleted (covers every gate's artifacts
-    — new sidecars/sentinels, the archive ``shutil.move``, the delete ``rm -rf``,
-    and the registry ``tracks.md`` edit that lives outside the track dir). It
-    mirrors the post-loop ``apply_fixes`` precedent and is safe because the
-    conductor flow reaches each gate with a clean working tree (implementation
-    files were committed per-task during the implement loop), so only
-    conductor-managed artifacts are pending. The ``git diff --cached --quiet ||``
-    guard makes the commit conditional: nothing staged → exit 0 → ``||``
-    short-circuits → no commit and no failure. That is safe because every gate
-    advances on a durable marker (a state field or a sidecar/sentinel stamp set
-    by a SEPARATE line in the same ``post``), never on this commit existing — so
-    skipping an empty commit still advances the gate, and idempotent re-entry
-    after an interruption is a no-op instead of a hard git failure.
+    ``git add -A`` (not bare ``-m`` / ``-a``) stages new + modified + deleted
+    artifacts: the track-state mutators never stage what they write (so bare
+    ``-m`` found nothing staged and failed), and ``-a`` only stages modifications
+    to already-tracked files (so the first untracked sidecar/sentinel missed its
+    own commit). Safe because the conductor flow reaches each gate with a clean
+    working tree — only conductor-managed artifacts are pending. The
+    ``git diff --cached --quiet ||`` guard makes an empty commit a no-op: every
+    gate advances on a durable marker (a state field or a sidecar stamp set by a
+    SEPARATE line in the same ``post``), never on this commit existing, so
+    idempotent re-entry after an interruption is a no-op instead of a hard git
+    failure.
     """
     return ("git add -A && git diff --cached --quiet || git commit -m "
             + shlex.quote(message))
