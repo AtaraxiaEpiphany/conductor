@@ -116,7 +116,7 @@ COMPACT_FIELDS = {
     "dispatch-prepare": ("action", "phase", "task", "subtask", "name",
                          "sha", "is_resume", "retry_count",
                          "max_retries", "execution_mode"),
-    "dispatch-finalize": ("status", "sha", "deviations", "committed",
+    "dispatch-finalize": ("status", "sha", "code_sha", "deviations", "committed",
                           "phase_checkpoint_pending", "retry_count",
                           "phase", "task", "subtask", "summary",
                           "coverage_gate", "tdd_gate", "coverage_pct",
@@ -144,7 +144,7 @@ COMPACT_FIELDS = {
     "wave-status": ("active", "phase", "base_sha", "members"),
     # wave-finalize emits the _finalize_task result envelope PLUS its own keys;
     # subset of dispatch-finalize's since the transition is shared.
-    "wave-finalize": ("action", "status", "sha", "retry_count", "committed",
+    "wave-finalize": ("action", "status", "sha", "code_sha", "retry_count", "committed",
                       "phase", "task", "subtask", "summary", "deviations",
                       "member_status", "drained", "phase_checkpoint_pending"),
     "wave-abort": ("action", "aborted", "ok"),

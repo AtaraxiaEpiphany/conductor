@@ -208,7 +208,7 @@ track-state dispatch-finalize "<track_dir>"
 `dispatch-finalize` creates the conductor commit internally. Do NOT commit separately.
 Output includes `committed: true/false` and optionally `phase_checkpoint_pending: <phase_index>`.
 
-**SUCCESS**: `committed: false` → announce `"conductor commit failed, result.json preserved"` → re-run `dispatch-finalize` (max 3 attempts, then HALT with `"dispatch-finalize stuck"`). Deviations > 0 → announce. If `phase_checkpoint_pending` present → dispatch `conductor:phase-checker` immediately. Otherwise → **Section 3.6b** (self-review, if the task opted in) → **Section 3.7**.
+**SUCCESS**: `committed: false` → announce `"conductor commit failed, result.json preserved"` → re-run `dispatch-finalize` (max 3 attempts, then HALT with `"dispatch-finalize stuck"`). Deviations > 0 → announce. If `phase_checkpoint_pending` present → dispatch `conductor:phase-checker` immediately. Otherwise → **Section 3.6b** (self-review, if `[Review]`) → **Section 3.6c** (refactor, if `[Refactor]`) → **Section 3.7**.
 
 **FAILURE**: retry < max → re-dispatch (Section 3.1). retry >= max → dispatch `conductor:skip-analyst`, prompt:
 
@@ -262,13 +262,38 @@ Maintain a `seen` set of finding **signatures** (`severity+title+file+lines`). D
    ```
    TRACK_DIR={td}
    TRACK_ID={id}
-   REVISION_RANGE={sha}~1..{sha}
+   REVISION_RANGE={code_sha}~1..{code_sha}
    ```
 2. **Decide from the `---REVIEW RESULT---` block** (substring-check the severities), counting only NEW `Critical`/`High` (signatures not already in `seen`):
    - **Zero NEW `Critical`/`High`** — a dry round (K=1 empty pass) → loop satisfied → announce `"🔍 Self-review [Review]: clean"` → delete `.conductor/review-seen.json` → §3.7.
    - **NEW `Critical`/`High` present** → add their signatures to `seen` and **write `review-seen.json` back**; re-dispatch `conductor:task-executor` with `ATTEMPT={n+1}` and the NEW findings as remediation context (the agent fixes its own changes), `dispatch-finalize` again, then loop back to step 1.
 3. **Budget guard — max 3 fix iterations.** No runaway loop. If still not dry after 3 fix iterations, stop iterating and announce: `"🔍 Self-review [Review]: {N} findings → 3 fix iterations → {M} residual"` → delete `.conductor/review-seen.json` → step 4.
 4. **Escalate on residual judgment only** — if `Critical` findings persist once the budget is spent (or at any dry stop that still leaves residual Critical), surface them via `AskUserQuestion` (fix-guidance / accept-with-debt / block). Medium/Low residual → note and proceed (do not block the loop on nits).
+
+### 3.6c Tactical Refactor (opt-in — orchestrator-dispatched)
+
+**DEFAULT OFF.** Runs ONLY when the just-completed task opts in:
+- the task NAME contains the marker `[Refactor]` (per-task opt-in), OR
+- env `CONDUCTOR_TASK_REFACTOR=1` (global opt-in for every task this session).
+
+`[Refactor]` is a **name marker, not a tag** — it does NOT enter the
+`[Docs]`/`[Config]`/… exemption logic, so a refactorable task still owes TDD (F2)
+and coverage (F3). (Tier rationale — mechanical Step 5 vs tactical refactorer —
+lives in `agents/refactorer.md` §1.0, not here: the orchestrator is a thin router.)
+
+When opted in, dispatch `conductor:refactorer`, prompt:
+
+```
+TRACK_DIR={td}
+REVISION_RANGE={code_sha}~1..{code_sha}
+```
+
+Parse the `---REFACTOR RESULT---` block (non-blocking — the task already succeeded):
+- **STATUS: SUCCESS** → announce `"🔨 [Refactor]: {REFACTORED} → {COMMITTED}"` → §3.7.
+- **STATUS: FAILURE** → announce `"🔨 [Refactor]: failed (non-blocking) — {SUMMARY}"` → §3.7.
+
+One bounded pass (no loop, no transient state). The refactorer runs the suite
+itself and self-reverts on regression, so no separate green-confirm dispatch.
 
 ### 3.7 Phase Boundary
 

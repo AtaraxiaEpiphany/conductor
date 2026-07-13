@@ -81,6 +81,7 @@ AGENT_REMINDERS = {
     "test-digester": "[Conductor] Result format: ---TEST DIGEST RESULT--- ... ---END RESULT---",
     "doc-probe": "[Conductor] Result format: ---PROBE RESULT--- ... ---END RESULT---",
     "apply-fixes": "[Conductor] Result format: ---FIX RESULT--- ... ---END RESULT---",
+    "refactorer": "[Conductor] Result format: ---REFACTOR RESULT--- ... ---END RESULT---",
 }
 
 

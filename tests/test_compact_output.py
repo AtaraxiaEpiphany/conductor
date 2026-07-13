@@ -251,6 +251,25 @@ class TestDispatchFinalizeCompact(TestCase):
         self.assertIsInstance(result["phase"], int)
         self.assertIsInstance(result["task"], int)
 
+    def test_success_compact_carries_code_sha(self):
+        """dispatch-finalize exposes ``code_sha`` (the agent's code commit) alongside
+        ``sha`` (the conductor chore commit, = final_sha). The §3.6b code-reviewer
+        and §3.6c refactorer seams bind ``REVISION_RANGE={code_sha}~1..{code_sha}``
+        from this field — binding ``{sha}`` instead made both no-ops (the chore
+        diff is state files, not code). ``code_sha`` is in the dispatch-finalize
+        allowlist, so it survives compaction."""
+        d = _make_git_track_dir()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        _write_success_result(d, commit_sha="0123456789abcdef0123456789abcdef01234567")
+        result = _out_captured(cmd_dispatch_finalize, d)
+        self.assertEqual(result["status"], "success")
+        self.assertIn("code_sha", result)               # survives compaction
+        self.assertEqual(result["code_sha"], "0123456")  # 7-char normalized
+        # `sha` is the conductor chore commit; `code_sha` is its parent (the
+        # agent's code). They differ — the split is the whole point.
+        self.assertIn("sha", result)
+        self.assertNotEqual(result["sha"], result["code_sha"])
+
 
 class TestParentStuckCompact(TestCase):
     """Gap #8: the parent_stuck emit no longer carries ``failed=True`` — it was

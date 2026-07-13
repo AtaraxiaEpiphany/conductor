@@ -841,7 +841,8 @@ def _finalize_task(track_dir, p, t, s, r, task_name, status):
         (coverage_gate, tdd_gate, ac_integrity_gate, ears_gate,
          tc_consistency_gate, cov_pct) = _advisory_gates(
              track_dir, r, tags, code_sha)
-        result = dict(status="success", sha=final_sha, parent_completed=parent_completed,
+        result = dict(status="success", sha=final_sha, code_sha=code_sha,
+                      parent_completed=parent_completed,
                       deviations=len(r.get("spec_deviation_detail", [])),
                       sync_count=synced, committed=committed,
                       coverage_gate=coverage_gate, tdd_gate=tdd_gate,

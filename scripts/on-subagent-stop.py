@@ -107,6 +107,11 @@ STDOUT_BLOCK_AGENTS = {
         "the spine does NOT mark a failed chunk done, so an honest FAILURE re-dispatches "
         "it — do not fake SUCCESS."
     ),
+    "refactorer": (
+        "IMMEDIATELY print the ---REFACTOR RESULT--- block (Section 5.0). Report "
+        "STATUS: FAILURE with a one-line REASON if the refactor could not complete; "
+        "the seam is non-blocking, so an honest FAILURE just proceeds — do not fake SUCCESS."
+    ),
 }
 
 # Matches any conductor result-block close tag, e.g. ---END RESULT---,
