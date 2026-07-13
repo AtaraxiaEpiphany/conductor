@@ -14,9 +14,10 @@ code, closing the verdict-on-disk gate:
   in-spine `_do_skip` + advance; SUSTAINED → `halt`).
 
 Both give read-only agents' verdicts a disk channel the spine consumes (mirroring
-`wave-finalize` reading `result.json`). The only remaining non-spine branch is
-`wave_active` (a different spine). The Rail A prose loop (`skills/implement/SKILL.md`)
-is untouched — `step` is an additive, A/B alternative.
+`wave-finalize` reading `result.json`). The only remaining non-spine *routing* branch
+is `wave_active` (a different spine); the opt-in `[Review]`/`[Refactor]` post-SUCCESS
+seams stay Rail A prose (deferred B-full, see below). The Rail A prose loop
+(`skills/implement/SKILL.md`) is untouched — `step` is an additive, A/B alternative.
 
 ## The thesis
 
@@ -51,9 +52,11 @@ extracted from the CLI wrappers) plus `recover`-equivalent routing.
 
 ## What stayed in the skill (the B-min boundary)
 
-The only branch not collapsed is `wave_active` — it hands to a *different* spine
-(`/conductor:parallel`), not a graduation target. The post-loop (§4.0–§8.0) has its
-own spine (`post-loop-step`); `step` hands off at `done`.
+The only *routing* branch not collapsed is `wave_active` — it hands to a *different*
+spine (`/conductor:parallel`), not a graduation target. The post-loop (§4.0–§8.0) has
+its own spine (`post-loop-step`); `step` hands off at `done`. The opt-in post-SUCCESS
+seams (`[Review]`, `[Refactor]`) are not routing branches — `step` routes SUCCESS
+straight to the next leaf — and are listed as B-full graduations below.
 
 ## The two subtle spine behaviors
 
@@ -95,17 +98,32 @@ recover→dispatch-next semantics:
 Both multi-agent handoffs shipped (serial spine only): the §3.2 phase-checkpoint
 fan-out + synthesize (WM2-2, via the `phase-checkpoint.json` marker) AND the §3.6
 skip_analyze skip-analyst → refute → route (WM2-3, via the `skip-analysis.json`
-marker). The verdict-on-disk gate is closed. What remains if empirical A/B shows
-it matters:
+marker). The verdict-on-disk gate is closed.
+
+The refactor mechanism is **partly** in B-min already: its mechanical tier — Step 5,
+inline in `task-executor` §4.0 — runs on every dispatched task regardless of spine
+(the executor owns it, so the dispatching spine is irrelevant). What stays
+Rail-A-only, deferred to B-full if empirical A/B shows it matters:
 
 - **`review_round`** — a `step --review` sub-mode that drives the self-review
   loop in code (loop-until-dry). The `seen`-signature set is **already persisted**
   to `.conductor/review-seen.json` (keyed by `task_sha`) in §3.6b of the Rail A
   skill — so what remains for the B-full graduation is the loop *control flow*
   (review → fix → re-review routing), not the compaction-resilience of `seen`.
+- **`refactor` (§3.6c tactical refactorer)** — graduate the opt-in `[Refactor]`
+  seam (added after this spike was written). On a SUCCESS finalize where the task
+  opts in (name marker `[Refactor]` or env `CONDUCTOR_TASK_REFACTOR`), emit a
+  `dispatch_refactorer` action + a result-transcribe stamp command (the refactorer
+  is stdout-block, like `apply-fixes`), then route to the next leaf (non-blocking).
+  Simpler than `review_round` — one bounded pass, no loop, no transient `seen`
+  state — but the same model-judgment character. `_step_route_after_finalize`
+  currently routes SUCCESS straight to the next leaf, so this seam is invisible to
+  `step` today.
 
-The remaining option is a model-judgment loop that benefits less from determinism
-than the fan-out + synthesize + skip-refute did.
+Both remaining options are model-judgment passes that benefit less from determinism
+than the fan-out + synthesize + skip-refute did, and both fire only after a
+non-blocking SUCCESS (the task already succeeded) — so omitting them from B-min
+trades a debt-improvement opportunity, never correctness.
 
 ## What this spike does NOT change
 

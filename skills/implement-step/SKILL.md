@@ -78,7 +78,15 @@ re-dispatches the synthesizer; an `analyzed` skip marker re-routes from there.)
 `dispatch_skip_analyst` / `dispatch_refuter` / `ask` / `halt` / `done` / `error`) is
 fully code-driven and tested — the phase-checkpoint handshake (§3.2/§3.7) AND the
 skip_analyze handshake (§3.6: skip-analyst → refute → route) both run in code via
-their transcribe commands, not teleoperator prose. The only remaining non-spine branch
-is `wave_active` (`/conductor:parallel` — a different spine). The verdict-on-disk gate
-is closed. See `${CLAUDE_PLUGIN_ROOT}/conductor/design/rail-b-step.md` for the action
-contract and the B-full options.
+their transcribe commands, not teleoperator prose. The verdict-on-disk gate is closed.
+The only remaining non-spine *routing* branch is `wave_active` (`/conductor:parallel`
+— a different spine).
+
+**Refactor mechanism in B-min:** the mechanical **Step 5** tier is active on
+`step`-dispatched tasks — it is inline in `task-executor` §4.0, so the executor runs
+it regardless of which spine dispatched it. The opt-in post-SUCCESS seams (`[Review]`
+§3.6b self-review, `[Refactor]` §3.6c tactical refactorer) are NOT in the spine:
+`step` routes SUCCESS straight to the next leaf, so they stay Rail A prose — deferred
+B-full graduations (model-judgment passes that benefit less from determinism). See
+`${CLAUDE_PLUGIN_ROOT}/conductor/design/rail-b-step.md` for the action contract and
+the B-full options.
