@@ -95,7 +95,12 @@ class DecisionPresentTests(TestCase):
             cmds = decision["commands"][label]
             self.assertEqual(len(cmds), 3, label)
             self.assertTrue(cmds[1].startswith("track-state sync-plan"), label)
-            self.assertTrue(cmds[2].startswith("git commit -m "), label)
+            # The bookkeeping commit stages its own changes (the mutator +
+            # sync-plan before it never stage), and is a no-op on a clean tree
+            # — see _bookkeeping_commit_line. A bare `git commit -m` would find
+            # nothing staged and fail.
+            self.assertIn("git add -A", cmds[2], label)
+            self.assertIn("git commit -m", cmds[2], label)
         # Routing map.
         self.assertEqual(decision["next"],
                          {"Retry": "3.1", "Skip": "3.1", "Block": "HALT"})

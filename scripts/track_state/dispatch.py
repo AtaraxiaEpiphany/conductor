@@ -331,6 +331,44 @@ def _emit_no_active_or_decision(track_dir, state, fixes, compact):
     _emit_no_active_task(track_dir, state, fixes, compact)
 
 
+def _bookkeeping_commit_line(message):
+    """A relayed-envelope commit one-liner: stage, then commit ONLY if something
+    is staged. The robust replacement for the ad-hoc ``git commit -m`` /
+    ``git commit -am`` lines the post-loop ``post`` and the implement-loop
+    ``decision`` blobs hand the teleoperator.
+
+    Why this exists (the bug class it closes):
+      * Bare ``git commit -m "..."`` — the preceding ``track-state ...`` command
+        (sync-plan / registry-update / complete / skip / block / reset / defer /
+        archive) mutates TRACKED files but never stages them, so the commit found
+        nothing staged and FAILED ("no changes added to commit"). This first
+        surfaced on the post-loop ``finalize`` leaf — the very first commit after
+        the implement loop hands off at ``done`` — and hit every other bare-``-m``
+        decision leaf (failed-task Retry/Skip/Block, manual-task Defer/Skip,
+        deferred Verify/Skip, archive, delete) the same way.
+      * ``git commit -am "..."`` — ``-a`` stages only modifications to
+        ALREADY-TRACKED files, so the FIRST sidecar / fix-chunk sentinel (a
+        brand-new untracked file) was left out of its own commit; the
+        advisory / lint / digest gates committed nothing on first run.
+
+    ``git add -A`` stages new + modified + deleted (covers every gate's artifacts
+    — new sidecars/sentinels, the archive ``shutil.move``, the delete ``rm -rf``,
+    and the registry ``tracks.md`` edit that lives outside the track dir). It
+    mirrors the post-loop ``apply_fixes`` precedent and is safe because the
+    conductor flow reaches each gate with a clean working tree (implementation
+    files were committed per-task during the implement loop), so only
+    conductor-managed artifacts are pending. The ``git diff --cached --quiet ||``
+    guard makes the commit conditional: nothing staged → exit 0 → ``||``
+    short-circuits → no commit and no failure. That is safe because every gate
+    advances on a durable marker (a state field or a sidecar/sentinel stamp set
+    by a SEPARATE line in the same ``post``), never on this commit existing — so
+    skipping an empty commit still advances the gate, and idempotent re-entry
+    after an interruption is a no-op instead of a hard git failure.
+    """
+    return ("git add -A && git diff --cached --quiet || git commit -m "
+            + shlex.quote(message))
+
+
 def _failed_task_decision(track_dir, pi, ti, si, name, retry_count):
     """Build the pre-computed Retry/Skip/Block ``decision`` blob for an
     interactive failed+exhausted task (the #1 transducer win).
@@ -366,11 +404,11 @@ def _failed_task_decision(track_dir, pi, ti, si, name, retry_count):
         f'--reason {shlex.quote("Blocked: failed task needs human intervention")}'
     )
 
-    commit_retry = "git commit -m " + shlex.quote(
+    commit_retry = _bookkeeping_commit_line(
         f"chore(conductor): Reset failed task '{name}' for retry [{loc}]")
-    commit_skip = "git commit -m " + shlex.quote(
+    commit_skip = _bookkeeping_commit_line(
         f"chore(conductor): Skip failed task '{name}' [{loc}]")
-    commit_block = "git commit -m " + shlex.quote(
+    commit_block = _bookkeeping_commit_line(
         f"chore(conductor): Block failed task '{name}' [{loc}]")
 
     return dict(
@@ -1180,9 +1218,9 @@ def _manual_task_decision(track_dir, pi, ti, name):
     skip_cmd = (f'track-state skip "{td}" --phase {pi} --task {ti} '
                 f'--reason {shlex.quote("Skipped: manual task not required")}')
     sync_cmd = f'track-state sync-plan "{td}"'
-    commit_defer = "git commit -m " + shlex.quote(
+    commit_defer = _bookkeeping_commit_line(
         f"chore(conductor): Defer manual task '{name}' [{loc}]")
-    commit_skip = "git commit -m " + shlex.quote(
+    commit_skip = _bookkeeping_commit_line(
         f"chore(conductor): Skip manual task '{name}' [{loc}]")
     return dict(
         question=f"Manual task '{name}' ({loc}) needs human verification. Defer or skip?",
@@ -1950,12 +1988,12 @@ def _post_loop_deferred_decision(track_dir, deferred):
             f'track-state skip "{td}" --phase {d["phase"]} --task {d["task"]}'
             f'{sub_flag} --reason {shlex.quote("Skipped: user verified not needed")}')
     sync_cmd = f'track-state sync-plan "{td}"'
-    commit_cmd = "git commit -m " + shlex.quote(
+    commit_cmd = _bookkeeping_commit_line(
         f"chore(conductor): Resolve deferred tasks [{loc}]")
     # Keep-deferred: stamp the sidecar (MERGE — preserves prior markers) so the
     # gate advances without mutating state.
     keep_cmd = _post_loop_stamp_line(td, {"schema": 2, "deferred_resolved": True})
-    keep_commit = "git commit -am " + shlex.quote(
+    keep_commit = _bookkeeping_commit_line(
         f"chore(conductor): Keep deferred tasks (user-verified) [{loc}]")
     return dict(
         question=(f"{len(deferred)} deferred task(s) pending (first: "
@@ -1983,7 +2021,7 @@ def _post_loop_finalize_post(track_dir):
     return [
         f'track-state sync-plan "{td}"',
         f'track-state registry-update "{td}" "conductor/tracks.md"',
-        "git commit -m " + shlex.quote("chore(conductor): Complete track"),
+        _bookkeeping_commit_line("chore(conductor): Complete track"),
     ]
 
 
@@ -2002,7 +2040,7 @@ def _post_loop_advisory_post(track_dir):
     td = str(track_dir)
     return [
         _post_loop_stamp_line(td, {"schema": 2, "advisory_diff_shown": True}),
-        "git commit -am " + shlex.quote(
+        _bookkeeping_commit_line(
             "chore(conductor): Post-loop advisory diff checked"),
     ]
 
@@ -2023,7 +2061,7 @@ def _post_loop_lint_post(track_dir):
     td = str(track_dir)
     return [
         _post_loop_stamp_line(td, {"schema": 2, "lint_done": True}),
-        "git commit -am " + shlex.quote("chore(conductor): Post-loop wiki lint run"),
+        _bookkeeping_commit_line("chore(conductor): Post-loop wiki lint run"),
     ]
 
 
@@ -2032,7 +2070,7 @@ def _post_loop_digest_post(track_dir):
     td = str(track_dir)
     return [
         _post_loop_stamp_line(td, {"schema": 2, "digest_shown": True}),
-        "git commit -am " + shlex.quote("chore(conductor): Post-loop digest shown"),
+        _bookkeeping_commit_line("chore(conductor): Post-loop digest shown"),
     ]
 
 
@@ -2065,7 +2103,7 @@ def _post_loop_apply_fixes_post(track_dir, file_path):
     return [
         f'mkdir -p {shlex.quote(str(sentinel.parent))}',
         f'touch {shlex.quote(str(sentinel))}',
-        "git add -A && git commit -m " + shlex.quote(
+        _bookkeeping_commit_line(
             f"chore(conductor): Post-loop fix chunk done [{file_path}]"),
     ]
 
@@ -2107,9 +2145,9 @@ def _post_loop_archive_decision(track_dir):
     td = str(track_dir)
     archive_cmd = f'track-state archive "{td}"'
     registry_cmd = f'track-state registry-update "<new_track_dir>" "conductor/tracks.md"'
-    commit_cmd = "git commit -m " + shlex.quote("chore(conductor): Archive track")
+    commit_cmd = _bookkeeping_commit_line("chore(conductor): Archive track")
     delete_cmd = f'rm -rf "{td}"'
-    delete_commit = "git commit -m " + shlex.quote("chore(conductor): Delete track")
+    delete_commit = _bookkeeping_commit_line("chore(conductor): Delete track")
     return dict(
         question="Track finalized, doc-synced, and reviewed. Archive it now?",
         header="Archive",
