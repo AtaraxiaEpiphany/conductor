@@ -433,6 +433,24 @@ def cmd_finalize(track_dir):
     """CLI wrapper for :func:`_finalize_track` — emits the result."""
     out(_finalize_track(track_dir))
 
+def _to_number(v):
+    """Coerce a free-form ``coverage_pct`` value to a number for scoring.
+
+    int/float pass through; numeric strings ("85", "85.0") parse; anything else
+    (None, "", "n/a", bool) → None so the caller can skip it instead of feeding
+    a non-numeric into ``sum()``. bool is excluded because ``isinstance(True,
+    int)`` is True in Python yet a boolean coverage value is nonsensical.
+    """
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        return v
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
 def _compute_quality_score(track_dir, state, statuses, checklist):
     """Compute a 0-100 quality score for the track.
     Weights: completion 40%, checklist 30%, coverage 20%, retry penalty 10%."""
@@ -450,17 +468,28 @@ def _compute_quality_score(track_dir, state, statuses, checklist):
     else:
         checklist_ratio = 1.0  # No checklist = assume full
 
-    # Coverage score (20%): from task evidence, fallback to git notes
+    # Coverage score (20%): from task evidence, fallback to git notes. Coerce
+    # defensively: ``coverage_pct`` is free-form (not schema-enforced int) and
+    # has reached state as a numeric string ("85") via result.json propagation
+    # / manual edits — a bare ``sum()`` over a str does int(0) + str →
+    # ``TypeError: unsupported operand type(s) for +: 'int' and 'str'``, which
+    # crashes ``post-loop-step`` (via _finalize_track). Numeric strings still
+    # count (85 == "85"); non-numeric junk is skipped, matching the isinstance
+    # guard in ``misc._quality_grade`` (the other coverage_pct consumer).
     coverage_values = []
     for phase in state.get("phases", []):
         for task in phase.get("tasks", []):
             ev = task.get("evidence")
             if ev and ev.get("coverage_pct") is not None:
-                coverage_values.append(ev["coverage_pct"])
+                v = _to_number(ev["coverage_pct"])
+                if v is not None:
+                    coverage_values.append(v)
             for sub in task.get("subtasks", []):
                 sev = sub.get("evidence")
                 if sev and sev.get("coverage_pct") is not None:
-                    coverage_values.append(sev["coverage_pct"])
+                    v = _to_number(sev["coverage_pct"])
+                    if v is not None:
+                        coverage_values.append(v)
     if coverage_values:
         coverage_ratio = sum(coverage_values) / len(coverage_values) / 100
     else:

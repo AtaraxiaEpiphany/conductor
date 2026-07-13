@@ -196,6 +196,48 @@ class HaltOnIncompleteTests(TestCase):
         self.assertTrue(len(out["incomplete"]) > 0)
 
 
+class CoveragePctTypeTests(TestCase):
+    """Regression: ``evidence.coverage_pct`` reaching state as a numeric STRING
+    (via result.json propagation / manual edits — the schema does not enforce
+    int) must not crash ``_compute_quality_score``'s ``sum()`` with an int+str
+    TypeError. Numeric strings still count toward the score; non-numeric junk is
+    skipped. The crash surfaced as ``post-loop-step`` failing the first time it
+    finalized a track whose evidence held a string coverage_pct."""
+
+    def test_string_coverage_pct_does_not_crash_finalize(self):
+        # Not finalized → cmd_post_loop_step runs _finalize_track inline →
+        # _compute_quality_score sums evidence.coverage_pct. With a string
+        # value, a bare sum() did int(0) + "85" → TypeError (post-loop crash).
+        state = _make_state(status="in_progress", quality_score=None,
+                            current_phase_index=1, current_task_index=0)
+        state["phases"][0]["tasks"][0]["evidence"] = {
+            "coverage_pct": "85", "tc_coverage": "", "deviations": 0}
+        d = _git_track_dir(state)
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        out = _pls(d)
+        # No exception → finalize leaf emitted (ok:true), score computed.
+        self.assertEqual(out["action"], "finalize")
+        self.assertIsInstance(load(d)["quality_score"], (int, float))
+
+    def test_non_numeric_coverage_pct_is_skipped_not_crash(self):
+        # "n/a" / "" / None must be skipped, not summed — and a real numeric
+        # value on another task still contributes.
+        state = _make_state(status="in_progress", quality_score=None,
+                            current_phase_index=1, current_task_index=0)
+        state["phases"][0]["tasks"][0]["evidence"] = {
+            "coverage_pct": "n/a", "tc_coverage": "", "deviations": 0}
+        state["phases"][0]["tasks"][1]["evidence"] = {
+            "coverage_pct": "90", "tc_coverage": "", "deviations": 0}
+        d = _git_track_dir(state)
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        out = _pls(d)
+        self.assertEqual(out["action"], "finalize")
+        score = load(d)["quality_score"]
+        self.assertIsInstance(score, (int, float))
+        self.assertGreaterEqual(score, 0)
+        self.assertLessEqual(score, 100)
+
+
 class DocSyncGateTests(TestCase):
     def setUp(self):
         self.d = _git_track_dir(_make_state())  # already finalized
