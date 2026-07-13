@@ -77,5 +77,40 @@ class PhaseCheckerWorkflowPointerTests(TestCase):
         self.assertIn("ok: true", self.agent)
 
 
+class TaskExecutorRefactorStepTests(TestCase):
+    def setUp(self):
+        self.agent = (AGENTS / "task-executor.md").read_text(encoding="utf-8")
+
+    def test_step5_binding_present(self):
+        # Step 5 (Refactor) was a dead-letter template step; §4.0 now binds it for real.
+        self.assertIn("Step 5 (Refactor)", self.agent)
+
+    def test_step5_guardrails_present(self):
+        # The load-bearing invariants that keep refactor safe in a small-window TDD loop.
+        self.assertIn("behavior-preserving", self.agent)
+        self.assertIn("diff-scoped", self.agent)
+        self.assertIn("git revert", self.agent)
+        self.assertIn("~6 rounds", self.agent)
+
+    def test_step5_does_not_widen_fence(self):
+        # Step 5 reuses Step 6's coverage dispatch + inline Bash lint; it adds no Agent-tool
+        # dispatch kind, so the §5.0 nesting fence must not widen for it.
+        self.assertIn("no `Agent`-tool dispatch kind", self.agent)
+
+
+class TaskWorkflowRefactorStepTests(TestCase):
+    def setUp(self):
+        self.doc = (TEMPLATES / "task-workflow.md").read_text(encoding="utf-8")
+
+    def test_step5_no_longer_optional(self):
+        # "(optional)" with no mechanism meant never; the step is now a real, bounded step.
+        self.assertNotIn("Refactor (optional)", self.doc)
+        self.assertIn("5. **Refactor**", self.doc)
+
+    def test_step5_guardrails_documented(self):
+        self.assertIn("behavior-preserving", self.doc)
+        self.assertIn("green-confirm", self.doc)
+
+
 if __name__ == "__main__":
     main()

@@ -202,6 +202,7 @@ Check task tag to determine workflow:
 **Agent-specific bindings (override / extend the template):**
 
 - **Step 3 (Red)** — derive test cases from your self-extracted ACs/TCs (Layer 2); map each `TC-{n}.{m}` row → one test function covering happy paths, edge cases, and errors. **Name each test function `test_TC_{n}_{m}_*`** matching its TC row (see `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/plan-format-contract.md` §Test ↔ TC Naming Link) so the grounding check can resolve your claimed TCs to real tests. **Run + confirm failure via the digester (§4.5, `PURPOSE=red`)** rather than running the suite inline — the verbose pytest/cargo/go-test output stays in the child's sub-context and you receive a parsed `STATUS` block. Proceed only on `red_confirmed`; on anything else see §4.5.
+- **Step 5 (Refactor)** — default-on for code tasks (`[Docs]`/`[Config]`/`[Chore]` exempt). Load `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/refactor.md` and follow it. Boundary (always): one **diff-scoped**, **behavior-preserving** pass under green; own `refactor(area):` commit; `git revert` on red; cap **~6 rounds** and skip near the §7.0 tripwire.
 - **Step 6 (Coverage)** — **measure coverage via the digester (§4.5, `PURPOSE=coverage`)**. Take `COVERAGE_PCT` straight from the returned block (parsed by the shared `coverage-pct.py` — never eyeball the report and type a number) and pass it to `--coverage-pct` (§6.1). Do **not** commit below 80% (F3). If `COVERAGE_PCT: N/A`, the parser found no figure — report it honestly; do not invent one.
 - **Step 7 (Deviations)** — *Tech Stack* divergence → update `tech-stack.md` → resume; *Spec* deviation (AC unmet) → report as `SPEC_DEVIATION` in your result (§6.1); *TC Coverage* → compare implemented vs expected TCs, report gaps.
 - **Step 8 (Commit)** — stage + commit `<type>(<scope>): <description>`. **Git notes are written by `track-state dispatch-finalize` — you do NOT write git notes, modify plan markers, or append SHAs** (orchestrator-owned Steps 9-11).
@@ -273,6 +274,8 @@ exceptions to keep bulk output out of your context (anti-proliferation guard:
 `tests/test_log_checker_wiring.py` pins which agents may hold the `Agent` tool;
 `tests/test_doc_probe_wiring.py` pins the doc-probe fan-out); widening either
 silently is a violation.
+
+Step 5 (Refactor) adds no `Agent`-tool dispatch kind (inline Bash lint + Step 6's coverage green-confirm), so this fence needs no widening.
 
 Violation → STOP → `WORKFLOW VIOLATION: <code>` → revert → restart.
 
