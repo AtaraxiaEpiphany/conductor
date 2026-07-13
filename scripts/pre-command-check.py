@@ -463,6 +463,140 @@ def _check_f2_tdd_gate(cwd: Path, command: str) -> None:
     _deny("f2_tdd", command, additional_context, permission_reason)
 
 
+# --- refactor diff-scope gate ------------------------------------------------
+# The orchestrator-dispatched refactorer (agents/refactorer.md) is a behavior-
+# preserving patcher scoped to the task's own code diff (REVISION_RANGE =
+# code_sha~1..code_sha, §3.6c). Its boundary was prose-only; this gate
+# mechanizes Pillar 2 ("when documentation falls short, promote the rule into
+# code") at commit time: a `refactor(area):` commit (the refactorer's mandated
+# conventional type, agents/refactorer.md §3.0) may only stage files the
+# completed task already touched. The bound is derived independently from
+# track-state.json's cursor-target commit_sha (= the agent's code commit — set
+# by mutations._do_complete; the SAME range §3.6c hands the refactorer).
+# Fail-open on any ambiguity (no resolvable track, >1 candidate, git error, empty
+# range) so the gate can never false-block legitimate work.
+_TRACKS_GLOB = "conductor/tracks/*/track-state.json"
+
+
+def _cursor_completed_code_sha(state):
+    """commit_sha of the cursor-pointed task/subtask if it is `completed`, else None.
+
+    Mirrors lib.locked_task._locked_indices' index→target resolution but swaps
+    its ``status == "in_progress"`` gate for ``completed`` (the refactorer runs
+    AFTER dispatch-finalize, so its task is terminal) and additionally requires a
+    non-empty commit_sha (no code commit → no range to scope). A stale cursor
+    pointing at a non-completed target, or out-of-range indices, → None.
+    """
+    pi = state.get("current_phase_index", 0)
+    ti = state.get("current_task_index", 0)
+    if pi < 1 or ti < 1:
+        return None
+    try:
+        task = state["phases"][pi - 1]["tasks"][ti - 1]
+    except (IndexError, KeyError):
+        return None
+    si = state.get("current_subtask_index")
+    if si is not None:
+        try:
+            tgt = task["subtasks"][si - 1]
+        except (IndexError, KeyError):
+            tgt = task
+    else:
+        tgt = task
+    if tgt.get("status") != "completed":
+        return None
+    sha = (tgt.get("commit_sha") or "").strip()
+    return sha or None
+
+
+def _resolve_refactor_bound(cwd: Path):
+    """The single completed-task code_sha bounding this refactor, or None.
+
+    Globs conductor tracks under ``cwd`` and collects every track whose cursor
+    resolves to a completed task with a commit_sha. Exactly one → that sha; zero
+    or more than one → None (ambiguous → caller fails open). Conductor runs one
+    track per session, so "exactly one" is the normal case; multi-track repos
+    degrade to fail-open (unenforced, never a false block). Malformed/unreadable
+    state files are skipped, never raised.
+    """
+    shas = []
+    for state_path in Path(cwd).glob(_TRACKS_GLOB):
+        try:
+            with open(state_path) as f:
+                state = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            continue
+        sha = _cursor_completed_code_sha(state)
+        if sha:
+            shas.append(sha)
+    return shas[0] if len(shas) == 1 else None
+
+
+def _refactor_allowed_files(cwd: Path, code_sha: str) -> set:
+    """File set the completed task's code commit touched (the refactorer's bound).
+
+    ``--no-renames`` for a stable set (matches git_ops._changed_files precedent).
+    Empty on any git error — callers treat an empty derived bound as fail-open
+    (the gate cannot decide what's in scope), NOT as "everything is out of scope".
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "diff", "--no-renames", "--name-only", f"{code_sha}~1", code_sha],
+            cwd=str(cwd), capture_output=True, text=True, timeout=3,
+        )
+        if proc.returncode != 0:
+            return set()
+        return {f for f in proc.stdout.splitlines() if f.strip()}
+    except (OSError, subprocess.SubprocessError):
+        return set()
+
+
+def _check_refactor_scope_gate(cwd: Path, command: str) -> None:
+    """Refactor diff-scope gate: a ``refactor(area):`` commit may only stage files
+    the completed task already touched.
+
+    Returns normally (caller proceeds to allow) when the gate passes or does not
+    apply; calls ``_deny(...)`` — which exits the process — when it trips. The
+    ``refactor(`` prefix is the trigger (not agent identity — PreToolUse hooks
+    can't see which agent is running), sidestepping the identity limitation
+    entirely. Fail-open whenever the bound is unresolvable.
+    """
+    if _commit_type_from_command(command) != "refactor":
+        return  # only the refactorer's own commits are in scope
+
+    code_sha = _resolve_refactor_bound(cwd)
+    if not code_sha:
+        return  # no single resolvable completed task → fail open
+
+    allowed = _refactor_allowed_files(cwd, code_sha)
+    if not allowed:
+        return  # bound undeterminable (git error / empty range) → fail open
+
+    staged = set(_staged_files(cwd))
+    if not staged:
+        return  # nothing staged or git unavailable — don't block blindly (mirrors F2)
+
+    out_of_scope = sorted(staged - allowed)
+    if not out_of_scope:
+        return  # every staged file is within the task's own code diff → OK
+
+    eg = out_of_scope[0]
+    more = f" (+{len(out_of_scope) - 1} more)" if len(out_of_scope) > 1 else ""
+    additional_context = (
+        f'[Conductor] refactor diff-scope violation: this `refactor(...)` commit '
+        f'stages {eg}{more} outside the task\'s own code (REVISION_RANGE='
+        f'{code_sha}~1..{code_sha}). The refactorer is behavior-preserving and '
+        f'may only touch files the task changed. Unstage the out-of-scope file(s) '
+        f'(`git restore --staged <file>`), or split them into their own commit.'
+    )
+    permission_reason = (
+        f'refactor-scope: `{eg}` is outside the completed task\'s code diff '
+        f'({code_sha}~1..{code_sha}). Unstage it; a refactor commit may only '
+        f'touch files the task already changed.'
+    )
+    _deny("refactor-scope", command, additional_context, permission_reason)
+
+
 def main():
     """Main hook function"""
     input_data = read_hook_input()
@@ -561,6 +695,10 @@ def main():
     # (via write_hook_output) when it trips.
     if re.search(r'git\s+commit\b', command, re.IGNORECASE):
         _check_f2_tdd_gate(cwd, command)
+        # Refactor diff-scope gate: a refactor(...) commit must stay within the
+        # completed task's own code diff (agents/refactorer.md boundary). Same
+        # fail-open / _deny contract as F2.
+        _check_refactor_scope_gate(cwd, command)
 
     # Allow all other commands
     write_hook_output(hook_event_name="PreToolUse")
