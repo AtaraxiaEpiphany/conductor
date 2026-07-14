@@ -14,13 +14,18 @@ Mirrors the WARN-only posture of ``result._evaluate_gates``: the
 ``ac_integrity_gate`` string is advisory — surfaced in the finalize envelope and
 ``quality-snapshot`` — and never blocks a task. Degrades to ``None`` rates /
 ``"N/A"`` gate when ``spec.md`` is absent or has no ACs, so tracks without a
-formal spec are not penalized.
+formal spec are not penalized. ``ac_integrity_reason`` distinguishes the two
+N/A cases: ``"spec_missing"`` (no spec.md — intentionally spec-less, clean)
+vs ``"no_acs"`` (spec.md exists but no ``## Acceptance Criteria`` section — a
+planner that was supposed to anchor a spec but didn't, which new-track §2.3
+re-dispatches on rather than blessing). ``None`` whenever ACs are present.
 """
 import os
 import re
 from pathlib import Path
 
 from .core import load
+from .helpers import out
 from .spec_parse import parse_spec
 from .plan_parse import parse_plan, collect_ac_refs
 
@@ -264,8 +269,16 @@ def compute_ac_evidence_map(acs, tc_to_ac, covered, measured_map):
     return out
 
 
-def _empty(fr_count=0, nfr_count=0):
-    """Degraded result: no ACs to rate (no spec.md, or spec has no ACs)."""
+def _empty(fr_count=0, nfr_count=0, reason=None):
+    """Degraded result: no ACs to rate (no spec.md, or spec has no ACs).
+
+    ``reason`` (``"spec_missing"`` / ``"no_acs"`` / ``None``) lets callers
+    distinguish *intentionally* spec-less tracks (``spec_missing`` — clean) from
+    a planner that was supposed to produce a spec but wrote no AC section
+    (``no_acs`` — the weak-model anchor-drift failure new-track §2.3 must
+    re-dispatch on). ``None`` on the measured/PASS paths where the gate carries
+    the signal.
+    """
     return {
         "ac_count": 0,
         "tc_count": 0,
@@ -282,6 +295,7 @@ def _empty(fr_count=0, nfr_count=0):
         "partial_acs": [],
         "spec_errors": [],
         "ac_integrity_gate": "N/A",
+        "ac_integrity_reason": reason,
         "ac_evidence": [],
         "ears_warnings": [],
         "ears_gate": "N/A",
@@ -370,7 +384,7 @@ def compute_ac_integrity(track_dir):
     """
     spec_path = Path(track_dir) / "spec.md"
     if not spec_path.exists():
-        return _empty()
+        return _empty(reason="spec_missing")
 
     spec = parse_spec(spec_path)
     # EARS advisory lint over FR/NFR (ACs are criteria, not EARS requirements) —
@@ -380,7 +394,8 @@ def compute_ac_integrity(track_dir):
     tc_to_ac = spec["tc_to_ac"]
     if not acs:
         base = _empty(fr_count=len(set(spec["frs"])),
-                      nfr_count=len(set(spec["nfrs"])))
+                      nfr_count=len(set(spec["nfrs"])),
+                      reason="no_acs")
         base["ears_warnings"] = ears_warn
         base["ears_gate"] = _ears_gate_str(ears_warn)
         return base
@@ -456,10 +471,54 @@ def compute_ac_integrity(track_dir):
         "ac_integrity_gate": _gate(
             ac_tc_coverage_rate, orphan_acs, ac_traceability_rate,
             untraced_acs, dangling_ac_refs),
+        "ac_integrity_reason": None,
         "ac_evidence": ac_evidence,
         "ears_warnings": ears_warn,
         "ears_gate": _ears_gate_str(ears_warn),
     }
+
+
+def cmd_spec_anchors(track_dir):
+    """Read-only structural check: are the English machine anchors present?
+
+    Guards the weak-model failure where ``spec.md`` is written as free-form
+    narrative (often in another language) with no ``## Acceptance Criteria``
+    section or ``## Test Scenarios`` table — so ``compute_ac_integrity``
+    degrades to ``N/A`` and the new-track §2.3 loop blesses it as clean. This
+    check asserts the *structure* the parser needs, reusing ``parse_spec``
+    (no parallel scan): every spec a planner produces MUST carry ``- AC-N:``
+    bullets under ``## Acceptance Criteria`` and ``| TC-N.M | AC-N |`` rows
+    under ``## Test Scenarios``.
+
+    Language-agnostic by design: it checks English anchor *tokens*, not prose.
+    A fully-Chinese-prose spec with the headings + ``AC-N``/``TC-N.M`` IDs
+    passes; only the bracketed body text may be any language. FR/NFR are
+    inventory-only (no traceability channel), so they are NOT gated.
+
+    Output mirrors ``init-from-plan --check``: ``ok`` (bool) + ``errors[]``
+    (each a verdict+fix clause) + ``source`` + counts. Always exits 0;
+    failure is surfaced via ``ok:false``, never a non-zero process exit.
+    """
+    spec_path = Path(track_dir) / "spec.md"
+    if not spec_path.exists():
+        out(dict(ok=False, errors=[f"spec.md not found at {spec_path}"]))
+        return
+
+    spec = parse_spec(spec_path)
+    errors = []
+    if not spec["acs"]:
+        errors.append(
+            "missing '## Acceptance Criteria' section (or no '- AC-N:' bullets) "
+            "— the heading and AC IDs are machine anchors; keep them in English "
+            "even when the prose is another language")
+    if spec["acs"] and not spec["tcs"]:
+        errors.append(
+            "missing '## Test Scenarios' table (or no '| TC-N.M | AC-N |' rows) "
+            "— these IDs are machine anchors; keep them in English even when the "
+            "prose is another language")
+    out(dict(ok=not errors, check=True, source=str(spec_path),
+             ac_count=len(spec["acs"]), tc_count=len(spec["tcs"]),
+             errors=errors))
 
 
 def _ac_integrity_gates(track_dir):

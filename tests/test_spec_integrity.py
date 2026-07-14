@@ -82,6 +82,7 @@ class AllGreenTests(TestCase):
         self.assertEqual(r["fr_count"], 1)
         self.assertEqual(r["nfr_count"], 1)
         self.assertEqual(r["ac_integrity_gate"], "PASS")
+        self.assertIsNone(r["ac_integrity_reason"])  # ACs present → gate carries the signal
         self.assertEqual(r["orphan_acs"], [])
         self.assertEqual(r["dangling_ac_refs"], [])
 
@@ -187,6 +188,8 @@ class DegradationTests(TestCase):
         self.assertIsNone(r["ac_traceability_rate"])
         self.assertIsNone(r["ac_verification_rate"])
         self.assertEqual(r["ac_integrity_gate"], "N/A")
+        # No spec.md at all → the "intentionally spec-less" N/A reason (clean).
+        self.assertEqual(r["ac_integrity_reason"], "spec_missing")
 
     def test_spec_with_no_acs_yields_na_gate(self):
         spec = "# Specification: Demo\n## Requirements\n### Functional Requirements\n- FR-1: x\n"
@@ -197,6 +200,9 @@ class DegradationTests(TestCase):
         self.assertEqual(r["ac_integrity_gate"], "N/A")
         self.assertIsNone(r["ac_tc_coverage_rate"])
         self.assertEqual(r["fr_count"], 1)
+        # spec.md exists but has no ## Acceptance Criteria → the weak-model
+        # anchor-drift N/A reason (new-track §2.3 re-dispatches, not clean).
+        self.assertEqual(r["ac_integrity_reason"], "no_acs")
 
     def test_no_plan_yields_traceability_none_but_gate_can_pass(self):
         # No plan.md → traceability unmeasured (None); with TC coverage 100% and

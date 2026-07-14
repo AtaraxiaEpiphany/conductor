@@ -112,40 +112,32 @@ RELATED_DOCS={paths or N/A}
 
 Parse `---SPEC PLAN RESULT---` block. Confirm `STATUS: SUCCESS` (halt on FAILURE and announce `SUMMARY`). `plan.md` and `spec.md` are now on disk — `PLAN_STRUCTURE` is **no longer required**: Section 2.6 derives the full task/subtask structure mechanically from `plan.md`, eliminating manual transcription.
 
-**Validate the generated plan + spec (catch format AND acceptance-criteria defects now, not at §2.6).** `plan.md` is sometimes written with a format defect the LLM does not self-catch — a task/subtask line missing its `- [ ]` checkbox, or a missing `## Phase N:` heading. Such a plan reads fine to a human but fails `init-from-plan` at §2.6, halting the whole track. And a plan can conform syntactically while an Acceptance Criterion in `spec.md` is never traced to a task or lacks a Test Scenario — a completeness hole the format check cannot see (completeness-critic). Validate **both** now and re-dispatch spec-planner with the exact defects if either fails.
+**Validate the generated plan + spec before §2.6.** Run three read-only checks; re-dispatch spec-planner with the combined defects if any fails. Max **2 re-dispatches (3 total attempts)**, counting from the first dispatch above:
 
-Loop — max **2 re-dispatches (3 total attempts)**, counting from the first dispatch above:
+1. **Format** — `track-state init-from-plan "<track_dir>" --check` (the same `parse_plan` §2.6 uses). `ok: false` → collect `errors[]`. `ok: true` → continue.
+2. **Spec anchors** — `track-state spec-anchors "<track_dir>"` (run only if format passed). Catches a `spec.md` written as free-form narrative with no `## Acceptance Criteria` section / `## Test Scenarios` table (a defect the step-3 check below silently blesses as `N/A`). Language-agnostic: it checks the English machine-anchor tokens, not prose. `ok: false` → collect `errors[]`. `ok: true` → continue.
+3. **AC integrity** — `track-state spec-integrity "<track_dir>"` (run only if anchors passed). Runs at planning time (no `track-state.json` yet → degrades gracefully). Branch on `ac_integrity_gate` **and** `ac_integrity_reason`:
+   - `N/A` + `"spec_missing"` → clean (legitimately spec-less track).
+   - `N/A` + `"no_acs"` → treat as FAILED: spec.md exists but has no `## Acceptance Criteria` (the weak-model anchor-drift failure). Collect the gate string **verbatim**.
+   - `FAILED` → collect the gate string **verbatim** (it names the offending AC IDs + the fix).
+   - `PASS` / `WARN` → clean (WARN is advisory; carry into §2.4).
 
-1. **Format check** (writes nothing — same `parse_plan` parser §2.6 uses):
-   ```bash
-   track-state init-from-plan "<track_dir>" --check
-   ```
-   `ok: false` → collect the emitted `errors` (the defect(s)). `ok: true` → note the reported `phases`/`tasks` counts, continue to step 2.
+**All three clean → break (proceed to the resume marker below).** Any failed → if a re-dispatch remains, re-dispatch `conductor:spec-planner` with the combined defects:
 
-2. **AC-integrity check** (run only if the format check passed; writes nothing):
-   ```bash
-   track-state spec-integrity "<track_dir>"
-   ```
-   Parse `ac_integrity_gate`. This runs at planning time — no `track-state.json` exists yet (§2.6 creates it); the command degrades gracefully. `N/A` (no `spec.md` / no `## Acceptance Criteria`) → a track without a formal spec is not penalized; treat as clean. `FAILED` → collect the gate string **verbatim** — it names the offending AC IDs and the authoring fix (e.g. "annotate the implementing task in plan.md with a `<!-- AC-n -->`", "add a `TC-{n}.{m} | AC-{n}` row under ## Test Scenarios"). Any other verdict (`PASS` / `WARN`) → clean (WARN is advisory; carry it into §2.4).
+```
+TRACK_DIR={track_dir}
+TRACK_DESCRIPTION={desc}
+TRACK_TYPE={type}
+USER_ANSWERS={answers or N/A}
+RELATED_DOCS={paths or N/A}
+PREVIOUS_ERRORS:
+{the format errors[], the spec-anchors errors[], and/or the AC-integrity gate string, verbatim}
+REGEN_FOCUS: The prior plan.md/spec.md failed validation. FORMAT: every task/subtask line begins with `- [ ]`; every phase begins with `## Phase N: Name`. SPEC-ANCHOR: spec.md has `## Acceptance Criteria` with `- AC-N:` bullets and `## Test Scenarios` with `| TC-N.M | AC-N |` rows — these headings + ID tokens are machine anchors, keep them ASCII even when prose is another language. AC-INTEGRITY: every AC-n appears in some task's `<!-- AC-n -->` AND maps to a `TC-{n}.{m} | AC-n` row. Re-read `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/plan-format-contract.md` and `${CLAUDE_PLUGIN_ROOT}/templates/spec-scaffold.md`, then regenerate a conforming plan.md/spec.md.
+```
 
-3. **Both clean** → break out of the loop; proceed to the resume marker below.
+Re-parse the returned `---SPEC PLAN RESULT---` block (halt on FAILURE), then loop back to step 1.
 
-4. **Either failed** → if a re-dispatch remains, dispatch `conductor:spec-planner` again with the combined defects appended so it can fix both:
-
-   ```
-   TRACK_DIR={track_dir}
-   TRACK_DESCRIPTION={desc}
-   TRACK_TYPE={type}
-   USER_ANSWERS={answers or N/A}
-   RELATED_DOCS={paths or N/A}
-   PREVIOUS_ERRORS:
-   {the format errors[] and/or the AC-integrity gate string, verbatim}
-   REGEN_FOCUS: The prior plan.md/spec.md failed validation. For FORMAT defects: every task AND subtask line MUST begin with `- [ ]`; every phase MUST begin with `## Phase N: Name`; subtasks are indented 2 spaces under their parent and never replace the `[ ]` with a tag. For AC-INTEGRITY defects: address the gate string — every AC-n must appear in some task's `<!-- AC-n -->` annotation AND map to a `TC-{n}.{m} | AC-n` row under ## Test Scenarios. Re-read `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/plan-format-contract.md`, then regenerate a conforming plan.md/spec.md.
-   ```
-
-   Re-parse the returned `---SPEC PLAN RESULT---` block (halt on FAILURE), then loop back to step 1.
-
-5. Still failing after the final attempt → **halt**: `"Spec-planner produced a plan/spec that still fails validation after 3 attempts — errors: <combined defects>. Inspect <track_dir>/plan.md / spec.md."` Do NOT proceed to §2.6 (it would fail identically).
+Still failing after the final attempt → **halt**: `"Spec-planner produced a plan/spec that still fails validation after 3 attempts — errors: <combined defects>. Inspect <track_dir>/plan.md / spec.md."` Do NOT proceed to §2.6 (it would fail identically).
 
 ### 2.3b Adversarial Plan Refuter (semantic gate)
 
@@ -171,7 +163,7 @@ Parse the `---REFUTATION RESULT---` block:
 - **STATUS: REFUTED** (positive, grounded defect, with `file:line` citations in EVIDENCE) → re-dispatch `conductor:spec-planner` ONCE with the refuter's challenges appended to `PREVIOUS_ERRORS` (reuse the §2.3 regen envelope; `REGEN_FOCUS` = the refuter's EVIDENCE + REASONING). Re-run this refuter once on the regenerated plan. If still `REFUTED`, announce the sustained challenges and proceed to §2.4 **non-blocking** — the spec-reviewer and user assess them there. A semantic disagreement the deterministic pipeline cannot close is a human-judgment call, not a hard halt.
 - **STATUS: FAILURE** → treat as SUSTAINED (the refuter could not complete; the plan stands) and proceed to §2.4.
 
-> **Resume:** stamp the step **only after BOTH the `--check` and `spec-integrity` checks pass AND the §2.3b refute completes** — a plan/spec that has not yet validated and been semantically vetted is not "planned":
+> **Resume:** stamp the step **only after ALL THREE checks (`init-from-plan --check`, `spec-anchors`, `spec-integrity`) pass AND the §2.3b refute completes** — a plan/spec that has not yet validated and been semantically vetted is not "planned":
 > ```bash
 > track-state new-track-step "<track_dir>" spec_planned
 > ```
@@ -186,7 +178,7 @@ TRACK_DIR={track_dir}
 
 Parse `---REVIEW RESULT---` block. If `STATUS: CANCELLED` → halt. If `STRUCTURE_CHANGED: true` → note for init.
 
-**Carry forward the §2.3 `ac_integrity_gate` verdict.** It is `PASS`/`N/A` → nothing to surface. If `WARN`, announce the advisory before the review: `"⚠️ AC-integrity WARN: <gate string> — these ACs are traced but not fully grounded; review with this in mind."` so the user + spec-reviewer assess the spec informed by AC traceability (the `ac_evidence` list from the §2.3 JSON shows each AC's measured/claimed/missing TCs). A `FAILED` gate cannot reach here — §2.3 loops until it passes or halts.
+**Carry forward the §2.3 `ac_integrity_gate` verdict.** It is `PASS` or `N/A`+`ac_integrity_reason:"spec_missing"` → nothing to surface (a legitimately spec-less track). If `WARN`, announce the advisory before the review: `"⚠️ AC-integrity WARN: <gate string> — these ACs are traced but not fully grounded; review with this in mind."` so the user + spec-reviewer assess the spec informed by AC traceability (the `ac_evidence` list from the §2.3 JSON shows each AC's measured/claimed/missing TCs). A `FAILED` gate, and an `N/A`+`"no_acs"` gate, cannot reach here — §2.3 loops until they pass or halts.
 
 > Full file review happens in the subagent. The orchestrator only sees the compact result.
 

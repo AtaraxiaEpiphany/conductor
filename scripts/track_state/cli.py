@@ -24,6 +24,7 @@ from .misc import (
     cmd_spec_integrity, cmd_derive_name, cmd_post_loop_status,
     cmd_resolve_track, cmd_check, _resolve_track_dir_or_halt,
 )
+from .spec_integrity import cmd_spec_anchors
 from .handoff import cmd_get_handoff, cmd_sync_handoff, cmd_append_handoff, cmd_harvest_candidates
 from .sync import cmd_sync_plan
 from .wave import (
@@ -304,6 +305,10 @@ COMMAND_HELP = {
                          "Read-only aggregate quality grades: completion, coverage, evidence gaps"),
     "spec-integrity": ("spec-integrity <track-dir>",
                        "Read-only AC coverage rates (TC/plan/verification) + advisory gate; FR/NFR counts"),
+    "spec-anchors": ("spec-anchors <track-dir>",
+                     "Read-only structural check: are the English machine anchors present in spec.md "
+                     "(## Acceptance Criteria + '- AC-N:' bullets + ## Test Scenarios '| TC-N.M | AC-N |' table)? "
+                     "Language-agnostic — checks anchor tokens, not prose. ok:false + named errors if missing."),
     "derive-name": ("derive-name <shortname>",
                     "Derive canonical track_id (<shortname>_<YYYYMMDD>) and track_dir for "
                     "today; idempotent. Uniqueness is the skill's job (new-track §2.6)."),
@@ -347,7 +352,7 @@ _COMMAND_GROUPS = [
                           "new-track-set-mode", "new-track-finalize"]),
     ("Diagnostics", ["validate", "gc", "shas", "post-loop-status", "checklist-verify",
                      "deferred-report", "phase-done", "add-checkpoint", "preflight",
-                     "quality-snapshot", "spec-integrity"]),
+                     "quality-snapshot", "spec-integrity", "spec-anchors"]),
 ]
 
 
@@ -495,6 +500,8 @@ def main():
             cmd_quality_snapshot(track_dir)
         elif cmd == "spec-integrity":
             cmd_spec_integrity(track_dir)
+        elif cmd == "spec-anchors":
+            cmd_spec_anchors(track_dir)
         elif cmd == "add-checkpoint":
             if len(pos) < 2:
                 out(dict(error="Missing phase or sha argument"))

@@ -83,19 +83,14 @@ Synthesize:
 
 ### 4.1 Generate `spec.md`
 
-Read `${CLAUDE_PLUGIN_ROOT}/templates/spec-scaffold.md` and generate `spec.md` following that structure — substitute `{Track Description}` and `{TRACK_TYPE}` and fill every section. The scaffold's italic / parenthetical notes are generation guidance (what good content looks like), not literal output. Keeping the skeleton in a template lets this prompt focus on the generation logic below.
+Read `${CLAUDE_PLUGIN_ROOT}/templates/spec-scaffold.md` and **fill its skeleton** — every section, in the track's chosen language.
+
+**Machine anchors stay ASCII.** The headings (`## Acceptance Criteria`, `## Test Scenarios`, …) and ID tokens (`FR-N`, `NFR-N`, `AC-N`, `TC-N.M`, the table `|`-syntax) are machine anchors the parser keys on — keep them in English/ASCII even when the prose is another language. Fill only the body text, in any language. **A `spec.md` missing `## Acceptance Criteria` (with `- AC-N:` bullets) or the `## Test Scenarios` table (with `| TC-N.M | AC-N |` rows) is rejected by `track-state spec-anchors`** — do not localize the anchors, localize only the body.
 
 **Rules:**
-- Use standard Markdown link syntax for all references (clickable, traceable).
-- Group by category when 3+ references exist for better scanability.
-- Keep descriptions concise — state what was derived, not the full content.
-- All paths are relative to project root.
-- **Only include** documents that actively informed this spec's requirements.
-- Acceptance criteria must be measurable and testable.
-- Keep functional requirements specific and atomic.
-- **Write every Functional and Non-Functional Requirement in EARS syntax** (see `${CLAUDE_PLUGIN_ROOT}/templates/spec-scaffold.md` §Requirements). Each requirement is exactly one EARS pattern: `When <trigger>, the <system> shall …` (event-driven), `While <state>, the <system> shall …` (state-driven), `Where <feature>, the <system> shall …` (optional feature), `If <trigger>, then the <system> shall …` (unwanted/error), or the ubiquitous `The <system> shall …`. Rules: mandatory `shall` (never `should`/`may`/`will`); exactly one system name; one requirement per statement (no `and`-bundling — split instead); prefer positive recovery over `shall not`. Be specific and measurable (thresholds, counts). The conductor's EARS lint (`spec-integrity`) flags any requirement missing `shall` or using negation, so non-EARS requirements surface as a WARN at finalize. **The mandatory verb need not be English `shall`** — any localized obligation modal lints clean (FR `doit`, DE `muss`, ES `deberá`, ZH `应`/`应当`/`必须`, JA `すること`, …); set `CONDUCTOR_EARS_VERBS=verb1,verb2,…` to extend the set for a project-specific language.
-- **Test Scenarios** must cover every AC: happy path + at least one edge case per AC.
-- TC IDs follow the pattern `TC-{AC_NUMBER}.{SCENARIO_INDEX}` for traceability.
+- EARS syntax for every FR/NFR — mandatory `shall` (or a localized equivalent: `doit`/`muss`/`应`/`すること`…; extend via `CONDUCTOR_EARS_VERBS`); one requirement per statement; prefer positive recovery over `shall not`. The `spec-integrity` EARS lint surfaces violations as a WARN.
+- Test Scenarios cover every AC (happy path + ≥1 edge case); TC IDs follow `TC-{AC_NUMBER}.{SCENARIO_INDEX}`.
+- Measurable, testable ACs; atomic FRs. Markdown links for references (group when 3+). Paths relative to project root.
 
 ### 4.2 Generate `plan.md`
 

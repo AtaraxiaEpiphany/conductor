@@ -231,6 +231,7 @@ def cmd_quality_snapshot(track_dir):
         ac_verification_rate=ac["ac_verification_rate"],
         ac_verification_measured_rate=ac["ac_verification_measured_rate"],
         ac_integrity_gate=ac["ac_integrity_gate"],
+        ac_integrity_reason=ac["ac_integrity_reason"],
         ears_warnings=ac["ears_warnings"],
         ears_gate=ac["ears_gate"],
     ))
