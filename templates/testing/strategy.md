@@ -15,14 +15,14 @@ All test files MUST be created under `{TEST_ROOT}`. NEVER co-locate test files w
 
 | Language | Test Directory | File Pattern | Class/Function Pattern | Convention |
 |----------|---------------|--------------|----------------------|------------|
-| Python | `tests/` | `test_{module}.py` | `Test{Class}` / `test_{scenario}_{outcome}` | Mirror `src/` structure |
-| JavaScript | `__tests__/` or `tests/` | `{module}.test.js` | `describe` + `test`/`it` | Mirror `src/` structure |
-| TypeScript | `__tests__/` or `tests/` | `{module}.test.ts` | `describe` + `test`/`it` | Mirror `src/` structure |
-| Go | Same package | `{name}_test.go` | `Test{Function}` | Go convention: co-located |
-| C++ | `tests/` | `{module}_test.cc` | `TEST_F({Class}Test, {Scenario})` | Mirror `src/` structure |
-| C# | `{Project}.Tests/` | `{Class}Tests.cs` | `[Fact] {Method}_{Scenario}_{Outcome}()` | Mirror project structure |
-| Java | `src/test/java/` | `{Name}Test.java` | `@Test void {method}_{scenario}_{outcome}()` | Mirror `src/main/java/` package structure |
-| Dart | `test/` | `{name}_test.dart` | `group` + `test` | Mirror `lib/` structure |
+| Python | `tests/` | `test_{module}.py` | `Test{Class}` / `test_{scenario}_{outcome}` | Mirror `src/` structure | <!-- lang:python -->
+| JavaScript | `__tests__/` or `tests/` | `{module}.test.js` | `describe` + `test`/`it` | Mirror `src/` structure | <!-- lang:javascript -->
+| TypeScript | `__tests__/` or `tests/` | `{module}.test.ts` | `describe` + `test`/`it` | Mirror `src/` structure | <!-- lang:typescript -->
+| Go | Same package | `{name}_test.go` | `Test{Function}` | Go convention: co-located | <!-- lang:go -->
+| C++ | `tests/` | `{module}_test.cc` | `TEST_F({Class}Test, {Scenario})` | Mirror `src/` structure | <!-- lang:cpp -->
+| C# | `{Project}.Tests/` | `{Class}Tests.cs` | `[Fact] {Method}_{Scenario}_{Outcome}()` | Mirror project structure | <!-- lang:csharp -->
+| Java | `src/test/java/` | `{Name}Test.java` | `@Test void {method}_{scenario}_{outcome}()` | Mirror `src/main/java/` package structure | <!-- lang:java -->
+| Dart | `test/` | `{name}_test.dart` | `group` + `test` | Mirror `lib/` structure | <!-- lang:dart -->
 
 ### Mirror Rule
 
@@ -33,11 +33,11 @@ src/{package}/{module}/{file}  →  {TEST_ROOT}/{module}/{test_file}
 ```
 
 Examples:
-- `src/myapp/services/user.py` → `tests/services/test_user.py`
-- `src/components/Button.tsx` → `__tests__/components/Button.test.tsx`
-- `lib/src/models/user.dart` → `test/models/user_test.dart`
-- `MyApp/Services/UserService.cs` → `MyApp.Tests/Services/UserServiceTests.cs`
-- `src/main/java/com/acme/user/UserService.java` → `src/test/java/com/acme/user/UserServiceTest.java`
+- `src/myapp/services/user.py` → `tests/services/test_user.py` <!-- lang:python -->
+- `src/components/Button.tsx` → `__tests__/components/Button.test.tsx` <!-- lang:typescript -->
+- `lib/src/models/user.dart` → `test/models/user_test.dart` <!-- lang:dart -->
+- `MyApp/Services/UserService.cs` → `MyApp.Tests/Services/UserServiceTests.cs` <!-- lang:csharp -->
+- `src/main/java/com/acme/user/UserService.java` → `src/test/java/com/acme/user/UserServiceTest.java` <!-- lang:java -->
 
 ### Existing Convention Rule
 
@@ -76,13 +76,13 @@ Before creating any test file:
 <!-- DYNAMIC: Injected from dev-commands/<lang>.md Environment section during setup. -->
 
 Keep test artifacts out of the source tree:
-- Python: `PYTHONPYCACHEPREFIX` redirects `__pycache__/` to `/tmp/`.
-- Go: `GOCACHE` redirects build cache to `/tmp/`.
-- C++: Build artifacts stay in `build/` (out-of-source CMake).
-- C#: `bin/` and `obj/` stay in per-project directories (gitignored).
-- Java: `target/` (Maven) and `build/` (Gradle) gitignored.
-- JS/TS: `coverage/` and `.nyc_output/` gitignored.
-- Dart: `.dart_tool/` and `build/` gitignored.
+- Python: `PYTHONPYCACHEPREFIX` redirects `__pycache__/` to `/tmp/`. <!-- lang:python -->
+- Go: `GOCACHE` redirects build cache to `/tmp/`. <!-- lang:go -->
+- C++: Build artifacts stay in `build/` (out-of-source CMake). <!-- lang:cpp -->
+- C#: `bin/` and `obj/` stay in per-project directories (gitignored). <!-- lang:csharp -->
+- Java: `target/` (Maven) and `build/` (Gradle) gitignored. <!-- lang:java -->
+- JS/TS: `coverage/` and `.nyc_output/` gitignored. <!-- lang:javascript typescript -->
+- Dart: `.dart_tool/` and `build/` gitignored. <!-- lang:dart -->
 
 ## Violation Recovery
 
