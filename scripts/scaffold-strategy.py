@@ -62,14 +62,23 @@ _LANG_MARKER = re.compile(r"\s*<!--\s*lang:([a-z+#0-9 ]*?)\s*-->\s*$")
 _KNOWN_KEYS = {"python", "javascript", "typescript", "go", "cpp", "csharp", "java", "dart"}
 
 
-def resolve_root(analysis_path, override):
-    """analysis.json structure.test_dirs[0] (trailing '/' stripped), else override, else 'tests'."""
+def resolve_root(analysis_path, override, *, raw=None):
+    """analysis.json structure.test_dirs[0] (trailing '/' stripped), else override, else 'tests'.
+
+    ``raw`` (the file's already-loaded text) lets a caller that already read
+    analysis.json for another purpose reuse the bytes instead of re-reading.
+    """
     if override:
         return override.rstrip("/") or "tests"
-    if analysis_path.exists():
+    if raw is None and analysis_path.exists():
         try:
-            data = json.loads(analysis_path.read_text())
-        except (json.JSONDecodeError, OSError) as e:
+            raw = analysis_path.read_text()
+        except OSError as e:
+            sys.exit(f"HALT: analysis.json unreadable ({e}) -- pass --test-root")
+    if raw is not None:
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as e:
             sys.exit(f"HALT: analysis.json unreadable ({e}) -- pass --test-root")
         test_dirs = (data.get("structure", {}) or {}).get("test_dirs") or []
         if test_dirs and test_dirs[0]:
@@ -77,18 +86,26 @@ def resolve_root(analysis_path, override):
     return "tests"
 
 
-def detect_languages(analysis_path):
+def detect_languages(analysis_path, *, raw=None):
     """analysis.json languages[].name → set of canonical keys, or None if unknown.
 
     ``None`` is the "no detection" sentinel → caller keeps all languages. Triggered
     by a missing analysis.json, a missing/empty ``languages`` list, or a list whose
     names are all unrecognized (e.g. [{name:"Rust"}]). Never raises — greenfield and
     exotic stacks fall back to the full doc rather than blocking setup.
+
+    ``raw`` (the file's already-loaded text) lets a caller reuse the bytes instead
+    of re-reading; ``None`` result still wins when the JSON is unreadable.
     """
-    if not analysis_path.exists():
-        return None
+    if raw is None:
+        if not analysis_path.exists():
+            return None
+        try:
+            raw = analysis_path.read_text()
+        except (json.JSONDecodeError, OSError):
+            return None
     try:
-        data = json.loads(analysis_path.read_text())
+        data = json.loads(raw)
     except (json.JSONDecodeError, OSError):
         return None
     names = (data.get("languages") or [])
@@ -152,8 +169,12 @@ def main():
     template = Path(args.template)
     if not template.exists():
         sys.exit(f"HALT: template missing: {template} (is CLAUDE_PLUGIN_ROOT set correctly?)")
-    root = resolve_root(Path(args.analysis), args.test_root)
-    langs = _parse_languages(args.languages) if args.languages else detect_languages(Path(args.analysis))
+    analysis = Path(args.analysis)
+    # analysis.json drives both root resolution and language detection; read it
+    # once and share the bytes so the no-override path doesn't parse it twice.
+    raw_analysis = analysis.read_text() if analysis.exists() else None
+    root = resolve_root(analysis, args.test_root, raw=raw_analysis)
+    langs = _parse_languages(args.languages) if args.languages else detect_languages(analysis, raw=raw_analysis)
 
     try:
         text = template.read_text()
@@ -170,11 +191,12 @@ def main():
     except OSError as e:
         sys.exit(f"HALT: cannot write {target}: {e} -- check path/permissions")
 
-    # Self-verify (§7.1 L0): the token must be gone in the written file.
-    if "{TEST_ROOT}" in target.read_text():
+    # Self-verify (§7.1 L0): the token must be gone, and no filter markup may
+    # remain, in the written file.
+    written = target.read_text()
+    if "{TEST_ROOT}" in written:
         sys.exit(f"HALT: {{TEST_ROOT}} still present in {target} after substitution")
-    # Self-verify: no filter markup may remain in the rendered doc.
-    if "<!-- lang:" in target.read_text():
+    if "<!-- lang:" in written:
         sys.exit(f"HALT: <!-- lang: --> marker survived in {target} (filter bug)")
     print(f"OK: strategy.md root={root} langs={_fmt_langs(langs)} -> {target}")
 

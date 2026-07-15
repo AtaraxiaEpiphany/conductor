@@ -30,7 +30,7 @@ from pathlib import Path
 # Coverage threshold floor — Firewall F3 invariant. The doc may state a higher floor,
 # never a lower one.
 _COVERAGE_FLOOR = 80
-_COVERAGE_RE = re.compile(r"(?:>=?|>)\s*(\d{1,3})\s*%")
+_COVERAGE_RE = re.compile(r">=?\s*(\d{1,3})\s*%")
 
 
 def check_invariants(text):

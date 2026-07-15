@@ -588,7 +588,6 @@ def _head_is_start_commit(cwd: Path) -> bool | None:
     (fail-open) whenever git is unavailable so the gate never blocks blindly.
     """
     try:
-        import subprocess
         r = subprocess.run(["git", "-C", str(cwd), "log", "-1", "--format=%s"],
                            capture_output=True, text=True, timeout=5)
         if r.returncode != 0:
