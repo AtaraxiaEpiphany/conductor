@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .core import load, save
-from .git_ops import docs_synced_for_track
+from .git_ops import docs_synced_for_track, _git_commit
 from .helpers import out, now_iso, conductor_dir, _reset_task, _resolve_conductor_root
 from .constants import EXECUTION_MODES
 from .handoff import _ensure_handoff_index
@@ -320,7 +320,19 @@ def cmd_init_from_plan(track_dir, track_id, track_type, description,
 
 
 def cmd_start(track_dir):
-    """Transition a track from 'new' to 'in_progress'."""
+    """Transition a track from 'new' to 'in_progress' and own its commit.
+
+    Fully idempotent end-to-end: the bookkeeping commit lives INSIDE the
+    ``status == "new"`` branch, so a re-invocation (compaction re-entry, a
+    re-run of the step skill) is a true no-op — no second "start" commit. The
+    orchestrator never constructs this commit itself (it used to run a prose
+    ``git commit`` after ``track-state start`` that was unguarded and produced
+    duplicate start commits on re-entry).
+
+    ``_git_commit`` stages only conductor-managed files relative to ``track_dir``
+    and commits only if something is staged, so this is a no-op if the state
+    mutation produced no diff.
+    """
     state = load(track_dir)
     if state.get("status") != "new":
         out(dict(ok=True, status=state.get("status"), message="already started"))
@@ -329,7 +341,10 @@ def cmd_start(track_dir):
     state["status"] = "in_progress"
     state["updated_at"] = now_iso()
     save(track_dir, state)
-    out(dict(ok=True, status="in_progress"))
+    track_id = state.get("track_id") or ""
+    msg = f"chore(conductor): Start track '{track_id}'" if track_id else "chore(conductor): Start track"
+    _git_commit(track_dir, msg)
+    out(dict(ok=True, status="in_progress", committed=True))
 
 
 def cmd_set_mode(track_dir, mode):

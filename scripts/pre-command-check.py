@@ -576,6 +576,61 @@ def _check_refactor_scope_gate(cwd: Path, command: str) -> None:
     _deny("refactor-scope", command, additional_context, permission_reason)
 
 
+_START_COMMIT_PREFIX = "chore(conductor): Start "
+
+
+def _head_is_start_commit(cwd: Path) -> bool | None:
+    """True if HEAD's subject is a conductor Start commit, False if not, None on error.
+
+    A second start commit on top of an already-started track is the duplicate
+    the cmd_start own-its-commit fix eliminates at the source — this hook is the
+    backstop for any prose ``git commit`` a skill body still emits. Returns None
+    (fail-open) whenever git is unavailable so the gate never blocks blindly.
+    """
+    try:
+        import subprocess
+        r = subprocess.run(["git", "-C", str(cwd), "log", "-1", "--format=%s"],
+                           capture_output=True, text=True, timeout=5)
+        if r.returncode != 0:
+            return None
+        return r.stdout.strip().startswith(_START_COMMIT_PREFIX)
+    except Exception:
+        return None
+
+
+def _check_duplicate_start_gate(cwd: Path, command: str) -> None:
+    """Duplicate-Start-commit gate: deny a second ``chore(conductor): Start …`` commit
+    when HEAD is already a Start commit.
+
+    Returns normally (caller proceeds to allow) when the gate passes or does not
+    apply; calls ``_deny(...)`` — which exits the process — when it trips. The
+    ``chore(conductor): Start `` message prefix is the trigger (not agent identity
+    — PreToolUse hooks can't see which agent is running), mirroring the
+    refactor-scope gate's approach. Fail-open on any git error or unreadable
+    message (``_extract_commit_message`` returns None for shell we can't read
+    statically — never block on that).
+    """
+    message = _extract_commit_message(command)
+    if message is None or not message.startswith(_START_COMMIT_PREFIX):
+        return  # not a start commit, or a message we can't read statically
+
+    if _head_is_start_commit(cwd) is not True:
+        return  # HEAD isn't a start commit (or git failed → fail open)
+
+    additional_context = (
+        '[Conductor] duplicate start-commit: HEAD is already a '
+        '`chore(conductor): Start …` commit, and this commit would be a second '
+        'one. `track-state start` owns the start commit and is idempotent — '
+        're-invoking it is a no-op, so no second `git commit` is needed. If you '
+        'meant to record other changes, give the commit a different message.'
+    )
+    permission_reason = (
+        'duplicate start-commit: HEAD is already a Start commit; '
+        '`track-state start` is idempotent and owns the start commit.'
+    )
+    _deny("duplicate_start_commit", command, additional_context, permission_reason)
+
+
 def main():
     """Main hook function"""
     input_data = read_hook_input()
@@ -678,6 +733,11 @@ def main():
         # completed task's own code diff (agents/refactorer.md boundary). Same
         # fail-open / _deny contract as F2.
         _check_refactor_scope_gate(cwd, command)
+        # Duplicate start-commit backstop: `track-state start` owns the Start
+        # commit and is idempotent, but a skill body that still emits a prose
+        # `git commit` on top of an existing Start commit would re-introduce the
+        # double-start bug. Fail-open like the gates above.
+        _check_duplicate_start_gate(cwd, command)
 
     # Allow all other commands
     write_hook_output(hook_event_name="PreToolUse")

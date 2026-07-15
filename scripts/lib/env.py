@@ -4,6 +4,7 @@ Provides unified environment variable retrieval and validation functionality.
 """
 
 import os
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -11,23 +12,38 @@ from typing import Optional
 def get_plugin_root() -> Path:
     """Get plugin root directory
 
+    Resolution priority (ground-truth first):
+      1. ``__file__``-based root — env.py lives at ``<plugin>/scripts/lib/env.py``,
+         so its parent.parent.parent is ALWAYS the true plugin root and is always
+         available (we are executing from inside the plugin tree).
+      2. ``$CLAUDE_PLUGIN_ROOT`` — trusted ONLY when it resolves to the same path
+         as the ``__file__`` root. A stale/wrong env var (a different plugin's
+         install, a subshell, a wrapper dir) used to win unconditionally and make
+         scripts like scaffold-strategy.py HALT on a ``templates/`` path it
+         computed wrong. Never let a hint override ground truth without checking.
+
     Returns:
         Plugin root directory path
     """
-    plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
-    if plugin_root:
-        return Path(plugin_root)
-    else:
-        # Fallback: use current working directory parent or default
-        cwd = Path.cwd()
-        # Check if we're in a conductor-plugin directory
-        if cwd.name == "scripts":
-            return cwd.parent
-        elif (cwd / "scripts" / "track-state").exists():
-            return cwd
-        else:
-            # Default to parent of scripts directory
-            return Path(__file__).parent.parent
+    # Ground truth: env.py is at <plugin>/scripts/lib/env.py.
+    file_root = Path(__file__).resolve().parent.parent.parent
+
+    env_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
+    if env_root:
+        env_root_resolved = Path(env_root).resolve()
+        if env_root_resolved == file_root:
+            return env_root_resolved
+        # Mismatch → the env var is stale or points elsewhere. Prefer the
+        # file-derived root (always correct) and surface the discrepancy so a
+        # genuinely broken install is still diagnosable rather than a silent
+        # HALT deep inside a downstream script.
+        print(
+            f"WARNING: CLAUDE_PLUGIN_ROOT={env_root!r} does not match the "
+            f"plugin location derived from this file ({file_root}); using "
+            f"{file_root}. Fix the env var if this plugin was relocated.",
+            file=sys.stderr,
+        )
+    return file_root
 
 
 def get_data_dir() -> Path:

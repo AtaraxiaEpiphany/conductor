@@ -28,6 +28,20 @@ def _run(cwd, *args):
                           capture_output=True, text=True, cwd=str(cwd), env=env)
 
 
+def _run_with_env(cwd, env_overrides, *args):
+    """Like ``_run`` but lets a test inject a specific ``CLAUDE_PLUGIN_ROOT``.
+
+    Used to pin the priority-inversion fix: a stale/wrong env var must NOT
+    override the always-correct ``__file__``-based root (env.py falls back and
+    warns rather than HALTing on a template path it computed wrong).
+    """
+    env = dict(os.environ)
+    env.pop("CLAUDE_PLUGIN_ROOT", None)
+    env.update(env_overrides)
+    return subprocess.run([sys.executable, str(_SCRIPT), *args],
+                          capture_output=True, text=True, cwd=str(cwd), env=env)
+
+
 class ScaffoldStrategyTests(TestCase):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp())
@@ -97,6 +111,25 @@ class ScaffoldStrategyTests(TestCase):
                  "--test-root", "tests")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self.out.read_text(), _TEMPLATE.read_text().replace("{TEST_ROOT}", "tests"))
+
+    def test_wrong_plugin_root_env_falls_back_and_warns(self):
+        # Priority-inversion regression: a stale/wrong CLAUDE_PLUGIN_ROOT must
+        # NOT make the script HALT on a missing template. get_plugin_root() now
+        # treats the env var as a hint validated against the __file__-derived
+        # ground truth, falling back (with a stderr warning) when they disagree.
+        r = _run_with_env(self.root, {"CLAUDE_PLUGIN_ROOT": "/tmp/nonexistent-plugin"},
+                          "--template", str(self.tpl), "--out", str(self.out))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("{TEST_ROOT}", self.out.read_text())  # substitution still ran
+        self.assertIn("does not match", r.stderr)              # discrepancy surfaced
+
+    def test_matching_plugin_root_env_honored_silently(self):
+        # When CLAUDE_PLUGIN_ROOT points at the real plugin root, it is honored
+        # and produces no warning (the common production path).
+        r = _run_with_env(self.root, {"CLAUDE_PLUGIN_ROOT": str(_REPO)},
+                          "--template", str(self.tpl), "--out", str(self.out))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("does not match", r.stderr)
 
 
 if __name__ == "__main__":

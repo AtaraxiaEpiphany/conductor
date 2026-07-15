@@ -733,6 +733,73 @@ class TestDispatchFinalizeShaWriteback(TestCase):
         self.assertIn(f"[{sha}]", plan)
 
 
+class TestCmdStartIdempotent(TestCase):
+    """quality.cmd_start owns its commit and is idempotent end-to-end.
+
+    Regression: the start commit used to be the model's prose ``git commit``
+    after ``track-state start``, unguarded → a re-invocation of the step skill
+    produced a *second* "start" commit even though ``cmd_start`` itself no-op'd.
+    The commit now lives inside the ``status == "new"`` branch, so re-running
+    ``start`` is a true no-op.
+    """
+
+    def _make_git_track_dir(self):
+        import subprocess
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d)
+        subprocess.run(["git", "init", d], capture_output=True, check=True)
+        subprocess.run(["git", "-C", d, "config", "user.email", "test@test.com"],
+                        capture_output=True, check=True)
+        subprocess.run(["git", "-C", d, "config", "user.name", "Test"],
+                        capture_output=True, check=True)
+        Path(d, "README.md").write_text("# test")
+        subprocess.run(["git", "-C", d, "add", "README.md"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", d, "commit", "-m", "init"], capture_output=True, check=True)
+        # status:"new" is what cmd_start transitions away from.
+        save(d, _make_state(status="new", track_id="dblstart"))
+        return d
+
+    def _head_subject(self, d):
+        import subprocess
+        return subprocess.run(["git", "-C", d, "log", "-1", "--format=%s"],
+                              capture_output=True, text=True).stdout.strip()
+
+    def test_first_start_commits_second_is_noop(self):
+        from scripts.track_state.quality import cmd_start
+        d = self._make_git_track_dir()
+
+        r1 = _out_captured(cmd_start, d)[0]
+        self.assertTrue(r1["ok"])
+        self.assertEqual(r1["status"], "in_progress")
+        self.assertTrue(r1.get("committed"))
+        after_first = self._head_subject(d)
+        self.assertIn("Start track", after_first)
+
+        r2 = _out_captured(cmd_start, d)[0]
+        self.assertTrue(r2["ok"])
+        self.assertEqual(r2["status"], "in_progress")
+        self.assertEqual(r2.get("message"), "already started")
+        self.assertNotIn("committed", r2)  # no commit claim on the no-op path
+
+        # The HEAD subject is unchanged — no second "start" commit.
+        self.assertEqual(self._head_subject(d), after_first)
+
+    def test_start_does_not_emit_prose_commit_on_already_started(self):
+        # Guards the exact user-reported scenario: re-running the step skill on a
+        # track that's already in_progress must add zero commits.
+        import subprocess
+        from scripts.track_state.quality import cmd_start
+        d = self._make_git_track_dir()
+
+        _out_captured(cmd_start, d)  # transition once
+        between = subprocess.run(["git", "-C", d, "rev-parse", "HEAD"],
+                                 capture_output=True, text=True).stdout.strip()
+        _out_captured(cmd_start, d)  # re-run (simulates skill re-invocation)
+        after = subprocess.run(["git", "-C", d, "rev-parse", "HEAD"],
+                               capture_output=True, text=True).stdout.strip()
+        self.assertEqual(between, after)
+
+
 class TestInitFromPlan(TestCase):
     """plan_parse + cmd_init_from_plan: mechanical extraction + plan.md syntax checks."""
 
