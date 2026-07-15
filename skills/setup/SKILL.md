@@ -25,6 +25,7 @@ Key paths (resolve via `conductor/index.md` if non-default):
 
 **Subagents:**
 - `conductor:project-analyzer` — brownfield project analysis (§2.0)
+- `conductor:strategy-writer` — optional project-specific testing strategy (§2.4 step 3), when the user picks generation over the filtered template
 - `/conductor:new-track` — owns the entire initial-track lifecycle (§3.2): derive-name, spec-planner, spec-reviewer, `init-from-plan`, registry-update, commit, announce, auto-start. It also resumes any partial track via its own §0.5 marker.
 
 CRITICAL: Validate every tool call. On failure → halt → announce.
@@ -101,11 +102,23 @@ Copy the workflow templates into `conductor/workflow/` with Bash (`cp`/`sed`) ra
    rm -f /tmp/.devcmds
    ```
 
-3. **Testing strategy:** run the scaffold script — it resolves the test root (`conductor/.conductor/analysis.json` → `structure.test_dirs[0]`; greenfield → `tests`), filters the per-language rows/examples/cache-rules to the detected languages (`analysis.json` → `languages[].name`; no detection → keeps all), writes `conductor/workflow/testing/strategy.md` byte-exact modulo the token + filter, and self-verifies (non-zero exit + remediation hint on any failure). Promoted to code so the `{TEST_ROOT}` substitution and language filter can't be skipped or drifted:
+3. **Testing strategy:** `AskUserQuestion` — **"How should I create the testing strategy?"** with options:
+   - **"Use the filtered template (Recommended)"** (default) → run the scaffold script below. Language-filtered, deterministic, contract-correct.
+   - **"Generate a project-specific strategy"** → dispatch `conductor:strategy-writer` (inspects the project's real test layout/frameworks, asks follow-up questions, writes the file). Best for projects whose actual conventions diverge from the generic template.
+
+   **Default branch (filtered template):** run the scaffold script — it resolves the test root (`conductor/.conductor/analysis.json` → `structure.test_dirs[0]`; greenfield → `tests`), filters the per-language rows/examples/cache-rules to the detected languages (`analysis.json` → `languages[].name`; no detection → keeps all), writes `conductor/workflow/testing/strategy.md` byte-exact modulo the token + filter, and self-verifies (non-zero exit + remediation hint on any failure). Promoted to code so the `{TEST_ROOT}` substitution and language filter can't be skipped or drifted:
    ```bash
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/scaffold-strategy.py"
    ```
    Override the detected root with `--test-root <path>` if the scan missed it, or the language set with `--languages python,typescript` to force a filter manually.
+
+   **Generate branch (project-specific):** resolve the test root the same way the script would (`analysis.json` → `structure.test_dirs[0]`, else `tests`), then:
+   ```
+   Dispatch `conductor:strategy-writer`, prompt:
+   PROJECT_DIR={project root}
+   TEST_ROOT={resolved root}
+   ```
+   The agent inspects the live project, asks the user questions interactively, writes `conductor/workflow/testing/strategy.md`, and self-verifies via `scripts/verify-strategy.py` (the deterministic invariant backstop for the generated doc). Parse the `---STRATEGY RESULT---` block; on `STATUS: FAILURE` → halt → announce.
 
 4. **Workflow index:** generate `conductor/workflow/index.md` listing the created files (per-project content — not a template copy).
 
