@@ -50,10 +50,7 @@ Read `action` and do **only** that:
 
 ### Non-spine branch (B-min boundary — hand off to another spine)
 
-`wave_active` needs a different spine, so `step` surfaces it as a named action
-rather than collapsing it: hand the track to `/conductor:parallel` (the wave spine
-owns it). That is the measured B-min boundary, not a gap.
-
+`wave_active` needs a different spine, so `step` surfaces it as a named action rather than collapsing it: hand the track to `/conductor:parallel` (the wave spine owns it). That is the measured B-min boundary, not a gap.
 ## 3.0 STATE-LOCK INVARIANTS (resume safety)
 
 **NEVER stop between a `dispatch` and the next `step` call** (or between any
