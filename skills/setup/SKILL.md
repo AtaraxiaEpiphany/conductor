@@ -170,17 +170,7 @@ Save state: `2.4_workflow`.
 
 ## 3.0 INITIAL TRACK (delegates to /conductor:new-track)
 
-setup no longer creates the track itself — the entire track lifecycle lives in
-`/conductor:new-track`, which owns derive-name, spec-planner, spec-reviewer,
-`init-from-plan` (mechanical, from plan.md — no large `--plan-structure` arg),
-registry-update, the track commit, announce, and auto-start. It also resumes any
-partial track via its §0.5 marker (issue #3). setup's only unique responsibilities
-here are the greenfield product requirements (§3.1), delegating (§3.2), and its
-own final commit (§3.6).
-
-Re-entering §3.0 after an interruption lets new-track resume the partial track
-automatically — **do not** re-derive a track id, re-init state, or pass a
-`--plan-structure` from setup.
+setup delegates the entire track lifecycle to `/conductor:new-track`, which owns derive-name, spec-planner, spec-reviewer, `init-from-plan`, registry-update, the track commit, announce, and auto-start (resuming any partial track via its own §0.5 marker). setup's only unique responsibilities here are the greenfield product requirements (§3.1), delegating (§3.2), and its own final commit (§3.6).  On re-entry after an interruption, **do not** re-derive a track id, re-init state, or pass a `--plan-structure` — let new-track resume the partial track.
 
 ### 3.1 Product Requirements (Greenfield only)
 
@@ -189,31 +179,16 @@ Interactive (up to 5 questions).
 ### 3.2 Delegate to /conductor:new-track
 
 1. If the user chose "later" at §2.5 step 7 → Phase 1 is already committed → HALT.
-2. Gather the track description: greenfield → synthesize from the §3.1 answers;
-   brownfield → one short description (the analyzer's top recommendation). Pass
-   the greenfield product answers as context.
-3. Invoke `/conductor:new-track <description>`. new-track does the rest —
-   including resuming a partial track if one exists at the derived `track_dir`,
-   and validating any pre-existing `plan.md` (its §2.3 guard).
-4. On return, fall through to §3.6. (The old §3.3 spec-planner / §3.4
-   spec-reviewer / §3.5 `init --plan-structure` steps are now owned by new-track
-   — hence the numbering gap. This also retires the large CLI arg of issue #6 and
-   the parser-bypass of issue #4a.)
+2. Gather the track description: greenfield → synthesize from the §3.1 answers; brownfield → one short description (the analyzer's top recommendation). Pass the greenfield product answers as context.
+3. Invoke `/conductor:new-track <description>`. new-track does the rest — including resuming a partial track if one exists at the derived `track_dir`, and validating any pre-existing `plan.md` (its §2.3 guard).
+4. On return, fall through to §3.6.
 
 ### 3.6 Final Commit
 
-1. **Save the terminal resume key BEFORE committing** (issue #1: the old order
-   committed first, then saved `setup_state.json`, leaving it dirty on the
-   working tree). Saving first means the scoped stage below includes the
-   completed marker:
+1. **Save the terminal resume key BEFORE committing.** Saving first means the
+   scoped stage below includes the completed marker:
    Save state: `3.6_setup_complete`.
-2. Commit setup artifacts — **scoped, never `git add -A`**. A brownfield project
-   may carry unrelated WIP that must not be swept into the scaffold commit, so
-   stage only what setup owns: the `conductor/` tree (incl. `setup_state.json`
-   and `.conductor/analysis.json`), the `CLAUDE.md` TOC append, and the `.gitignore`
-   conductor block. The `git diff --cached --quiet ||` guard makes the commit a
-   no-op **only** when those artifacts are already committed (a defensive re-run)
-   — it does NOT skip this step:
+2. Commit setup artifacts — **scoped, never `git add -A`**. A brownfield project may carry unrelated WIP that must not be swept into the scaffold commit, so stage only what setup owns: the `conductor/` tree (incl. `setup_state.json` and `.conductor/analysis.json`), the `CLAUDE.md` TOC append, and the `.gitignore` conductor block. The `git diff --cached --quiet ||` guard makes the commit a no-op **only** when those artifacts are already committed (a defensive re-run) — it does NOT skip this step:
    ```bash
    git add conductor/ CLAUDE.md .gitignore
    git diff --cached --quiet || git commit -m "chore(conductor): Scaffold conductor setup"
