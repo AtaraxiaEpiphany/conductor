@@ -18,8 +18,7 @@ hooks:
 
 You are a **teleoperator**. You do NOT route, judge, or construct prompts —
 `track-state wave-step` does all of that in code. Your entire job: run `wave-step`,
-read `action`, do *exactly* what it says, then run `wave-step` again. Context budget
-is precious; this skill body is deliberately tiny.
+read `action`, do *exactly* what it says, then run `wave-step` again.
 
 ## 1.0 SETUP (once)
 
@@ -27,7 +26,7 @@ is precious; this skill body is deliberately tiny.
    - `proceed` → `<td>` = `td`; **print `announce`**; continue to step 2.
    - `ask` → `AskUserQuestion` over `candidates` (label = `track_id`), then re-run `track-state check "<chosen track_id>"`.
    - `halt` → print `message`; HALT.
-2. `track-state recover "<td>"`. If `status == "new"` → `track-state start "<td>"` + commit.
+2. `track-state recover "<td>"`. Then `track-state start "<td>"`.
 3. If recover surfaces an interrupted wave (`wave_active`), just enter §2.0 — `wave-step` integrates in-flight members before anything else.
 
 ## 2.0 THE LOOP
@@ -59,17 +58,14 @@ A single-member `dispatch_batch` with `is_resume: true` is a **re-dispatch of on
 
 ## 3.0 STATE-LOCK INVARIANTS (resume safety)
 
-The loop runs uninterrupted, but a harness compaction can pause you mid-wave. Keep the wave ledger clean so resume is automatic:
-
 **NEVER stop mid-wave** — between `dispatch_batch` and the last `wave_integrate`
 every member's worktree is live and its branch unmerged. The no-retry-burn
-discriminator protects an interrupted member (it re-dispatches without burning a
-retry), but a drained boundary is always cleaner.
+discriminator protects an interrupted member, but a drained boundary is always cleaner.
 
 ---
 
-**Spike status:** the spine (`dispatch_batch` / `wave_integrate` / `ask` / `done` /
-`error`) is fully code-driven and tested. `seam_review`, `serial`, and
-`phase_checkpoint` deliberately defer to `/conductor:parallel` / `/conductor:implement`
-prose — that is the measured B-min boundary, not a gap. See
-`${CLAUDE_PLUGIN_ROOT}/conductor/design/rail-b-wave-step.md` for the action contract and the B-full options.
+**Scope:** the spine (`dispatch_batch` / `wave_integrate` / `ask` / `done` /
+`error`) is fully code-driven. `seam_review`, `serial`, and `phase_checkpoint`
+defer to `/conductor:parallel` / `/conductor:implement` prose (the measured B-min
+boundary). Design contract + B-full options:
+`${CLAUDE_PLUGIN_ROOT}/conductor/design/rail-b-wave-step.md`.

@@ -18,13 +18,13 @@ hooks:
 
 ## ORCHESTRATOR CONTRACT
 
-You are a **thin state machine** that routes between subagents — the parallel sibling of `conductor:implement`. Serial execution is the default; this skill runs ONLY when the user opts into within-track parallelism for a phase that decomposes into file-disjoint, deps-declared tasks.
+You are a **thin state machine** that routes between subagents — the parallel sibling of `conductor:implement`. Runs ONLY when the user opts into within-track parallelism for a phase of file-disjoint, deps-declared tasks.
 
-1. **NEVER read `spec.md` or `plan.md`** — subagents self-load all business context. You decide waves from the `dispatch-wave` compact envelope alone.
-2. **Parse only the compact envelope's emitted fields** (`COMPACT_FIELDS` in `scripts/track_state/helpers.py`). Pass `--full` only to debug.
+1. **NEVER read `spec.md` or `plan.md`** — subagents self-load all business context. Decide waves from the `dispatch-wave` compact envelope alone.
+2. **Parse only the compact envelope** (`COMPACT_FIELDS` in `scripts/track_state/helpers.py`). Pass `--full` only to debug.
 3. **Keep dispatch prompts minimal** — task identity + paths only (~100 tokens). The only additions over serial are `WORKTREE_DIR` and a worktree-pinned `TRACK_DIR`.
 4. **Announce actions tersely** — one line per action, no narrative.
-5. **Never abandon a mid-wave state machine.** The loop runs uninterrupted, but a harness compaction can pause you mid-wave — never stop between `dispatch-wave` returning members and the last `wave-finalize` returning `drained`, when every member's worktree is live and its branch unmerged. `dispatch-wave` refuses with `wave_active` if a member is still in_flight (signaling an interrupted wave to integrate first); only rest at `drained: true`.
+5. **Never abandon a mid-wave state machine.** A compaction can pause you mid-wave — never stop between `dispatch-wave` returning members and the last `wave-finalize` returning `drained`, when every member's worktree is live and its branch unmerged. `dispatch-wave` refuses with `wave_active` if a member is still in_flight (integrate it first); only rest at `drained: true`.
 
 Wave loop: `DISPATCH-WAVE → FAN OUT → INTEGRATE (per member) → (drained) → repeat → NO_READY_TASKS → SERIAL FALLBACK or PHASE BOUNDARY → (repeat) → FINALIZE → POST-LOOP`
 
@@ -32,7 +32,7 @@ Wave loop: `DISPATCH-WAVE → FAN OUT → INTEGRATE (per member) → (drained) �
 
 ## 0.0 MODEL — when waves run vs serial
 
-`dispatch-wave` computes a **ready-set**: pending, flat (no subtasks), executor-routed (`[Manual]`/`[Explore]` excluded), AND **opt-in via a `<!-- deps: -->` comment** whose every declared dep target is satisfied (completed/skipped/deferred). Capped at 4 members. Tasks with no deps comment are assumed serial-order-dependent and stay on the serial spine — so a wave ONLY ever contains tasks the plan author declared independent. Serial fallback (§3.0) makes progress on the remaining serial tasks, which may satisfy deps for the next wave.
+`dispatch-wave` computes a **ready-set**: pending, flat (no subtasks), executor-routed (`[Manual]`/`[Explore]` excluded), AND **opt-in via a `<!-- deps: -->` comment** whose every declared dep is satisfied (completed/skipped/deferred). Capped at 4 members. Tasks with no deps comment stay on the serial spine — a wave ONLY ever contains tasks the plan author declared independent. Serial fallback (§3.0) may satisfy deps for the next wave.
 
 ---
 
@@ -46,7 +46,7 @@ Wave loop: `DISPATCH-WAVE → FAN OUT → INTEGRATE (per member) → (drained) �
    - `status: "wave_active"` → an interrupted wave has in-flight members. Go to **§2.5** (resume the wave — integrate members before anything else).
    - error → HALT.
    - otherwise → continue.
-3. If `status == "new"` → `track-state start` + `registry-update` + commit.
+3. `track-state start "<track_dir>"`.
 4. If recover surfaced a normal `in_progress`/`failed`/`blocked` serial task (no wave active) → handle exactly as `implement` §2.0, then come back here.
 
 ---
@@ -93,11 +93,11 @@ Switch on `action`:
 
 ### 3.2 Fan out (action: `dispatch_wave`)
 
-The `wave` array has one member per ready task, each carrying `worktree`, `branch`, `worktree_track_dir`, `phase`, `task`, `name`. **Dispatch ALL members in ONE message** (concurrent `Agent` calls) so they run in parallel — that is the entire point of this skill.
+The `wave` array has one member per ready task, each carrying `worktree`, `branch`, `worktree_track_dir`, `phase`, `task`, `name`. **Dispatch ALL members in ONE message** (concurrent `Agent` calls) — that parallelism is the whole point.
 
-If the envelope also carries a non-empty `deferred` list, those are eligible members the wave cap (`CONDUCTOR_WAVE_SIZE`, default 2) pushed past this wave — announce them before fanning out: `⚠️ Wave cap reached; deferring <P{p}.T{t} …> to the next wave`. They stay `pending`; the next `dispatch-wave` (after this one drains) picks them up automatically. **The cap is never silent** — an eligible task deferred by the cap is always surfaced, never dropped (no-silent-caps).
+If the envelope carries a non-empty `deferred` list, those are eligible members the wave cap (`CONDUCTOR_WAVE_SIZE`, default 2) pushed past this wave — announce each before fanning out: `⚠️ Wave cap reached; deferring <P{p}.T{t} …> to the next wave`. They stay `pending`; the next `dispatch-wave` picks them up. **The cap is never silent** (no-silent-caps).
 
-Per member, dispatch `conductor:task-executor` with the canonical minimal prompt **plus the worktree pinning**:
+Per member, dispatch `conductor:task-executor` with the canonical minimal prompt **plus worktree pinning**:
 
 ```
 WORKTREE_DIR={worktree}
@@ -110,19 +110,17 @@ ATTEMPT=1
 MAX_RETRIES={m}
 ```
 
-Lead the agent's first action with: `cd "{WORKTREE_DIR}"` first (Bash cwd persists across calls), so every later `git`/edit lands in the worktree. `TRACK_DIR` points into the worktree, so the agent's `track-state write-result "{TRACK_DIR}" ...` writes the worktree's own `result.json` — exactly what `wave-finalize` reads. The agent otherwise behaves identically to serial (TDD, coverage, commits on its branch). It does NOT call dispatch-finalize — wave integration is the orchestrator's job (§4.0).
+Lead the agent's first action with `cd "{WORKTREE_DIR}"` (Bash cwd persists), so every later `git`/edit lands in the worktree. `TRACK_DIR` points into the worktree, so `track-state write-result "{TRACK_DIR}" ...` writes the worktree's own `result.json` — what `wave-finalize` reads. The agent otherwise behaves identically to serial (TDD, coverage, commits on its branch). It does NOT call dispatch-finalize — wave integration is the orchestrator's job (§4.0).
 
 After ALL members return → **§4.0** (integrate each, in any order).
 
 ### 3.3 Serial fallback (action: `no_ready_tasks`)
 
-No deps-declared file-disjoint pending task is ready in the current phase. Make serial progress — a serial task may satisfy a dep that unlocks the next wave.
+No deps-declared file-disjoint pending task is ready. Make serial progress — a serial task may satisfy a dep that unlocks the next wave. **Read the `ineligible` list first** (one `{phase, task, name, reason}` per rejected pending task, `reason` ∈ `subtasked` | `non_executor` | `no_deps_comment` | `deps_unsatisfied`) and announce the blocker — do NOT silently fall to serial when the author intended parallelism:
 
-**Read the `ineligible` list first.** It carries one `{phase, task, name, reason}` per pending task that was rejected, with `reason` ∈ `subtasked` | `non_executor` | `no_deps_comment` | `deps_unsatisfied`. Announce the blocker — do NOT silently fall to serial when the author clearly intended parallelism:
-
-- `subtasked` → the dominant case. A task with subtasks is **flat-only-excluded in v1** — it can never be a wave member. If the author wants it parallel, they must **flatten** it (drop the subtasks, inline the work) and add `<!-- deps: -->`. Announce: `"⚠️ P{p}.T{t} '{name}' has subtasks — v1 waves are flat-only. Flatten + add <!-- deps: --> to parallelize."` See plan-format-contract.md §8.
-- `no_deps_comment` → the opt-in comment is missing or malformed (e.g. `<deps m.n>` instead of `<!-- deps: -->`). Announce the offending task so the author can fix the syntax.
-- `deps_unsatisfied` / `non_executor` → expected (a dep not yet met, or a `[Manual]`/`[Explore]` task). No announcement needed unless every candidate is blocked.
+- `subtasked` → the dominant case. A task with subtasks is **flat-only-excluded in v1**. Announce `"⚠️ P{p}.T{t} '{name}' has subtasks — v1 waves are flat-only. Flatten + add <!-- deps: --> to parallelize."` (plan-format-contract.md §8).
+- `no_deps_comment` → the opt-in comment is missing/malformed (e.g. `<deps m.n>` instead of `<!-- deps: -->`). Announce the offending task.
+- `deps_unsatisfied` / `non_executor` → expected (dep not met, or `[Manual]`/`[Explore]`). No announcement unless every candidate is blocked.
 
 ```bash
 track-state dispatch-next "<track_dir>"
@@ -143,31 +141,25 @@ For **each** member of the just-dispatched wave, **in any order, serialized**:
 track-state wave-finalize "<track_dir>" --phase <p> --task <t>
 ```
 
-`wave-finalize` reads the member's worktree `result.json`, squash-merges its branch onto the track branch as ONE code commit (conflict → FAILURE with a `SPEC_DEVIATION`), runs the SUCCESS/FAILURE finalize transition on the real `track-state.json`, and tears down that member's worktree + branch. It emits `status`, `committed`, `member_status`, `drained`.
+`wave-finalize` reads the member's worktree `result.json`, squash-merges its branch onto the track branch as ONE code commit (conflict → FAILURE with `SPEC_DEVIATION`), runs the SUCCESS/FAILURE finalize transition on the real `track-state.json`, and tears down that member's worktree + branch. Emits `status`, `committed`, `member_status`, `drained`.
 
 Route by `status`:
 
-**SUCCESS** (`member_status: finalized`): announce tersely. `deviations > 0` → announce. If `phase_checkpoint_pending` present → note it (handle at the phase boundary, §4.2). `committed: false` → announce `"wave-finalize conductor commit failed, result.json preserved"` and re-run `wave-finalize` for that member (max 3 attempts, then HALT `"wave-finalize stuck"`).
+**SUCCESS** (`member_status: finalized`): announce tersely. `deviations > 0` → announce. `phase_checkpoint_pending` present → note it (handle at the phase boundary, §4.2). `committed: false` → announce `"wave-finalize conductor commit failed, result.json preserved"` and re-run for that member (max 3 attempts, then HALT `"wave-finalize stuck"`).
 
-**FAILURE** (`member_status: failed` or `conflict`): the member is left `failed`. **v1 does NOT retry within the wave** (in-wave re-dispatch is deferred). The failed member stays `failed`; after the wave drains it is handled by the serial spine's normal retry/skip/block path (§4.1). Announce which member failed and why (`member_status: conflict` → file-overlap despite declared deps).
+**FAILURE** (`member_status: failed` or `conflict`): the member is left `failed`. **v1 does NOT retry within the wave.** After the wave drains it's handled by the serial spine's normal retry/skip/block path (§4.1). Announce which member failed and why (`member_status: conflict` → file-overlap despite declared deps).
 
-After each `wave-finalize`, check `drained`:
-- `drained: false` → integrate the next member.
-- `drained: true` → **§4.1**.
+After each `wave-finalize`, check `drained`: `false` → integrate next member; `true` → **§4.1**.
 
 ### 4.1 Wave drained
 
-All members of this wave have settled. Announce the wave summary (`N completed / M failed`).
-
-If any members FAILED → §4.0's `wave-finalize` already told you which (`member_status: failed`/`conflict`). A terminal `failed` task is **invisible to `dispatch-next`** — it returns only `in_progress`/`pending`, so looping back to `dispatch-wave`/`dispatch-next` strands the member and the track eventually finalizes `status:"failed"` with no decision. Instead run `track-state recover "<track_dir>"` (the FAILURE transition left the current indices pointing at the failed member) and surface its Retry/Skip/Block decision exactly as `implement` §2.2 (interactive) or route to `skip-analyst` (continuous). Resolve every failed member before re-checking for the next wave. Then → **§4.15** (cross-member seam check).
+Announce the wave summary (`N completed / M failed`). If any members FAILED → `wave-finalize` already reported which (`member_status: failed`/`conflict`). A terminal `failed` task is **invisible to `dispatch-next`** (it returns only `in_progress`/`pending`), so looping back strands the member and the track eventually finalizes `status:"failed"` with no decision. Instead run `track-state recover "<track_dir>"` (the FAILURE transition left the current indices pointing at the failed member) and surface its Retry/Skip/Block decision as `implement` §2.2 (interactive) or route to `skip-analyst` (continuous). Resolve every failed member before re-checking for the next wave. Then → **§4.15** (cross-member seam check).
 
 ### 4.15 Cross-Member Integration Review (completeness-critic)
 
-Wave isolation gives each member a blind spot it cannot cure alone: the **seams** where its output meets another member's — a consumer read a producer's shape that the producer changed, two members touched a shared type/config, a declared `<!-- deps: -->` boundary drifted. No individual member can see these; only the integrated whole can. After the wave drains, review the seams once (completeness-critic over the integration the wave just performed).
+Wave isolation gives each member a blind spot: the **seams** where its output meets another member's — a consumer read a producer's shape that the producer changed, two members touched a shared type/config, a declared `<!-- deps: -->` boundary drifted. No individual member can see these; only the integrated whole can. Review the seams once after the wave drains.
 
-**Decide applicability:** skip (announce nothing) when **fewer than 2** members reached `member_status: finalized` this wave — a single-member wave has no cross-member seams, and a review there is pure latency. Otherwise:
-
-Dispatch `conductor:code-reviewer` (read-only) over the integrated range, prompt:
+**Decide applicability:** skip (announce nothing) when **fewer than 2** members reached `member_status: finalized` this wave — a single-member wave has no seams. Otherwise dispatch `conductor:code-reviewer` (read-only) over the integrated range:
 
 ```
 TRACK_DIR={td}
@@ -176,12 +168,12 @@ REVISION_RANGE={base_sha}..HEAD
 SCOPE=cross-member interaction defects at deps boundaries only
 ```
 
-`SCOPE` narrows the pass to defects a member *could not* have seen alone — shape/contract mismatch at a `<!-- deps: -->` boundary, shared-file clobbering, conflicting type/config edits across members. Decide from the returned `---REVIEW RESULT---` block (substring-check the severities):
+`SCOPE` narrows the pass to defects a member *could not* have seen alone. Decide from the `---REVIEW RESULT---` block (substring-check severities):
 
 - **Zero `Critical`/`High`** → announce `"🔍 Seam review: clean"` → **§4.2**.
-- **`Critical`/`High` present** → these are integration defects the wave *created*, not rework on any one member's isolated work. **Refute first** (below) to strip single-reviewer misreads, then surface the survivors via the human gate.
+- **`Critical`/`High` present** → integration defects the wave *created*. **Refute first** (below) to strip single-reviewer misreads, then surface survivors via the human gate.
 
-**Seam refute (before the human gate).** A single cross-member pass can misread an interaction — a "defect" that is correct behavior once both members are read together, or a `file:line` citation gone stale against the merge. Write the Critical/High findings to `{td}/.conductor/seam-findings.json` (a list of `{severity,title,file,lines,suggestion}`), then dispatch `conductor:refuter` to re-examine each against the integrated working tree:
+**Seam refute (before the human gate).** Write the Critical/High findings to `{td}/.conductor/seam-findings.json` (list of `{severity,title,file,lines,suggestion}`), then dispatch `conductor:refuter` to re-examine each against the integrated working tree:
 
 ```
 PROJECT_DIR={project_root}
@@ -190,13 +182,13 @@ CLAIM=The findings in {td}/.conductor/seam-findings.json are real cross-member i
 CONTEXT_PATHS={td}/.conductor/seam-findings.json {the member source files cited in the findings}
 ```
 
-The CLAIM is framed as "the findings are real" so the refuter's default `SUSTAINED` = keep-when-uncertain — a possible integration defect is surfaced to the human rather than silently dropped. `REFUTED` = grounded evidence a finding is a misread (the reviewer misread the cross-member interaction once both members are read together, or the citation is stale against the merged code). Dedup survivors by signature (`severity+title+file+lines`). Then:
+CLAIM framed as "the findings are real" → refuter's default `SUSTAINED` = keep-when-uncertain (a possible defect is surfaced, not silently dropped); `REFUTED` = grounded evidence of a misread (reviewer misread the interaction once both members are read together, or citation stale against the merge). Dedup survivors by signature (`severity+title+file+lines`). Then:
 
-- **Survivors remain** → surface the survivors via `AskUserQuestion`: **fix-now** (dispatch `conductor:task-executor` against the offending member's seam on the main branch) / **accept-with-debt** (note in the wave summary, proceed) / **block** (HALT). Resolve per the user's choice, then → **§4.2**.
-- **No survivors (all findings refuted)** → announce `"🔍 Seam review: <N> findings → all refuted on re-examination"` → **§4.2**. The refuted count is announced, not hidden (no silent caps).
-- **STATUS: FAILURE** → the refuter could not complete; keep all original findings and route to `AskUserQuestion` as-is (conservative — don't drop findings a crashed backup did not vet).
+- **Survivors remain** → surface via `AskUserQuestion`: **fix-now** (dispatch `conductor:task-executor` against the offending member's seam on the main branch) / **accept-with-debt** (note in wave summary, proceed) / **block** (HALT). Resolve per choice → **§4.2**.
+- **No survivors** → announce `"🔍 Seam review: <N> findings → all refuted on re-examination"` → **§4.2** (refuted count announced, not hidden).
+- **STATUS: FAILURE** → keep all original findings, route to `AskUserQuestion` as-is (don't drop findings a crashed backup didn't vet).
 
-This is orchestration over the existing `code-reviewer` + `task-executor` + `refuter` agents — no new agent, no new hook. It runs once per drained multi-member wave, not once per member.
+Orchestration over existing `code-reviewer` + `task-executor` + `refuter` agents — no new agent/hook. Once per drained multi-member wave, not per member.
 
 ### 4.2 Phase boundary
 

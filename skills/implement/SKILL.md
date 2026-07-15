@@ -21,14 +21,12 @@ hooks:
 You are a **thin state machine** that routes between subagents. Context budget is precious.
 
 1. **NEVER read `spec.md` or `plan.md`** — subagents self-load all business context.
-2. **Parse only the compact envelope's emitted fields** from track-state outputs. The dispatch commands (`next`, `recover`, `dispatch-next/prepare/finalize`) emit a **compact envelope by default** — the per-command allowlist in `scripts/track_state/helpers.py` (`COMPACT_FIELDS`) is the single source of truth for exactly which fields each command emits. Pass `--full` only to debug a raw envelope; the compact default is the contract.
+2. **Parse only the compact envelope** track-state emits by default (the per-command field allowlist is `COMPACT_FIELDS` in `scripts/track_state/helpers.py`). Pass `--full` only to debug.
 3. **Keep dispatch prompts minimal** — task identity + file paths only (~100 tokens).
 4. **Announce actions tersely** — one line per action, no narrative.
-5. **Never abandon a mid-transaction state machine.** The loop runs uninterrupted, but a harness compaction can pause you mid-transaction — never stop between `dispatch-prepare` and `dispatch-finalize` (that abandons a stale `[~]` lock the next run's `recover` must reap, and the Stop hook will flag it), nor between `code-reviewer` returning and the `.conductor/post-loop.json` reviewed-range stamp in the post-loop (that loses the review-done signal and forces an expensive re-review). Re-entry is automatic: `recover` reaps stale locks, `dispatch-next` re-emits `action=finalize` → §4.0 re-enters the post-loop, and `post-loop-status` gates skip what already ran.
+5. **Never abandon a mid-transaction state machine.** A harness compaction can pause you mid-transaction — never stop between `dispatch-prepare` and `dispatch-finalize` (abandons a stale `[~]` lock the next `recover` must reap), nor between `code-reviewer` returning and the `.conductor/post-loop.json` reviewed-range stamp (loses the review-done signal → expensive re-review). Re-entry is automatic: `recover` reaps stale locks, `dispatch-next` re-emits `action=finalize`, `post-loop-status` gates skip what already ran.
 
-Dispatch loop: `RECOVER → DISPATCH → PROCESS → PHASE_BOUNDARY → (repeat) → FINALIZE`
-
-Tag inheritance: subtasks inherit dispatch tags from parent when subtask name has none.
+Dispatch loop: `RECOVER → DISPATCH → PROCESS → PHASE_BOUNDARY → (repeat) → FINALIZE`. Tag inheritance: subtasks inherit dispatch tags from parent when the subtask name has none.
 
 ---
 
@@ -39,7 +37,7 @@ Tag inheritance: subtasks inherit dispatch tags from parent when subtask name ha
    - `ask` → `AskUserQuestion` over `candidates` (label = `track_id`), then re-run `track-state check "<chosen track_id>"`.
    - `halt` → print `message`; HALT.
 2. `track-state recover "<track_dir>"` — if error → HALT.
-3. If `status == "new"` → `track-state start` + `registry-update` + commit.
+3. `track-state start "<track_dir>"`.
 
 ---
 
@@ -67,21 +65,17 @@ If state changed → commit: `chore(conductor): Fix state consistency after reco
 
 ### 2.1 Resume Phase Checkpoint
 
-If recover output contains `phase_checkpoint_pending: <phase_index>`:
-- Dispatch `conductor:phase-checker` (§3.2), `PHASE=<phase_index>`
-- After return → **Section 3.7** (Phase Boundary)
+If recover output contains `phase_checkpoint_pending: <phase_index>`: dispatch `conductor:phase-checker` (§3.2), `PHASE=<phase_index>`, then → **§3.7**.
 
 ### 2.2 Failed Task Decision (interactive only)
 
-When `recover` surfaces a `failed` task whose retries are exhausted AND `execution_mode == "interactive"`, the recover envelope carries a pre-computed `decision` blob. Do NOT judge retry-exhaustion or construct commands yourself — act as a pure transducer:
+When `recover` surfaces a `failed` task whose retries are exhausted AND `execution_mode == "interactive"`, the recover envelope carries a pre-computed `decision` blob. Act as a pure transducer — do NOT judge retry-exhaustion or construct commands:
 
 1. `AskUserQuestion(decision.question, decision.header, decision.options)` → user picks Retry / Skip / Block.
-2. Run `decision.commands[<chosen label>]` **verbatim** — each entry is one shell-safe command line (the task name is already `shlex`-quoted inside the `git commit -m` / `--reason` args; do not edit or re-quote).
+2. Run `decision.commands[<chosen label>]` **verbatim** — each is one shell-safe line (task name already `shlex`-quoted; do not edit or re-quote).
 3. Go to `decision.next[<chosen label>]` (`3.1` for Retry/Skip, `HALT` for Block).
 
-When `execution_mode == "continuous"` (no `decision` blob): dispatch `conductor:skip-analyst` (§3.6).
-
-A parent failed via the parent-stuck path (P<phase>.T<task> rendered `[!]` because its subtasks exhausted retries) surfaces the same blob — `reset task` clears the parent **and** its subtasks for a full retry.
+**Continuous** (no `decision` blob): dispatch `conductor:skip-analyst` (§3.6). A parent failed via the parent-stuck path surfaces the same blob — `reset task` clears the parent **and** its subtasks for a full retry.
 
 ---
 
@@ -97,16 +91,13 @@ Returns `action` enum — switch on it:
 
 ### 3.2 Action: `dispatch_phase_checker`
 
-The phase checkpoint is a **fan-out-and-synthesize**: two read-only verifier tiers run in parallel, then `conductor:phase-checker` (the synthesizer) consumes their verdicts and owns the L1 fix-and-retry + L2 + L4 + commit.
+The phase checkpoint is a **fan-out-and-synthesize**: two read-only verifier tiers run in parallel, then `conductor:phase-checker` consumes their verdicts and owns the L1 fix-and-retry + L2 + L4 + commit.
 
-**Step 1 — Fan out the verifiers.** Dispatch BOTH in ONE message (parallel):
+**Step 1 — Fan out BOTH verifiers in ONE message:** `conductor:ac-tracer` (`TRACK_DIR={td} TRACK_ID={id}`) and `conductor:test-runner` (`TRACK_DIR={td} TRACK_ID={id} PHASE_INDEX={phase}`).
 
-- `conductor:ac-tracer` — prompt: `TRACK_DIR={td} TRACK_ID={id}`
-- `conductor:test-runner` — prompt: `TRACK_DIR={td} TRACK_ID={id} PHASE_INDEX={phase}`
+**Step 2 — Parse the result blocks.** From `ac-tracer`'s `---AC TRACE RESULT---`: `VERDICT` (passed/warn/skipped/FAILED/ERROR), `GATE` (when FAILED), `N_UNGROUNDED` (when warn). From `test-runner`'s `---L1 VERIFY RESULT---`: `STATUS` (passed/failed/error), `COMMAND`.
 
-**Step 2 — Parse the fleet's result blocks.** From `ac-tracer`'s `---AC TRACE RESULT---`: `VERDICT` (passed/warn/skipped/FAILED/ERROR), `GATE` (when FAILED), `N_UNGROUNDED` (when warn). From `test-runner`'s `---L1 VERIFY RESULT---`: `STATUS` (passed/failed/error), `COMMAND`.
-
-**Step 3 — Dispatch the synthesizer** `conductor:phase-checker` (canonical dispatch — §2.1, §3.5b, §3.7 reuse this fan-out+synthesize; only the `PHASE` value source differs), passing the fleet's verdicts through:
+**Step 3 — Dispatch `conductor:phase-checker`** (canonical dispatch — §2.1, §3.5b, §3.7 reuse this fan-out+synthesize; only the `PHASE` value source differs), passing the fleet's verdicts through:
 
 ```
 TRACK_DIR={td}
@@ -125,9 +116,7 @@ After return → **Section 3.6** (Phase Boundary).
 ### 3.3 Action: `dispatch_explorer`
 
 ```bash
-track-state dispatch-prepare "<track_dir>"
-# dispatch-prepare makes the "Start task" commit internally (skipped on resume),
-# so there is no separate `git commit` step here.
+track-state dispatch-prepare "<track_dir>"   # makes the "Start task" commit internally (skipped on resume)
 ```
 
 Dispatch `conductor:explorer`, prompt:
@@ -140,19 +129,15 @@ SUBTASK={s}
 NAME={name}
 ```
 
-After return → `track-state dispatch-finalize "<track_dir>"` → **Section 3.7**.
-
-The explorer records findings via `track-state append-handoff` (→ `.conductor/handoff/`) and writes gitignored `.conductor/result.json`. Both are conductor-managed, so `dispatch-finalize`'s internal commit stages them — **no separate `docs(explore)` commit, no `git add -A` sweep, no `--override commit_sha`**. Ship `commit_sha: ""`; `dispatch-finalize` stores the conductor completion SHA.
+After return → `track-state dispatch-finalize "<track_dir>"` → **Section 3.7**. The explorer records findings via `track-state append-handoff` and writes gitignored `.conductor/result.json` — both conductor-managed, so `dispatch-finalize`'s internal commit stages them. **No separate `docs(explore)` commit, no `git add -A` sweep, no `--override commit_sha`** — ship `commit_sha: ""`.
 
 ### 3.4 Action: `dispatch_executor`
 
 ```bash
-track-state dispatch-prepare "<track_dir>"
-# dispatch-prepare makes the "Start task" commit internally (skipped on resume),
-# so there is no separate `git commit` step here.
+track-state dispatch-prepare "<track_dir>"   # makes the "Start task" commit internally (skipped on resume)
 ```
 
-Dispatch `conductor:task-executor`, prompt (canonical dispatch — retry re-dispatches in §2.2 and §3.6 reuse this with an incremented `ATTEMPT`; retry status is self-detected from the handoff, not a flag):
+Dispatch `conductor:task-executor` (canonical dispatch — §2.2 / §3.6 retry re-dispatches reuse this with incremented `ATTEMPT`; retry status self-detected from the handoff, not a flag):
 
 ```
 TRACK_DIR={td}
@@ -168,11 +153,7 @@ After return → **Section 3.6**.
 
 ### 3.5 Action: `parent_stuck`
 
-Parent has failed subtasks (retries exhausted) and no other work remains. The parent is marked **failed** (renders `[!]`, not `[x]`) and committed by `dispatch-next`. Announce:
-
-`"⚠️ Parent '{name}' marked failed — subtasks exhausted retries (P{phase}.T{task}). On the next run, recover surfaces it for a Retry/Skip/Block decision (§2.2)."`
-
-`track-state sync-plan "<track_dir>"` → **Section 3.7**.
+Parent has failed subtasks (retries exhausted) and no other work remains. `dispatch-next` marks it **failed** (renders `[!]`, not `[x]`) and commits. Announce: `"⚠️ Parent '{name}' marked failed — subtasks exhausted retries (P{phase}.T{task}). Next run's recover surfaces it for a Retry/Skip/Block (§2.2)."`. Then `track-state sync-plan "<track_dir>"` → **§3.7**.
 
 ### 3.5b Action: `defer_manual`
 
@@ -182,35 +163,28 @@ track-state sync-plan "<track_dir>"
 git commit -m "chore(conductor): Defer manual task '<name>'"
 ```
 
-Check the output of ALL three commands (especially `defer` and `sync-plan`) for `phase_checkpoint_pending` or `next_action: dispatch_phase_checker`.
-
-If found → dispatch `conductor:phase-checker` (§3.2), `PHASE=<phase from output>`, then → **Section 3.1**.
-
-If NOT found → **Section 3.7**.
+Check the output of ALL three commands (especially `defer` and `sync-plan`) for `phase_checkpoint_pending` / `next_action: dispatch_phase_checker`. Found → dispatch `conductor:phase-checker` (§3.2, `PHASE=<phase>`), then → **§3.1**. Not found → **§3.7**.
 
 ### 3.5c Action: `manual_task`
 
-(Interactive mode only — in continuous mode a `[Manual]` task emits `defer_manual`, see 3.5b.) A `[Manual]` task requires human verification and cannot be auto-executed, so it is surfaced to the user instead of silently deferred. Ask via `AskUserQuestion` whether to defer it for later or skip it, then run the matching command:
+(Interactive only — continuous mode emits `defer_manual`, §3.5b.) A `[Manual]` task requires human verification, so surface it rather than silently defer. `AskUserQuestion` defer-or-skip, then run the matching command:
 
 - **Defer** → `track-state defer "<track_dir>" --phase <p> --task <t> --reason 'Deferred: manual task requires human verification'`
 - **Skip** → `track-state skip "<track_dir>" --phase <p> --task <t> --reason 'Skipped: manual task not required'`
 
-Then: `track-state sync-plan "<track_dir>"` → `git commit -m "chore(conductor): {Defer|Skip} manual task '<name>'"` → **Section 3.1** (dispatch-next detects any pending phase checkpoint and routes accordingly).
+Then `track-state sync-plan "<track_dir>"` → `git commit -m "chore(conductor): {Defer|Skip} manual task '<name>'"` → **§3.1**.
 
 ### 3.6 Process Result (after task-executor)
 
-**ALWAYS** call `dispatch-finalize` after the task-executor returns — even with no/incomplete result block. It synthesizes a result from state when `result.json` is missing (committed code → SUCCESS; nothing → FAILURE with retry handoff).
+**ALWAYS** call `dispatch-finalize` after the task-executor returns — even with no/incomplete result block (it synthesizes a result from state: committed code → SUCCESS; nothing → FAILURE with retry handoff). `dispatch-finalize` creates the conductor commit internally — **do NOT commit separately**.
 
 ```bash
 track-state dispatch-finalize "<track_dir>"
 ```
 
-`dispatch-finalize` creates the conductor commit internally. Do NOT commit separately.
-Output includes `committed: true/false` and optionally `phase_checkpoint_pending: <phase_index>`.
+**SUCCESS**: `committed: false` → announce `"conductor commit failed, result.json preserved"` → re-run `dispatch-finalize` (max 3 attempts, then HALT with `"dispatch-finalize stuck"`). Deviations > 0 → announce. If `phase_checkpoint_pending` present → dispatch `conductor:phase-checker` immediately. Otherwise → **Section 3.6b** (self-review, if `[Review]`) → **Section 3.6c** (refactor, if `[Refactor]`) → **§3.7**.
 
-**SUCCESS**: `committed: false` → announce `"conductor commit failed, result.json preserved"` → re-run `dispatch-finalize` (max 3 attempts, then HALT with `"dispatch-finalize stuck"`). Deviations > 0 → announce. If `phase_checkpoint_pending` present → dispatch `conductor:phase-checker` immediately. Otherwise → **Section 3.6b** (self-review, if `[Review]`) → **Section 3.6c** (refactor, if `[Refactor]`) → **Section 3.7**.
-
-**FAILURE**: retry < max → re-dispatch (Section 3.1). retry >= max → dispatch `conductor:skip-analyst`, prompt:
+**FAILURE**: retry < max → re-dispatch (§3.1). retry >= max → dispatch `conductor:skip-analyst`:
 
 ```
 TRACK_DIR={td}
@@ -235,7 +209,7 @@ CLAIM=Skip-analyst recommended skipping task P{p}T{t} ("{name}"), reasoning: "{s
 CONTEXT_PATHS={td}/plan.md {td}/track-state.json {td}/.conductor/handoff/P{p}T{t}.md
 ```
 
-> The CLAIM is framed as "the skip is unsafe" deliberately. The refuter defaults to `SUSTAINED` when uncertain, so `SUSTAINED` = block-when-uncertain — the conservative direction for a skip, because skipping is the riskier action and uncertainty must fall toward *not* skipping. (`new-track` §2.3b frames its CLAIM the opposite way — "the plan is sound" — because a plan gate should proceed-when-uncertain, not block.) `REFUTED` = grounded evidence the skip IS safe.
+> The CLAIM is framed as "the skip is unsafe" deliberately: the refuter defaults to `SUSTAINED` when uncertain, so `SUSTAINED` = block-when-uncertain (the conservative direction for a skip, the riskier action). `REFUTED` = grounded evidence the skip IS safe. (`new-track` §2.3b frames its CLAIM the opposite way — "the plan is sound" — because a plan gate should proceed-when-uncertain.)
 
 Parse the `---REFUTATION RESULT---` block:
 
@@ -251,24 +225,21 @@ Parse the `---REFUTATION RESULT---` block:
 
 `[Review]` is a **name marker, not a tag** — it does NOT enter the `[Docs]`/`[Config]`/… exemption logic, so a reviewable task still owes TDD (F2) and coverage (F3).
 
-When opted in (after a SUCCESSFUL `dispatch-finalize`, before §3.7), run a **convergent review loop** (review → fix → re-review) that stops on a *dry* round, not a fixed count (loop-until-dry) — convergence to zero NEW Critical/High, not a single self-certifying pass.
+When opted in (after a SUCCESSFUL `dispatch-finalize`, before §3.7), run a **convergent review loop** (review → fix → re-review) that stops on a *dry* round (loop-until-dry — zero NEW Critical/High), not a fixed count. Maintain a `seen` set of finding **signatures** (`severity+title+file+lines`); dedup **new** findings vs `seen` (NOT vs the set you just fixed — a re-appearing finding is a *residual*, counted separately).
 
-Maintain a `seen` set of finding **signatures** (`severity+title+file+lines`). Dedup **new** findings vs `seen` (NOT vs the set you just fixed) — a finding that re-appears unchanged after a fix is a *residual*, counted separately, not "new".
+**Persist `seen` across compaction** (loop state a compaction would otherwise lose): at loop **entry**, load `.conductor/review-seen.json` (conductor-owned, gitignored) — if its `task_sha` matches this task, restore its `seen` (resuming a compacted loop); else start empty (never inherit another task's set). After each round that adds signatures, write it back as `{"task_sha": "<sha>", "seen": [...]}`. On **any terminal exit**, delete the file.
 
-**Persist `seen` across compaction.** The set is loop state a mid-loop context compaction would otherwise lose (→ redundant re-review of already-triaged findings, wasting fix iterations). At loop **entry**, load `.conductor/review-seen.json` (conductor-owned, gitignored): if its `task_sha` matches this task, restore its `seen` list (you are resuming a compacted loop); otherwise start `seen` empty (a different/new task — never inherit another task's set). After each round that adds signatures, write the file back as `{"task_sha": "<this task's sha>", "seen": [...]}`. On **any terminal exit** (dry/clean OR budget-exhausted/escalate), delete the file so a later `[Review]` task starts clean.
-
-1. **Reviewer pass** — dispatch `conductor:code-reviewer` (read-only) on the task's own commit range `<task_sha>~1..<task_sha>`, prompt:
-
+1. **Reviewer pass** — dispatch `conductor:code-reviewer` (read-only) on `<task_sha>~1..<task_sha>`:
    ```
    TRACK_DIR={td}
    TRACK_ID={id}
    REVISION_RANGE={code_sha}~1..{code_sha}
    ```
-2. **Decide from the `---REVIEW RESULT---` block** (substring-check the severities), counting only NEW `Critical`/`High` (signatures not already in `seen`):
-   - **Zero NEW `Critical`/`High`** — a dry round (K=1 empty pass) → loop satisfied → announce `"🔍 Self-review [Review]: clean"` → delete `.conductor/review-seen.json` → §3.7.
-   - **NEW `Critical`/`High` present** → add their signatures to `seen` and **write `review-seen.json` back**; re-dispatch `conductor:task-executor` with `ATTEMPT={n+1}` and the NEW findings as remediation context (the agent fixes its own changes), `dispatch-finalize` again, then loop back to step 1.
-3. **Budget guard — max 3 fix iterations.** No runaway loop. If still not dry after 3 fix iterations, stop iterating and announce: `"🔍 Self-review [Review]: {N} findings → 3 fix iterations → {M} residual"` → delete `.conductor/review-seen.json` → step 4.
-4. **Escalate on residual judgment only** — if `Critical` findings persist once the budget is spent (or at any dry stop that still leaves residual Critical), surface them via `AskUserQuestion` (fix-guidance / accept-with-debt / block). Medium/Low residual → note and proceed (do not block the loop on nits).
+2. **Decide from the `---REVIEW RESULT---` block** (substring-check severities), counting only NEW `Critical`/`High` (signatures not in `seen`):
+   - **Zero NEW `Critical`/`High`** — dry round → announce `"🔍 Self-review [Review]: clean"` → delete `.conductor/review-seen.json` → §3.7.
+   - **NEW `Critical`/`High`** → add signatures to `seen`, **write `review-seen.json` back**; re-dispatch `conductor:task-executor` with `ATTEMPT={n+1}` and the NEW findings as remediation (the agent fixes its own changes), `dispatch-finalize` again, loop to step 1.
+3. **Budget guard — max 3 fix iterations.** If still not dry after 3 → announce `"🔍 Self-review [Review]: {N} findings → 3 fix iterations → {M} residual"` → delete `.conductor/review-seen.json` → step 4.
+4. **Escalate on residual Critical only** — surface via `AskUserQuestion` (fix-guidance / accept-with-debt / block). Medium/Low residual → note and proceed.
 
 ### 3.6c Tactical Refactor (opt-in — orchestrator-dispatched)
 
@@ -276,10 +247,7 @@ Maintain a `seen` set of finding **signatures** (`severity+title+file+lines`). D
 - the task NAME contains the marker `[Refactor]` (per-task opt-in), OR
 - env `CONDUCTOR_TASK_REFACTOR=1` (global opt-in for every task this session).
 
-`[Refactor]` is a **name marker, not a tag** — it does NOT enter the
-`[Docs]`/`[Config]`/… exemption logic, so a refactorable task still owes TDD (F2)
-and coverage (F3). (Tier rationale — mechanical Step 5 vs tactical refactorer —
-lives in `agents/refactorer.md` §1.0, not here: the orchestrator is a thin router.)
+`[Refactor]` is a **name marker, not a tag** — it does NOT enter the `[Docs]`/`[Config]`/… exemption logic, so a refactorable task still owes TDD (F2) and coverage (F3). (Tier rationale — mechanical Step 5 vs tactical refactorer — lives in `agents/refactorer.md` §1.0.)
 
 When opted in, dispatch `conductor:refactorer`, prompt:
 
@@ -292,8 +260,7 @@ Parse the `---REFACTOR RESULT---` block (non-blocking — the task already succe
 - **STATUS: SUCCESS** → announce `"🔨 [Refactor]: {REFACTORED} → {COMMITTED}"` → §3.7.
 - **STATUS: FAILURE** → announce `"🔨 [Refactor]: failed (non-blocking) — {SUMMARY}"` → §3.7.
 
-One bounded pass (no loop, no transient state). The refactorer runs the suite
-itself and self-reverts on regression, so no separate green-confirm dispatch.
+One bounded pass (no loop, no transient state). The refactorer runs the suite itself and self-reverts on regression — no separate green-confirm dispatch.
 
 ### 3.7 Phase Boundary
 
@@ -312,8 +279,6 @@ track-state phase-done "<track_dir>" <phase>
 
 ## 4.0 POST-LOOP
 
-Run `track-state post-loop-status "<track_dir>"` and keep the envelope (`finalized`, `doc_synced`, `review.done`/`review.range`, `shas_count`). §5.5/§6.0/§7.0 gate on it to skip phases already completed across a context-budget interruption. (If you resume the post-loop after a compaction without the envelope, re-run it — it's a cheap git-log grep + state load.)
-
-Read `conductor/workflow/post-loop.md` and execute sections 5.0–8.0.
+Run `track-state post-loop-status "<track_dir>"` and keep the envelope (`finalized`, `doc_synced`, `review.done`/`review.range`, `shas_count`). §5.5/§6.0/§7.0 gate on it to skip phases already completed across an interruption (if you resume without it, re-run — it's a cheap git-log grep + state load). Then read `conductor/workflow/post-loop.md` and execute sections 5.0–8.0.
 
 ---

@@ -18,8 +18,7 @@ hooks:
 
 You are a **teleoperator**. You do NOT route, judge, or construct prompts —
 `track-state step` does all of that in code. Your entire job: run `step`, read
-`action`, do *exactly* what it says, then run `step` again. Context budget is
-precious; this skill body is deliberately tiny.
+`action`, do *exactly* what it says, then run `step` again.
 
 ## 1.0 SETUP (once)
 
@@ -27,7 +26,7 @@ precious; this skill body is deliberately tiny.
    - `proceed` → `<td>` = `td`; **print `announce`**; continue to step 2.
    - `ask` → `AskUserQuestion` over `candidates` (label = `track_id`), then re-run `track-state check "<chosen track_id>"`.
    - `halt` → print `message`; HALT.
-2. `track-state recover "<td>"`. If `status == "new"` → `track-state start "<td>"` + commit.
+2. `track-state recover "<td>"`. Then `track-state start "<td>"`.
 
 ## 2.0 THE LOOP
 
@@ -57,36 +56,20 @@ owns it). That is the measured B-min boundary, not a gap.
 
 ## 3.0 STATE-LOCK INVARIANTS (resume safety)
 
-The loop is long-running and runs uninterrupted.
-Even so, a harness compaction can pause you mid-transaction — keep the state machine clean so resume is automatic:
-
-**NEVER stop between a `dispatch` and the next `step` call** — that leaves a
-stale `[~]` lock. `step` is state-driven, so re-entry is automatic on the next
-invocation: a task still `in_progress` with no result and a Start HEAD re-dispatches
-without burning a retry. Likewise never stop between a `dispatch_batch` returning
-and its `phase-verdict` call, between a `dispatch_phase_checker` returning and its
-`phase-checkpoint-review` call, between a `dispatch_skip_analyst` returning and its
-`skip-analyst-verdict` call, or between a `dispatch_refuter` returning and its
-`skip-refute-review` call — dropping the verdict the spine needs forces an expensive
-re-fan / re-synth / re-analyze on resume. (If you do, `step` still recovers: with no
-verdict marker it re-fans / re-analyzes; a `synth_pending` checkpoint marker
-re-dispatches the synthesizer; an `analyzed` skip marker re-routes from there.)
+**NEVER stop between a `dispatch` and the next `step` call** (or between any
+verdict-returning dispatch — `dispatch_batch`→`phase-verdict`,
+`dispatch_phase_checker`→`phase-checkpoint-review`,
+`dispatch_skip_analyst`→`skip-analyst-verdict`,
+`dispatch_refuter`→`skip-refute-review`) — that leaves a stale lock or drops the
+verdict the spine needs. Re-entry is still automatic: `step` re-fans / re-analyzes
+with no verdict marker, and re-dispatches the synthesizer on a `synth_pending` marker.
 
 ---
 
-**Spike status:** the spine (`dispatch` / `dispatch_batch` / `dispatch_phase_checker` /
-`dispatch_skip_analyst` / `dispatch_refuter` / `ask` / `halt` / `done` / `error`) is
-fully code-driven and tested — the phase-checkpoint handshake (§3.2/§3.7) AND the
-skip_analyze handshake (§3.6: skip-analyst → refute → route) both run in code via
-their transcribe commands, not teleoperator prose. The verdict-on-disk gate is closed.
-The only remaining non-spine *routing* branch is `wave_active` (`/conductor:parallel`
-— a different spine).
-
-**Refactor mechanism in B-min:** the mechanical **Step 5** tier is active on
-`step`-dispatched tasks — it is inline in `task-executor` §4.0, so the executor runs
-it regardless of which spine dispatched it. The opt-in post-SUCCESS seams (`[Review]`
-§3.6b self-review, `[Refactor]` §3.6c tactical refactorer) are NOT in the spine:
-`step` routes SUCCESS straight to the next leaf, so they stay Rail A prose — deferred
-B-full graduations (model-judgment passes that benefit less from determinism). See
-`${CLAUDE_PLUGIN_ROOT}/conductor/design/rail-b-step.md` for the action contract and
-the B-full options.
+**Scope:** the spine (`dispatch` / `dispatch_batch` / `dispatch_phase_checker` /
+`dispatch_skip_analyst` / `dispatch_refuter` / `ask` / `halt` / `done` / `error`)
+is fully code-driven. The only non-spine *routing* branch is `wave_active` (→
+`/conductor:parallel`). The opt-in post-SUCCESS seams (`[Review]` self-review,
+`[Refactor]` tactical refactorer) are NOT in the spine — `step` routes SUCCESS
+straight to the next leaf, so they stay Rail A prose. Design contract + B-full
+options: `${CLAUDE_PLUGIN_ROOT}/conductor/design/rail-b-step.md`.
