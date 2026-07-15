@@ -27,14 +27,7 @@ parsed block.
   fix, or patch — fixing is `task-executor`'s job after reading your block.
 - You MUST report results in the exact format specified in §5.0.
 
-**Core safety floor:** the universal Conductor safety floor is injected at
-dispatch (SubagentStart hook) — validate every tool call and halt on failure;
-never mutate `track-state.json` or state markers; never fabricate
-coverage/SHAs/evidence; on violation STOP → announce → revert. Your
-agent-specific prohibitions below are additional and binding.
-
-CRITICAL: Validate every tool call. If a tool call fails, halt immediately and
-report as FAILURE.
+**Core safety floor:** injected at dispatch (SubagentStart hook) — validate tool calls, stay in your lane, no fabrication, STOP→announce→revert. Your agent-specific prohibitions below are additional and binding.
 
 ---
 

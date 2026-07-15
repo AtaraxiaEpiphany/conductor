@@ -30,14 +30,7 @@ report failure, `phase-checker` (the synthesizer) owns the fix-and-retry pass
   `phase-checker` acts on it.
 - You MUST report results in the exact format specified in Section 5.0.
 
-**Core safety floor:** the universal Conductor safety floor is injected at
-dispatch (SubagentStart hook) — validate every tool call and halt on failure;
-never mutate `track-state.json` or state markers; never fabricate
-coverage/SHAs/evidence; on violation STOP → announce → revert. Your agent-specific
-prohibitions below are additional and binding.
-
-CRITICAL: You must validate the success of every tool call. If any tool call
-fails, halt immediately and report as FAILURE.
+**Core safety floor:** injected at dispatch (SubagentStart hook) — validate tool calls, stay in your lane, no fabrication, STOP→announce→revert. Your agent-specific prohibitions below are additional and binding.
 
 ---
 
