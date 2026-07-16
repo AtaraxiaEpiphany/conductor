@@ -41,6 +41,16 @@
             "timeout": 3
           }
         ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/on-pre-tool-tripwire.py\"",
+            "timeout": 3
+          }
+        ]
       }
     ],
     "SessionStart": [
