@@ -148,6 +148,7 @@ class FailureAnalysisRoutingTests(TestCase):
         self.assertEqual(o["reason"], "replan")
         self.assertEqual(o["reasoning"], "AC-2 contradicts AC-1")
         self.assertEqual(o["modification"], "drop AC-2")
+        self.assertIn("spec.md", o["recovery"])
         self.assertFalse(_failure_analysis_marker_path(d).exists())
 
     def test_decompose_halts(self):
@@ -158,6 +159,10 @@ class FailureAnalysisRoutingTests(TestCase):
         o = _step(d)
         self.assertEqual(o["action"], "halt")
         self.assertEqual(o["reason"], "decompose")
+        # The recovery recipe MUST tell the operator to preserve the commit
+        # (the load-bearing invariant: original task's SHA is not destroyed).
+        self.assertIn("commit_sha", o["recovery"])
+        self.assertIn("NOT revert", o["recovery"])
 
     def test_escalate_halts(self):
         d = _failed_exhausted_track()
@@ -167,6 +172,7 @@ class FailureAnalysisRoutingTests(TestCase):
         o = _step(d)
         self.assertEqual(o["action"], "halt")
         self.assertEqual(o["reason"], "escalate")
+        self.assertIn("Manual escalation", o["recovery"])
 
     def test_cap_overrun_escalates_instead_of_redispatching(self):
         # Past MAX_ANALYSIS_ROUNDS, retry_modified must fall through to escalate,

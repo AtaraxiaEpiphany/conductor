@@ -1536,12 +1536,42 @@ def _step_route_failure_analysis(track_dir, marker, compact):
     rec = marker.get("recommendation")
     rounds = int(marker.get("analysis_rounds", 1) or 1)
 
+    # Recovery hints: the halts are intentional human gates (not gaps), but the
+    # operator needs the SAFE manual path, not just a diagnosis. Each is the
+    # minimal recipe that preserves the invariants the firewall depends on —
+    # the original task's commit_sha is never destroyed, and replan never
+    # silently rewrites an AC that downstream gates already measured against.
+    _RECOVERY = {
+        # Replan = the SPEC/PLAN is wrong. The analyst cannot decide which AC is
+        # correct (that's intent, not diagnosis), so recovery is a human edit of
+        # spec.md/plan.md followed by re-running the affected verification. The
+        # halt is mandatory: silently rewriting an AC would retroactively falsify
+        # every "verified against AC-2" stamp downstream.
+        "replan": ("Edit spec.md / plan.md to resolve the conflict (see root_cause "
+                   "+ modification), then decide whether completed tasks are still "
+                   "valid (re-run ac-tracer / code-reviewer against the new ACs), "
+                   "re-init or continue the track."),
+        # Decompose = the task is too big, NOT wrong. The committed work is sound
+        # and MUST be preserved: split in plan.md, skip the original (commit_sha
+        # intact), insert the remainder as new pending tasks. No revert, no
+        # re-do of the committed part.
+        "decompose": ("Split the task in plan.md per the modification. Skip the "
+                      "original task (its commit_sha is preserved — do NOT revert), "
+                      "then insert the remainder as new pending tasks and re-run. "
+                      "The committed work stays in git history."),
+        # Escalate = analyst exhausted its options (or hit the analysis-round cap).
+        # Pure hand-off; recovery is open-ended human judgment.
+        "escalate": ("Manual escalation required — review the diagnosis and decide "
+                     "the next step (the analyst exhausted its automated options)."),
+    }
+
     def _halt(reason):
         _failure_analysis_clear_marker(track_dir)
         emit(dict(action="halt", reason=reason, recommendation=rec,
                   category=marker.get("category"),
                   reasoning=marker.get("root_cause"),
                   modification=marker.get("modification"),
+                  recovery=_RECOVERY.get(reason),
                   what_was_done=marker.get("what_was_done"),
                   phase=pi, task=ti, subtask=si, name=name), "step", compact)
 
