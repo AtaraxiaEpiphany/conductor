@@ -79,8 +79,12 @@ class CommitGuardTests(TestCase):
         # Issue #1 regression guard: the terminal Save state must come BEFORE the
         # git commit, so setup_state.json is staged and committed (clean tree)
         # rather than left dirty. Earlier the order was reversed.
+        # Scoped to §3.6 because §2.5's "create track later" branch ALSO uses a
+        # guarded commit (an earlier occurrence of the same string); the order
+        # invariant only applies to the terminal §3.6 commit.
+        idx_36 = SKILL.index("### 3.6 Final Commit")
         idx_terminal = SKILL.index("Save state: `3.6_setup_complete`")
-        idx_commit = SKILL.index("git diff --cached --quiet")
+        idx_commit = SKILL.index("git diff --cached --quiet", idx_36)
         self.assertLess(idx_terminal, idx_commit,
                         "terminal Save state must precede the final git commit")
 
