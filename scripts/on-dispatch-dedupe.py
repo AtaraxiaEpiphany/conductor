@@ -1,0 +1,160 @@
+#!/usr/bin/env python3
+"""PreToolUse:Agent dedupe hook — deny a second dispatch for an in-flight task.
+
+The problem this solves
+-----------------------
+In the ``implement-step`` (Rail B-min) teleoperator spine, the orchestrator
+sometimes dispatches **multiple ``task-executor`` subagents for the same locked
+task**. The state machine is single-writer and correct (``prepare_dispatch``
+locks one ``in_progress`` task), but the hole is the gap between ``step``
+emitting ``action: dispatch`` and the agent returning: if the teleoperator
+calls ``step`` again while the first task-executor is still running, ``cmd_step``
+takes its re-dispatch branch and fires a *second* spawn for the same task. Two
+agents then race on the same working tree and the same ``.conductor/result.json``.
+
+The SKILL.md §3.0 "never stop between a dispatch and the next step" rule that
+should prevent this is **prose a small-window model can ignore** — the same
+class of gap the round tripwire (``on-pre-tool-tripwire.py``) was built to
+close. This hook makes the single-writer invariant **deterministic**: it sees
+the orchestrator's ``Agent`` tool call *before* the subagent spawns, reads the
+inflight marker ``prepare_dispatch`` stamped, and ``permissionDecision: "deny"``
+a second spawn for a task already in flight.
+
+How it fires
+------------
+PreToolUse fires in the orchestrator's own tool loop. For an ``Agent`` dispatch,
+``tool_name == "Agent"`` and ``tool_input.subagent_type`` names the target. This
+hook filters to the single-writer-critical agents (``task-executor``, ``explorer``
+— the only ones that *write* the working tree for a locked task); verifiers,
+phase-checker, skip-analyst and refuter are read-only or own their own lifecycle
+and are left alone.
+
+Resolution + in-flight test
+---------------------------
+- Resolve the locked ``in_progress`` task via ``lib.locked_task.resolve`` →
+  ``(track_dir, phase, task, subtask)``. No locked task → allow.
+- Read the inflight marker for that task. Missing → allow (no prior dispatch
+  recorded; fresh or pre-this-change state).
+- Marker present: a task is **in flight** iff ``git HEAD == marker.start_sha``
+  AND no ``.conductor/result.json`` exists — the *same predicate* ``cmd_step``
+  uses to decide finalize-vs-redispatch. In flight → ``deny``. Otherwise the
+  marker is stale (HEAD advanced / a result landed) → allow + clear it.
+
+Fail-open
+---------
+This hook must **never block productive work**. Any resolution, I/O, SHA, or
+parsing error → allow + stderr warning. The marker read/write errors are also
+swallowed in ``lib.dispatch_inflight``. A misbehaving guard is worse than none.
+"""
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent / "lib"))
+
+from hook_io import read_hook_input, write_hook_output
+from locked_task import resolve as resolve_locked_task
+import dispatch_inflight as inflight
+
+
+# Only these agents mutate the working tree for a locked task, so only they are
+# single-writer-critical. Verifiers (ac-tracer, test-runner), phase-checker,
+# skip-analyst and refuter are read-only or own their own lifecycle → excluded.
+_WRITE_AGENTS = ("task-executor", "explorer")
+
+
+def _head_sha(track_dir):
+    """Short (7-char) HEAD SHA, matching ``git_ops._git_head_sha``'s format so
+    the comparison against ``marker.start_sha`` is apples-to-apples. None on
+    failure (fail-open)."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short=7", "HEAD"],
+            capture_output=True, text=True, cwd=track_dir, timeout=5,
+        )
+        sha = result.stdout.strip()
+        return sha if re.match(r"^[0-9a-f]{7}$", sha) else None
+    except Exception:
+        return None
+
+
+def _result_exists(track_dir):
+    try:
+        return (Path(track_dir) / ".conductor" / "result.json").exists()
+    except Exception:
+        return False
+
+
+def main():
+    input_data = read_hook_input()
+
+    # Only the orchestrator's Agent dispatches are in scope. PreToolUse fires
+    # inside subagents too (with agent_type set) — those inner tool calls are
+    # not Agent-dispatches and must be left alone.
+    if input_data.get("tool_name") != "Agent":
+        write_hook_output(permission_decision="allow")
+        return
+
+    subagent_type = (input_data.get("tool_input") or {}).get("subagent_type", "")
+    if subagent_type not in _WRITE_AGENTS:
+        write_hook_output(permission_decision="allow")
+        return
+
+    cwd = input_data.get("cwd") or str(Path.cwd())
+    try:
+        locked = resolve_locked_task(cwd)
+    except Exception:
+        locked = None
+    if locked is None:
+        write_hook_output(permission_decision="allow")
+        return
+
+    track_dir, phase, task, subtask = locked
+
+    try:
+        marker = inflight.read(track_dir, phase, task, subtask)
+    except Exception:
+        # Corrupt/missing marker → treat as not-in-flight (fail-open).
+        marker = None
+    if marker is None:
+        write_hook_output(permission_decision="allow")
+        return
+
+    start_sha = marker.get("start_sha")
+    head = _head_sha(track_dir)
+
+    # In flight iff the Start commit is still HEAD (no work advanced past it)
+    # AND no result.json was written. Same predicate as cmd_step's
+    # finalize-vs-redispatch branch — the hook and spine agree on "still working".
+    in_flight = bool(start_sha) and head == start_sha and not _result_exists(track_dir)
+
+    if not in_flight:
+        # HEAD advanced or a result landed → the prior dispatch finalized /
+        # returned. The marker is stale; clear it so it can't misfire later.
+        try:
+            inflight.clear(track_dir, phase, task, subtask)
+        except Exception:
+            pass
+        write_hook_output(permission_decision="allow")
+        return
+
+    # A dispatch is already in flight for this task → deny the second spawn.
+    sha_hint = (start_sha or "?")[:8]
+    loc = f"P{phase}T{task}" + (f".S{subtask}" if subtask is not None else "")
+    reason = (
+        f"A {subagent_type} is already dispatched for {loc} (Start {sha_hint}); "
+        f"HEAD has not advanced past the Start commit and no result.json was "
+        f"written — the prior dispatch is still in flight. Do NOT dispatch again. "
+        f"Call `track-state step \"{track_dir}\"` to finalize the in-flight "
+        f"dispatch (or resume it) instead."
+    )
+    print(f"⚠️  CONDUCTOR DEDUPE: denied duplicate {subagent_type} dispatch for "
+          f"{loc} (Start {sha_hint} still HEAD, no result.json).",
+          file=sys.stderr)
+    write_hook_output(permission_decision="deny", permission_decision_reason=reason)
+
+
+if __name__ == "__main__":
+    main()

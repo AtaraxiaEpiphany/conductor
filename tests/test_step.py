@@ -209,6 +209,48 @@ class StepFinalizeRouteTests(TestCase):
         self.assertEqual(tgt["status"], "in_progress")
         self.assertEqual(tgt.get("retry_count", 0), 0)
 
+    def test_dispatch_stamps_inflight_marker(self):
+        # prepare_dispatch must stamp the inflight marker with the Start-commit
+        # SHA so the PreToolUse:Agent dedupe hook can deny a second concurrent
+        # dispatch for the same task. Pins the spine-side half of the
+        # single-writer invariant (the hook's deny is tested in
+        # test_dispatch_dedupe.py).
+        from scripts.lib import dispatch_inflight as inflight
+        state = _make_state(phases=[{"name": "Phase 1", "status": "pending", "tasks": [
+            {"name": "Task A", "status": "pending"}]}])
+        d = _git_track_dir(state)
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        first = _step(d)  # locks Task A + Start commit + stamps marker
+        self.assertEqual(first["action"], "dispatch")
+        marker = inflight.read(d, 1, 1, None)
+        self.assertIsNotNone(marker, "dispatch must stamp the inflight marker")
+        self.assertEqual(marker["phase"], 1)
+        self.assertEqual(marker["task"], 1)
+        # start_sha must equal the live HEAD (the Start commit) so the hook's
+        # HEAD == start_sha in-flight test holds.
+        head = subprocess.run(["git", "-C", d, "rev-parse", "--short=7", "HEAD"],
+                              capture_output=True, text=True, check=True).stdout.strip()
+        self.assertEqual(marker["start_sha"], head)
+
+    def test_finalize_clears_inflight_marker(self):
+        # After a dispatch returns SUCCESS and step finalizes, the inflight
+        # marker must be cleared so the hook stops guarding the (now-done) task.
+        from scripts.lib import dispatch_inflight as inflight
+        state = _make_state(phases=[{"name": "Phase 1", "status": "pending", "tasks": [
+            {"name": "Task A", "status": "pending"},
+            {"name": "Task B", "status": "pending"}]}])
+        d = _git_track_dir(state)
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        _step(d)  # dispatch Task A → Start commit + marker
+        self.assertIsNotNone(inflight.read(d, 1, 1, None))
+        # Agent returns success: a real impl commit + result.json.
+        _commit(d, "feat: Task A done", files={"a.py": "x"})
+        _result(d, {"status": "success", "summary": "done"})
+        out = _step(d)  # finalize Task A
+        self.assertEqual(out["action"], "dispatch")  # advances to Task B
+        self.assertIsNone(inflight.read(d, 1, 1, None),
+                          "finalize must clear Task A's inflight marker")
+
 
 class StepExhaustedTests(TestCase):
     def test_failed_exhausted_interactive_emits_ask(self):

@@ -15,6 +15,7 @@ from .constants import AUTO_COMPLETE_OK, MAX_RETRIES
 from .mutations import _do_lock, _do_complete, _do_fail, _do_fail_parent, _do_defer, _do_skip
 from .result import _advisory_gates
 from .sync import _do_sync_plan
+from lib import dispatch_inflight as _inflight
 from .git_ops import (
     _git_commit, _git_commit_ensured, _git_head_sha, _write_git_note,
     _has_sibling_sha, _update_task_sha, _recover_git_notes,
@@ -444,6 +445,7 @@ def cmd_recover(track_dir, compact=True):
         # finalize. Reap it so the next dispatch-finalize can't misread a stale
         # file as this run's result.
         _clear_stale_result(track_dir)
+        _dispatch_inflight_clear_all(track_dir)  # cursor invalid → reap any stale marker
         _emit_no_active_or_decision(track_dir, state, fixes, compact)
         return
 
@@ -451,6 +453,7 @@ def cmd_recover(track_dir, compact=True):
         task = state["phases"][pi - 1]["tasks"][ti - 1]
     except IndexError:
         _clear_stale_result(track_dir)
+        _dispatch_inflight_clear_all(track_dir)  # cursor invalid → reap any stale marker
         _emit_no_active_or_decision(track_dir, state, fixes, compact)
         return
 
@@ -471,6 +474,10 @@ def cmd_recover(track_dir, compact=True):
     # for it to consume.
     if tgt.get("status") != "in_progress":
         _clear_stale_result(track_dir)
+        # No active dispatch for this task anymore → drop a stale inflight
+        # marker too, so a crashed run can't leave the dedupe hook guarding a
+        # task that's no longer in flight.
+        _dispatch_inflight_clear(track_dir, pi, ti, si)
 
     # Best-effort: recover missing git notes for completed tasks
     _recover_git_notes(track_dir, state)
@@ -522,6 +529,22 @@ def _clear_stale_result(track_dir):
     genuinely from this run. ``missing_ok=True`` makes it a no-op on a fresh task.
     """
     (conductor_dir(track_dir) / "result.json").unlink(missing_ok=True)
+
+
+def _dispatch_inflight_write(track_dir, pi, ti, si, start_sha, written_at_iso):
+    """Stamp the inflight dispatch marker (see lib/dispatch_inflight). Thin
+    wrapper so callers stay within the ``_``-prefixed private-helper convention."""
+    _inflight.write(track_dir, pi, ti, si, start_sha, written_at_iso)
+
+
+def _dispatch_inflight_clear(track_dir, pi, ti, si):
+    """Clear the inflight dispatch marker for a task (see lib/dispatch_inflight)."""
+    _inflight.clear(track_dir, pi, ti, si)
+
+
+def _dispatch_inflight_clear_all(track_dir):
+    """Clear every inflight marker in this track (crash-recovery; see lib/dispatch_inflight)."""
+    _inflight.clear_all(track_dir)
 
 
 def prepare_dispatch(track_dir):
@@ -614,6 +637,15 @@ def prepare_dispatch(track_dir):
         # staged (no --allow-empty: the start commit is a sentinel detected by
         # message pattern at recovery time, not a SHA the machinery requires).
         _git_commit(track_dir, f"chore(conductor): Start task '{name}' [P{pi}.T{ti}]")
+
+    # Stamp the inflight marker so the PreToolUse:Agent dedupe hook can deny a
+    # second spawn for this same task while this dispatch is still in flight
+    # (HEAD == start_sha, no result.json yet). Captured AFTER the Start commit
+    # so start_sha is the commit HEAD actually sits on — on the is_resume path
+    # no new commit is written, so this is the prior Start commit (correct:
+    # that's the SHA the hook compares the live HEAD against). See
+    # lib/dispatch_inflight.
+    _dispatch_inflight_write(track_dir, pi, ti, si, _git_head_sha(track_dir), now_iso())
 
     return dict(action=action, phase=pi, task=ti, subtask=si, name=name,
                 tags=tags, sync_count=synced, is_resume=is_resume,
@@ -936,6 +968,13 @@ def finalize_dispatch(track_dir):
         result_path.unlink(missing_ok=True)
     elif result.get("status") != "error":
         print("WARNING: result.json preserved due to commit failure", file=sys.stderr)
+
+    # A dispatch returned a verdict → it is no longer in flight. Clear the
+    # inflight marker so the dedupe hook stops guarding this task. On an error
+    # outcome leave it (the task is still locked + unfinished; the hook keeps
+    # guarding until a real finalize advances state). See lib/dispatch_inflight.
+    if result.get("status") != "error":
+        _dispatch_inflight_clear(track_dir, p, t, s)
 
     return result
 

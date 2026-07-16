@@ -51,6 +51,16 @@
             "timeout": 3
           }
         ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/on-dispatch-dedupe.py\"",
+            "timeout": 3
+          }
+        ]
       }
     ],
     "SessionStart": [
