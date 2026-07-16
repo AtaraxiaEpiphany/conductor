@@ -26,8 +26,8 @@ PreToolUse fires in the orchestrator's own tool loop. For an ``Agent`` dispatch,
 ``tool_name == "Agent"`` and ``tool_input.subagent_type`` names the target. This
 hook filters to the single-writer-critical agents (``task-executor``, ``explorer``
 — the only ones that *write* the working tree for a locked task); verifiers,
-phase-checker, skip-analyst and refuter are read-only or own their own lifecycle
-and are left alone.
+phase-checker, skip-analyst, failure-analyst and refuter are read-only or own
+their own lifecycle and are left alone.
 
 Resolution + in-flight test
 ---------------------------
@@ -61,7 +61,8 @@ import dispatch_inflight as inflight
 
 # Only these agents mutate the working tree for a locked task, so only they are
 # single-writer-critical. Verifiers (ac-tracer, test-runner), phase-checker,
-# skip-analyst and refuter are read-only or own their own lifecycle → excluded.
+# skip-analyst, failure-analyst and refuter are read-only or own their own
+# lifecycle → excluded.
 _WRITE_AGENTS = ("task-executor", "explorer")
 
 

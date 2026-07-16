@@ -6,13 +6,14 @@ from pathlib import Path
 from .core import load
 from .constants import EXECUTION_MODES
 from .helpers import out, flag
-from .mutations import cmd_lock, cmd_fail, cmd_skip, cmd_block, cmd_defer
+from .mutations import cmd_lock, cmd_fail, cmd_skip, cmd_block, cmd_defer, cmd_set_max_retries
 from .cmd_complete import cmd_complete
 from .dispatch import (
     cmd_next, cmd_dispatch_next, cmd_dispatch_prepare, cmd_dispatch_finalize,
     cmd_recover, cmd_step, cmd_post_loop_step, cmd_post_loop_review,
     cmd_phase_verdict, cmd_phase_checkpoint_review,
     cmd_skip_analyst_verdict, cmd_skip_refute_review,
+    cmd_failure_analyst_verdict,
 )
 from .result import cmd_process_result, cmd_write_result
 from .validate import cmd_validate
@@ -202,6 +203,11 @@ COMMAND_HELP = {
     "block": ("block <track-dir> <phase> <task> [<subtask>] --reason <text>\n"
               "      block <track-dir> --phase <n> --task <n> [--subtask <n>] --reason <text>",
               "Block task with reason"),
+    "set-max-retries": ("set-max-retries <track-dir> <phase> <task> [<subtask>] --max-retries <int>\n"
+                        "               set-max-retries <track-dir> --phase <n> --task <n> [--subtask <n>] --max-retries <int>",
+                        "Set a per-task max_retries override (absent → global MAX_RETRIES). "
+                        "Lets a hard task get more attempts or an easy one fewer; honored by the "
+                        "retry policy, handoff N/M display, and dispatch-prepare/recover output."),
     "reset": ("reset <track-dir> --scope <task|phase|track> [--phase <n>] [--task <n>]",
               "Reset task(s) to pending, clearing completion fields and syncing plan"),
     "finalize": ("finalize <track-dir>",
@@ -262,6 +268,12 @@ COMMAND_HELP = {
     "skip-refute-review": ("skip-refute-review <track-dir> --status <SUSTAINED|REFUTED|FAILURE> [--reasoning <text>]",
                            "Transcribe the refuter's STATUS onto the skip-analysis marker (stage=refuted); the next `step` "
                            "routes (REFUTED/FAILURE→skip+advance; SUSTAINED→halt). Owns the §3.6 skip-refute in code."),
+    "failure-analyst-verdict": ("failure-analyst-verdict <track-dir> --category <deterministic_bug|spec_plan_defect|context_budget|environmental|stuck> "
+                                "--recommendation <retry_modified|replan|decompose|escalate> "
+                                "[--root-cause <text>] [--modification <text>] [--what-was-done <text>]",
+                                "Transcribe failure-analyst's verdict to the failure-analysis marker (stage=analyzed); the next "
+                                "`step` routes (retry_modified→inject+redispatch task-executor; replan/decompose/escalate→halt). "
+                                "Owns the failure-analyze route in code. --modification is required for retry_modified."),
     "record-summary": ("record-summary <track-dir>",
                        "Record compact task summary (stdin JSON) for post-compaction recovery"),
     "dispatch-wave": ("dispatch-wave <track-dir> [--full]",
@@ -338,14 +350,16 @@ COMMAND_HELP = {
 _COMMAND_GROUPS = [
     ("Lifecycle", ["init-from-plan", "start", "set-mode", "finalize", "archive"]),
     ("Navigation", ["next", "dispatch-next", "recover", "indices"]),
-    ("State Mutations", ["lock", "complete", "fail", "skip", "defer", "block", "reset"]),
+    ("State Mutations", ["lock", "complete", "fail", "skip", "defer", "block", "reset",
+                         "set-max-retries"]),
     ("Sync & Registry", ["sync-plan", "sync-handoff", "registry-update", "registry-add"]),
     ("Handoff", ["get-handoff", "append-handoff", "harvest-candidates"]),
     ("Result Processing", ["write-result", "process-result"]),
     ("Dispatch Composites", ["dispatch-prepare", "dispatch-finalize", "record-summary"]),
     ("Rail B-min Spines", ["step", "post-loop-step", "post-loop-review",
                            "phase-verdict", "phase-checkpoint-review",
-                           "skip-analyst-verdict", "skip-refute-review"]),
+                           "skip-analyst-verdict", "skip-refute-review",
+                           "failure-analyst-verdict"]),
     ("Wave Parallelism", ["dispatch-wave", "wave-status", "wave-finalize", "wave-abort", "wave-step"]),
     ("Naming", ["derive-name", "resolve-track", "check"]),
     ("New-Track Resume", ["new-track-resume", "new-track-init", "new-track-step",
@@ -415,7 +429,8 @@ def main():
     ):
         track_dir = _resolve_track_dir_or_halt(track_dir, cmd)
 
-    _INDEX_COMMANDS = {"lock", "complete", "fail", "skip", "block", "defer"}
+    _INDEX_COMMANDS = {"lock", "complete", "fail", "skip", "block", "defer",
+                       "set-max-retries"}
 
     try:
         if cmd in _INDEX_COMMANDS:
@@ -456,6 +471,14 @@ def main():
             elif cmd == "defer":
                 cmd_defer(track_dir, p, t, s,
                           flag(args, "--reason") or "")
+            elif cmd == "set-max-retries":
+                mr = flag(args, "--max-retries")
+                try:
+                    mr_val = int(mr) if mr else None
+                except ValueError:
+                    out(dict(error=f"--max-retries requires an integer, got: {mr!r}"))
+                    sys.exit(1)
+                cmd_set_max_retries(track_dir, p, t, s, max_retries=mr_val)
 
         elif cmd == "next":
             cmd_next(track_dir, compact="--full" not in args)
@@ -551,6 +574,11 @@ def main():
         elif cmd == "skip-refute-review":
             cmd_skip_refute_review(
                 track_dir, flag(args, "--status"), flag(args, "--reasoning"))
+        elif cmd == "failure-analyst-verdict":
+            cmd_failure_analyst_verdict(
+                track_dir, flag(args, "--category"),
+                flag(args, "--recommendation"), flag(args, "--root-cause"),
+                flag(args, "--modification"), flag(args, "--what-was-done"))
         elif cmd == "record-summary":
             cmd_record_summary(track_dir)
         elif cmd == "dispatch-wave":

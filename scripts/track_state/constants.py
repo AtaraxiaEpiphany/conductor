@@ -29,15 +29,40 @@ SHA_MARKERS = {"x", "!", ">", "#", "-", "d"}
 
 # Maximum retry attempts for a failed task before marking it permanently failed.
 #
-# Single source of truth for the retry threshold — never re-literal "3":
+# The DEFAULT ceiling — per-task overrides via ``max_retries`` (see
+# :func:`task_max_retries`) are honored at every enforcement site. Single source
+# of truth for the default; never re-literal "3":
 #  - Enforced by mutations._do_fail (re-queues as "pending" while retry_count <
-#    MAX_RETRIES; flips to "failed" at the threshold) and _do_fail_parent (pins
-#    retry_count = MAX_RETRIES so recover surfaces the parent as failed+max).
+#    task_max_retries(tgt); flips to "failed" at the threshold) and _do_fail_parent
+#    (pins retry_count = task_max_retries(tgt) so recover surfaces the parent as
+#    failed+max).
 #  - Emitted in track-state output (recover, dispatch-prepare) as `max_retries`
 #    so the implement skill routes on it without hardcoding the number, and
 #    rendered by handoff as "{retry_count}/{max_retries}". Bump it here and
 #    every consumer follows.
 MAX_RETRIES = 3
+
+
+def task_max_retries(task):
+    """Per-task retry ceiling, falling back to the global ``MAX_RETRIES``.
+
+    Single resolver for "how many attempts does this task get" — every enforcement
+    site (``mutations._do_fail`` requeue decision, ``_do_fail_parent`` pin,
+    ``dispatch._find_failed_exhausted``) reads the ceiling through here rather than
+    the bare ``MAX_RETRIES``, so a task carrying ``max_retries`` is honored. Absent
+    / invalid (non-int or < 1) → global default; defensive so a corrupt value can't
+    zero out a task's retry budget.
+    """
+    mr = task.get("max_retries") if isinstance(task, dict) else None
+    return mr if isinstance(mr, int) and mr >= 1 else MAX_RETRIES
+
+
+# Bound on consecutive failure-analyst rounds for one task (dispatch.py
+# ``_step_route_failure_analysis``). A failure-analyst whose ``retry_modified``
+# verdict fails again and re-triggers another failure-analyst is the loop this
+# caps: past the limit the router falls through to ``escalate``→halt instead of
+# re-analyzing. Mirrors ``MAX_RECOVERY_TURNS`` (lib/recovery.py) in spirit.
+MAX_ANALYSIS_ROUNDS = 1
 
 # Stuck-lock heartbeat. ``_do_lock`` stamps ``locked_at`` (epoch seconds) on the
 # task; a task still ``in_progress`` past this threshold is treated as a

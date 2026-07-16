@@ -89,6 +89,11 @@
           "type": "integer",
           "minimum": 0
         },
+        "max_retries": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per-task override of the global MAX_RETRIES. Absent → use the global default."
+        },
         "last_failure_summary": { "type": "string" },
         "skip_analysis": { "type": "string" },
         "defer_reason": { "type": "string" },

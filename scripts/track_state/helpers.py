@@ -130,7 +130,11 @@ COMPACT_FIELDS = {
     "step": ("action", "phase", "task", "subtask", "name", "execution_mode",
              "agent", "prompt", "attempt", "max_retries", "is_resume",
              "decision", "sha", "wave",
-             "reason", "recommendation", "reasoning", "impact", "evidence"),
+             "reason", "recommendation", "reasoning", "impact", "evidence",
+             # failure-analyst halt (B): surfaces category + modification (the
+             # proposed AC correction / task split / different approach) + what
+             # was done, so the orchestrator can relay the diagnosis to a human.
+             "category", "modification", "what_was_done"),
     # Wave parallelism (skills/parallel/SKILL.md). dispatch-wave carries the
     # member list (worktree/branch/worktree_track_dir) so the orchestrator can
     # fan out pinned task-executor agents; `deferred` surfaces the eligible-but-

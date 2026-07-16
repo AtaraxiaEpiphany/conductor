@@ -6,7 +6,7 @@ from pathlib import Path
 
 from .core import load
 from .helpers import conductor_dir, now_iso, out, _safe_task_name, _display_loc
-from .constants import MAX_RETRIES
+from .constants import MAX_RETRIES, task_max_retries
 
 
 def _get_handoff_dir(track_dir):
@@ -144,7 +144,8 @@ def _sync_handoff_index(track_dir, state=None):
                 task_emoji = "[ ]"
 
             retry_count = task.get("retry_count", 0)
-            retry_info = f" ({retry_count}/{MAX_RETRIES})" if retry_count > 0 else ""
+            retry_info = (f" ({retry_count}/{task_max_retries(task)})"
+                          if retry_count > 0 else "")
 
             task_rows.append(
                 f"| {ti}. | {task_emoji} {task_name}{retry_info} | "

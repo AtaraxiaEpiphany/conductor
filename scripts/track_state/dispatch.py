@@ -11,8 +11,10 @@ from .helpers import (
     conductor_dir, _store_evidence, _last_subtask_sha, _any_phase_needs_checkpoint,
     flag, _normalize_sha, target, _extract_tags_for_task, _resolve_conductor_root,
 )
-from .constants import AUTO_COMPLETE_OK, MAX_RETRIES
-from .mutations import _do_lock, _do_complete, _do_fail, _do_fail_parent, _do_defer, _do_skip
+from .constants import (AUTO_COMPLETE_OK, MAX_RETRIES, task_max_retries,
+                        MAX_ANALYSIS_ROUNDS)
+from .mutations import (_do_lock, _do_complete, _do_fail, _do_fail_parent,
+                        _do_defer, _do_skip, reactivate_for_modified_retry)
 from .result import _advisory_gates
 from .sync import _do_sync_plan
 from lib import dispatch_inflight as _inflight
@@ -292,10 +294,31 @@ def _find_failed_exhausted(state):
         for ti, task in enumerate(phase.get("tasks", []), 1):
             for si, sub in enumerate(task.get("subtasks", []), 1):
                 if (sub.get("status") == "failed"
-                        and sub.get("retry_count", 0) >= MAX_RETRIES):
+                        and sub.get("retry_count", 0) >= task_max_retries(sub)):
                     return pi, ti, si, sub, sub.get("name", "...")
             if (task.get("status") == "failed"
-                    and task.get("retry_count", 0) >= MAX_RETRIES):
+                    and task.get("retry_count", 0) >= task_max_retries(task)):
+                return pi, ti, None, task, task.get("name", "...")
+    return None
+
+
+def _find_failed_task(state):
+    """First ``failed`` task (regardless of retry exhaustion), scanning subtasks
+    first (most specific). Returns ``(pi, ti, si, tgt, name)`` or ``None``.
+
+    Broader than :func:`_find_failed_exhausted` (which requires
+    ``retry_count >= max``) — used by the failure-analyze handshake, which can
+    fire *before* exhaustion (the pre-exhaustion tier, B.6) when a task is
+    ``failed`` but still has retry budget. When the analyst fires post-exhaustion
+    (the skip-analyst ``retry_with_modification`` hand-off), the failed task is
+    also exhausted, so this still finds it.
+    """
+    for pi, phase in enumerate(state.get("phases", []), 1):
+        for ti, task in enumerate(phase.get("tasks", []), 1):
+            for si, sub in enumerate(task.get("subtasks", []), 1):
+                if sub.get("status") == "failed":
+                    return pi, ti, si, sub, sub.get("name", "...")
+            if task.get("status") == "failed":
                 return pi, ti, None, task, task.get("name", "...")
     return None
 
@@ -317,7 +340,7 @@ def _emit_no_active_or_decision(track_dir, state, fixes, compact):
                 phase=fpi, task=fti, subtask=fsi,
                 name=name,
                 retry_count=tgt.get("retry_count", 0),
-                max_retries=MAX_RETRIES,
+                max_retries=task_max_retries(tgt),
                 execution_mode="interactive",
             )
             if fixes:
@@ -492,7 +515,7 @@ def cmd_recover(track_dir, compact=True):
         phase=pi, task=ti, subtask=si,
         name=name, type=ttype,
         retry_count=tgt.get("retry_count", 0),
-        max_retries=MAX_RETRIES,
+        max_retries=task_max_retries(tgt),
         last_failure_summary=tgt.get("last_failure_summary"),
         tags=sub_tags,
         execution_mode=state.get("execution_mode", "interactive"),
@@ -650,7 +673,7 @@ def prepare_dispatch(track_dir):
     return dict(action=action, phase=pi, task=ti, subtask=si, name=name,
                 tags=tags, sync_count=synced, is_resume=is_resume,
                 retry_count=tgt.get("retry_count", 0),
-                max_retries=MAX_RETRIES,
+                max_retries=task_max_retries(tgt),
                 last_failure_summary=tgt.get("last_failure_summary"),
                 execution_mode=nxt.get("execution_mode", "interactive"),
                 next=nxt)
@@ -746,7 +769,7 @@ def _synthesize_result_from_state(track_dir):
             subtask=si,
             task_name=name,
             attempt=tgt.get("retry_count", 0) + 1,
-            max_retries=MAX_RETRIES,
+            max_retries=task_max_retries(tgt),
         )
     else:
         # Agent committed implementation code but forgot to write result.json.
@@ -760,7 +783,7 @@ def _synthesize_result_from_state(track_dir):
             subtask=si,
             task_name=name,
             attempt=tgt.get("retry_count", 0) + 1,
-            max_retries=MAX_RETRIES,
+            max_retries=task_max_retries(tgt),
         )
 
 
@@ -1164,6 +1187,123 @@ def _skip_analysis_clear_marker(track_dir):
         path.unlink()
 
 
+# --------------------------------------------------------------------------- #
+# failure_analyze handshake — same marker shape as skip_analyze (WM2 verdict-on-
+# disk). failure-analyst is a read-only diagnostic dispatched in continuous mode
+# (before the final retry, and when skip-analyst returns retry_with_modification)
+# to classify WHY a task keeps failing and pick a materially different next
+# action. The spine owns the category→action route judgment in code
+# (``_step_route_failure_analysis``); the teleoperator only transcribes the
+# verdict. See agents/failure-analyst.md for the taxonomy.
+# --------------------------------------------------------------------------- #
+_FAILURE_ANALYSIS_MARKER = "failure-analysis.json"
+
+# Verdict enums (mirrors _SKIP_RECOMMENDATIONS). The category taxonomy is the
+# analyst's diagnostic classification; the recommendation is the action it asks
+# the spine to take.
+_FAILED_CATEGORIES = (
+    "deterministic_bug", "spec_plan_defect", "context_budget",
+    "environmental", "stuck",
+)
+_FAILED_RECOMMENDATIONS = ("retry_modified", "replan", "decompose", "escalate")
+
+
+def _failure_analysis_marker_path(track_dir):
+    """Pure path — deliberately no mkdir (mirrors ``_skip_analysis_marker_path``)."""
+    return Path(track_dir) / ".conductor" / _FAILURE_ANALYSIS_MARKER
+
+
+def _failure_analysis_read_marker(track_dir):
+    """Tolerant reader: ``None`` on missing/corrupt (mirrors skip-analysis)."""
+    path = _failure_analysis_marker_path(track_dir)
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text())
+        if isinstance(data, dict):
+            return data
+    except (ValueError, OSError):
+        pass
+    return None
+
+
+def _failure_analysis_write_marker(track_dir, data):
+    cdir = Path(track_dir) / ".conductor"
+    cdir.mkdir(parents=True, exist_ok=True)
+    _failure_analysis_marker_path(track_dir).write_text(
+        json.dumps(data, ensure_ascii=False))
+
+
+def _failure_analysis_clear_marker(track_dir):
+    path = _failure_analysis_marker_path(track_dir)
+    if path.exists():
+        path.unlink()
+
+
+# Modified-guidance marker — the B.5 bridge from failure-analyst's ``modification``
+# verdict to the retrying task-executor. Written by ``_step_route_failure_analysis``
+# on a ``retry_modified`` verdict, consumed + cleared by the SubagentStart hook
+# (``on-subagent-start.py`` appends it as a ``[Conductor Modified Retry]`` block,
+# mirroring the existing retry-context injection). Keyed by phase/task/subtask so a
+# concurrent sibling task's retry can't read another's guidance.
+def _modified_guidance_path(track_dir, pi, ti, si):
+    sub = f"-{si}" if si is not None else ""
+    return Path(track_dir) / ".conductor" / f".modified-guidance-{pi}-{ti}{sub}.md"
+
+
+def _modified_guidance_write(track_dir, pi, ti, si, modification, root_cause=None):
+    cdir = Path(track_dir) / ".conductor"
+    cdir.mkdir(parents=True, exist_ok=True)
+    payload = modification or ""
+    if root_cause:
+        payload = f"Root cause: {root_cause}\n\nModified approach:\n{payload}"
+    _modified_guidance_path(track_dir, pi, ti, si).write_text(payload)
+
+
+def _modified_guidance_read(track_dir, pi, ti, si):
+    path = _modified_guidance_path(track_dir, pi, ti, si)
+    if not path.exists():
+        return None
+    try:
+        text = path.read_text(encoding="utf-8").strip()
+        return text or None
+    except OSError:
+        return None
+
+
+def _modified_guidance_clear(track_dir, pi, ti, si):
+    path = _modified_guidance_path(track_dir, pi, ti, si)
+    if path.exists():
+        path.unlink()
+
+
+def _step_assemble_failure_analyst_prompt(track_dir, state, pi, ti, si, name):
+    """Pre-assemble the ``conductor:failure-analyst`` prompt.
+
+    Mirrors ``_step_assemble_skip_analyst_prompt`` (parent-scoped, no subtask
+    line) and adds ``RETRY_COUNT`` + the per-task ``MAX_RETRIES`` ceiling so the
+    analyst knows how much budget remains.
+    """
+    td = str(track_dir)
+    # Resolve the failing task's per-task ceiling (A: max_retries override).
+    ceiling = MAX_RETRIES
+    try:
+        tgt = target(state, int(pi), int(ti), int(si) if si is not None else None)
+        ceiling = task_max_retries(tgt)
+        retry_count = tgt.get("retry_count", 0)
+    except (IndexError, KeyError, TypeError, ValueError):
+        retry_count = 0
+    return "\n".join([
+        f"TRACK_DIR={td}",
+        f"TRACK_ID={state.get('track_id', '')}",
+        f"PHASE_INDEX={pi}",
+        f"TASK_INDEX={ti}",
+        f"TASK_NAME={name}",
+        f"RETRY_COUNT={retry_count}",
+        f"MAX_RETRIES={ceiling}",
+    ])
+
+
 def _step_assemble_skip_analyst_prompt(track_dir, state, pi, ti, si, name):
     """Pre-assemble the ``conductor:skip-analyst`` prompt (skills/implement §3.6).
     Parent-scoped (no subtask line), mirroring the prose."""
@@ -1272,7 +1412,8 @@ def _step_emit_dispatch(track_dir, compact):
     emit(dict(action="dispatch", agent=agent, prompt=prompt,
               phase=pre["phase"], task=pre["task"], subtask=pre.get("subtask"),
               name=pre.get("name", "?"), attempt=attempt,
-              max_retries=MAX_RETRIES, is_resume=pre.get("is_resume", False),
+              max_retries=pre.get("max_retries", MAX_RETRIES),
+              is_resume=pre.get("is_resume", False),
               execution_mode=pre.get("execution_mode", "interactive")),
          "step", compact)
 
@@ -1317,7 +1458,21 @@ def _step_route_skip_analysis(track_dir, marker, compact):
         if rec == "skip":
             _redispatch_refuter()
             return
-        if rec in ("pause_and_escalate", "retry_with_modification"):
+        if rec == "retry_with_modification":
+            # B.6: skip-analyst says "this is fixable, just not by skipping" — hand
+            # off to failure-analyst for a real diagnosis rather than halting. The
+            # task is terminal failed here (post-exhaustion); the analyst's
+            # retry_modified verdict will reactivate it. Clear the skip marker so
+            # it doesn't re-route; the failure-analysis marker takes over.
+            _skip_analysis_clear_marker(track_dir)
+            state = load(track_dir)
+            emit(dict(action="dispatch_failure_analyst", agent="failure-analyst",
+                      phase=pi, task=ti, subtask=si, name=name,
+                      execution_mode=state.get("execution_mode", "continuous"),
+                      prompt=_step_assemble_failure_analyst_prompt(
+                          track_dir, state, pi, ti, si, name)), "step", compact)
+            return
+        if rec == "pause_and_escalate":
             _skip_analysis_clear_marker(track_dir)
             emit(dict(action="halt", reason=rec, recommendation=rec,
                       reasoning=marker.get("reasoning"), impact=marker.get("impact"),
@@ -1354,6 +1509,80 @@ def _step_route_skip_analysis(track_dir, marker, compact):
     _redispatch_skip_analyst()
 
 
+def _step_route_failure_analysis(track_dir, marker, compact):
+    """Route the failure_analyze handshake from the on-disk marker.
+
+    The teleoperator transcribed failure-analyst's verdict (``failure-analyst-
+    verdict`` → ``stage=analyzed``); this decides + executes the next leaf,
+    owning the category→action route judgment in code.
+
+    ``stage=analyzed`` routes by ``recommendation``:
+      ``retry_modified`` → write the modification to the modified-guidance marker
+        (B.5), reactivate the failed task (failed→pending, retry_count preserved
+        so the attempt still counts against budget), clear the analysis marker,
+        and re-dispatch task-executor. Bounded by ``analysis_rounds``: past
+        ``MAX_ANALYSIS_ROUNDS`` the router falls through to ``escalate``→halt
+        (a failure-analyst that triggers another failure-analyst is the loop this
+        caps).
+      ``replan`` / ``decompose`` / ``escalate`` → ``halt`` for a human, surfacing
+        ``root_cause`` + ``modification``.
+    Unknown recommendation/stage are defensive re-dispatches (never loop).
+    """
+    td = str(track_dir)
+    stage = marker.get("stage")
+    pi, ti = marker.get("phase"), marker.get("task")
+    si = marker.get("subtask")
+    name = marker.get("name", "?")
+    rec = marker.get("recommendation")
+    rounds = int(marker.get("analysis_rounds", 1) or 1)
+
+    def _halt(reason):
+        _failure_analysis_clear_marker(track_dir)
+        emit(dict(action="halt", reason=reason, recommendation=rec,
+                  category=marker.get("category"),
+                  reasoning=marker.get("root_cause"),
+                  modification=marker.get("modification"),
+                  what_was_done=marker.get("what_was_done"),
+                  phase=pi, task=ti, subtask=si, name=name), "step", compact)
+
+    def _redispatch_failure_analyst():
+        state = load(track_dir)
+        emit(dict(action="dispatch_failure_analyst", agent="failure-analyst",
+                  phase=pi, task=ti, subtask=si, name=name,
+                  execution_mode=state.get("execution_mode", "continuous"),
+                  prompt=_step_assemble_failure_analyst_prompt(
+                      track_dir, state, pi, ti, si, name)),
+             "step", compact)
+
+    if stage == "analyzed":
+        if rec == "retry_modified":
+            # Cap: a modified retry that fails again would re-trigger the
+            # analyst — bound it so we don't loop analyze→retry→fail forever.
+            if rounds > MAX_ANALYSIS_ROUNDS:
+                _halt("escalate")
+                return
+            _modified_guidance_write(track_dir, pi, ti, si,
+                                     marker.get("modification"),
+                                     marker.get("root_cause"))
+            reactivate_for_modified_retry(track_dir, pi, ti, si)
+            _failure_analysis_clear_marker(track_dir)
+            _do_sync_plan(track_dir, load(track_dir))
+            _git_commit_ensured(
+                track_dir,
+                f"chore(conductor): Reactivate '{name}' [P{pi}T{ti}] "
+                f"for modified retry (failure-analyst)")
+            return _step_emit_dispatch(track_dir, compact)
+        if rec in ("replan", "decompose", "escalate"):
+            _halt(rec)
+            return
+        _failure_analysis_clear_marker(track_dir)  # unknown recommendation
+        _redispatch_failure_analyst()
+        return
+
+    _failure_analysis_clear_marker(track_dir)  # unknown stage → re-analyze
+    _redispatch_failure_analyst()
+
+
 def _step_emit_exhausted(track_dir, outcome, execution_mode, retry_count, compact):
     """Surface a retries-exhausted failure: interactive → ``ask`` (Retry/Skip/Block
     via the shared failed-task decision blob), continuous → ``dispatch_skip_analyst``
@@ -1381,6 +1610,26 @@ def _step_emit_exhausted(track_dir, outcome, execution_mode, retry_count, compac
                       track_dir, state, pi, ti, si, name)), "step", compact)
 
 
+def _outcome_max_retries(track_dir, outcome):
+    """Resolve the per-task ceiling for a finalize FAILURE outcome.
+
+    Reads ``max_retries`` off the failing task (phase/task/subtask carried on the
+    outcome) via :func:`task_max_retries`, so a task with a raised budget isn't
+    declared exhausted at the global default. Falls back to the global
+    ``MAX_RETRIES`` on any resolution error (fail-safe: over-retry is recoverable,
+    a crash in the routing helper is not).
+    """
+    try:
+        pi = int(outcome.get("phase"))
+        ti = int(outcome.get("task"))
+        si = outcome.get("subtask")
+        si = int(si) if si is not None else None
+        tgt = target(load(track_dir), pi, ti, si)
+        return task_max_retries(tgt)
+    except (IndexError, KeyError, TypeError, ValueError):
+        return MAX_RETRIES
+
+
 def _step_route_after_finalize(track_dir, outcome, compact):
     """Decide the next leaf from a finalize outcome (SUCCESS / FAILURE / error)."""
     if outcome.get("error"):
@@ -1394,9 +1643,43 @@ def _step_route_after_finalize(track_dir, outcome, compact):
     if outcome.get("status") == "SUCCESS":
         return _step_emit_next_leaf(track_dir, load(track_dir), compact)
     # FAILURE — retry (re-queued to pending by _do_fail) or surface exhaustion.
-    if outcome.get("retry_count", 0) < MAX_RETRIES:
+    # The ceiling is the failing task's own (max_retries override) — a task with a
+    # higher per-task budget must not be declared exhausted at the global default.
+    ceiling = _outcome_max_retries(track_dir, outcome)
+    rc = outcome.get("retry_count", 0)
+    if rc < ceiling:
+        # Pre-exhaustion tier (B.6, continuous only): when exactly one attempt
+        # remains, route through failure-analyst first so the final attempt is a
+        # *modified* retry rather than a third identical one. Interactive mode
+        # keeps a human in the loop and skips this. Lower retry_counts get the
+        # ordinary identical retry — the analyst fires once, on the penultimate
+        # failure, not on every failure.
+        if (execution_mode == "continuous" and rc == ceiling - 1
+                and ceiling >= 2):
+            return _step_emit_dispatch_failure_analyst(track_dir, outcome, compact)
         return _step_emit_dispatch(track_dir, compact)
-    _step_emit_exhausted(track_dir, outcome, execution_mode, outcome.get("retry_count", 0), compact)
+    _step_emit_exhausted(track_dir, outcome, execution_mode, rc, compact)
+
+
+def _step_emit_dispatch_failure_analyst(track_dir, outcome, compact):
+    """Emit the ``dispatch_failure_analyst`` leaf for a continuous-mode task one
+    attempt from exhaustion (B.6 pre-exhaustion tier)."""
+    state = load(track_dir)
+    pi = int(outcome.get("phase"))
+    ti = int(outcome.get("task"))
+    si = outcome.get("subtask")
+    si = int(si) if si is not None else None
+    try:
+        tgt = target(state, pi, ti, si)
+        name = tgt.get("name", "?")
+    except (IndexError, KeyError, TypeError, ValueError):
+        name = "?"
+    emit(dict(action="dispatch_failure_analyst", agent="failure-analyst",
+              phase=pi, task=ti, subtask=si, name=name,
+              execution_mode="continuous",
+              prompt=_step_assemble_failure_analyst_prompt(
+                  track_dir, state, pi, ti, si, name)),
+         "step", compact)
 
 
 def _emit_quiescent_leaf(track_dir, state, compact, command):
@@ -1572,6 +1855,15 @@ def cmd_step(track_dir, compact=True):
     sa = _skip_analysis_read_marker(track_dir)
     if sa is not None:
         return _step_route_skip_analysis(track_dir, sa, compact)
+
+    # failure_analyze handshake in progress? A failure-analysis marker means the
+    # teleoperator transcribed failure-analyst's verdict since the last dispatch;
+    # route it (retry_modified → reactivate + re-dispatch; replan/decompose/
+    # escalate → halt). Checked after skip-analysis so a skip hand-off wins if
+    # both somehow exist.
+    fa = _failure_analysis_read_marker(track_dir)
+    if fa is not None:
+        return _step_route_failure_analysis(track_dir, fa, compact)
 
     # If the current task is in_progress, the model just returned from a dispatch
     # (or was interrupted mid-dispatch). Decide finalize vs re-dispatch.
@@ -1780,6 +2072,68 @@ def cmd_skip_refute_review(track_dir, status, reasoning):
     marker["refute_reasoning"] = reasoning
     _skip_analysis_write_marker(track_dir, marker)
     out(dict(ok=True, stage="refuted", refute_status=verdict, track_dir=td))
+
+
+def cmd_failure_analyst_verdict(track_dir, category, recommendation, root_cause,
+                                modification, what_was_done=None):
+    """Transcribe failure-analyst's verdict to the failure-analysis marker.
+
+    After ``dispatch_failure_analyst`` returns, the teleoperator parses the
+    ``---FAILURE ANALYSIS---`` JSON and runs this. Writes ``stage=analyzed`` so
+    the next ``step`` routes (``_step_route_failure_analysis``):
+    ``retry_modified`` → inject modification + re-dispatch task-executor;
+    ``replan`` / ``decompose`` / ``escalate`` → ``halt`` for a human.
+
+    The failed task (phase/task/subtask/name) is re-derived from state via
+    ``_find_failed_task`` (broader than skip-analyst's ``_find_failed_exhausted``
+    — the analyst can fire before exhaustion). Validates the recommendation and
+    category enums. Carries an ``analysis_rounds`` counter so the router can cap
+    consecutive analysis→retry→fail cycles (``MAX_ANALYSIS_ROUNDS``).
+    """
+    td = str(track_dir)
+    if recommendation not in _FAILED_RECOMMENDATIONS:
+        out(dict(error=f"unrecognized recommendation: {recommendation!r}", track_dir=td,
+                 hint=f"one of: {', '.join(_FAILED_RECOMMENDATIONS)} "
+                      "(from ---FAILURE ANALYSIS--- recommendation)"))
+        return
+    if category not in _FAILED_CATEGORIES:
+        out(dict(error=f"unrecognized category: {category!r}", track_dir=td,
+                 hint=f"one of: {', '.join(_FAILED_CATEGORIES)} "
+                      "(from ---FAILURE ANALYSIS--- category)"))
+        return
+    if recommendation == "retry_modified" and not (modification or "").strip():
+        out(dict(error="retry_modified requires a non-empty modification "
+                       "(a specific different approach)", track_dir=td,
+                 hint="provide --modification, or choose escalate/replan/decompose"))
+        return
+    state, _fixes, verrors = ensure_healthy(track_dir)
+    if state is None:
+        out(dict(error="track state unhealthy", errors=verrors, track_dir=td))
+        return
+    found = _find_failed_task(state)
+    if found is None:
+        _failure_analysis_clear_marker(track_dir)
+        out(dict(error="no failed task to analyze", track_dir=td,
+                 hint="run `track-state step` to advance"))
+        return
+    fpi, fti, fsi, _ftgt, fname = found
+    # Increment the per-task analysis-rounds counter (B.7). A fresh marker starts
+    # at 1; an existing marker (re-analyze) carries the prior count forward.
+    prior = _failure_analysis_read_marker(track_dir) or {}
+    rounds = int(prior.get("analysis_rounds", 0) or 0) + 1
+    marker = {
+        "phase": fpi, "task": fti, "subtask": fsi, "name": fname,
+        "stage": "analyzed", "category": category,
+        "recommendation": recommendation,
+        "root_cause": root_cause,
+        "modification": modification,
+        "what_was_done": what_was_done,
+        "analysis_rounds": rounds,
+    }
+    _failure_analysis_write_marker(track_dir, marker)
+    out(dict(ok=True, recommendation=recommendation, category=category,
+             stage="analyzed", analysis_rounds=rounds,
+             phase=fpi, task=fti, track_dir=td))
 
 
 def _parse_bool(val):

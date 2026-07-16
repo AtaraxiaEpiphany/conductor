@@ -8,7 +8,7 @@ Conductor coordinates software construction by managing the full lifecycle of de
 
 - **Track-based project management** — Work is organized into tracks (feature / bugfix / chore / docs), each with spec, plan, state, and handoff files
 - **TDD enforcement** — Mandatory test-driven development with an 80 % coverage gate (server-side verification, not agent self-report)
-- **Subagent orchestration** — A main orchestrator dispatches 22 specialized AI agents for isolated, focused work
+- **Subagent orchestration** — A main orchestrator dispatches 23 specialized AI agents for isolated, focused work
 - **State machine CLI** — `track-state` manages all state mutations atomically; `plan.md` stays in sync as the human-readable mirror
 - **Execution firewall** — 6 mandatory pre-action checks (F1–F6) and 11 anti-patterns (V1–V11) prevent workflow violations
 - **Session continuity** — Handoff files, state recovery on resume, compression priority hints, and SubagentStop result-block recovery — an agent that crashes before emitting its result block earns a recovery turn instead of being silently lost
@@ -70,7 +70,7 @@ Commands:
 
 ```
 conductor-plugin/
-├── agents/                 22 specialised agent definitions (.md)
+├── agents/                 23 specialised agent definitions (.md)
 ├── bin/track-state         Shell wrapper for the state CLI
 ├── conductor/design/       Decision records (serial-execution, loop-heartbeat, rail-b step/wave …)
 ├── hooks/hooks.json        9 hook event types, 15 matcher entries
@@ -108,6 +108,7 @@ conductor-plugin/
 | `refactorer` | sonnet | Bounded tactical refactor (behavior-preserving) |
 | `apply-fixes` | sonnet | Bounded remediation patcher (one finding chunk) |
 | `skip-analyst` | haiku | Failed-task skip analysis |
+| `failure-analyst` | haiku | Diagnoses why a repeatedly failed task keeps failing; recommends retry-differently / replan / decompose / escalate |
 | `test-digester` | haiku | Read-only test/coverage digest (delegated by task-executor) |
 | `doc-probe` | haiku | Read-only scoped design-doc digester |
 | `log-checker` | haiku | Read-only git-history verifier for doc-update entries |

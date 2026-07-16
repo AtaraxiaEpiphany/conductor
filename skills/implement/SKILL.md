@@ -184,7 +184,7 @@ track-state dispatch-finalize "<track_dir>"
 
 **SUCCESS**: `committed: false` → announce `"conductor commit failed, result.json preserved"` → re-run `dispatch-finalize` (max 3 attempts, then HALT with `"dispatch-finalize stuck"`). Deviations > 0 → announce. If `phase_checkpoint_pending` present → dispatch `conductor:phase-checker` immediately. Otherwise → **Section 3.6b** (self-review, if `[Review]`) → **Section 3.6c** (refactor, if `[Refactor]`) → **§3.7**.
 
-**FAILURE**: retry < max → re-dispatch (§3.1). retry >= max → dispatch `conductor:skip-analyst`:
+**FAILURE**: retry < max → re-dispatch (§3.1). In **continuous mode**, when exactly one attempt remains (`retry == max - 1`), the spine dispatches `conductor:failure-analyst` first so the final attempt is a *modified* retry rather than another identical one — see the failure-analyst block below. retry >= max → dispatch `conductor:skip-analyst`:
 
 ```
 TRACK_DIR={td}
@@ -198,7 +198,7 @@ Skip-analyst result — parse the `---SKIP ANALYSIS---` JSON and act by `recomme
 
 - **`recommendation: skip`** (`can_skip: true`) → **run the skip refute first** (below). If the refute lets the skip stand → `track-state skip "<track_dir>" <phase> <task>` → Section 3.1. If the refute overrides → handle as `pause_and_escalate`.
 - **`recommendation: pause_and_escalate`** (or skip-refute override) → `track-state sync-plan "<track_dir>"` → commit → **HALT**: surface `impact` + `reasoning` (and the refuter's `EVIDENCE`/`REASONING` if it overrode). An unattended continuous track stops for human judgment rather than silently skipping or blocking.
-- **`recommendation: retry_with_modification`** → `track-state sync-plan` → commit → HALT with the reasoning as the modification guidance for the next attempt.
+- **`recommendation: retry_with_modification`** → the skip-analyst says "fixable, just not by skipping." In **continuous mode**, dispatch `conductor:failure-analyst` (below) for a real diagnosis — its `retry_modified` verdict re-dispatches task-executor with a modified approach. In **interactive mode** (human in the loop), `track-state sync-plan` → commit → HALT with the reasoning as modification guidance.
 
 **Skip refute (continuous mode only).** `§2.2`'s interactive path already has a human gate; this refute runs only on the unattended continuous path, where a wrong skip silently cascades a hole into downstream work. When `recommendation == skip`, dispatch `conductor:refuter` to challenge it before acting:
 
@@ -216,6 +216,23 @@ Parse the `---REFUTATION RESULT---` block:
 - **`STATUS: SUSTAINED`** (skip unsafe — default when uncertain) → **override to block**: handle as `pause_and_escalate` (sync-plan → commit → HALT with the refuter's evidence). The refute found grounded evidence the skip breaks something; do not skip.
 - **`STATUS: REFUTED`** (grounded evidence the skip is safe) → let the skip stand → `track-state skip` → Section 3.1.
 - **`STATUS: FAILURE`** → defer to skip-analyst's primary verdict: announce `"⚠️ skip refute could not complete — proceeding on skip-analyst's recommendation"` and let the skip stand. A backup-agent crash is not new evidence the skip is safe; the announce keeps it visible without halting the track on a backup failure.
+
+**Failure-analyst (continuous mode only).** A read-only diagnostic that answers *why* a task keeps failing before spending the retry budget on another identical attempt. The spine dispatches it (a) when one attempt remains (`retry == max - 1`) and (b) on a skip-analyst `retry_with_modification` hand-off. Dispatch `conductor:failure-analyst`:
+
+```
+TRACK_DIR={td}
+TRACK_ID={id}
+PHASE_INDEX={p}
+TASK_INDEX={t}
+TASK_NAME={name}
+RETRY_COUNT={retry}
+MAX_RETRIES={max}
+```
+
+Parse the `---FAILURE ANALYSIS---` JSON and act by `recommendation`:
+
+- **`retry_modified`** (`category: deterministic_bug`) → `track-state failure-analyst-verdict "<td>" --category <C> --recommendation retry_modified --root-cause "<text>" --modification "<text>"`. The spine writes the modification to a guidance marker, reactives the failed task (retry budget preserved), and re-dispatches task-executor with the modification injected as a `[Conductor Modified Retry]` block. → §3.1.
+- **`replan`** (`category: spec_plan_defect`) / **`decompose`** (`category: context_budget`) / **`escalate`** (`category: environmental|stuck`) → `track-state failure-analyst-verdict "<td>" --category <C> --recommendation <R> --root-cause "<text>" [--modification "<text>"]` → the spine HALTs surfacing `root_cause` + `modification` (a proposed AC correction, task split, or just the diagnosis). Edit the spec/plan/task per the guidance, then re-invoke to resume. A modified retry that fails again is capped (`MAX_ANALYSIS_ROUNDS`) → escalate.
 
 ### 3.6b Self-Review Loop (opt-in — "Ralph Wiggum")
 

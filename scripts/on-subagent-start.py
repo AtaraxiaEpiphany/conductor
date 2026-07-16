@@ -71,6 +71,7 @@ AGENT_REMINDERS = {
     "wiki-synthesizer": "[Conductor] Result format: ---DOC SYNC RESULT--- ... ---END RESULT---",
     "doc-linter": "[Conductor] Result format: ---DOC LINT RESULT--- ... ---END RESULT---",
     "skip-analyst": "[Conductor] Result format: ---SKIP ANALYSIS--- ... ---END ANALYSIS---",
+    "failure-analyst": "[Conductor] Result format: ---FAILURE ANALYSIS--- ... ---END ANALYSIS---",
     "spec-planner": "[Conductor] Result format: ---SPEC PLAN RESULT--- ... ---END SPEC PLAN RESULT---",
     "spec-reviewer": "[Conductor] Result format: ---REVIEW RESULT--- ... ---END REVIEW RESULT---",
     "project-analyzer": "[Conductor] Result format: ---ANALYSIS RESULT--- ... ---END ANALYSIS RESULT---",
@@ -97,6 +98,41 @@ _RETRY_LEAD = (
     "is below. Do NOT repeat the same approach; heed Failure Reason and "
     "Suggested Next Step. (Full history: track-state get-handoff, Layer 3.R.)"
 )
+
+# The header for a failure-analyst "modified retry" directive (B.5). When
+# failure-analyst returns ``retry_modified``, the spine writes the analyst's
+# modification to a per-task marker (``.conductor/.modified-guidance-<p>-<t>.md``);
+# this hook appends it here so the retrying task-executor receives a materially
+# different approach, deterministically — even if the orchestrator under-reports
+# retry status. Same reason the plain retry nudge lives in the hook, not prose.
+_MODIFIED_RETRY_LEAD = (
+    "[Conductor Modified Retry] A failure-analyst diagnosed the prior failure "
+    "and prescribes a DIFFERENT approach below. Follow it instead of repeating "
+    "the prior attempt; the diagnosis explains why the last approach failed."
+)
+
+
+def _modified_guidance_block(track_dir, p, t, s):
+    """The failure-analyst modification for this task, or ``None``.
+
+    Reads the per-task modified-guidance marker (written by the spine on a
+    ``retry_modified`` verdict). Returns the formatted block and CONSUMES the
+    marker (deletes it) so it applies to exactly one retry and doesn't leak into
+    a subsequent non-modified dispatch. Best-effort: any I/O error → ``None``
+    (advisory; must not break the floor/reminder injection).
+    """
+    try:
+        sub = f"-{s}" if s is not None else ""
+        path = Path(track_dir) / ".conductor" / f".modified-guidance-{p}-{t}{sub}.md"
+        if not path.exists():
+            return None
+        text = path.read_text(encoding="utf-8").strip()
+        path.unlink()  # consume-on-read
+        if not text:
+            return None
+        return f"{_MODIFIED_RETRY_LEAD}\n\n{text}"
+    except Exception:
+        return None
 
 
 def _latest_failure_attempt(content):
@@ -149,16 +185,24 @@ def _retry_context(cwd, agent_type):
         if locked is None:
             return None
         track_dir, p, t, s = locked
-        # Lazy import: track_state is heavier than lib.* and only needed on the
-        # retry path — mirrors on-subagent-stop's lazy track_state.mutations import.
+        parts = []
+
+        # (1) The failure-analyst modification, if the spine wrote one for this
+        # retry (B.5). Checked FIRST and independent of the handoff block — a
+        # modified retry must reach the executor even if the handoff is empty.
+        modified = _modified_guidance_block(track_dir, p, t, s)
+        if modified:
+            parts.append(modified)
+
+        # (2) The latest ### Attempt ❌ handoff record (the plain retry nudge).
         from track_state.handoff import get_handoff_content
         content = get_handoff_content(track_dir, p, t, s)
-        if not content:
-            return None
-        block = _latest_failure_attempt(content)
-        if not block:
-            return None
-        return f"{_RETRY_LEAD}\n\n{block}"
+        if content:
+            block = _latest_failure_attempt(content)
+            if block:
+                parts.append(f"{_RETRY_LEAD}\n\n{block}")
+
+        return "\n\n".join(parts) if parts else None
     except Exception:
         return None
 

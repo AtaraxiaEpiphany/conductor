@@ -609,8 +609,12 @@ class SkipAnalyzeRoutingTests(TestCase):
         _sa_marker(d, recommendation="retry_with_modification",
                    reasoning="add a null guard")
         o = _step(d)
-        self.assertEqual(o["action"], "halt")
-        self.assertEqual(o["reason"], "retry_with_modification")
+        # B.6: retry_with_modification no longer halts — it hands off to
+        # failure-analyst for a real diagnosis (which may reactivate the task
+        # for a modified retry). Skip marker is cleared so the failure-analysis
+        # marker takes over.
+        self.assertEqual(o["action"], "dispatch_failure_analyst")
+        self.assertEqual(o["agent"], "failure-analyst")
         self.assertFalse(_skip_analysis_marker_path(d).exists())
 
     def test_refuted_refuted_executes_skip_and_advances(self):

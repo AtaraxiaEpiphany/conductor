@@ -2,7 +2,7 @@
 import time
 from .core import load, save, transaction
 from .helpers import target, clean, now_iso, out, _last_subtask_sha, _reset_task, _propagate_to_subtasks, _any_phase_needs_checkpoint, _normalize_sha
-from .constants import TERMINAL_FOR_PARENT, AUTO_COMPLETE_OK, MAX_RETRIES, LOCKED_AT_FIELD
+from .constants import TERMINAL_FOR_PARENT, AUTO_COMPLETE_OK, MAX_RETRIES, LOCKED_AT_FIELD, task_max_retries
 from lib.recovery import RECOVERY_TURN_FIELD
 
 
@@ -207,7 +207,7 @@ def _do_fail(track_dir, p, t, s=None, summary="", retryable=True):
         tgt["retry_count"] = tgt.get("retry_count", -1) + 1
         tgt["last_failure_summary"] = summary
 
-        if retryable and tgt["retry_count"] < MAX_RETRIES:
+        if retryable and tgt["retry_count"] < task_max_retries(tgt):
             # Re-queue for retry — pending so dispatch-next finds it again.
             # retry_count and last_failure_summary are preserved for the retry agent.
             tgt["status"] = "pending"
@@ -243,7 +243,7 @@ def _do_fail_parent(track_dir, p, t, summary="", sha=None):
         failed_names = [sub["name"] for sub in tgt.get("subtasks", [])
                         if sub.get("status") == "failed"]
         tgt["status"] = "failed"
-        tgt["retry_count"] = MAX_RETRIES
+        tgt["retry_count"] = task_max_retries(tgt)
         tgt["last_failure_summary"] = summary or (
             "Subtasks failed: " + ", ".join(failed_names) if failed_names
             else "Subtasks failed"
@@ -343,3 +343,47 @@ def cmd_defer(track_dir, p, t, s=None, reason=""):
         result["phase_checkpoint_pending"] = checkpoint_pending
         result["next_action"] = "dispatch_phase_checker"
     out(result)
+
+def cmd_set_max_retries(track_dir, p, t, s=None, max_retries=None):
+    """Set a per-task ``max_retries`` override (the A.4 CLI backing).
+
+    Idempotent overwrite; ``max_retries`` is a reset-able field (it's not task
+    history like ``retry_count``/``last_failure_summary``), so it's written via
+    ``clean`` like the other mutable singletons (status, defer_reason). The CLI
+    layer parses + validates ``>= 1``; this mutator trusts its caller.
+    """
+    pi, ti = int(p), int(t)
+    si = int(s) if s is not None else None
+    if not isinstance(max_retries, int) or max_retries < 1:
+        out(dict(error=f"max_retries must be a positive integer, got {max_retries!r}"))
+        return
+    with transaction(track_dir) as state:
+        tgt = target(state, pi, ti, si)
+        tgt["max_retries"] = max_retries
+        clean(tgt, {"max_retries"})
+        _set_current_indices(state, pi, ti, si)
+        state["updated_at"] = now_iso()
+    out(dict(ok=True, phase=pi, task=ti, subtask=si, max_retries=max_retries))
+
+
+def reactivate_for_modified_retry(track_dir, p, t, s=None):
+    """Flip a ``failed`` task back to ``pending`` for a failure-analyst
+    ``retry_modified`` re-dispatch — WITHOUT resetting retry history.
+
+    Distinct from ``cmd_reset`` (which clears ``retry_count`` /
+    ``last_failure_summary`` via ``_RESET_FIELDS``): a modified retry must still
+    count against the per-task budget, so those intrinsic-history fields are
+    preserved (mirrors ``_do_fail``'s preservation). Only ``status`` flips to
+    ``pending`` so ``dispatch-next`` re-dispatches the task; the analyst's
+    modification reaches the executor via the modified-guidance marker (B.5),
+    not via state.
+    """
+    pi, ti = int(p), int(t)
+    si = int(s) if s is not None else None
+    with transaction(track_dir) as state:
+        tgt = target(state, pi, ti, si)
+        tgt["status"] = "pending"
+        clean(tgt, {"status", "retry_count", "last_failure_summary"})
+        _set_current_indices(state, pi, ti, si)
+        state["updated_at"] = now_iso()
+    return load(track_dir)

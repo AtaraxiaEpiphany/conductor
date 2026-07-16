@@ -17,8 +17,8 @@ from pathlib import Path
 from unittest import TestCase, main
 
 from scripts.track_state.core import load, save
-from scripts.track_state.mutations import _do_fail
-from scripts.track_state.constants import MAX_RETRIES
+from scripts.track_state.mutations import _do_fail, cmd_set_max_retries
+from scripts.track_state.constants import MAX_RETRIES, task_max_retries
 
 
 def _recent_iso():
@@ -77,6 +77,93 @@ class RetryPolicyTests(TestCase):
         retry_count, state = _do_fail(d, 1, 1, None, "boom", retryable=False)
         self.assertEqual(retry_count, 0)
         self.assertEqual(_task_status(d), "failed")
+
+
+def _track_dir_with_max_retries(max_retries):
+    """A track whose first task carries a per-task ``max_retries`` override."""
+    d = tempfile.mkdtemp()
+    Path(d, "plan.md").write_text("# Plan\n\n## Phase 1: Build\n- [ ] Task A\n")
+    save(d, {
+        "track_id": "test", "type": "feature", "status": "in_progress",
+        "current_phase_index": 1, "current_task_index": 1,
+        "updated_at": _recent_iso(),
+        "phases": [{"name": "Phase 1", "status": "pending",
+                    "tasks": [{"name": "Task A", "status": "pending",
+                               "max_retries": max_retries}]}],
+    })
+    return d
+
+
+class TaskMaxRetriesResolverTests(TestCase):
+    def test_override_returned_when_valid(self):
+        self.assertEqual(task_max_retries({"max_retries": 5}), 5)
+        self.assertEqual(task_max_retries({"max_retries": 1}), 1)
+
+    def test_global_fallback_when_absent(self):
+        self.assertEqual(task_max_retries({}), MAX_RETRIES)
+
+    def test_global_fallback_when_invalid(self):
+        # Defensive: 0 / negative / non-int must not zero out the retry budget.
+        self.assertEqual(task_max_retries({"max_retries": 0}), MAX_RETRIES)
+        self.assertEqual(task_max_retries({"max_retries": -3}), MAX_RETRIES)
+        self.assertEqual(task_max_retries({"max_retries": "3"}), MAX_RETRIES)
+        self.assertEqual(task_max_retries(None), MAX_RETRIES)
+
+
+class PerTaskRetryBudgetTests(TestCase):
+    def test_raised_budget_requeues_until_override(self):
+        # max_retries=5 → requeue (pending) while retry_count < 5.
+        d = _track_dir_with_max_retries(5)
+        for _ in range(5):
+            _do_fail(d, 1, 1, None, "boom")
+        state = load(d)
+        task = state["phases"][0]["tasks"][0]
+        self.assertEqual(task["status"], "pending")  # retry_count 4 < 5
+        self.assertEqual(task["retry_count"], 4)
+        # One more flips to failed (retry_count 5 >= 5).
+        _do_fail(d, 1, 1, None, "boom")
+        self.assertEqual(_task_status(d), "failed")
+        self.assertEqual(load(d)["phases"][0]["tasks"][0]["retry_count"], 5)
+
+    def test_lowered_budget_fails_immediately(self):
+        # max_retries=1 → first failure (retry_count 0 < 1 → pending); second
+        # (1 >= 1) → failed. So one requeue, then terminal.
+        d = _track_dir_with_max_retries(1)
+        _do_fail(d, 1, 1, None, "boom")
+        self.assertEqual(_task_status(d), "pending")
+        _do_fail(d, 1, 1, None, "boom")
+        self.assertEqual(_task_status(d), "failed")
+
+    def test_absent_override_matches_global_behavior(self):
+        # No max_retries field → identical to the global policy (still pending at
+        # MAX_RETRIES-1 fails, failed at MAX_RETRIES).
+        d = _track_dir()
+        for _ in range(MAX_RETRIES):
+            _do_fail(d, 1, 1, None, "boom")
+        self.assertEqual(_task_status(d), "pending")
+        _do_fail(d, 1, 1, None, "boom")
+        self.assertEqual(_task_status(d), "failed")
+
+
+class SetMaxRetriesCliTests(TestCase):
+    def test_writes_override_and_validates(self):
+        import contextlib, io
+        d = _track_dir()
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            cmd_set_max_retries(d, 1, 1, None, max_retries=5)
+        self.assertEqual(load(d)["phases"][0]["tasks"][0]["max_retries"], 5)
+
+    def test_rejects_non_positive(self):
+        import contextlib, io
+        d = _track_dir()
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            cmd_set_max_retries(d, 1, 1, None, max_retries=0)
+        out = buf.getvalue()
+        self.assertIn("must be a positive integer", out)
+        # Field not written on rejection.
+        self.assertNotIn("max_retries", load(d)["phases"][0]["tasks"][0])
 
 
 if __name__ == "__main__":
