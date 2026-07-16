@@ -163,7 +163,12 @@ Save state: `2.4_workflow`.
    ```
 
 6. Save state: `2.5_finalization`.
-7. Ask user: "Create an initial track now, or later?" If later → commit Phase 1 → HALT.
+7. Ask user: "Create an initial track now, or later?" If later → **commit Phase 1 scoped (never `git add -A`)**, then HALT. The staged scope is the same setup-owned tree §3.6 commits — `conductor/` (incl. `setup_state.json` and `.conductor/analysis.json`), the `CLAUDE.md` TOC append, the `.gitignore` conductor block — staged **after** `2.5_finalization` is saved so the marker is included:
+   ```bash
+   git add conductor/ CLAUDE.md .gitignore
+   git diff --cached --quiet || git commit -m "chore(conductor): Scaffold conductor setup (no initial track)"
+   ```
+   On re-entry (user later picks "create track now"), §3.0 → `/conductor:new-track` owns the track commit; setup's §3.6 then re-runs this same scoped commit idempotently (the `--quiet` guard makes it a no-op if already committed). A defensive re-run must never duplicate the commit and must never leave `setup_state.json` uncommitted.
 8. Summarize Phase 1 actions.
 
 ---
