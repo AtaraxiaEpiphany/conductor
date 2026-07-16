@@ -23,6 +23,7 @@ from scripts.track_state.core import save, load
 from scripts.track_state.dispatch import (
     cmd_step, _phase_cp_write_marker, _phase_cp_read_marker, _phase_cp_marker_path,
     _skip_analysis_write_marker, _skip_analysis_marker_path)
+from scripts.track_state.dispatch import cmd_dispatch_finalize
 
 
 def _recent_iso():
@@ -74,6 +75,18 @@ def _step(track_dir):
     sys.stderr = io.StringIO()
     try:
         cmd_step(track_dir)
+        return json.loads(sys.stdout.getvalue())
+    finally:
+        sys.stdout, sys.stderr = old_out, old_err
+
+
+def _finalize(track_dir):
+    """Capture cmd_dispatch_finalize stdout as a dict."""
+    old_out, old_err = sys.stdout, sys.stderr
+    sys.stdout = io.StringIO()
+    sys.stderr = io.StringIO()
+    try:
+        cmd_dispatch_finalize(track_dir)
         return json.loads(sys.stdout.getvalue())
     finally:
         sys.stdout, sys.stderr = old_out, old_err
@@ -250,6 +263,63 @@ class StepFinalizeRouteTests(TestCase):
         self.assertEqual(out["action"], "dispatch")  # advances to Task B
         self.assertIsNone(inflight.read(d, 1, 1, None),
                           "finalize must clear Task A's inflight marker")
+
+    def test_dispatch_finalize_breaks_inflight_loop(self):
+        # Regression for the dispatch-dedupe flailing loop. When a dispatch is
+        # in flight (in_progress + HEAD == start_sha + no result.json),
+        # `track-state step` re-emits `dispatch` (the no-retry-burn contract),
+        # the PreToolUse:Agent hook denies the spawn, and its deny reason now
+        # prescribes `dispatch-finalize` as the terminating recovery. This test
+        # pins that finalize actually breaks the stuck state: it clears the
+        # inflight marker (so the hook releases the guard) and the next
+        # dispatch stamps a FRESH start_sha — a new spawn is then allowed,
+        # instead of the orchestrator being wedged against a stale marker that
+        # never advanced.
+        from scripts.lib import dispatch_inflight as inflight
+        state = _make_state(phases=[{"name": "Phase 1", "status": "pending", "tasks": [
+            {"name": "Task A", "status": "pending"}]}])
+        d = _git_track_dir(state)
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+
+        first = _step(d)  # locks Task A + Start commit + stamps inflight marker
+        self.assertEqual(first["action"], "dispatch")
+        stuck_marker = inflight.read(d, 1, 1, None)
+        self.assertIsNotNone(stuck_marker, "dispatch stamps the inflight marker")
+        stuck_sha = stuck_marker["start_sha"]
+
+        # Simulate "agent in flight, never returned": no result.json, no impl
+        # commit. `step` re-emits dispatch (no-retry-burn) — the exact state
+        # the deny hook guards. HEAD is still the stuck start_sha.
+        second = _step(d)
+        self.assertEqual(second["action"], "dispatch")
+        self.assertEqual(inflight.read(d, 1, 1, None)["start_sha"], stuck_sha,
+                         "marker still points at the never-advanced start_sha")
+
+        # The terminating recovery the deny reason prescribes. The emitted
+        # finalize result normalizes the verdict to lowercase ("failure").
+        fin = _finalize(d)
+        self.assertEqual(fin.get("status"), "failure",
+                         "dispatch-finalize must synthesize a failure from a "
+                         "task that produced no result.json / no impl commit")
+
+        # The guard is released: the stuck marker is cleared. (The task resets
+        # to pending for a no-retry-burn re-dispatch — correct; what matters
+        # is the OLD marker with its never-advanced start_sha is gone.)
+        self.assertIsNone(inflight.read(d, 1, 1, None),
+                          "finalize must clear the inflight marker so the "
+                          "dedupe hook stops guarding the stuck start_sha")
+
+        # The next dispatch stamps a FRESH marker with a new start_sha (the
+        # reset's Start commit), so a subsequent spawn is allowed — not denied
+        # against the old stuck SHA. This is the loop terminating.
+        third = _step(d)
+        self.assertEqual(third["action"], "dispatch")
+        fresh_marker = inflight.read(d, 1, 1, None)
+        self.assertIsNotNone(fresh_marker, "a fresh dispatch re-stamps the marker")
+        self.assertNotEqual(
+            fresh_marker["start_sha"], stuck_sha,
+            "loop not terminated: the new dispatch reused the stuck "
+            "start_sha — a subsequent spawn would be denied against it")
 
 
 class StepExhaustedTests(TestCase):

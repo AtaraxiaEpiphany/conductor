@@ -128,10 +128,18 @@ class DispatchDedupeHookTests(TestCase):
         rc, out = _run_hook(self.repo)
         spec = out.get("hookSpecificOutput", {})
         self.assertEqual(spec.get("permissionDecision"), "deny")
-        # Reason must name the task and point to `track-state step`.
+        # Reason must name the task and prescribe the TERMINATING recovery
+        # (`dispatch-finalize`), NOT `step`. In this exact state `step`
+        # re-emits `dispatch` and would loop the model back here, so the
+        # directive must be the finalize command. We assert the prescribed
+        # action (the `Run \`...<cmd>...\`` clause), not mere substring
+        # presence — the reason legitimately *warns against* `step` too.
         reason = spec.get("permissionDecisionReason", "")
         self.assertIn("P1T1", reason)
-        self.assertIn("track-state step", reason)
+        self.assertIn("dispatch-finalize", reason)
+        self.assertIn('Run `track-state dispatch-finalize', reason)
+        # And it must explicitly warn off the looping path.
+        self.assertIn("Do NOT re-run", reason)
 
     def test_denies_explorer_too(self):
         _stamp_marker(self.track_dir, 1, 1, None, self.start_sha)

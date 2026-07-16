@@ -143,12 +143,22 @@ def main():
     # A dispatch is already in flight for this task → deny the second spawn.
     sha_hint = (start_sha or "?")[:8]
     loc = f"P{phase}T{task}" + (f".S{subtask}" if subtask is not None else "")
+    # IMPORTANT: do NOT point the model back at `track-state step` here. In this
+    # exact state (in_progress + HEAD == start_sha + no result.json) `step`
+    # takes its no-retry-burn branch and re-emits `action: dispatch`, so the
+    # model would spawn again → this hook denies again → `step` again: an
+    # infinite flailing loop that strands the task. The *terminating* recovery
+    # is `dispatch-finalize`, which synthesizes a FAILURE verdict from the
+    # locked-task state, advances the cursor, and clears this marker — breaking
+    # the loop. (See _resolve_finalize_target in track_state/dispatch.py.)
     reason = (
-        f"A {subagent_type} is already dispatched for {loc} (Start {sha_hint}); "
-        f"HEAD has not advanced past the Start commit and no result.json was "
-        f"written — the prior dispatch is still in flight. Do NOT dispatch again. "
-        f"Call `track-state step \"{track_dir}\"` to finalize the in-flight "
-        f"dispatch (or resume it) instead."
+        f"A {subagent_type} is already in flight for {loc} (Start {sha_hint} "
+        f"still HEAD, no result.json). Do NOT dispatch again. Do NOT re-run "
+        f"`track-state step` — in this state it hands you another `dispatch` "
+        f"and you will loop here. Run "
+        f"`track-state dispatch-finalize \"{track_dir}\"` to synthesize a "
+        f"FAILURE verdict from the locked task and advance the track; that "
+        f"clears this guard."
     )
     print(f"⚠️  CONDUCTOR DEDUPE: denied duplicate {subagent_type} dispatch for "
           f"{loc} (Start {sha_hint} still HEAD, no result.json).",

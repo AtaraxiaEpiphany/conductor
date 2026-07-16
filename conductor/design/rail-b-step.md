@@ -80,7 +80,13 @@ straight to the next leaf — and are listed as B-full graduations below.
   in-flight marker (`.conductor/.dispatch-inflight-*`, same predicate as the
   no-retry-burn branch) exists. Read-only agents and wave parallelism (separate
   worktrees, no marker, no `in_progress` cursor in the worktree state) are exempt;
-  only the serial-spine same-task re-dispatch is denied.
+  only the serial-spine same-task re-dispatch is denied. The hook's deny reason
+  prescribes the *terminating* recovery `track-state dispatch-finalize` (which
+  synthesizes a failure from the locked-task state, clears the stuck marker, and
+  lets the next dispatch stamp a fresh `start_sha`) — **not** `track-state step`,
+  which in this exact state re-emits `dispatch` and would loop the orchestrator
+  back into the deny (`step`→`dispatch`→deny→`step`). Pinned by
+  `test_dispatch_finalize_breaks_inflight_loop`.
 
 ## Routing ordering (matches Rail A)
 
