@@ -8,7 +8,7 @@ Conductor coordinates software construction by managing the full lifecycle of de
 
 - **Track-based project management** — Work is organized into tracks (feature / bugfix / chore / docs), each with spec, plan, state, and handoff files
 - **TDD enforcement** — Mandatory test-driven development with an 80 % coverage gate (server-side verification, not agent self-report)
-- **Subagent orchestration** — A main orchestrator dispatches 12 specialized AI agents for isolated, focused work
+- **Subagent orchestration** — A main orchestrator dispatches 22 specialized AI agents for isolated, focused work
 - **State machine CLI** — `track-state` manages all state mutations atomically; `plan.md` stays in sync as the human-readable mirror
 - **Execution firewall** — 6 mandatory pre-action checks (F1–F6) and 11 anti-patterns (V1–V11) prevent workflow violations
 - **Session continuity** — Handoff files, state recovery on resume, compression priority hints, and SubagentStop result-block recovery — an agent that crashes before emitting its result block earns a recovery turn instead of being silently lost
@@ -70,20 +70,23 @@ Commands:
 
 ```
 conductor-plugin/
-├── agents/                 12 specialised agent definitions (.md)
+├── agents/                 22 specialised agent definitions (.md)
 ├── bin/track-state         Shell wrapper for the state CLI
-├── conductor/design/       Decision records & doc conventions (serial-execution, loop-heartbeat …)
-├── hooks/hooks.json        9 hook event types, 12 matcher entries
-├── runtime/core-contract.md  System prompt injected into every session
+├── conductor/design/       Decision records (serial-execution, loop-heartbeat, rail-b step/wave …)
+├── hooks/hooks.json        9 hook event types, 15 matcher entries
+├── runtime/                System prompt material injected into sessions
+│   ├── core-contract.md      Main-session contract (F1–F6, V1–V11)
+│   ├── subagent-firewall.md  Subagent safety floor (dispatch injection)
+│   └── contracts/            Per-role contracts (review schema, refactor, doc conventions …)
 ├── schemas/                JSON Schema for track-state.json
 ├── scripts/
-│   ├── lib/                Shared library (hook_io, logging, validation …)
+│   ├── lib/                Shared library (env, dispatch_inflight, hook_io, logging, validation …)
 │   ├── track_state/        State machine CLI package
-│   └── *.py                Hook scripts (session start/end, subagent, batch …)
-├── skills/                 8 slash-command skills (implement, new-track, wiki …)
+│   └── *.py                Hook scripts (session start/end, subagent, dispatch-dedupe, tripwire …)
+├── skills/                 12 slash-command skills (implement, new-track, wiki …)
 └── templates/              Templates copied into target projects
-    ├── code-styleguides/   9 language style guides
-    ├── dev-commands/       7 language dev-command templates
+    ├── code-styleguides/   10 language style guides
+    ├── dev-commands/       8 language dev-command templates
     └── testing/            Testing strategy template
 ```
 
@@ -92,18 +95,27 @@ conductor-plugin/
 | Agent | Model | Purpose |
 |-------|-------|---------|
 | `task-executor` | sonnet | TDD implementation (steps 3–8) |
-| `explorer` | sonnet | Read-only code investigation |
-| `phase-checker` | sonnet | Phase checkpoint verification |
-| `code-reviewer` | sonnet | Deep code review against spec/plan |
+| `explorer` | sonnet | Read-only code investigation, Layer-0 map |
 | `spec-planner` | sonnet | Generate spec.md + plan.md |
 | `spec-reviewer` | haiku | Interactive spec/plan review |
+| `strategy-writer` | sonnet | Project-specific testing/strategy.md from real test layout |
+| `project-analyzer` | sonnet | Brownfield project detection |
+| `phase-checker` | sonnet | Phase checkpoint synthesizer |
+| `ac-tracer` | sonnet | AC-evidence-trace phase verification (read-only) |
+| `test-runner` | haiku | L1 verify-only phase tier — runs the suite once (read-only) |
+| `code-reviewer` | sonnet | Deep code review against spec/plan |
+| `refuter` | sonnet | Adversarial read-only verdict/finding verifier |
+| `refactorer` | sonnet | Bounded tactical refactor (behavior-preserving) |
+| `apply-fixes` | sonnet | Bounded remediation patcher (one finding chunk) |
+| `skip-analyst` | haiku | Failed-task skip analysis |
+| `test-digester` | haiku | Read-only test/coverage digest (delegated by task-executor) |
+| `doc-probe` | haiku | Read-only scoped design-doc digester |
+| `log-checker` | haiku | Read-only git-history verifier for doc-update entries |
 | `corpus-writer` | sonnet | Doc-sync Phase 1 — corpus edits + graduation |
 | `wiki-synthesizer` | sonnet | Doc-sync Phase 2 — overview/purpose/log synthesis |
 | `doc-linter` | sonnet | Docs wiki health-check (broken refs, stale claims, gaps) |
-| `wiki-researcher` | sonnet | Wiki topic query — cited answer synthesis (read-only) |
-| `wiki-differ` | sonnet | Wiki-vs-codebase drift detection (read-only) |
-| `skip-analyst` | haiku | Failed-task skip analysis |
-| `project-analyzer` | sonnet | Brownfield project detection |
+| `wiki-researcher` | haiku | Wiki topic query — cited answer synthesis (read-only) |
+| `wiki-differ` | haiku | Wiki-vs-codebase drift detection (read-only) |
 
 ### Execution Firewall
 

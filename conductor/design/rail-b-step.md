@@ -72,6 +72,15 @@ straight to the next leaf — and are listed as B-full graduations below.
   finalize (synthesizing a result from the committed code if the agent forgot to
   write one). Core to the long-running goal; covered by
   `test_interrupted_before_work_redispatches_no_retry_burn`.
+- **Deterministic single-writer dispatch.** The no-retry-burn branch re-dispatches
+  *after* the first agent has returned (or never ran). A different gap — a *second
+  concurrent* `step` call while the first task-executor/explorer is still in flight —
+  is closed by the `on-dispatch-dedupe.py` PreToolUse:Agent hook, which
+  `permissionDecision:"deny"`s a second spawn for the same locked task while an
+  in-flight marker (`.conductor/.dispatch-inflight-*`, same predicate as the
+  no-retry-burn branch) exists. Read-only agents and wave parallelism (separate
+  worktrees, no marker, no `in_progress` cursor in the worktree state) are exempt;
+  only the serial-spine same-task re-dispatch is denied.
 
 ## Routing ordering (matches Rail A)
 
