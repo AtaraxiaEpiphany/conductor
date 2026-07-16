@@ -6,7 +6,7 @@ model: sonnet
 effort: high
 # Test stdout is absorbed by the §4.5 test-digester child, so the parent needs no
 # headroom for buffering pytest/cargo/go-test output.
-maxTurns: 48
+maxTurns: 64
 permissionMode: acceptEdits
 ---
 
@@ -304,7 +304,7 @@ Only write to handoff when execution is interrupted or fails — NOT on every st
 | `on-subagent-stop` recovery fails | Write interruption log + report FAILURE |
 | Normal completion (commit succeeded) | Do NOT write — `process-result` handles handoff |
 
-**The 38-round tripwire is a hard number, not a percentage** (a small-window model can't self-assess "~80% of maxTurns" — count rounds instead). Once you cross **~38 rounds** without committing, **stop implementation work** and spend the remaining ~10 rounds on the two shutdown artifacts below. Tripping early is correct: it hands a rich `### Attempt` record to a fresh retry (Layer 3.R) *before* the window overflows; tripping late loses the retry to a context-overflow crash with no handoff.
+**The 38-round tripwire is a hard number, not a percentage** (a small-window model can't self-assess "~80% of maxTurns" — count rounds instead). Once you cross **~38 rounds** without committing, **stop implementation work** and spend the remaining rounds (maxTurns is 64, so ~26 remain) on the two shutdown artifacts below. Tripping early is correct: it hands a rich `### Attempt` record to a fresh retry (Layer 3.R) *before* the window overflows; tripping late loses the retry to a context-overflow crash with no handoff. **This tripwire is also code-enforced**: the PreToolUse hook `on-pre-tool-tripwire.py` counts your rounds against the locked task and injects a `⚠️ CONDUCTOR TRIPWIRE` directive at ~38 rounds — when you see it, comply immediately. The extra turns (64 vs the prior 48) are happy-path headroom for legitimate large tasks, not license to overrun; the code tripwire still fires at 38 regardless.
 
 ### How to write
 

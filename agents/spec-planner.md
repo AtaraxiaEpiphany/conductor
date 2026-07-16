@@ -4,7 +4,7 @@ description: Generates spec.md and plan.md from user requirements and project co
 tools: Read, Write, Grep, Glob
 model: sonnet
 effort: medium
-maxTurns: 45
+maxTurns: 60
 ---
 
 # Conductor Spec & Plan Generator

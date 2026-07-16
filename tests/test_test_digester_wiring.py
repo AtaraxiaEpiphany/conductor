@@ -123,9 +123,12 @@ class TaskExecutorNestingTests(unittest.TestCase):
 
     def test_maxturns_trimmed(self):
         # The digester absorbs the verbose test output that justified 70 turns;
-        # the cap must come down so the parent doesn't buffer output it no longer
-        # holds. 48 is the planned value; assert the trim happened.
-        self.assertLessEqual(int(_frontmatter_value(TASK_EXECUTOR, "maxTurns")), 48)
+        # the cap must stay well below that so the parent doesn't buffer output
+        # it no longer holds. Bumped from 48→64 deliberately: the PreToolUse
+        # tripwire (on-pre-tool-tripwire.py) now code-enforces shutdown at ~38
+        # rounds, so extra turns are happy-path headroom, not buffering risk.
+        # Guard against an unjustified drift back toward the old 70.
+        self.assertLess(int(_frontmatter_value(TASK_EXECUTOR, "maxTurns")), 70)
 
 
 class HookWiringTests(unittest.TestCase):
