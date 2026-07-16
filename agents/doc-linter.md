@@ -24,11 +24,11 @@ You are a **Conductor Documentation Lint Agent** — a read-only analysis subage
 
 ## 2.0 ASSIGNMENT (provided by orchestrator)
 
-| Parameter      | Description                              |
-| -------------- | ---------------------------------------- |
-| `PROJECT_DIR`  | Absolute path to the project root        |
-| `MODE`         | Optional. `full` (default) / `refute` — see §2.5. Omitting it is identical to `full` (backward-compatible). |
-| `FINDINGS_JSON` | Optional. Path to a prior lint result JSON; consumed only by `refute` mode. |
+| Parameter       | Description                                                                                                 |
+| --------------- | ----------------------------------------------------------------------------------------------------------- |
+| `PROJECT_DIR`   | Absolute path to the project root                                                                           |
+| `MODE`          | Optional. `full` (default) / `refute` — see §2.5. Omitting it is identical to `full` (backward-compatible). |
+| `FINDINGS_JSON` | Optional. Path to a prior lint result JSON; consumed only by `refute` mode.                                 |
 
 ---
 
@@ -111,19 +111,13 @@ Find documents in `conductor/index.md` that have no inbound `[[wikilinks]]` from
 
 ### 4.5 Log Consistency
 
-Verify `conductor/log.md` entries match actual git history. This check splits
-across two tool sets: the existence/track-ID checks (steps 1–2) are read-only and
-done directly; the git-history attribution (step 3) needs `Bash`, which this agent
-does **not** have — delegate that step to a `log-checker` subagent (the only
-`Agent` dispatch this agent performs; see §7.0).
+Verify `conductor/log.md` entries match actual git history. This check splits across two tool sets: the existence/track-ID checks (steps 1–2) are read-only and done directly; the git-history attribution (step 3) needs `Bash`, which this agent does **not** have — delegate that step to a `log-checker` subagent (the only `Agent` dispatch this agent performs; see §7.0).
 
 **Method:**
 1. Read all log entries.
 2. For each entry, verify the track ID exists in `conductor/tracks.md` (Read/Grep).
 3. For entries with `DOC_UPDATE` operation, collect `(track_id, referenced_file)`
-   pairs and delegate them **once** (batched) to a `log-checker` subagent, which
-   runs the git-history attribution via git notes and returns mismatches. If there
-   are no `DOC_UPDATE` entries, skip the dispatch. Dispatch `log-checker`, prompt:
+   pairs and delegate them **once** (batched) to a `log-checker` subagent, which runs the git-history attribution via git notes and returns mismatches. If there are no `DOC_UPDATE` entries, skip the dispatch. Dispatch `log-checker`, prompt:
    ```
    PROJECT_DIR: <project root>
    Verify the git-history attribution for these conductor/log.md DOC_UPDATE
@@ -133,10 +127,7 @@ does **not** have — delegate that step to a `log-checker` subagent (the only
    - track=<TID> file=<conductor/path/to/file>
    - track=<TID> file=<...>
    ```
-4. Fold the mismatches `log-checker` returns into `LOG_ISSUES` (WARN). If
-   `log-checker` reports `STATUS: FAILURE` (the git step could not run), surface
-   that as a single `LOG_ISSUES` WARN ("log attribution unverifiable") rather than
-   fabricating a clean PASS.
+4. Fold the mismatches `log-checker` returns into `LOG_ISSUES` (WARN). If `log-checker` reports `STATUS: FAILURE` (the git step could not run), surface that as a single `LOG_ISSUES` WARN ("log attribution unverifiable") rather than fabricating a clean PASS.
 
 ### 4.6 Missing Provenance Frontmatter
 
@@ -167,11 +158,11 @@ Find places where two corpus docs make claims that cannot both be true. This is 
 
 Aggregate findings into a severity summary:
 
-| Severity | Condition                                   |
-| -------- | ------------------------------------------- |
-| PASS     | Zero ERROR findings, ≤ 2 WARN findings     |
-| WARN     | Zero ERROR findings, > 2 WARN findings     |
-| FAIL     | Any ERROR findings, or > 5 WARN findings   |
+| Severity | Condition                                |
+| -------- | ---------------------------------------- |
+| PASS     | Zero ERROR findings, ≤ 2 WARN findings   |
+| WARN     | Zero ERROR findings, > 2 WARN findings   |
+| FAIL     | Any ERROR findings, or > 5 WARN findings |
 
 ---
 

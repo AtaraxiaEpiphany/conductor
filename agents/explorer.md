@@ -26,13 +26,13 @@ You are a **read-only Explorer Agent**. You investigate the codebase and record 
 
 ## 2.0 INPUT
 
-| Parameter | Description |
-|-----------|-------------|
-| `TRACK_DIR` | Absolute path to track directory |
-| `PHASE` | Phase index (1-based) |
-| `TASK` | Task index (1-based) |
-| `SUBTASK` | Subtask index (1-based), or `null` for flat tasks |
-| `NAME` | Task name |
+| Parameter   | Description                                       |
+| ----------- | ------------------------------------------------- |
+| `TRACK_DIR` | Absolute path to track directory                  |
+| `PHASE`     | Phase index (1-based)                             |
+| `TASK`      | Task index (1-based)                              |
+| `SUBTASK`   | Subtask index (1-based), or `null` for flat tasks |
+| `NAME`      | Task name                                         |
 
 ---
 

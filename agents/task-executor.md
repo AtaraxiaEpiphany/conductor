@@ -51,14 +51,7 @@ Under `conductor:parallel` you may be dispatched with an extra parameter:
 |-----------|-------------|
 | `WORKTREE_DIR` | Absolute path to your own `git worktree` checkout |
 
-When `WORKTREE_DIR` is present, **`cd "{WORKTREE_DIR}"` as your first action** —
-Bash cwd persists, so every subsequent `git`/edit lands in your isolated worktree.
-Your `TRACK_DIR` already points into it, so `track-state write-result "{TRACK_DIR}"`
-writes your own worktree's `result.json` — what `wave-finalize` reads back. Behave
-**identically** to serial mode otherwise (TDD, coverage, commit on the worktree
-branch). You do NOT call dispatch-finalize — the orchestrator squash-merges your
-branch via `wave-finalize`; your job ends at the result block. A `wave-agent.marker`
-under `.conductor/` tells SubagentStop to let you stop normally.
+When `WORKTREE_DIR` is present, **`cd "{WORKTREE_DIR}"` as your first action** — Bash cwd persists, so every subsequent `git`/edit lands in your isolated worktree.  Your `TRACK_DIR` already points into it, so `track-state write-result "{TRACK_DIR}"` writes your own worktree's `result.json` — what `wave-finalize` reads back. Behave **identically** to serial mode otherwise (TDD, coverage, commit on the worktree branch). You do NOT call dispatch-finalize — the orchestrator squash-merges your branch via `wave-finalize`; your job ends at the result block. A `wave-agent.marker` under `.conductor/` tells SubagentStop to let you stop normally.
 
 ---
 
@@ -84,13 +77,9 @@ Read `conductor/index.md` → the **Scoped Docs** table. For each entry whose **
 
 ### Layer 0(c): Nested read fan-out (OPT-IN — else skip to Layer 1)
 
-**Opt-in gate** (both checked): the task name carries a `[Probe]` marker **OR** env
-`CONDUCTOR_TASK_FANOUT=1` is set. If NEITHER → this layer is skipped; do the
-Layer 0(b) reads directly (the default — bulk reads stay in your context).
+**Opt-in gate** (both checked): the task name carries a `[Probe]` marker **OR** env `CONDUCTOR_TASK_FANOUT=1` is set. If NEITHER → this layer is skipped; do the Layer 0(b) reads directly (the default — bulk reads stay in your context).
 
-**When opted in** and Layer 0(b) matched **more than one** doc, replace the
-direct reads with a fan-out: **Dispatch `doc-probe`** once per matching doc **in
-ONE message** (parallel `Agent` calls), each prompted:
+**When opted in** and Layer 0(b) matched **more than one** doc, replace the direct reads with a fan-out: **Dispatch `doc-probe`** once per matching doc **in ONE message** (parallel `Agent` calls), each prompted:
 
 ```
 TRACK_DIR={td}
@@ -98,17 +87,9 @@ DOC_PATH={matched doc path}
 TASK_SCOPE={one-two line summary of this task's areas/AC keywords}
 ```
 
-Collect every `---PROBE RESULT---` block (`filter-subagent-output` trims the
-rest). Treat each digest as the doc's load: honor its `GOTCHAS`/`SCOPE_NOTES`,
-jump to its `ANCHORS` for detail. Drop `STATUS: irrelevant` docs. If a digest is
-insufficient for a specific decision, read that one doc's named section directly
-at the point of need.
+Collect every `---PROBE RESULT---` block (`filter-subagent-output` trims the rest). Treat each digest as the doc's load: honor its `GOTCHAS`/`SCOPE_NOTES`, jump to its `ANCHORS` for detail. Drop `STATUS: irrelevant` docs. If a digest is insufficient for a specific decision, read that one doc's named section directly at the point of need.
 
-**Anti-pattern guard (load-bearing):** `doc-probe` children do *scoped reads*
-and return RESULT blocks; they **never continue your work** — you remain the
-implementer. Continuation is your yield→stop→orchestrator-re-dispatch path
-(Layer 3.R + §7.0), not spawn-child. Fan-out turns count against your `maxTurns`
-(§7.0 tripwire): one parallel dispatch is one round, not N.
+**Anti-pattern guard (load-bearing):** `doc-probe` children do *scoped reads* and return RESULT blocks; they **never continue your work** — you remain the implementer. Continuation is your yield→stop→orchestrator-re-dispatch path (Layer 3.R + §7.0), not spawn-child. Fan-out turns count against your `maxTurns` (§7.0 tripwire): one parallel dispatch is one round, not N.
 
 ### Layer 1: Task Identity (READ FIRST)
 
@@ -124,11 +105,8 @@ Extract from task line:
 If the Layer-1 task tag is `[Docs]`, `[Config]`, or `[Chore]` → **TDD-exempt**
 (§4.0 → Step 8 only; §5.0 exempts F2/F3). For these tags:
 
-- **Skip Layer 2** — no AC/TC annotations, so spec.md AC extraction doesn't apply.
-  (If the task description or Layer 0 notes name an out-of-scope boundary, honor
-  it directly.)
-- **In Layer 3, skip `testing/strategy.md` and the styleguide** — read only
-  `task-workflow.md` Step 8 (commit-message format).
+- **Skip Layer 2** — no AC/TC annotations, so spec.md AC extraction doesn't apply.  (If the task description or Layer 0 notes name an out-of-scope boundary, honor it directly.)
+- **In Layer 3, skip `testing/strategy.md` and the styleguide** — read only `task-workflow.md` Step 8 (commit-message format).
 
 Then go **straight to §4.0 Step 8**. For any other tag → continue to Layer 2.
 
@@ -154,25 +132,16 @@ Read the relevant style guide from `conductor/workflow/code-styleguides/`.
 
 ### Layer 3.R: Retry Context (if prior attempts exist)
 
-You already loaded this task's handoff in Layer 0(a). Scan it for prior
-`### Attempt N/M` records. **None** (only Exploration Notes, or "not found") →
-fresh attempt → skip this layer.
+You already loaded this task's handoff in Layer 0(a). Scan it for prior `### Attempt N/M` records. **None** (only Exploration Notes, or "not found") → fresh attempt → skip this layer.
 
 **Prior `### Attempt` records** → you are a retry. Read the most recent one:
 - **What Was Done** — work the prior attempt left behind
 - **Failure Reason** — why it stopped
 - **Suggested Next Step** — the recommended next approach
 
-Do NOT repeat the same approach; focus on "Suggested Next Step". The handoff is
-the source of truth — if it shows prior attempts, you are a retry even if
-`ATTEMPT` was under-reported. (Re-fetch if dropped from context:
-`track-state get-handoff {TRACK_DIR} {PHASE} {TASK}`, adding
-`--subtask {SUBTASK}` when `SUBTASK` is not null.)
+Do NOT repeat the same approach; focus on "Suggested Next Step". The handoff is the source of truth — if it shows prior attempts, you are a retry even if `ATTEMPT` was under-reported. (Re-fetch if dropped from context: `track-state get-handoff {TRACK_DIR} {PHASE} {TASK}`, adding `--subtask {SUBTASK}` when `SUBTASK` is not null.)
 
-**Check for salvageable work**: the prior attempt may have left uncommitted files
-(listed under "What Was Done"). `git status` to see them. If usable → build on
-top; if broken → `git checkout -- <file>` to discard. NEVER leave broken partial
-code in place.
+**Check for salvageable work**: the prior attempt may have left uncommitted files (listed under "What Was Done"). `git status` to see them. If usable → build on top; if broken → `git checkout -- <file>` to discard. NEVER leave broken partial code in place.
 
 ---
 
@@ -200,9 +169,7 @@ Check task tag to determine workflow:
 
 ## 4.5 TEST EXECUTION VIA DIGESTER (nested)
 
-Dispatch the read-only `test-digester` child to run the suite and digest it —
-the verbose output stays in **its** sub-context; you receive only a compact
-`---TEST DIGEST RESULT---` block (`filter-subagent-output` trims the rest).
+Dispatch the read-only `test-digester` child to run the suite and digest it — the verbose output stays in **its** sub-context; you receive only a compact `---TEST DIGEST RESULT---` block (`filter-subagent-output` trims the rest).
 
 **Step 3 (Red), `PURPOSE=red`.** Dispatch `test-digester`, prompt:
 
@@ -250,11 +217,7 @@ SHA handling: orchestrator appends SHAs — you do NOT modify plan markers.
    (`[Probe]` marker or `CONDUCTOR_TASK_FANOUT=1`), one parallel dispatch per
    matching Layer 0(b) doc.
 
-Do not widen either child beyond its scoped mandate ("run the resolved command
-once and digest it" / "read one doc and return a digest") — both are deliberate
-exceptions to keep bulk output out of your context (`tests/test_log_checker_wiring.py`
-pins which agents hold the `Agent` tool; `tests/test_doc_probe_wiring.py` pins the
-fan-out). Step 5 adds no `Agent`-tool dispatch kind, so this fence needs no widening.
+Do not widen either child beyond its scoped mandate ("run the resolved command once and digest it" / "read one doc and return a digest") — both are deliberate exceptions to keep bulk output out of your context (`tests/test_log_checker_wiring.py` pins which agents hold the `Agent` tool; `tests/test_doc_probe_wiring.py` pins the fan-out). Step 5 adds no `Agent`-tool dispatch kind, so this fence needs no widening.
 
 Violation → STOP → `WORKFLOW VIOLATION: <code>` → revert → restart.
 
@@ -341,23 +304,13 @@ Only write to handoff when execution is interrupted or fails — NOT on every st
 | `on-subagent-stop` recovery fails | Write interruption log + report FAILURE |
 | Normal completion (commit succeeded) | Do NOT write — `process-result` handles handoff |
 
-**The 38-round tripwire is a hard number, not a percentage** (a small-window
-model can't self-assess "~80% of maxTurns" — count rounds instead). Once you
-cross **~38 rounds** without committing, **stop implementation work** and spend
-the remaining ~10 rounds on the two shutdown artifacts below. Tripping early is
-correct: it hands a rich `### Attempt` record to a fresh retry (Layer 3.R)
-*before* the window overflows; tripping late loses the retry to a context-overflow
-crash with no handoff.
+**The 38-round tripwire is a hard number, not a percentage** (a small-window model can't self-assess "~80% of maxTurns" — count rounds instead). Once you cross **~38 rounds** without committing, **stop implementation work** and spend the remaining ~10 rounds on the two shutdown artifacts below. Tripping early is correct: it hands a rich `### Attempt` record to a fresh retry (Layer 3.R) *before* the window overflows; tripping late loses the retry to a context-overflow crash with no handoff.
 
 ### How to write
 
-Two mandatory artifacts, in this order — the handoff feeds the retry; `result.json`
-is the completion signal `process-result` reads (omit it and `on-subagent-stop`
-forces a recovery turn).
+Two mandatory artifacts, in this order — the handoff feeds the retry; `result.json` is the completion signal `process-result` reads (omit it and `on-subagent-stop` forces a recovery turn).
 
-**1. Handoff deviation log** (retry context, read via Layer 3.R). Pipe JSON on
-stdin — inline `--content '<json>'` breaks on quotes/`` ` ``/`$` (same reason as
-§6.1); `append-handoff` reads stdin when `--content` is absent:
+**1. Handoff deviation log** (retry context, read via Layer 3.R). Pipe JSON on stdin — inline `--content '<json>'` breaks on quotes/`` ` ``/`$` (same reason as §6.1); `append-handoff` reads stdin when `--content` is absent:
 
 ```bash
 track-state append-handoff "{TRACK_DIR}" {PHASE} {TASK} \

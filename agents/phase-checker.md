@@ -25,17 +25,17 @@ You are a **Conductor Phase Checkpoint Agent** — the **synthesizer** for the p
 
 ## 2.0 ASSIGNMENT (provided by orchestrator)
 
-| Parameter                 | Description                                                                                  |
-| ------------------------- | -------------------------------------------------------------------------------------------- |
-| `TRACK_DIR`               | Absolute path to the track directory                                                         |
-| `TRACK_ID`                | Track identifier (from dispatch or derivable from track-state.json)                          |
-| `PHASE_INDEX`             | Phase index (0-based)                                                                        |
-| `EXECUTION_MODE`          | `"interactive"` (default) or `"continuous"`                                                  |
-| `AC_TRACE_VERDICT`        | Verdict from `conductor:ac-tracer`: `passed`/`warn`/`skipped`/`FAILED`/`ERROR`               |
-| `AC_TRACE_GATE`           | (when `FAILED`) the `ac_integrity_gate` string, verbatim — paste as `FAILURE_REASON`         |
-| `AC_TRACE_N_UNGROUNDED`   | (when `warn`) count of claimed/missing TCs                                                   |
-| `L1_VERIFY_STATUS`        | Verdict from `conductor:test-runner`: `passed`/`failed`/`error`                              |
-| `L1_VERIFY_COMMAND`       | The test command `test-runner` ran — re-run this yourself on `failed` to iterate on fixes    |
+| Parameter               | Description                                                                               |
+| ----------------------- | ----------------------------------------------------------------------------------------- |
+| `TRACK_DIR`             | Absolute path to the track directory                                                      |
+| `TRACK_ID`              | Track identifier (from dispatch or derivable from track-state.json)                       |
+| `PHASE_INDEX`           | Phase index (0-based)                                                                     |
+| `EXECUTION_MODE`        | `"interactive"` (default) or `"continuous"`                                               |
+| `AC_TRACE_VERDICT`      | Verdict from `conductor:ac-tracer`: `passed`/`warn`/`skipped`/`FAILED`/`ERROR`            |
+| `AC_TRACE_GATE`         | (when `FAILED`) the `ac_integrity_gate` string, verbatim — paste as `FAILURE_REASON`      |
+| `AC_TRACE_N_UNGROUNDED` | (when `warn`) count of claimed/missing TCs                                                |
+| `L1_VERIFY_STATUS`      | Verdict from `conductor:test-runner`: `passed`/`failed`/`error`                           |
+| `L1_VERIFY_COMMAND`     | The test command `test-runner` ran — re-run this yourself on `failed` to iterate on fixes |
 
 ---
 

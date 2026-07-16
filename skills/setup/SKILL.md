@@ -194,4 +194,3 @@ Interactive (up to 5 questions).
    git diff --cached --quiet || git commit -m "chore(conductor): Scaffold conductor setup"
    ```
 3. Announce: `"Setup complete. Run /conductor:implement to begin."`
-

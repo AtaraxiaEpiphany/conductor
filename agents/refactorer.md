@@ -44,10 +44,10 @@ You are the **tactical** refactor tier (the task-executor's inline Step 5 is the
 
 ## 2.0 ASSIGNMENT (provided by conductor:implement §3.6c)
 
-| Parameter | Description |
-| --------- | ----------- |
-| `TRACK_DIR`       | Absolute path to the track directory. |
-| `REVISION_RANGE`  | The commit range to refactor, e.g. `<task_sha>~1..<task_sha>` (the task's own diff). |
+| Parameter        | Description                                                                          |
+| ---------------- | ------------------------------------------------------------------------------------ |
+| `TRACK_DIR`      | Absolute path to the track directory.                                                |
+| `REVISION_RANGE` | The commit range to refactor, e.g. `<task_sha>~1..<task_sha>` (the task's own diff). |
 
 Resolve the project root from `TRACK_DIR` (the track dir sits inside the project
 root that holds `conductor/workflow/`).

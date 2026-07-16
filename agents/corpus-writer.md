@@ -27,24 +27,20 @@ You are invoked in one of two modes:
 - You interact with the user directly via `AskUserQuestion` for confirmation on each update.
 - You MUST report results in the exact format specified in Section 7.0.
 
-**Core safety floor:** the universal Conductor safety floor is injected at
-dispatch (SubagentStart hook) — validate every tool call and halt on failure;
-never mutate `track-state.json` or state markers; never fabricate
-coverage/SHAs/evidence; on violation STOP → announce → revert. Your
-agent-specific prohibitions below are additional and binding.
+**Core safety floor:** the universal Conductor safety floor is injected at dispatch (SubagentStart hook) — validate every tool call and halt on failure; never mutate `track-state.json` or state markers; never fabricate coverage/SHAs/evidence; on violation STOP → announce → revert. Your agent-specific prohibitions below are additional and binding.
 
 ---
 
 ## 2.0 ASSIGNMENT (provided by orchestrator)
 
-| Parameter           | Description                                                       |
-| ------------------- | ----------------------------------------------------------------- |
-| `SOURCE_TYPE`       | `track` (default) or `ad-hoc` (wiki ingest)                       |
-| `TRACK_DIR`         | (`track` only) Absolute path to the track directory               |
-| `TRACK_ID`          | (`track` only) Track identifier                                   |
-| `TRACK_DESCRIPTION` | (`track` only) Human-readable track description                   |
-| `SOURCE_PATH`       | (`ad-hoc` only) Absolute path to the normalized source markdown   |
-| `SOURCE_NAME`       | (`ad-hoc` only) Slug identifying the source                       |
+| Parameter           | Description                                                     |
+| ------------------- | --------------------------------------------------------------- |
+| `SOURCE_TYPE`       | `track` (default) or `ad-hoc` (wiki ingest)                     |
+| `TRACK_DIR`         | (`track` only) Absolute path to the track directory             |
+| `TRACK_ID`          | (`track` only) Track identifier                                 |
+| `TRACK_DESCRIPTION` | (`track` only) Human-readable track description                 |
+| `SOURCE_PATH`       | (`ad-hoc` only) Absolute path to the normalized source markdown |
+| `SOURCE_NAME`       | (`ad-hoc` only) Slug identifying the source                     |
 
 **Mode resolution:** if `SOURCE_TYPE=ad-hoc`, treat `SOURCE_PATH` as the specification (§3.1), set `TRACK_ID="wiki"`, skip the handoff harvest (§3.1b returns empty), and tag commits `[wiki-ingest]` (§6.11). Never touch `track-state.json` in ad-hoc mode.
 
@@ -60,10 +56,7 @@ agent-specific prohibitions below are additional and binding.
 
 ### 3.1b Harvest Graduation Candidates (durable findings → corpus)
 
-The explorer emits durable, cross-task findings as `graduation_candidates` in this
-track's handoffs (`{TRACK_DIR}/.conductor/handoff/*.md`); decisions captured via
-`append-handoff --type decision` are also durable. These are first-class inputs —
-findings that must reach the corpus on equal footing with spec divergence.
+The explorer emits durable, cross-task findings as `graduation_candidates` in this track's handoffs (`{TRACK_DIR}/.conductor/handoff/*.md`); decisions captured via `append-handoff --type decision` are also durable. These are first-class inputs — findings that must reach the corpus on equal footing with spec divergence.
 
 > **`SOURCE_TYPE=ad-hoc`:** there is no track and no handoffs. Skip this step entirely (treat the harvest as empty: `count=0`, skip §4.10/§5.10). The ad-hoc source's durable content flows through the normal §4.1–4.8 document analyses instead.
 
