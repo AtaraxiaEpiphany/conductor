@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from lib.env import get_data_dir
+
 
 def init_logging(script_name: str, log_dir_name: str = "logs") -> Path:
     """Initialize log directory, return log file path
@@ -21,15 +23,11 @@ def init_logging(script_name: str, log_dir_name: str = "logs") -> Path:
     Returns:
         Log file path
     """
-    # Get data directory
-    data_dir = os.environ.get("CLAUDE_PLUGIN_DATA", "")
-    if not data_dir:
-        plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT", "")
-        if plugin_root:
-            data_dir = plugin_root + "/.data"
-        else:
-            # Fallback: relative to this lib directory (scripts/lib -> scripts -> plugin_root)
-            data_dir = str(Path(__file__).parent.parent.parent / ".data")
+    # Single source of truth: route through lib.env.get_data_dir so logs land
+    # in the project dir (CLAUDE_PROJECT_DIR/.conductor) by default and every
+    # caller (this fn, get_logs_dir, session-start/end) agrees on the location.
+    # See get_data_dir for the full resolution chain.
+    data_dir = str(get_data_dir())
 
     # Create log directory structure
     log_dir = Path(data_dir) / log_dir_name

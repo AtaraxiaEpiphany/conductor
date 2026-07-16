@@ -13,6 +13,7 @@ from pathlib import Path
 # Add lib directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent / "lib"))
 
+from lib.env import get_data_dir
 from lib.hook_io import read_hook_input, write_hook_output
 from lib.json_utils import load_json_safe
 from lib.logging import init_logging, log_entry
@@ -153,11 +154,9 @@ def main():
 
     cwd = Path(cwd_str) if cwd_str else Path.cwd()
 
-    # Initialize directories
-    data_dir = Path(os.environ.get("CLAUDE_PLUGIN_DATA", ""))
-    if not data_dir.is_absolute():
-        plugin_root = Path(__file__).parent.parent
-        data_dir = plugin_root / ".data"
+    # Initialize directories — single resolver (project-scoped by default,
+    # plugin-anchored fail-safe). Matches session-start.py and init_logging.
+    data_dir = get_data_dir()
 
     data_dir.mkdir(parents=True, exist_ok=True)
     log_dir = data_dir / "logs"

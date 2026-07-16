@@ -47,18 +47,35 @@ def get_plugin_root() -> Path:
 
 
 def get_data_dir() -> Path:
-    """Get data directory (.data)
+    """Get the runtime data directory for project-scoped telemetry.
+
+    Resolution priority (explicit override first, project next, plugin last):
+
+      1. ``$CLAUDE_PLUGIN_DATA`` — explicit override (tests, sandboxes, custom
+         layouts). Returned verbatim.
+      2. ``$CLAUDE_PROJECT_DIR/.conductor`` — the project's runtime dir.
+         Conductor's logs/failures/recovery events are *project-scoped* (they
+         describe a specific project's tracks), so they belong beside the
+         project's ``conductor/`` tree — where you look when debugging — not
+         under the shared plugin dir (which collides across projects).
+         ``CLAUDE_PROJECT_DIR`` is set by Claude Code for every project hook,
+         so this is the common path with zero config. The ``/.conductor/``
+         root-anchored gitignore rule (setup §2.5) already covers it.
+      3. ``<plugin>/.data`` — fail-safe. Hooks that fire outside any project
+         (e.g. session-start before a track exists, or a non-project cwd) still
+         need a writable home; the plugin dir always exists.
 
     Returns:
-        Data directory path
+        Data directory path (not yet created; callers mkdir as needed).
     """
-    data_dir = os.environ.get("CLAUDE_PLUGIN_DATA")
-    if data_dir:
-        return Path(data_dir)
-    else:
-        # Default .data under plugin root
-        plugin_root = get_plugin_root()
-        return plugin_root / ".data"
+    explicit = os.environ.get("CLAUDE_PLUGIN_DATA")
+    if explicit:
+        return Path(explicit)
+    project_dir = os.environ.get("CLAUDE_PROJECT_DIR")
+    if project_dir:
+        return Path(project_dir) / ".conductor"
+    # Fail-safe: plugin-anchored (always writable, always exists).
+    return get_plugin_root() / ".data"
 
 
 def get_logs_dir() -> Path:

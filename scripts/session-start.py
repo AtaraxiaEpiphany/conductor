@@ -230,7 +230,9 @@ def get_loop_digest(project_root: Path) -> str:
 def _write_session_start(data_dir: Path, session_id: str) -> None:
     """Stamp the session start time so the SessionEnd hook can log duration.
 
-    Writes ``int(time.time())`` atomically to ``.data/logs/.session-{id}.start``;
+    Writes ``int(time.time())`` atomically to ``<data_dir>/logs/.session-{id}.start``;
+    ``data_dir`` is the project-scoped resolver output (``CLAUDE_PROJECT_DIR/.conductor``
+    by default — see ``lib.env.get_data_dir``).
     ``session-end.py::log_session_duration`` reads it, appends a
     ``duration_seconds=`` line to ``session-metrics.log``, and unlinks it. This
     closes the loop that was dead (session-end read a file nothing wrote).
