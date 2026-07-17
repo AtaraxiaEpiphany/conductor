@@ -31,6 +31,10 @@ GITIGNORE_TEMPLATE = (ROOT / "templates" / "conductor-gitignore.md").read_text(e
 # The block setup appends = the whole template file body.
 CONDUCTOR_BLOCK = GITIGNORE_TEMPLATE
 
+# Per-track .conductor/.gitignore body, as written by quality._ensure_conductor_gitignore.
+# conftest.py puts ``scripts/`` on sys.path so ``track_state`` resolves as in production.
+from track_state.quality import _CONDUCTOR_GITIGNORE  # noqa: E402
+
 
 def _check_ignore(repo, path):
     """Return True if git would ignore ``path`` under ``repo``. ``path`` is repo-relative."""
@@ -113,6 +117,64 @@ class GitignoreSemanticsTests(TestCase):
         self.assertEqual(before, after, "second append must be a no-op (idempotent)")
         self.assertEqual(after.count("# conductor:gitignore begin"), 1,
                          "block must appear exactly once")
+
+
+# The per-track ``.conductor/.gitignore`` written by
+# ``track_state.quality._ensure_conductor_gitignore`` — the ONLY thing covering
+# transient markers that live under ``conductor/tracks/<id>/.conductor/`` (the
+# root ``/.conductor/`` rule is root-anchored and deliberately does NOT reach
+# them; the per-track dir carries committed bookkeeping so it stays tracked).
+
+
+class PerTrackConductorGitignoreTests(TestCase):
+    """Pin that every transient per-track marker is listed in the per-track
+    ``.conductor/.gitignore`` — the inflight/tripwire/modified-guidance markers
+    were added without updating this constant and showed as untracked noise."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self.tmp.name)
+        subprocess.run(["git", "init", "-q"], cwd=str(self.repo), check=True)
+        # Mirror a target project: root-anchored /.conductor/ (covers root
+        # scratch only) + a per-track .conductor/.gitignore written by quality.
+        (self.repo / ".gitignore").write_text(CONDUCTOR_BLOCK, encoding="utf-8")
+        self.track_dir = self.repo / "conductor" / "tracks" / "feat-x"
+        cond = self.track_dir / ".conductor"
+        cond.mkdir(parents=True, exist_ok=True)
+        (cond / ".gitignore").write_text(_CONDUCTOR_GITIGNORE, encoding="utf-8")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _touch(self, rel):
+        p = self.repo / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("x", encoding="utf-8")
+        return rel
+
+    def test_transient_markers_are_ignored(self):
+        # The regression: these dot-prefixed markers under per-track .conductor/
+        # were NOT in the per-track gitignore list and showed as untracked.
+        for rel in (
+            "conductor/tracks/feat-x/.conductor/.dispatch-inflight-1-1.json",
+            "conductor/tracks/feat-x/.conductor/.tripwire-2-3.count",
+            "conductor/tracks/feat-x/.conductor/.modified-guidance-1-1.md",
+        ):
+            self._touch(rel)
+            self.assertTrue(_check_ignore(self.repo, rel),
+                            f"transient marker must be ignored: {rel}")
+
+    def test_committed_bookkeeping_stays_tracked(self):
+        # The per-track .conductor/ stays tracked for committed bookkeeping;
+        # only the transient names are ignored. result.json is listed
+        # explicitly, so it stays ignored too (transient, recreated per cycle).
+        for rel in (
+            "conductor/tracks/feat-x/.conductor/parallel.json",
+            "conductor/tracks/feat-x/.conductor/wave-agent.marker",
+        ):
+            self._touch(rel)
+            self.assertTrue(_check_ignore(self.repo, rel),
+                            f"listed transient artifact must be ignored: {rel}")
 
 
 if __name__ == "__main__":

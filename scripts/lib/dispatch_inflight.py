@@ -43,8 +43,16 @@ so a marker I/O error can never block a dispatch (fail-open at the hook).
 
 The marker lives at ``<track_dir>/.conductor/.dispatch-inflight-*.json`` — it is
 transient lock state (written by ``prepare_dispatch``, cleared on
-finalize/reap), covered by the root ``/.conductor/`` gitignore, and **never**
-handed to the model or staged. Treat it as ignore-only plumbing.
+finalize/reap), covered by the per-track ``.conductor/.gitignore`` rule
+``.dispatch-inflight-*.json`` (written by ``track_state.quality._ensure_conductor_gitignore``),
+and **never** handed to the model or staged. Treat it as ignore-only plumbing.
+
+Note: the repo-root ``/.conductor/`` gitignore rule is root-anchored and
+deliberately does NOT cover per-track ``conductor/tracks/<id>/.conductor/``
+(that directory carries committed conductor bookkeeping — ``result.json``,
+``parallel.json``, etc. are listed explicitly in the per-track gitignore while
+transient markers like this one are glob-ignored). See
+``templates/conductor-gitignore.md`` and ``tests/test_conductor_gitignore.py``.
 """
 import json
 from pathlib import Path

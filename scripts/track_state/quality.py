@@ -94,6 +94,15 @@ def _validate_plan_structure(plan):
 # cmd_wave_step): records that a drained wave's post-drain decisions (seam-review
 # applicability) were made, keyed on (track_id, base_sha). Per-run bookkeeping —
 # committing it would leak state across tracks and survive past the wave it marks.
+# .dispatch-inflight-*.json is the single-writer guard marker (lib/dispatch_inflight,
+# on-dispatch-dedupe.py PreToolUse:Agent hook): stamped by prepare_dispatch and
+# cleared on finalize/reap; transient lock state, never staged.
+# .tripwire-*.count is the PreToolUse round-trip counter (on-pre-tool-tripwire.py):
+# reset on dispatch, bumped every tool round; per-run counter, never committed.
+# .modified-guidance-*.md is the failure-analyst retry_modified injection marker
+# (dispatch.py _modified_guidance_write / on-subagent-start.py): stamped on a
+# retry-with-modified-guidance decision, consumed-on-read and cleared; transient
+# plumbing, never staged.
 _CONDUCTOR_GITIGNORE = """# Conductor runtime artifacts — transient, never commit.
 result.json
 .result.tmp.*
@@ -104,6 +113,9 @@ review-seen.json
 parallel.json
 wave-agent.marker
 .wave-drain-processed
+.dispatch-inflight-*.json
+.tripwire-*.count
+.modified-guidance-*.md
 """
 
 
