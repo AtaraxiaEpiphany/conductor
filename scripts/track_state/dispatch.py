@@ -18,6 +18,7 @@ from .mutations import (_do_lock, _do_complete, _do_fail, _do_fail_parent,
 from .result import _advisory_gates
 from .sync import _do_sync_plan
 from lib import dispatch_inflight as _inflight
+from lib.git_utils import implementation_uncommitted_files
 from .git_ops import (
     _git_commit, _git_commit_ensured, _git_head_sha, _write_git_note,
     _has_sibling_sha, _update_task_sha, _recover_git_notes,
@@ -1014,6 +1015,15 @@ def _finalize_task(track_dir, p, t, s, r, task_name, status):
                       tc_consistency_gate=tc_consistency_gate,
                       phase=int(p), task=int(t),
                       subtask=(int(s) if s is not None else None))
+        # Telemetry: implementation files left uncommitted after a SUCCESS. The
+        # PreToolUse clean-tree hook should make this 0 on the flag channel; a
+        # non-zero value means the result was written via --data/stdin (which
+        # the hook can't inspect) — a monitoring signal, surfaced so the leak
+        # is visible in finalize logs instead of silent. Uses the shared
+        # lib.git_utils helper (with --untracked-files=all + the full conductor
+        # namespace exclusion) so it agrees with the hook's classification.
+        # See git_ops._git_commit for why finalize never stages these itself.
+        result["stranded_files_count"] = len(implementation_uncommitted_files(track_dir))
         if cov_pct is not None:
             result["coverage_pct"] = cov_pct
 

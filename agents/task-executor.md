@@ -163,7 +163,11 @@ Check task tag to determine workflow:
 - **Step 5 (Refactor)** — default-on for code tasks (`[Docs]`/`[Config]`/`[Chore]` exempt). Load `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/refactor.md` and follow it. Boundary: one **diff-scoped**, **behavior-preserving** pass under green; own `refactor(area):` commit; `git revert` on red; cap ~6 rounds and skip near the §7.0 tripwire.
 - **Step 6 (Coverage)** — **measure via the digester (§4.5, `PURPOSE=coverage`)**. Take `COVERAGE_PCT` from the returned block (parsed by the shared `coverage-pct.py` — never eyeball/type a number) and pass it to `--coverage-pct` (§6.1). Do **not** commit below 80% (F3). On `COVERAGE_PCT: N/A`, report N/A honestly; never fabricate.
 - **Step 7 (Deviations)** — *Tech Stack* divergence → update `tech-stack.md` → resume; *Spec* deviation (AC unmet) → report as `SPEC_DEVIATION` (§6.1); *TC Coverage* → compare implemented vs expected TCs, report gaps.
-- **Step 8 (Commit)** — stage + commit `<type>(<scope>): <description>`. **Git notes are written by `track-state dispatch-finalize` — you do NOT write git notes, modify plan markers, or append SHAs** (orchestrator-owned Steps 9-11).
+- **Step 8 (Commit)** — commit your implementation work BEFORE reporting success:
+  ```bash
+  git add -A && git diff --cached --quiet || git commit -m "<type>(<scope>): <description>"
+  ```
+  `git add -A` stages new + modified + deleted; the `|| commit` guard is a no-op when nothing changed. **Git notes are written by `track-state dispatch-finalize` — you do NOT write git notes, modify plan markers, or append SHAs** (orchestrator-owned Steps 9-11). A clean tree is **enforced**: `write-result --status success` is denied while implementation files are uncommitted (the PreToolUse clean-tree hook). If the work is genuinely incomplete, report `--status failure` instead — never claim success with an uncommitted tree.
 
 ---
 
@@ -302,7 +306,7 @@ Only write to handoff when execution is interrupted or fails — NOT on every st
 | Step fails and you cannot recover | Write interruption log + report FAILURE |
 | **~38 tool-call rounds spent with no commit** (the hard tripwire) | Write interruption log + report FAILURE **now** |
 | `on-subagent-stop` recovery fails | Write interruption log + report FAILURE |
-| Normal completion (commit succeeded) | Do NOT write — `process-result` handles handoff |
+| Normal completion (commit succeeded) | Do NOT write — `process-result` handles handoff. (Commit is a precondition for `--status success`: the clean-tree hook denies success with an uncommitted tree.) |
 
 **The 38-round tripwire is a hard number, not a percentage** (a small-window model can't self-assess "~80% of maxTurns" — count rounds instead). Once you cross **~38 rounds** without committing, **stop implementation work** and spend the remaining rounds (maxTurns is 64, so ~26 remain) on the two shutdown artifacts below. Tripping early is correct: it hands a rich `### Attempt` record to a fresh retry (Layer 3.R) *before* the window overflows; tripping late loses the retry to a context-overflow crash with no handoff. **This tripwire is also code-enforced**: the PreToolUse hook `on-pre-tool-tripwire.py` counts your rounds against the locked task and injects a `⚠️ CONDUCTOR TRIPWIRE` directive at ~38 rounds — when you see it, comply immediately. The extra turns (64 vs the prior 48) are happy-path headroom for legitimate large tasks, not license to overrun; the code tripwire still fires at 38 regardless.
 

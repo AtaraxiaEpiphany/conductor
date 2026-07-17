@@ -60,6 +60,49 @@ def get_git_status(cwd: Optional[Path] = None) -> Dict[str, Any]:
     return {"files": files, "clean": len(files) == 0}
 
 
+# Conductor-managed namespaces — never counted as "stranded implementation"
+# work. ``conductor/`` covers the per-track tree (``conductor/tracks/<id>/``)
+# alongside the repo-root ``.conductor/`` runtime dir. Shared by the
+# write-result clean-tree hook and the finalize telemetry so the two cannot
+# drift on what counts as implementation work.
+_CONDUCTOR_MANAGED_PREFIXES = (
+    "track-state", "plan.md", ".conductor/", "conductor/", "issues.md",
+    "handoff.md",
+)
+
+
+def implementation_uncommitted_files(track_dir):
+    """Repo-relative implementation files that are uncommitted (unstaged,
+    staged, or untracked), excluding conductor-managed artifacts.
+
+    Uses ``--untracked-files=all`` so a brand-new file under a fresh directory
+    expands to its real path (default porcelain collapses it to just the dir,
+    e.g. ``?? src/``), which would break both classification and any file list
+    shown to the agent. Returns a sorted list; empty list on any git error
+    (fail-open — callers must never raise on a dirty-tree probe).
+    """
+    result = run_git_command(
+        ["status", "--porcelain", "--untracked-files=all"], cwd=track_dir)
+    if result.returncode != 0:
+        return []
+    files = set()
+    for line in result.stdout.splitlines():
+        if len(line) <= 3:
+            continue
+        path = line[3:]
+        # Rename/copy: "<orig> -> <dest>" — keep the destination (what now exists).
+        if " -> " in path:
+            path = path.rsplit(" -> ", 1)[1]
+        path = path.strip().strip('"')
+        if not path:
+            continue
+        if any(path.startswith(p) or path == p.rstrip("/")
+               for p in _CONDUCTOR_MANAGED_PREFIXES):
+            continue
+        files.add(path)
+    return sorted(files)
+
+
 def get_current_branch(cwd: Optional[Path] = None) -> Optional[str]:
     """Get current git branch
 

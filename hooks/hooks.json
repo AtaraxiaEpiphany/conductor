@@ -43,6 +43,16 @@
         ]
       },
       {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/on-write-result-clean-tree.py\"",
+            "timeout": 3
+          }
+        ]
+      },
+      {
         "matcher": "",
         "hooks": [
           {
