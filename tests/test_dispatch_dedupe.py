@@ -26,6 +26,7 @@ _HOOK = _scripts / "on-dispatch-dedupe.py"
 
 # Import the lib directly for marker setup (lightweight, no track_state import).
 from lib import dispatch_inflight as inflight  # noqa: E402
+from lib import dispatch_lifecycle as lifecycle  # noqa: E402
 
 
 # --- shared fixtures ----------------------------------------------------------
@@ -187,6 +188,80 @@ class DispatchDedupeHookTests(TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(
             out.get("hookSpecificOutput", {}).get("permissionDecision"), "allow")
+
+    def test_probe_emits_nonempty_session_via_transcript_path(self):
+        """The probe must carry a non-empty session even when PreToolUse
+        delivers ``session_id`` empty. The transcript_path stem is the
+        fallback. This pins the join-key fix: a probe with ``session=`` makes
+        a captured relapse impossible to disambiguate from start/stop lines.
+        """
+        tmp_data = tempfile.mkdtemp()
+        env = dict(os.environ, CLAUDE_PLUGIN_DATA=tmp_data)
+        sid = "deadbeef-0000-1111-2222-333333333333"
+        payload = {
+            "tool_name": "Agent", "cwd": self.repo,
+            # session_id deliberately absent (the real PreToolUse case); the
+            # transcript_path stem must become the join key.
+            "transcript_path": f"/home/u/.claude/projects/proj/{sid}.jsonl",
+            "tool_input": {"subagent_type": "task-executor", "prompt": "x"},
+        }
+        proc = subprocess.run(
+            [sys.executable, str(_HOOK)],
+            input=json.dumps(payload), capture_output=True, text=True, env=env,
+        )
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+        log_path = Path(tmp_data) / "logs" / "dispatch-lifecycle.log"
+        self.assertTrue(log_path.exists(), "lifecycle log not written")
+        probe_lines = [
+            ln for ln in log_path.read_text().splitlines()
+            if "event=probe" in ln and f"session={sid}" in ln
+        ]
+        self.assertTrue(
+            probe_lines,
+            f"no probe line with session={sid}; got:\n"
+            f"{log_path.read_text()}",
+        )
+
+
+# --- session_token unit tests -------------------------------------------------
+class DispatchLifecycleSessionTokenTests(TestCase):
+    """``lifecycle.session_token`` is the shared join key for probe/start/stop.
+
+    PreToolUse sometimes delivers ``session_id`` empty; the transcript_path
+    stem is the deterministic fallback so all three events agree on session.
+    """
+    def test_prefers_explicit_session_id(self):
+        self.assertEqual(
+            lifecycle.session_token(
+                {"session_id": "abc",
+                 "transcript_path": "/p/x/def.jsonl"}),
+            "abc")
+
+    def test_falls_back_to_transcript_stem_when_session_id_empty(self):
+        self.assertEqual(
+            lifecycle.session_token(
+                {"session_id": "",
+                 "transcript_path": "/home/u/.claude/projects/proj/UUID-1.jsonl"}),
+            "UUID-1")
+
+    def test_falls_back_to_transcript_stem_when_session_id_absent(self):
+        self.assertEqual(
+            lifecycle.session_token(
+                {"transcript_path": "/anywhere/SID.jsonl"}),
+            "SID")
+
+    def test_returns_dash_when_neither_present(self):
+        self.assertEqual(lifecycle.session_token({}), "-")
+        self.assertEqual(lifecycle.session_token(None), "-")
+
+    def test_returns_dash_when_transcript_path_has_no_stem(self):
+        self.assertEqual(lifecycle.session_token({"transcript_path": "/"}), "-")
+
+    def test_never_raises_on_garbage(self):
+        # Non-dict input or weird values must not raise.
+        self.assertEqual(lifecycle.session_token("not a dict"), "-")
+        self.assertEqual(lifecycle.session_token(
+            {"transcript_path": 12345}), "-")
 
 
 # --- marker-lib unit tests ----------------------------------------------------

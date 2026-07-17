@@ -27,6 +27,7 @@ best-effort: telemetry must never raise, never block, and never perturb the
 control flow of a hook that is in a permission-decision hot path (a hook that
 crashed mid-decision could strand a task — far worse than a missing log line).
 """
+from pathlib import PurePath
 from typing import Optional
 
 from lib.env import get_data_dir
@@ -36,6 +37,49 @@ from lib.logging import init_logging, log_entry
 # from script_name; passing this constant makes every caller append to one
 # file so the lifecycle can be joined by grep. This is the join key.
 _LIFECYCLE_LOG_NAME = "dispatch-lifecycle"
+
+
+def session_token(input_data: Optional[dict]) -> str:
+    """Resolve a stable session token from a hook input payload.
+
+    The join key for ``dispatch-lifecycle.log``. Three hooks write to that log
+    — ``on-dispatch-dedupe`` (PreToolUse: ``probe``), ``on-subagent-start``
+    (``start``), ``on-subagent-stop`` (``stop``) — and a grep must be able to
+    group a single dispatch's events together. They can only be grouped if all
+    three agree on the session value.
+
+    The problem this solves
+    -----------------------
+    All three hooks read ``input_data["session_id"]`` — but PreToolUse, in some
+    Claude Code versions, delivers that field empty while SubagentStart/Stop
+    populate it. The result (seen in real captures) is ``probe session=`` next
+    to ``start session=<uuid>`` for the *same* dispatch — a dead join key, which
+    makes a captured relapse impossible to disambiguate
+    (``start…start`` vs ``start…stop…start`` vs no-probe).
+
+    Fallback chain (first non-empty wins; never raises):
+    1. ``session_id`` from the payload, if present and non-empty.
+    2. The session UUID parsed from ``transcript_path``
+       (``.../projects/<proj>/<sessionId>.jsonl``) — a documented common input
+       field present on every hook event, encoding the session UUID as the
+       trailing filename stem.
+    3. ``"-"`` if neither resolves (matches the ``-``-on-None convention every
+       other index field uses, so a missing resolution is visible, not silent).
+    """
+    try:
+        if not isinstance(input_data, dict):
+            return "-"
+        sid = (input_data.get("session_id") or "").strip()
+        if sid:
+            return sid
+        tp = (input_data.get("transcript_path") or "").strip()
+        if tp:
+            stem = PurePath(tp).stem
+            if stem:
+                return stem
+    except Exception:
+        pass
+    return "-"
 
 
 def emit(

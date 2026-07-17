@@ -79,7 +79,7 @@ def _emit_probe(input_data, subagent_type, phase, task, subtask,
     try:
         lifecycle.emit(
             event="probe",
-            session=input_data.get("session_id", ""),
+            session=lifecycle.session_token(input_data),
             agent=subagent_type or "",
             phase=phase, task=task, subtask=subtask,
             marker=marker, in_flight=in_flight,

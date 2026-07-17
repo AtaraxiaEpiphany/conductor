@@ -251,7 +251,7 @@ def main():
         else:
             p = t = s = None
         lifecycle.emit(
-            event="start", session=input_data.get("session_id", ""),
+            event="start", session=lifecycle.session_token(input_data),
             agent=agent_type, phase=p, task=t, subtask=s,
         )
     except Exception:

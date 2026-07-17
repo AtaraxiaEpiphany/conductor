@@ -233,7 +233,8 @@ def main():
         else:
             had = "-"
         lifecycle.emit(
-            event="stop", session=session_id, agent=agent_type,
+            event="stop", session=lifecycle.session_token(input_data),
+            agent=agent_type,
             phase=p, task=t, subtask=s, had_result=had,
         )
     except Exception:
