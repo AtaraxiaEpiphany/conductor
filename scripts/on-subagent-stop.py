@@ -42,6 +42,7 @@ from lib.recovery import (
     MAX_RECOVERY_TURNS,
 )
 from lib.locked_task import resolve as resolve_locked_task
+from lib import dispatch_lifecycle as lifecycle
 
 
 # Per-agent recovery instructions for result-file agents. The GATE (which
@@ -210,6 +211,33 @@ def main():
 
     log_file = init_logging("on-subagent-stop")
     log_entry(log_file, f"session={session_id} agent={agent_type} event=subagent_stop")
+
+    # Lifecycle telemetry: record that the subagent stopped, with the locked
+    # task and whether a fresh result landed. The `stop` line is the other half
+    # of the join with `start` (on-subagent-start) and `probe`
+    # (on-dispatch-dedupe): a grep over dispatch-lifecycle.log disambiguates a
+    # relapse's shape. For result-file agents we report the real had_result;
+    # for stdout-block / other agents result-file presence is not their
+    # completion signal, so report `-` (unknown) rather than a misleading 0.
+    # Best-effort; never raises into the recovery decision.
+    try:
+        locked = _resolve_locked(cwd)
+        if locked is not None:
+            _td, p, t, s = locked
+            track_dir = locked[0]
+        else:
+            p = t = s = None
+            track_dir = None
+        if agent_type in RESULT_FILE_AGENT_TYPES:
+            had = "1" if fresh_result_exists(cwd, track_dir=track_dir) else "0"
+        else:
+            had = "-"
+        lifecycle.emit(
+            event="stop", session=session_id, agent=agent_type,
+            phase=p, task=t, subtask=s, had_result=had,
+        )
+    except Exception:
+        pass
 
     # result-file agents: a fresh result.json is the single completion signal.
     # A written FAILURE result.json is a valid signal — do NOT block (the

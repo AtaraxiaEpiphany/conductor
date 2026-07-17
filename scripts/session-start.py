@@ -4,6 +4,7 @@
 On compact events, inject a compact summary to reduce context pressure.
 """
 
+import os
 import re
 import sys
 import time
@@ -18,6 +19,7 @@ from lib.json_utils import load_json_safe
 from lib.path_utils import get_file_age_hours
 from lib.frontmatter import check_corpus_frontmatter
 from lib.atomic_io import atomic_write_text
+from lib.logging import init_logging, log_entry
 
 
 COMPACT_CONTENT = """## Conductor Core (compact)
@@ -250,6 +252,37 @@ def _write_session_start(data_dir: Path, session_id: str) -> None:
         pass
 
 
+def _warn_if_backgrounding_enabled(data_dir: Path) -> None:
+    """Log a warning if background subagents are not disabled at session start.
+
+    The conductor is a serial spine: one agent owns a locked task at a time,
+    enforced by the PreToolUse:Agent dedupe hook. Background subagents
+    (``CLAUDE_AUTO_BACKGROUND_TASKS`` auto-backgrounds after ~2 min;
+    ``CLAUDE_CODE_FORK_SUBAGENT`` forces all spawns to background) reorder
+    ``SubagentStop`` and break that invariant — the exact "subagent re-runs
+    while the previous is still running" relapse. The plugin's settings.json
+    sets ``CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`` (the hard off-switch for
+    the whole subsystem), but a user override or a future update that clears
+    it would reopen the window invisibly. This makes the regression noisy in
+    the session log instead of silent. Best-effort; never breaks bootstrap.
+    """
+    flag = os.environ.get("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS", "")
+    if flag == "1":
+        return
+    try:
+        log_file = init_logging("session-start")
+        log_entry(
+            log_file,
+            "WARNING CLAUDE_CODE_DISABLE_BACKGROUND_TASKS is not '1' — background "
+            "subagents may be active, which breaks the conductor's single-writer "
+            "invariant (a backgrounded agent reorders SubagentStop and can cause "
+            "duplicate dispatches). Set CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1.",
+            level="WARNING",
+        )
+    except Exception:
+        pass
+
+
 def main():
     """Main hook function"""
     # Read hook input
@@ -266,6 +299,7 @@ def main():
     # survive so end-of-session measures the full duration).
     if source != "compact":
         _write_session_start(data_dir, session_id)
+        _warn_if_backgrounding_enabled(data_dir)
 
     # Get content
     content = get_conductor_content(plugin_root, source)

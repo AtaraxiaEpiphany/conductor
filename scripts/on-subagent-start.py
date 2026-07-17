@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent / "lib"))
 
 from lib.hook_io import read_hook_input, write_simple_output
 from lib.locked_task import resolve as resolve_locked_task
+from lib import dispatch_lifecycle as lifecycle
 
 
 # The universal safety floor injected ahead of every agent's reminder. Single
@@ -237,6 +238,24 @@ def main():
     input_data = read_hook_input()
     agent_type = input_data.get("agent_type", "")
     cwd = input_data.get("cwd") or str(Path.cwd())
+
+    # Lifecycle telemetry: record that a subagent started for the locked task
+    # (if any). The `start` line is one half of the join — paired with the
+    # `stop` from on-subagent-stop and the `probe` from on-dispatch-dedupe, a
+    # grep over dispatch-lifecycle.log disambiguates a relapse's failure shape
+    # (concurrent vs re-derive vs hook-not-firing). Best-effort; never raises.
+    try:
+        locked = resolve_locked_task(cwd)
+        if locked is not None:
+            _td, p, t, s = locked
+        else:
+            p = t = s = None
+        lifecycle.emit(
+            event="start", session=input_data.get("session_id", ""),
+            agent=agent_type, phase=p, task=t, subtask=s,
+        )
+    except Exception:
+        pass
 
     # Reset the round tripwire counter for a fresh task-executor dispatch.
     _reset_tripwire_counter(cwd, agent_type)

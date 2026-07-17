@@ -57,6 +57,7 @@ sys.path.insert(0, str(Path(__file__).parent / "lib"))
 from lib.hook_io import read_hook_input, write_hook_output
 from lib.locked_task import resolve as resolve_locked_task
 from lib import dispatch_inflight as inflight
+from lib import dispatch_lifecycle as lifecycle
 
 
 # Only these agents mutate the working tree for a locked task, so only they are
@@ -64,6 +65,28 @@ from lib import dispatch_inflight as inflight
 # skip-analyst, failure-analyst and refuter are read-only or own their own
 # lifecycle → excluded.
 _WRITE_AGENTS = ("task-executor", "explorer")
+
+
+def _emit_probe(input_data, subagent_type, phase, task, subtask,
+                marker, in_flight, decision, head="-"):
+    """Append a dispatch-lifecycle ``probe`` event.
+
+    The probe proves the hook *fired* (the load-bearing signal: if no probe line
+    appears during a known double-dispatch, the matcher/plumbing regressed and
+    no guard logic matters). Best-effort — telemetry must never raise into a
+    permission-decision path.
+    """
+    try:
+        lifecycle.emit(
+            event="probe",
+            session=input_data.get("session_id", ""),
+            agent=subagent_type or "",
+            phase=phase, task=task, subtask=subtask,
+            marker=marker, in_flight=in_flight,
+            decision=decision, head=head,
+        )
+    except Exception:
+        pass
 
 
 def _head_sha(track_dir):
@@ -90,6 +113,7 @@ def _result_exists(track_dir):
 
 def main():
     input_data = read_hook_input()
+    subagent_type = (input_data.get("tool_input") or {}).get("subagent_type", "")
 
     # Only the orchestrator's Agent dispatches are in scope. PreToolUse fires
     # inside subagents too (with agent_type set) — those inner tool calls are
@@ -98,7 +122,12 @@ def main():
         write_hook_output(permission_decision="allow")
         return
 
-    subagent_type = (input_data.get("tool_input") or {}).get("subagent_type", "")
+    # Probe at the very top: proves the hook fired for an Agent dispatch. If no
+    # probe line ever appears during a known double-dispatch, the matcher is
+    # silently not matching — a plumbing regression no guard logic can fix.
+    _emit_probe(input_data, subagent_type, None, None, None,
+                marker="-", in_flight="-", decision="allow-not-write-or-early")
+
     if subagent_type not in _WRITE_AGENTS:
         write_hook_output(permission_decision="allow")
         return
@@ -109,6 +138,8 @@ def main():
     except Exception:
         locked = None
     if locked is None:
+        _emit_probe(input_data, subagent_type, None, None, None,
+                    marker="-", in_flight="0", decision="allow-no-locked-task")
         write_hook_output(permission_decision="allow")
         return
 
@@ -119,27 +150,38 @@ def main():
     except Exception:
         # Corrupt/missing marker → treat as not-in-flight (fail-open).
         marker = None
+    marker_present = "1" if marker is not None else "0"
     if marker is None:
+        _emit_probe(input_data, subagent_type, phase, task, subtask,
+                    marker="0", in_flight="0", decision="allow-no-marker")
         write_hook_output(permission_decision="allow")
         return
 
     start_sha = marker.get("start_sha")
     head = _head_sha(track_dir)
+    result_present = _result_exists(track_dir)
 
     # In flight iff the Start commit is still HEAD (no work advanced past it)
     # AND no result.json was written. Same predicate as cmd_step's
     # finalize-vs-redispatch branch — the hook and spine agree on "still working".
-    in_flight = bool(start_sha) and head == start_sha and not _result_exists(track_dir)
+    in_flight = bool(start_sha) and head == start_sha and not result_present
 
     if not in_flight:
         # HEAD advanced or a result landed → the prior dispatch finalized /
         # returned. The marker is stale; clear it so it can't misfire later.
+        _emit_probe(input_data, subagent_type, phase, task, subtask,
+                    marker=marker_present, in_flight="0", decision="allow-stale",
+                    head=head or "-")
         try:
             inflight.clear(track_dir, phase, task, subtask)
         except Exception:
             pass
         write_hook_output(permission_decision="allow")
         return
+
+    _emit_probe(input_data, subagent_type, phase, task, subtask,
+                marker=marker_present, in_flight="1", decision="deny",
+                head=head or "-")
 
     # A dispatch is already in flight for this task → deny the second spawn.
     sha_hint = (start_sha or "?")[:8]
