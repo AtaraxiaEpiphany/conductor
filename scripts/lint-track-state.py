@@ -206,7 +206,7 @@ def check_misplaced_docs(track_dir: Path) -> list:
     conductor/resource/, scratch in .conductor/. Does NOT descend into .conductor/
     (sanctioned working memory) or subdirs. Returns the stray filenames.
     """
-    track_meta_docs = {"spec.md", "plan.md", "handoff.md", "index.md", "issues.md"}
+    track_meta_docs = {"spec.md", "plan.md", "handoff.md", "index.md"}
     stray = []
     if not track_dir.is_dir():
         return stray

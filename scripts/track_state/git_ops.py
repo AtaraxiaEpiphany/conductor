@@ -174,13 +174,13 @@ def _git_commit(track_dir, message, allow_empty=False):
     """Stage conductor state files and create a git commit. Returns True if committed.
 
     Only stages files that dispatch-finalize modifies: track-state.json,
-    plan.md, .conductor/, and issues.md — never arbitrary untracked files.
+    plan.md, .conductor/ — never arbitrary untracked files.
     When allow_empty is True, creates a commit even with nothing staged (for SHA dedup).
     """
     try:
         import subprocess
         # Stage only conductor-managed files (not arbitrary untracked files)
-        paths = ["track-state.json", "plan.md", ".conductor/", "issues.md"]
+        paths = ["track-state.json", "plan.md", ".conductor/"]
         subprocess.run(
             ["git", "add", "--"] + [p for p in paths if Path(track_dir, p).exists()],
             capture_output=True, text=True, cwd=track_dir, timeout=10
@@ -284,7 +284,7 @@ def _git_uncommitted_files(track_dir):
     """Get list of unstaged, staged, and untracked files in the working tree.
 
     Returns sorted list of repo-relative file paths, excluding conductor-managed
-    files (track-state.json, plan.md, .conductor/, issues.md, handoff.md).
+    files (track-state.json, plan.md, .conductor/, handoff.md).
     Uses git status --porcelain to cover all three categories in one call."""
     try:
         import subprocess
@@ -298,7 +298,7 @@ def _git_uncommitted_files(track_dir):
         files = set()
     # Exclude conductor-managed files — only report implementation files
     conductor_prefixes = ("track-state", "plan.md", ".conductor/",
-                          "issues.md", "handoff.md")
+                          "handoff.md")
     return sorted(f for f in files
                   if not any(f.startswith(p) or f == p for p in conductor_prefixes))
 

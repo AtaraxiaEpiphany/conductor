@@ -26,9 +26,7 @@ from .git_ops import (
     docs_synced_for_track, wiki_phase2_committed_for_track,
     _git_rev_parse_toplevel,
 )
-from .handoff import (
-    _append_execution_record, _append_deviation_legacy, _append_failure_legacy,
-)
+from .handoff import _append_execution_record
 from .misc import _get_all_shas, _stamp_checkpoint_in_plan
 from .quality import _finalize_track
 from .validate import _fix_plan_mismatches, ensure_healthy
@@ -1001,8 +999,8 @@ def _finalize_task(track_dir, p, t, s, r, task_name, status):
 
         synced = _do_sync_plan(track_dir, state)
         _append_execution_record(track_dir, p, t, s, r, state)
-        for dev in r.get("spec_deviation_detail", []):
-            _append_deviation_legacy(track_dir, task_name, dev)
+        # Spec deviations are recorded in handoff.md above; the legacy
+        # issues.md mirror was removed.
 
         # Create conductor commit to get a unique SHA per task/subtask
         commit_msg = f"chore(conductor): Complete '{task_name}' [{code_sha}]"
@@ -1081,12 +1079,11 @@ def _finalize_task(track_dir, p, t, s, r, task_name, status):
         retry_count, state = _do_fail(track_dir, p, t, s, summary)
         synced = _do_sync_plan(track_dir, state)
         _append_execution_record(track_dir, p, t, s, r, state)
-        _append_failure_legacy(track_dir, r)
 
         commit_msg = f"chore(conductor): '{task_name}' failed (attempt {retry_count})"
         # Use _git_commit_ensured (allow-empty fallback) to mirror the SUCCESS
         # path. The failure has already been fully ingested into track-state.json
-        # + handoff + issues.md above, and the task is no longer in_progress, so a
+        # + handoff above, and the task is no longer in_progress, so a
         # preserved result.json here would only surface as an "orphaned result.json"
         # complaint on the next Stop hook. Ensured commit unlinks it reliably; the
         # genuine-git-breakage case still preserves it (both attempts return False).

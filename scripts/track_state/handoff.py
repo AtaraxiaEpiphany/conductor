@@ -335,59 +335,6 @@ def _append_execution_record(track_dir, phase, task, subtask, result_data, state
 
     _write_task_handoff(track_dir, phase, task, section_header, state)
 
-def _append_failure_legacy(track_dir, result_data):
-    """Legacy: Append a failure entry to issues.md for backward compatibility."""
-    issues_path = Path(track_dir) / "issues.md"
-    ts = now_iso()
-    task_name = result_data.get("task_name", "unknown")
-    attempt = result_data.get("attempt", 1)
-    max_retries = result_data.get("max_retries", MAX_RETRIES)
-    detail = result_data.get("failure_detail", {})
-
-    header = ""
-    if not issues_path.exists():
-        track_id = result_data.get("track_id", "unknown")
-        header = f"# Track: {track_id} — Failure Reports\n\n"
-
-    entry = (
-        f"### Task: {task_name} | Attempt: {attempt}/{max_retries} | {ts}\n"
-        f"**What Was Done**: {detail.get('what_was_done', 'N/A')}\n"
-        f"**Failure Reason**: {detail.get('failure_reason', 'N/A')}\n"
-        f"**Suggested Next Step**: {detail.get('suggested_next_step', 'N/A')}\n"
-        "---\n\n"
-    )
-
-    with open(issues_path, "a") as f:
-        f.write(header + entry)
-
-def _append_deviation_legacy(track_dir, task_name, dev):
-    """Legacy: Append a spec deviation entry to issues.md for backward compatibility."""
-    issues_path = Path(track_dir) / "issues.md"
-    ts = now_iso()
-
-    header = ""
-    if not issues_path.exists():
-        track_id = "unknown"
-        # Try to get track_id from state
-        try:
-            state = load(track_dir)
-            track_id = state.get("track_id", "unknown")
-        except (FileNotFoundError, json.JSONDecodeError):
-            track_id = "unknown"
-        header = f"# Track: {track_id} — Failure Reports\n\n"
-
-    entry = (
-        f"### Spec Deviation: {task_name} | {ts}\n"
-        f"**AC**: {dev.get('ac_id', 'N/A')} | "
-        f"**Reason**: {dev.get('reason', 'N/A')} | "
-        f"**Revision**: {dev.get('suggested_revision', 'N/A')} | "
-        f"**Status**: pending-review\n"
-        "---\n\n"
-    )
-
-    with open(issues_path, "a") as f:
-        f.write(header + entry)
-
 def _extract_subtask_section(content, subtask):
     """Return the ``## Subtask {n}`` slice of *content*, or ``''`` if absent.
 

@@ -61,7 +61,14 @@ def get_data_dir() -> Path:
          ``CLAUDE_PROJECT_DIR`` is set by Claude Code for every project hook,
          so this is the common path with zero config. The ``/.conductor/``
          root-anchored gitignore rule (setup §2.5) already covers it.
-      3. ``<plugin>/.data`` — fail-safe. Hooks that fire outside any project
+      3. ``$cwd/.conductor`` when ``$cwd/conductor/tracks/`` exists — a cwd
+         heuristic that catches the common case where ``CLAUDE_PROJECT_DIR`` is
+         not injected (it has been observed empty even in live session shells).
+         Without this tier the resolver silently falls through to the plugin dir
+         and every log/failure event lands in the plugin tree instead of the
+         project being run. Gated on ``conductor/tracks/`` so it never matches
+         the plugin repo itself (which has ``conductor/design/`` but no tracks).
+      4. ``<plugin>/.data`` — fail-safe. Hooks that fire outside any project
          (e.g. session-start before a track exists, or a non-project cwd) still
          need a writable home; the plugin dir always exists.
 
@@ -74,6 +81,17 @@ def get_data_dir() -> Path:
     project_dir = os.environ.get("CLAUDE_PROJECT_DIR")
     if project_dir:
         return Path(project_dir) / ".conductor"
+    # cwd heuristic: Claude Code doesn't always inject ``CLAUDE_PROJECT_DIR``
+    # (seen empty even in live session shells), so without this tier the
+    # resolver would fall straight through to ``<plugin>/.data`` and land every
+    # log/failure event in the *plugin* tree instead of the project being run.
+    # The plugin only runs where a conductor track tree is present, so a
+    # ``conductor/tracks/`` dir in ``cwd`` is a reliable "we're in a real
+    # project" signal. The plugin repo itself has ``conductor/design/`` but no
+    # ``conductor/tracks/``, so this never false-positives on the plugin dir.
+    cwd = Path.cwd()
+    if (cwd / "conductor" / "tracks").is_dir():
+        return cwd / ".conductor"
     # Fail-safe: plugin-anchored (always writable, always exists).
     return get_plugin_root() / ".data"
 

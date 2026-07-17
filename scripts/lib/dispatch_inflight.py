@@ -40,6 +40,11 @@ can import this without pulling the heavy dispatch graph. Mirrors the shape of
 ``lib/locked_task`` (shared between spine and hooks). Failures are tolerated:
 readers return ``None`` on missing/corrupt; writers/clearers swallow ``OSError``
 so a marker I/O error can never block a dispatch (fail-open at the hook).
+
+The marker lives at ``<track_dir>/.conductor/.dispatch-inflight-*.json`` — it is
+transient lock state (written by ``prepare_dispatch``, cleared on
+finalize/reap), covered by the root ``/.conductor/`` gitignore, and **never**
+handed to the model or staged. Treat it as ignore-only plumbing.
 """
 import json
 from pathlib import Path

@@ -66,7 +66,7 @@ def get_git_status(cwd: Optional[Path] = None) -> Dict[str, Any]:
 # write-result clean-tree hook and the finalize telemetry so the two cannot
 # drift on what counts as implementation work.
 _CONDUCTOR_MANAGED_PREFIXES = (
-    "track-state", "plan.md", ".conductor/", "conductor/", "issues.md",
+    "track-state", "plan.md", ".conductor/", "conductor/",
     "handoff.md",
 )
 

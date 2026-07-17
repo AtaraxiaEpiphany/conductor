@@ -175,6 +175,80 @@ def audit_track(track_dir: Path) -> List[str]:
     return issues
 
 
+# Regex slice of a dispatch-lifecycle line. The log format (see
+# lib/dispatch_lifecycle.py:emit) is space-delimited ``key=value``:
+#   dispatch_lifecycle event=start session=<tok> agent=<a> phase=<p> task=<t> subtask=<s> ...
+# We extract the four fields we join on (session + phase/task/subtask) and the
+# event verb. Keep this tolerant: a malformed line just won't match.
+import re  # noqa: E402
+
+_LIFECYCLE_FIELD = re.compile(
+    r"(?:^|\s)event=(\S+)"
+    r"(?:.*?\ssession=(\S+))?"
+    r"(?:.*?\sphase=(\S+))?"
+    r"(?:.*?\stask=(\S+))?"
+    r"(?:.*?\ssubtask=(\S+))?"
+)
+# Events that mean a dispatch reached resolution: either the guard saw it
+# proceed (probe) or the agent reported back (stop). A `start` with no such
+# follow event for the same (session, phase, task, subtask) is a stall.
+_RESOLVE_EVENTS = {"probe", "stop", "re-dispatch"}
+
+
+def stalled_dispatch_hint() -> str | None:
+    """Detect a teleoperator stall from the dispatch-lifecycle log.
+
+    The implement-step skill's yield rule is "NEVER stop between a dispatch and
+    the next ``track-state step`` call." Small-window models drop that prose
+    instruction and stall on "Agent dispatched, waiting…" — a ``start`` event
+    in ``dispatch-lifecycle.log`` with no following ``probe``/``stop`` is the
+    exact, already-captured signal (Phase 1–2 telemetry). This reads the log,
+    finds the most recent unresolved ``start`` per ``(session, phase, task,
+    subtask)`` join key, and returns a one-line reminder to run ``step``.
+
+    Pure + best-effort: never raises; returns ``None`` on any ambiguity (no
+    log, unreadable, no stall). Advisory only — the caller surfaces it via
+    ``additionalContext``, never as a block (the agent may legitimately be
+    mid-work when Stop fires).
+    """
+    try:
+        from lib.env import get_logs_dir
+
+        log_path = get_logs_dir() / "dispatch-lifecycle.log"
+        if not log_path.is_file():
+            return None
+        lines = log_path.read_text(errors="replace").splitlines()
+    except Exception:
+        return None
+
+    # Walk newest-first; the FIRST unresolved start we hit (most recent) is the
+    # stall candidate. Once we've seen a resolve event for a key, any earlier
+    # start on that key is closed and we skip it.
+    resolved: set = set()
+    for line in reversed(lines):
+        m = _LIFECYCLE_FIELD.search(line)
+        if not m:
+            continue
+        event, session, phase, task, subtask = m.groups()
+        key = (session or "-", phase or "-", task or "-", subtask or "-")
+        if event in _RESOLVE_EVENTS:
+            resolved.add(key)
+            continue
+        if event == "start" and key not in resolved:
+            # Found the most-recent unresolved dispatch. Only surface if the
+            # indices are real (not "-") — a start with no resolved phase/task
+            # is a pre-lock emit, not a teleoperator stall.
+            if phase != "-" and task != "-":
+                sub = f"/{subtask}" if subtask not in (None, "-", "") else ""
+                return (
+                    f"[Conductor] dispatch phase={phase} task={task}{sub} has no "
+                    "completion event in dispatch-lifecycle.log — the teleoperator "
+                    f"may have stalled between dispatch and `track-state step`. "
+                    "If the agent finished, run `track-state step <track_dir>` to advance."
+                )
+    return None
+
+
 def main() -> None:
     input_data = read_hook_input()
 
@@ -207,7 +281,10 @@ def main() -> None:
         reason = "Conductor stop audit: " + " | ".join(issues)
         write_hook_output(decision="block", reason=reason)
     else:
-        write_hook_output()
+        # Advisory-only: a detected teleoperator stall surfaces as context the
+        # model sees on stop, without blocking it (the agent may be mid-work).
+        hint = stalled_dispatch_hint()
+        write_hook_output(additional_context=hint)
 
 
 if __name__ == "__main__":

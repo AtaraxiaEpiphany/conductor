@@ -8,7 +8,7 @@ sets. The **implementation commit** is owned by ``task-executor`` Step 8
 (``agents/task-executor.md`` §4.0) — the *only* place implementation files ever
 get committed. The **conductor commit** (``_finalize_task`` → ``_git_commit``,
 ``git_ops.py:174``) stages **only** conductor-managed files
-(``track-state.json``, ``plan.md``, ``.conductor/``, ``issues.md``) by design:
+(``track-state.json``, ``plan.md``, ``.conductor/``) by design:
 that narrow staging is a load-bearing invariant that keeps unrelated brownfield
 WIP out of conductor commits (the setup skill repeats "never ``git add -A``"
 three times for exactly this reason).
@@ -148,7 +148,7 @@ def main():
         f"CONDUCTOR CLEAN-TREE: write-result --status success denied — "
         f"{len(stranded)} implementation file(s) are uncommitted: {shown}. "
         f"The conductor finalize commit stages ONLY conductor-managed files "
-        f"(track-state.json, plan.md, .conductor/, issues.md); it will NEVER "
+        f"(track-state.json, plan.md, .conductor/); it will NEVER "
         f"commit your code. Commit your implementation work first (Step 8):\n"
         f"    git add -A && git diff --cached --quiet || "
         f"git commit -m \"<type>(<scope>): <description>\"\n"

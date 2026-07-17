@@ -4,7 +4,7 @@
 The hook closes the "lots of files not committed" leak: task-executor can
 report ``write-result --status success`` while implementation files sit
 uncommitted, because the conductor finalize commit stages ONLY conductor-managed
-files (``track-state.json``/``plan.md``/``.conductor/``/``issues.md``) by design
+files (``track-state.json``/``plan.md``/``.conductor/``) by design
 — it will never sweep up the agent's code. So the only place implementation
 files get committed is Step 8, and nothing caught a SUCCESS claim with a dirty
 tree. This hook makes that lie deterministic: deny ``--status success`` while
@@ -206,8 +206,12 @@ class FinalizeStagingInvariantTests(TestCase):
         impl = os.path.join(self.repo, "src", "app.py")
         os.makedirs(os.path.dirname(impl), exist_ok=True)
         Path(impl).write_text("x = 1\n")
-        issues = os.path.join(self.repo, "issues.md")
-        Path(issues).write_text("# issues\n")
+        # track-state.json is a conductor-managed file that _git_commit stages
+        # (issues.md was removed from the staging list when its legacy writer
+        # was deleted). Use a conductor-managed file to prove the staging set
+        # is still narrow-but-real.
+        ts = os.path.join(self.repo, "track-state.json")
+        Path(ts).write_text('{"status":"in_progress"}\n')
 
         committed = self._git_commit(self.repo, "chore(conductor): test")
         self.assertTrue(committed)
@@ -217,7 +221,7 @@ class FinalizeStagingInvariantTests(TestCase):
             ["git", "show", "--name-only", "--format=", "HEAD"],
             cwd=self.repo, capture_output=True, text=True, check=True,
         ).stdout
-        self.assertIn("issues.md", show)
+        self.assertIn("track-state.json", show)
         self.assertNotIn("src/app.py", show)
 
         # And the implementation file remains uncommitted in the working tree.

@@ -15,10 +15,7 @@ from .helpers import (
 from .mutations import _do_complete, _do_fail
 from .sync import _do_sync_plan
 from .git_ops import _write_git_note, _git_commit_ensured, _finalize_parent
-from .handoff import (
-    _append_execution_record, _append_deviation_legacy,
-    _append_failure_legacy,
-)
+from .handoff import _append_execution_record
 
 
 def _verify_tdd_gate(track_dir, sha, result_data):
@@ -364,10 +361,9 @@ def cmd_process_result(track_dir):
         # Write to handoff
         _append_execution_record(track_dir, p, t, s, r, state)
 
-        # Handle spec deviations (legacy: also to issues.md for compatibility)
+        # Spec deviations are recorded in handoff.md (_append_execution_record
+        # above); the legacy issues.md mirror was removed.
         deviations = r.get("spec_deviation_detail", [])
-        for dev in deviations:
-            _append_deviation_legacy(track_dir, task_name, dev)
 
         # Write git notes audit trail
         _write_git_note(track_dir, r, state)
@@ -422,9 +418,6 @@ def cmd_process_result(track_dir):
 
         # Write to handoff
         _append_execution_record(track_dir, p, t, s, r, state)
-
-        # Legacy: also to issues.md for backward compatibility
-        _append_failure_legacy(track_dir, r)
 
         # Clean up
         result_path.unlink(missing_ok=True)

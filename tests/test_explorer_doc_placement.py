@@ -151,7 +151,7 @@ class TestInitCoreGitignore(TestCase):
 class TestMisplacedDocsLint(TestCase):
     def test_flags_stray_and_passes_meta(self):
         d = tempfile.mkdtemp()
-        for name in ["spec.md", "plan.md", "handoff.md", "index.md", "issues.md"]:
+        for name in ["spec.md", "plan.md", "handoff.md", "index.md"]:
             Path(d, name).write_text("x")
         lint = _load_lint()
         self.assertEqual(lint.check_misplaced_docs(Path(d)), [])
