@@ -118,6 +118,103 @@ def _do_sync_plan(track_dir, state=None):
 
     return synced
 
+
+def insert_subtask_lines(track_dir, p, t, after_subtask_index, names):
+    """Insert indented ``- [ ] <name>`` subtask lines into plan.md.
+
+    Splices the new subtask lines under task ``T{t}`` of ``Phase {p}``, positioned
+    after subtask ``after_subtask_index`` (1-based; ``0`` = right under the task
+    line, before any existing subtasks). Used by ``cmd_split`` to mirror in plan.md
+    the subtasks it just appended to track-state.json, so the next ``_do_sync_plan``
+    finds matching lines (its auto-absorb is a no-op when the lines already exist).
+
+    Tolerant by design: if plan.md is missing or the task line cannot be located,
+    emit a WARNING to stderr and return without raising — the JSON mutation is
+    already committed and correct; the plan/state count mismatch surfaces on the
+    next ``validate`` for repair rather than crashing the split.
+
+    Atomic on write: temp file + ``os.replace`` (plan.md otherwise has no atomic
+    write; a split is a rare, high-stakes mutation worth the safety).
+    """
+    import os
+    import tempfile
+    plan_path = Path(track_dir) / "plan.md"
+    if not plan_path.exists():
+        print(f"WARNING: plan.md missing — split JSON applied, plan.md not spliced",
+              file=sys.stderr)
+        return
+
+    with open(plan_path) as f:
+        lines = f.readlines()
+
+    phase_idx = 0
+    task_idx = 0
+    subtask_idx = 0
+    task_line_i = None       # index into `lines` of the target task line
+    subtask_indent = "  "    # fallback indent for new subtask lines
+    insert_at = None         # line index where new subtasks go
+
+    for i, raw in enumerate(lines):
+        stripped = raw.rstrip("\n")
+        pm = re.match(r"^##\s+Phase\s+(\d+)\b", stripped)
+        if pm:
+            phase_idx = int(pm.group(1))
+            task_idx = 0
+            subtask_idx = 0
+            continue
+        tm = re.match(r"^(\s*)-\s+\[([ x~!>#\-d])\]\s+(.*)", stripped)
+        if not tm or phase_idx != p:
+            continue
+        indent = tm.group(1)
+        is_subtask = len(indent) > 0
+        if is_subtask:
+            subtask_idx += 1
+            # Once inside the target task's subtask block, track the last subtask
+            # line at/before the insertion position; new lines append right after.
+            if task_line_i is not None and subtask_idx <= max(after_subtask_index, 0):
+                insert_at = i + 1
+                subtask_indent = indent  # match the block's own indentation
+        else:
+            task_idx += 1
+            subtask_idx = 0
+            if task_idx == t:
+                task_line_i = i
+                insert_at = i + 1  # default: right under the task line
+            elif task_line_i is not None and insert_at == task_line_i + 1 and subtask_idx == 0:
+                # We've moved past the target task with no subtasks seen yet (or
+                # after_subtask_index covered them) — insert_at already set; stop.
+                break
+
+    if task_line_i is None:
+        print(f"WARNING: task P{p}.T{t} not found in plan.md — JSON split applied, "
+              f"plan.md not spliced", file=sys.stderr)
+        return
+    # insert_at defaults to task_line_i+1 (before any subtasks); if we tracked
+    # subtasks, it points just past the last one at/before after_subtask_index.
+    if insert_at is None:
+        insert_at = task_line_i + 1
+
+    new_lines = [f"{subtask_indent}- [ ] {name}\n" for name in names]
+    updated = lines[:insert_at] + new_lines + lines[insert_at:]
+
+    # Atomic write: temp in same dir, fsync, os.replace.
+    plan_dir = plan_path.parent
+    fd, tmp = tempfile.mkstemp(dir=str(plan_dir), prefix=".plan-split-")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.writelines(updated)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, plan_path)
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        print(f"WARNING: plan.md splice failed — JSON split applied, plan.md "
+              f"unchanged", file=sys.stderr)
+
+
 def cmd_sync_plan(track_dir):
     synced = _do_sync_plan(track_dir)
     state = load(track_dir)

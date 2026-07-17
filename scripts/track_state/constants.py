@@ -62,7 +62,12 @@ def task_max_retries(task):
 # verdict fails again and re-triggers another failure-analyst is the loop this
 # caps: past the limit the router falls through to ``escalate``→halt instead of
 # re-analyzing. Mirrors ``MAX_RECOVERY_TURNS`` (lib/recovery.py) in spirit.
-MAX_ANALYSIS_ROUNDS = 1
+#
+# 2 = the analyst gets ONE refinement round on a failed modified-retry (round 1
+# prescribes the modification; if it fails, round 2 can prescribe a different one)
+# before escalating. Raising it further risks burning budget on a stuck task;
+# lowering to 1 gives no refinement at all.
+MAX_ANALYSIS_ROUNDS = 2
 
 # Stuck-lock heartbeat. ``_do_lock`` stamps ``locked_at`` (epoch seconds) on the
 # task; a task still ``in_progress`` past this threshold is treated as a

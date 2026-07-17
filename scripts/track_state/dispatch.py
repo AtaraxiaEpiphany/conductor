@@ -436,6 +436,92 @@ def _failed_task_decision(track_dir, pi, ti, si, name, retry_count):
     )
 
 
+def _parse_decompose_names(modification):
+    """Best-effort extraction of proposed subtask names from failure-analyst's
+    ``modification`` text.
+
+    The analyst returns free-form prose for a ``decompose`` verdict (e.g.
+    ``"1. Add validator\\n2. Wire CLI\\n3. Add tests"`` or ``"- parse\\n- emit"``).
+    This pulls the non-empty lines, stripping leading ``-``/``*``/``N.`` markers,
+    into candidate subtask names. Returns at least ``["Part 1"]`` on total parse
+    failure so the ``ask`` still proceeds (the human can edit before applying).
+    """
+    names = []
+    if modification:
+        for line in modification.splitlines():
+            cleaned = line.strip().lstrip("-*").strip()
+            # Strip a leading enumerator like "1." / "2)" / "1:"
+            cleaned = re.sub(r"^\d+[.):]\s*", "", cleaned)
+            if cleaned and cleaned not in names:
+                names.append(cleaned)
+    return names or ["Part 1"]
+
+
+def _decompose_decision(track_dir, marker):
+    """Build the Apply/Skip/Escalate ``decision`` blob for a failure-analyst
+    ``decompose`` verdict.
+
+    Replaces the old prose-only halt: the recovery recipe told a human to hand-edit
+    plan.md, skip the original, and insert remainder tasks — exactly the kind of
+    structured-state authoring a teleoperator shouldn't do in prose. This blob
+    moves it into code: the human just confirms the analyst's proposed split
+    (built from the marker's ``modification``), and the teleoperator runs
+    ``track-state split`` verbatim. Mirrors ``_failed_task_decision``'s
+    {question, header, options, commands, next} shape (dispatch.py:380).
+    """
+    td = str(track_dir)
+    pi = marker.get("phase")
+    ti = marker.get("task")
+    si = marker.get("subtask")
+    name = marker.get("name", "?")
+    loc = f"P{pi}.T{ti}" + (f".S{si}" if si else "")
+
+    names = _parse_decompose_names(marker.get("modification"))
+    what_was_done = (marker.get("what_was_done") or "").strip()
+    sha = marker.get("sha") or ""  # present when the analyst carried the partial SHA
+    note = "Decomposed via failure-analyst"
+    if what_was_done:
+        note += f"; partial work: {what_was_done}"
+    if sha:
+        note += f" (sha {sha})"
+
+    sub_pos = f"{pi} {ti}" + (f" {si}" if si else "")
+    split_cmd = (
+        f'track-state split "{td}" {sub_pos} '
+        f'--subtasks {shlex.quote(";".join(names))} '
+        f'--note {shlex.quote(note)}')
+    sync_cmd = f'track-state sync-plan "{td}"'
+    skip_cmd = (
+        f'track-state skip "{td}" --phase {pi} --task {ti} '
+        + (f'--subtask {si} ' if si else '')
+        + f'--reason {shlex.quote("Decomposed: skipped without splitting")}')
+    commit_split = _bookkeeping_commit_line(
+        f"chore(conductor): Decompose '{name}' [{loc}] via ask")
+    commit_skip = _bookkeeping_commit_line(
+        f"chore(conductor): Skip failed task '{name}' [{loc}] (decompose ask)")
+
+    return dict(
+        question=(
+            f"failure-analyst recommends DECOMPOSING '{name}' ({loc}) into "
+            f"{len(names)} subtask(s): {', '.join(names)}. Apply the split?"),
+        header="Decompose",
+        options=[
+            {"label": "Apply split",
+             "description": "Skip original (SHA kept), add these subtasks, resume"},
+            {"label": "Skip original only",
+             "description": "Skip the task without splitting — resume without it"},
+            {"label": "Escalate",
+             "description": "Stop for human investigation (HALT)"},
+        ],
+        commands={
+            "Apply split": [split_cmd, commit_split],
+            "Skip original only": [skip_cmd, sync_cmd, commit_skip],
+            "Escalate": [],
+        },
+        next={"Apply split": "step", "Skip original only": "step", "Escalate": "HALT"},
+    )
+
+
 def cmd_recover(track_dir, compact=True):
     """Recover current task after interruption, with auto-fix and smart advancement.
 
@@ -1525,7 +1611,9 @@ def _step_route_failure_analysis(track_dir, marker, compact):
         (a failure-analyst that triggers another failure-analyst is the loop this
         caps).
       ``replan`` / ``decompose`` / ``escalate`` → ``halt`` for a human, surfacing
-        ``root_cause`` + ``modification``.
+        ``root_cause`` + ``modification``. (``decompose`` is the exception: it
+        routes to an ``ask`` — ``_decompose_decision`` — whose Apply runs
+        ``track-state split`` verbatim; see below. replan/escalate stay halts.)
     Unknown recommendation/stage are defensive re-dispatches (never loop).
     """
     td = str(track_dir)
@@ -1555,6 +1643,11 @@ def _step_route_failure_analysis(track_dir, marker, compact):
         # and MUST be preserved: split in plan.md, skip the original (commit_sha
         # intact), insert the remainder as new pending tasks. No revert, no
         # re-do of the committed part.
+        #
+        # NOTE: decompose no longer reaches this halt — the route above emits an
+        # ``ask`` (``_decompose_decision``) whose Apply runs ``track-state split``.
+        # This entry is kept as the canonical statement of the invariant (and is
+        # still surfaced if a future caller routes decompose through _halt).
         "decompose": ("Split the task in plan.md per the modification. Skip the "
                       "original task (its commit_sha is preserved — do NOT revert), "
                       "then insert the remainder as new pending tasks and re-run. "
@@ -1602,7 +1695,21 @@ def _step_route_failure_analysis(track_dir, marker, compact):
                 f"chore(conductor): Reactivate '{name}' [P{pi}T{ti}] "
                 f"for modified retry (failure-analyst)")
             return _step_emit_dispatch(track_dir, compact)
-        if rec in ("replan", "decompose", "escalate"):
+        if rec == "decompose":
+            # Decompose is mechanical enough to offer as a code-applied, human-
+            # confirmed split — the recovery recipe used to be prose telling a
+            # human to hand-edit plan.md; now ``_decompose_decision`` builds an
+            # ``ask`` whose Apply runs ``track-state split`` verbatim. The marker
+            # is cleared BEFORE the ask (leaving it would re-route to decompose on
+            # the next ``step`` after the human picks Apply); mirrors retry_modified
+            # clearing before re-dispatch. replan/escalate stay halts below.
+            _failure_analysis_clear_marker(track_dir)
+            emit(dict(action="ask", phase=pi, task=ti, subtask=si, name=name,
+                      decision=_decompose_decision(track_dir, marker),
+                      execution_mode=load(track_dir).get("execution_mode", "continuous")),
+                 "step", compact)
+            return
+        if rec in ("replan", "escalate"):
             _halt(rec)
             return
         _failure_analysis_clear_marker(track_dir)  # unknown recommendation

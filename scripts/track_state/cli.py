@@ -1,12 +1,13 @@
 """CLI entry point: argument parsing and command routing."""
 import json
+import re
 import sys
 from pathlib import Path
 
 from .core import load
 from .constants import EXECUTION_MODES
 from .helpers import out, flag
-from .mutations import cmd_lock, cmd_fail, cmd_skip, cmd_block, cmd_defer, cmd_set_max_retries
+from .mutations import cmd_lock, cmd_fail, cmd_skip, cmd_block, cmd_defer, cmd_set_max_retries, cmd_split
 from .cmd_complete import cmd_complete
 from .dispatch import (
     cmd_next, cmd_dispatch_next, cmd_dispatch_prepare, cmd_dispatch_finalize,
@@ -208,6 +209,11 @@ COMMAND_HELP = {
                         "Set a per-task max_retries override (absent → global MAX_RETRIES). "
                         "Lets a hard task get more attempts or an easy one fewer; honored by the "
                         "retry policy, handoff N/M display, and dispatch-prepare/recover output."),
+    "split": ("split <track-dir> <phase> <task> [<subtask>] --subtasks \"a;b;c\" [--note <text>]\n"
+              "      split <track-dir> --phase <n> --task <n> [--subtask <n>] --subtasks <a;b;c> [--note <text>]",
+              "Decompose a task/subtask: skip the original (commit_sha preserved) and append the "
+              "named pieces as pending subtasks under the parent. Backs the failure-analyst "
+              "`decompose` verdict. '--subtasks' delimiter is ';' or newline."),
     "reset": ("reset <track-dir> --scope <task|phase|track> [--phase <n>] [--task <n>]",
               "Reset task(s) to pending, clearing completion fields and syncing plan"),
     "finalize": ("finalize <track-dir>",
@@ -351,7 +357,7 @@ _COMMAND_GROUPS = [
     ("Lifecycle", ["init-from-plan", "start", "set-mode", "finalize", "archive"]),
     ("Navigation", ["next", "dispatch-next", "recover", "indices"]),
     ("State Mutations", ["lock", "complete", "fail", "skip", "defer", "block", "reset",
-                         "set-max-retries"]),
+                         "set-max-retries", "split"]),
     ("Sync & Registry", ["sync-plan", "sync-handoff", "registry-update", "registry-add"]),
     ("Handoff", ["get-handoff", "append-handoff", "harvest-candidates"]),
     ("Result Processing", ["write-result", "process-result"]),
@@ -430,7 +436,7 @@ def main():
         track_dir = _resolve_track_dir_or_halt(track_dir, cmd)
 
     _INDEX_COMMANDS = {"lock", "complete", "fail", "skip", "block", "defer",
-                       "set-max-retries"}
+                       "set-max-retries", "split"}
 
     try:
         if cmd in _INDEX_COMMANDS:
@@ -479,6 +485,20 @@ def main():
                     out(dict(error=f"--max-retries requires an integer, got: {mr!r}"))
                     sys.exit(1)
                 cmd_set_max_retries(track_dir, p, t, s, max_retries=mr_val)
+            elif cmd == "split":
+                names_raw = flag(args, "--subtasks") or ""
+                note = flag(args, "--note")
+                # Delimiter: ';' or newline. Strip empties; dedup preserves order.
+                names = []
+                for n in re.split(r"[;\n]", names_raw):
+                    n = n.strip().lstrip("-").strip()
+                    if n and n not in names:
+                        names.append(n)
+                if not names:
+                    out(dict(error="--subtasks requires at least one non-empty name "
+                                   "(delimiter ';' or newline, e.g. --subtasks \"a;b;c\")"))
+                    sys.exit(1)
+                cmd_split(track_dir, p, t, s, subtask_names=names, note=note)
 
         elif cmd == "next":
             cmd_next(track_dir, compact="--full" not in args)

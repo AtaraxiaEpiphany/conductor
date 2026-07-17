@@ -151,18 +151,32 @@ class FailureAnalysisRoutingTests(TestCase):
         self.assertIn("spec.md", o["recovery"])
         self.assertFalse(_failure_analysis_marker_path(d).exists())
 
-    def test_decompose_halts(self):
+    def test_decompose_emits_ask_with_split_decision(self):
         d = _failed_exhausted_track()
         self.addCleanup(shutil.rmtree, d, ignore_errors=True)
         self._marker(d, category="context_budget", recommendation="decompose",
-                     modification="split into 2a + 2b")
+                     modification="split into 2a + 2b",
+                     what_was_done="added the validator")
         o = _step(d)
-        self.assertEqual(o["action"], "halt")
-        self.assertEqual(o["reason"], "decompose")
-        # The recovery recipe MUST tell the operator to preserve the commit
-        # (the load-bearing invariant: original task's SHA is not destroyed).
-        self.assertIn("commit_sha", o["recovery"])
-        self.assertIn("NOT revert", o["recovery"])
+        # Decompose now routes to an ask (code-applied, human-confirmed split),
+        # not a halt. The marker is cleared before the ask.
+        self.assertEqual(o["action"], "ask")
+        self.assertFalse(_failure_analysis_marker_path(d).exists())
+        decision = o["decision"]
+        self.assertEqual(decision["header"], "Decompose")
+        labels = [opt["label"] for opt in decision["options"]]
+        self.assertEqual(labels, ["Apply split", "Skip original only", "Escalate"])
+        # Apply split must run the new split CLI verbatim with the proposed names.
+        apply_cmds = decision["commands"]["Apply split"]
+        self.assertTrue(any("track-state split" in c for c in apply_cmds),
+                        f"expected a track-state split line, got {apply_cmds}")
+        split_line = next(c for c in apply_cmds if "track-state split" in c)
+        # Parsed names from the modification text survive into the command.
+        self.assertIn("2a", split_line)
+        self.assertIn("2b", split_line)
+        # Apply split resumes the spine; Escalate halts.
+        self.assertEqual(decision["next"]["Apply split"], "step")
+        self.assertEqual(decision["next"]["Escalate"], "HALT")
 
     def test_escalate_halts(self):
         d = _failed_exhausted_track()
@@ -185,6 +199,19 @@ class FailureAnalysisRoutingTests(TestCase):
         o = _step(d)
         self.assertEqual(o["action"], "halt")
         self.assertEqual(o["reason"], "escalate")
+
+    def test_within_cap_still_redispatches(self):
+        # With MAX_ANALYSIS_ROUNDS=2, round 2 is still under the cap → the analyst
+        # gets its one refinement round (reactivate + re-dispatch), not escalate.
+        from scripts.track_state.constants import MAX_ANALYSIS_ROUNDS
+        self.assertGreaterEqual(MAX_ANALYSIS_ROUNDS, 2)
+        d = _failed_exhausted_track()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        self._marker(d, recommendation="retry_modified",
+                     modification="different approach", analysis_rounds=2)
+        o = _step(d)
+        self.assertEqual(o["action"], "dispatch")
+        self.assertEqual(o["agent"], "task-executor")
 
 
 class PreExhaustionTriggerTests(TestCase):

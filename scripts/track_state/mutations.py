@@ -387,3 +387,96 @@ def reactivate_for_modified_retry(track_dir, p, t, s=None):
         _set_current_indices(state, pi, ti, si)
         state["updated_at"] = now_iso()
     return load(track_dir)
+
+
+# Statuses that may be meaningfully decomposed. Terminal-clean states
+# (completed/skipped/blocked/cancelled) have no pending work to split out.
+_SPLITTABLE = {"pending", "in_progress", "failed"}
+
+
+def _do_split(track_dir, p, t, s, subtask_names, note=None):
+    """Split task/subtask ``(p, t, s)`` into new pending sibling subtasks under
+    its parent task, skipping the original with ``commit_sha`` + a decomposition
+    note preserved.
+
+    The decompose invariant (failure-analyst ``decompose``): the original's
+    committed work is sound — it is *skipped* (not reverted), its ``commit_sha``
+    is kept on the skipped record for traceability, and the pieces are appended as
+    ``pending`` subtasks so dispatch re-runs them. Two depth cases, both producing
+    dispatchable two-depth units (never sub-subtasks, which nothing can dispatch):
+
+      * task split (``s is None``) → pieces append under the task itself (it
+        becomes a parent, gaining a ``subtasks`` array — the same shape auto-absorb
+        produces in sync.py).
+      * subtask split (``s`` set) → pieces append under the *parent task* as
+        siblings of the original, so every piece stays a top-level subtask.
+
+    Returns the post-commit state (mirrors ``reactivate_for_modified_retry``).
+    plan.md insertion + sync + commit are the caller's job (``cmd_split``), run
+    sequentially AFTER this transaction commits — transactions must not nest
+    (core.py) and ``_do_sync_plan`` saves outside any held lock.
+    """
+    pi, ti = int(p), int(t)
+    si = int(s) if s is not None else None
+    with transaction(track_dir) as state:
+        parent = target(state, pi, ti, None)
+        orig = target(state, pi, ti, si)
+        if orig.get("status") not in _SPLITTABLE:
+            raise ValueError(
+                f"cannot split {orig.get('status')!r} task "
+                f"(only {sorted(_SPLITTABLE)} are splittable)")
+        # Skip the original; KEEP commit_sha (mirrors _do_fail_parent's keep-set,
+        # NOT plain _do_skip which drops it) so the partial-work SHA survives.
+        orig["status"] = "skipped"
+        orig["skip_analysis"] = note or "Decomposed via failure-analyst"
+        clean(orig, {"status", "skip_analysis", "commit_sha"})
+        # Append the pieces as pending subtasks of the parent task.
+        subs = parent.setdefault("subtasks", [])
+        for name in subtask_names:
+            subs.append({"name": name, "status": "pending"})
+        # Point at the parent so dispatch-next/step picks up the first new piece.
+        _set_current_indices(state, pi, ti, None)
+        state["updated_at"] = now_iso()
+    return load(track_dir)
+
+
+def cmd_split(track_dir, p, t, s=None, subtask_names=None, note=None):
+    """``track-state split`` backing: mutate JSON, splice plan.md, sync, commit.
+
+    Orchestrates the four steps SEQUENTIALLY (not nested — see core.py's
+    no-nest constraint on ``transaction()``): ``_do_split`` (atomic JSON) →
+    ``insert_subtask_lines`` (plan.md) → ``_do_sync_plan`` → bookkeeping commit.
+    """
+    from .sync import insert_subtask_lines, _do_sync_plan
+    from .git_ops import _git_commit_ensured
+    pi, ti = int(p), int(t)
+    si = int(s) if s is not None else None
+    names = subtask_names or []
+    if not names:
+        out(dict(error="--subtasks requires at least one non-empty name"))
+        return
+    try:
+        state = _do_split(track_dir, pi, ti, si, names, note=note)
+    except ValueError as exc:
+        out(dict(error=str(exc)))
+        return
+    # Resolve a readable name + loc for the commit message + plan.md splice.
+    parent = target(state, pi, ti, None)
+    name = parent.get("name", "?")
+    loc = f"P{pi}.T{ti}" + (f".S{si}" if si else "")
+    # plan.md splice + sync are best-effort: the JSON mutation is already
+    # committed. A missing/unwritable plan.md degrades to a WARNING + the
+    # plan/state mismatch surfaces on the next `validate` (no crash — the split
+    # must not fail after the authoritative state is already updated).
+    try:
+        insert_subtask_lines(track_dir, pi, ti, si or 0, names)
+        _do_sync_plan(track_dir)
+    except OSError as exc:
+        print(f"WARNING: plan.md sync skipped ({exc}); JSON split applied",
+              file=__import__("sys").stderr)
+    _git_commit_ensured(
+        track_dir,
+        f"chore(conductor): Decompose '{name}' [{loc}] "
+        f"into {len(names)} subtasks (failure-analyst)")
+    out(dict(ok=True, phase=pi, task=ti, subtask=si, added=len(names)))
+
