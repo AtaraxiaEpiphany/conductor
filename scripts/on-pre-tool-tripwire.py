@@ -90,9 +90,16 @@ def _read_count(path: Path) -> int:
 
 
 def _bump_count(path: Path) -> int:
-    """Increment and return the new count. Never raises (fail-open)."""
+    """Increment and return the new count. Never raises (fail-open).
+
+    ``.conductor/`` is created at track setup (``new_track.py``) and the counter
+    is reset on every dispatch (``on-subagent-start``), so the dir exists by the
+    time we bump — we only ``mkdir`` on the first touch (missing file), avoiding
+    a redundant syscall on every PreToolUse round.
+    """
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
         n = _read_count(path) + 1
         path.write_text(str(n))
         return n

@@ -54,9 +54,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent / "lib"))
 
-from hook_io import read_hook_input, write_hook_output
-from locked_task import resolve as resolve_locked_task
-import dispatch_inflight as inflight
+from lib.hook_io import read_hook_input, write_hook_output
+from lib.locked_task import resolve as resolve_locked_task
+from lib import dispatch_inflight as inflight
 
 
 # Only these agents mutate the working tree for a locked task, so only they are

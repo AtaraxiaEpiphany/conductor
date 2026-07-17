@@ -1148,6 +1148,43 @@ def _step_assemble_verifier_prompt(track_dir, state, phase, agent):
 
 
 # --------------------------------------------------------------------------- #
+# Shared tolerant-JSON-marker core. ``phase-checkpoint``, ``skip-analysis``, and
+# ``failure-analysis`` are all single-file-per-track verdict-on-disk markers with
+# byte-identical read/write/clear semantics — only the filename differs. The core
+# below is parameterized by the per-family ``_path(track_dir)`` function so each
+# family keeps its named helpers (call sites + tests) while the bodies live once.
+# Mirrors ``new_track.py``'s tolerant read/write helpers and lifecycle.
+# --------------------------------------------------------------------------- #
+def _json_marker_read(path):
+    """Tolerant reader: the marker dict, or ``None`` on missing/corrupt.
+
+    ``None`` always means "treat as absent" so the routing branches on the marker
+    without existence checks and a half-written file never crashes the spine.
+    """
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text())
+        if isinstance(data, dict):
+            return data
+    except (ValueError, OSError):
+        pass
+    return None
+
+
+def _json_marker_write(path, data):
+    """Write the whole marker dict; ``parents=True`` ensures ``.conductor/`` exists."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False))
+
+
+def _json_marker_clear(path):
+    """Delete the marker; idempotent (a missing file is a no-op success)."""
+    if path.exists():
+        path.unlink()
+
+
+# --------------------------------------------------------------------------- #
 # Phase-checkpoint handshake marker (WM2 verdict-on-disk, step 2).
 #
 # ``_any_phase_needs_checkpoint`` only sees "checkpoint absent in plan.md" — it
@@ -1171,33 +1208,18 @@ def _phase_cp_marker_path(track_dir):
 
 
 def _phase_cp_read_marker(track_dir):
-    """Tolerant reader: ``None`` on missing/corrupt, so the routing branch on the
-    marker without existence checks and a half-written file never crashes the
-    spine (mirrors ``_nt_read_marker``)."""
-    path = _phase_cp_marker_path(track_dir)
-    if not path.exists():
-        return None
-    try:
-        data = json.loads(path.read_text())
-        if isinstance(data, dict):
-            return data
-    except (ValueError, OSError):
-        pass
-    return None
+    """Tolerant reader: ``None`` on missing/corrupt (see ``_json_marker_read``)."""
+    return _json_marker_read(_phase_cp_marker_path(track_dir))
 
 
 def _phase_cp_write_marker(track_dir, data):
-    """Write the whole marker dict; ``parents=True`` ensures ``.conductor/`` exists."""
-    cdir = Path(track_dir) / ".conductor"
-    cdir.mkdir(parents=True, exist_ok=True)
-    _phase_cp_marker_path(track_dir).write_text(json.dumps(data, ensure_ascii=False))
+    """Write the whole marker dict (see ``_json_marker_write``)."""
+    _json_marker_write(_phase_cp_marker_path(track_dir), data)
 
 
 def _phase_cp_clear_marker(track_dir):
-    """Delete the marker; idempotent (a missing file is a no-op success)."""
-    path = _phase_cp_marker_path(track_dir)
-    if path.exists():
-        path.unlink()
+    """Delete the marker; idempotent (see ``_json_marker_clear``)."""
+    _json_marker_clear(_phase_cp_marker_path(track_dir))
 
 
 def _step_assemble_phase_checker_prompt(track_dir, state, phase, marker):
@@ -1248,29 +1270,18 @@ def _skip_analysis_marker_path(track_dir):
 
 
 def _skip_analysis_read_marker(track_dir):
-    """Tolerant reader: ``None`` on missing/corrupt (mirrors ``_phase_cp_read_marker``)."""
-    path = _skip_analysis_marker_path(track_dir)
-    if not path.exists():
-        return None
-    try:
-        data = json.loads(path.read_text())
-        if isinstance(data, dict):
-            return data
-    except (ValueError, OSError):
-        pass
-    return None
+    """Tolerant reader: ``None`` on missing/corrupt (see ``_json_marker_read``)."""
+    return _json_marker_read(_skip_analysis_marker_path(track_dir))
 
 
 def _skip_analysis_write_marker(track_dir, data):
-    cdir = Path(track_dir) / ".conductor"
-    cdir.mkdir(parents=True, exist_ok=True)
-    _skip_analysis_marker_path(track_dir).write_text(json.dumps(data, ensure_ascii=False))
+    """Write the whole marker dict (see ``_json_marker_write``)."""
+    _json_marker_write(_skip_analysis_marker_path(track_dir), data)
 
 
 def _skip_analysis_clear_marker(track_dir):
-    path = _skip_analysis_marker_path(track_dir)
-    if path.exists():
-        path.unlink()
+    """Delete the marker; idempotent (see ``_json_marker_clear``)."""
+    _json_marker_clear(_skip_analysis_marker_path(track_dir))
 
 
 # --------------------------------------------------------------------------- #
@@ -1300,30 +1311,18 @@ def _failure_analysis_marker_path(track_dir):
 
 
 def _failure_analysis_read_marker(track_dir):
-    """Tolerant reader: ``None`` on missing/corrupt (mirrors skip-analysis)."""
-    path = _failure_analysis_marker_path(track_dir)
-    if not path.exists():
-        return None
-    try:
-        data = json.loads(path.read_text())
-        if isinstance(data, dict):
-            return data
-    except (ValueError, OSError):
-        pass
-    return None
+    """Tolerant reader: ``None`` on missing/corrupt (see ``_json_marker_read``)."""
+    return _json_marker_read(_failure_analysis_marker_path(track_dir))
 
 
 def _failure_analysis_write_marker(track_dir, data):
-    cdir = Path(track_dir) / ".conductor"
-    cdir.mkdir(parents=True, exist_ok=True)
-    _failure_analysis_marker_path(track_dir).write_text(
-        json.dumps(data, ensure_ascii=False))
+    """Write the whole marker dict (see ``_json_marker_write``)."""
+    _json_marker_write(_failure_analysis_marker_path(track_dir), data)
 
 
 def _failure_analysis_clear_marker(track_dir):
-    path = _failure_analysis_marker_path(track_dir)
-    if path.exists():
-        path.unlink()
+    """Delete the marker; idempotent (see ``_json_marker_clear``)."""
+    _json_marker_clear(_failure_analysis_marker_path(track_dir))
 
 
 # Modified-guidance marker — the B.5 bridge from failure-analyst's ``modification``

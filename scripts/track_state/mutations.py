@@ -1,8 +1,9 @@
 """State mutation operations: lock, complete, fail, skip, block, defer."""
+import sys
 import time
 from .core import load, save, transaction
 from .helpers import target, clean, now_iso, out, _last_subtask_sha, _reset_task, _propagate_to_subtasks, _any_phase_needs_checkpoint, _normalize_sha
-from .constants import TERMINAL_FOR_PARENT, AUTO_COMPLETE_OK, MAX_RETRIES, LOCKED_AT_FIELD, task_max_retries
+from .constants import TERMINAL_FOR_PARENT, AUTO_COMPLETE_OK, LOCKED_AT_FIELD, task_max_retries
 from lib.recovery import RECOVERY_TURN_FIELD
 
 
@@ -473,7 +474,7 @@ def cmd_split(track_dir, p, t, s=None, subtask_names=None, note=None):
         _do_sync_plan(track_dir)
     except OSError as exc:
         print(f"WARNING: plan.md sync skipped ({exc}); JSON split applied",
-              file=__import__("sys").stderr)
+              file=sys.stderr)
     _git_commit_ensured(
         track_dir,
         f"chore(conductor): Decompose '{name}' [{loc}] "
