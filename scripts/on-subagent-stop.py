@@ -233,7 +233,7 @@ def main():
         else:
             had = "-"
         lifecycle.emit(
-            event="stop", session=lifecycle.session_token(input_data),
+            event="stop", session=lifecycle.session_token(input_data, fallback=str(track_dir) if track_dir else ""),
             agent=agent_type,
             phase=p, task=t, subtask=s, had_result=had,
         )

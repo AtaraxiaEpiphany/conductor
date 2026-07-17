@@ -68,22 +68,33 @@ _WRITE_AGENTS = ("task-executor", "explorer")
 
 
 def _emit_probe(input_data, subagent_type, phase, task, subtask,
-                marker, in_flight, decision, head="-"):
+                marker, in_flight, decision, head="-", track_dir=None, gen="-"):
     """Append a dispatch-lifecycle ``probe`` event.
 
     The probe proves the hook *fired* (the load-bearing signal: if no probe line
     appears during a known double-dispatch, the matcher/plumbing regressed and
     no guard logic matters). Best-effort — telemetry must never raise into a
     permission-decision path.
+
+    ``track_dir`` is the join-key fallback: on real payloads both ``session_id``
+    and ``transcript_path`` arrive empty, so ``session_token`` falls back to the
+    track dir (present on every real dispatch; stable across probe/start/stop
+    for the same task). Early probes fire before a locked task is resolved and
+    pass ``None`` — they get ``session=-``, which is correct (no task to join).
+
+    ``gen`` is the inflight marker's dispatch generation. Two probes with the
+    SAME gen = a single dispatch spawned twice (concurrent relapse); a higher
+    gen on the second = the spine re-dispatched (fresh prepare). That
+    disambiguation is the whole point of the gen field.
     """
     try:
         lifecycle.emit(
             event="probe",
-            session=lifecycle.session_token(input_data),
+            session=lifecycle.session_token(input_data, fallback=track_dir or ""),
             agent=subagent_type or "",
             phase=phase, task=task, subtask=subtask,
             marker=marker, in_flight=in_flight,
-            decision=decision, head=head,
+            decision=decision, head=head, gen=gen,
         )
     except Exception:
         pass
@@ -153,13 +164,18 @@ def main():
     marker_present = "1" if marker is not None else "0"
     if marker is None:
         _emit_probe(input_data, subagent_type, phase, task, subtask,
-                    marker="0", in_flight="0", decision="allow-no-marker")
+                    marker="0", in_flight="0", decision="allow-no-marker",
+                    track_dir=track_dir)
         write_hook_output(permission_decision="allow")
         return
 
     start_sha = marker.get("start_sha")
     head = _head_sha(track_dir)
     result_present = _result_exists(track_dir)
+    try:
+        gen = str(int(marker.get("gen", 1)))
+    except (TypeError, ValueError):
+        gen = "-"
 
     # In flight iff the Start commit is still HEAD (no work advanced past it)
     # AND no result.json was written. Same predicate as cmd_step's
@@ -171,7 +187,7 @@ def main():
         # returned. The marker is stale; clear it so it can't misfire later.
         _emit_probe(input_data, subagent_type, phase, task, subtask,
                     marker=marker_present, in_flight="0", decision="allow-stale",
-                    head=head or "-")
+                    head=head or "-", track_dir=track_dir, gen=gen)
         try:
             inflight.clear(track_dir, phase, task, subtask)
         except Exception:
@@ -181,7 +197,7 @@ def main():
 
     _emit_probe(input_data, subagent_type, phase, task, subtask,
                 marker=marker_present, in_flight="1", decision="deny",
-                head=head or "-")
+                head=head or "-", track_dir=track_dir, gen=gen)
 
     # A dispatch is already in flight for this task → deny the second spawn.
     sha_hint = (start_sha or "?")[:8]

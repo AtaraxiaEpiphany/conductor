@@ -39,7 +39,7 @@ from lib.logging import init_logging, log_entry
 _LIFECYCLE_LOG_NAME = "dispatch-lifecycle"
 
 
-def session_token(input_data: Optional[dict]) -> str:
+def session_token(input_data: Optional[dict], fallback: str = "") -> str:
     """Resolve a stable session token from a hook input payload.
 
     The join key for ``dispatch-lifecycle.log``. Three hooks write to that log
@@ -57,26 +57,39 @@ def session_token(input_data: Optional[dict]) -> str:
     makes a captured relapse impossible to disambiguate
     (``start…start`` vs ``start…stop…start`` vs no-probe).
 
+    **A second, harder capture.** Real-session captures (``.data/logs/dispatch-
+    lifecycle.log``) show BOTH ``session_id`` AND ``transcript_path`` empty on
+    every event — rendering ``session=`` / ``session=-`` / garbage for the whole
+    trail, so NO relapse in those sessions was ever classifiable. The two
+    documented fields are simply absent on these payloads.
+
     Fallback chain (first non-empty wins; never raises):
     1. ``session_id`` from the payload, if present and non-empty.
     2. The session UUID parsed from ``transcript_path``
        (``.../projects/<proj>/<sessionId>.jsonl``) — a documented common input
        field present on every hook event, encoding the session UUID as the
        trailing filename stem.
-    3. ``"-"`` if neither resolves (matches the ``-``-on-None convention every
-       other index field uses, so a missing resolution is visible, not silent).
+    3. ``fallback`` — the caller's resolved ``track_dir`` / ``cwd``. Conductor
+       runs one track per session and locks at most one ``in_progress`` task,
+       so the track dir is present on every real dispatch and is stable across
+       ``probe``/``start``/``stop`` for the same task. It is NOT a session id,
+       but it is a *join key* — which is all the grep needs. Each caller already
+       resolves it, so passing it through is one argument.
+    4. ``"-"`` if none resolve (matches the ``-``-on-None convention every other
+       index field uses, so a missing resolution is visible, not silent).
     """
     try:
-        if not isinstance(input_data, dict):
-            return "-"
-        sid = (input_data.get("session_id") or "").strip()
-        if sid:
-            return sid
-        tp = (input_data.get("transcript_path") or "").strip()
-        if tp:
-            stem = PurePath(tp).stem
-            if stem:
-                return stem
+        if isinstance(input_data, dict):
+            sid = (input_data.get("session_id") or "").strip()
+            if sid:
+                return sid
+            tp = (input_data.get("transcript_path") or "").strip()
+            if tp:
+                stem = PurePath(tp).stem
+                if stem:
+                    return stem
+        if fallback:
+            return fallback
     except Exception:
         pass
     return "-"
@@ -95,6 +108,7 @@ def emit(
     decision: str = "-",
     head: str = "-",
     had_result: str = "-",
+    gen: str = "-",
 ) -> None:
     """Append one structured dispatch-lifecycle event to the shared log.
 
@@ -102,6 +116,12 @@ def emit(
     one ``grep dispatch-lifecycle`` + an optional ``grep 'phase=1 task=1'``
     filter. ``phase``/``task``/``subtask`` render as ``-`` when unknown (no
     locked task resolved) so a missing resolution is visible, not silent.
+
+    ``gen`` is the dispatch generation from the inflight marker. It
+    disambiguates the relapse shapes once the join key is reliable: a genuine
+    concurrent double-spawn shows the SAME gen on two probes (one dispatch, two
+    spawns); a spine re-dispatch shows a HIGHER gen on the second probe (a fresh
+    prepare bumped it). Without gen those two look identical.
 
     Best-effort: swallows every error. Telemetry is advisory and must never
     raise into a hook's permission-decision path.
@@ -114,7 +134,7 @@ def emit(
         line = (
             f"dispatch_lifecycle event={event} session={session} agent={agent} "
             f"phase={p} task={t} subtask={s} marker={marker} in_flight={in_flight} "
-            f"decision={decision} head={head} had_result={had_result}"
+            f"decision={decision} head={head} had_result={had_result} gen={gen}"
         )
         log_entry(log_file, line)
     except Exception:

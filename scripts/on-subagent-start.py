@@ -250,9 +250,20 @@ def main():
             _td, p, t, s = locked
         else:
             p = t = s = None
+        # Read the inflight marker's gen so a start event records WHICH dispatch
+        # generation is now running — same gen as the probe = the dispatch the
+        # guard saw; a higher gen than a prior start = a spine re-dispatch.
+        gen = "-"
+        if locked is not None:
+            try:
+                from lib import dispatch_inflight as _inflight
+                g = _inflight.read_gen(_td, p, t, s)
+                gen = str(g) if g else "-"
+            except Exception:
+                pass
         lifecycle.emit(
-            event="start", session=lifecycle.session_token(input_data),
-            agent=agent_type, phase=p, task=t, subtask=s,
+            event="start", session=lifecycle.session_token(input_data, fallback=str(_td) if locked is not None else ""),
+            agent=agent_type, phase=p, task=t, subtask=s, gen=gen,
         )
     except Exception:
         pass

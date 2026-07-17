@@ -75,13 +75,37 @@ def read(track_dir, phase, task, subtask=None):
     return None
 
 
-def write(track_dir, phase, task, subtask, start_sha, written_at_iso):
+def read_gen(track_dir, phase, task, subtask=None):
+    """Tolerant reader for the dispatch ``gen`` of an existing marker.
+
+    Returns the stored ``gen`` (an int, defaulting to ``1`` for markers written
+    before the gen field existed / when absent), or ``0`` when there is no
+    marker. ``0`` is the sentinel the writer uses to mean "no prior generation
+    — stamp 1" (``_dispatch_inflight_write`` reads this then bumps). Never
+    raises.
+    """
+    data = read(track_dir, phase, task, subtask)
+    if data is None:
+        return 0
+    try:
+        gen = int(data.get("gen", 1))
+    except (TypeError, ValueError):
+        gen = 1
+    return gen if gen >= 1 else 1
+
+
+def write(track_dir, phase, task, subtask, start_sha, written_at_iso, gen=1):
     """Write the inflight marker. Swallows ``OSError`` (fail-open).
 
     ``start_sha`` is the commit HEAD is sitting on right after the Start commit
     (or the existing Start commit on a resume path) — the value the hook
     compares the live HEAD against. ``written_at_iso`` is passed in (not read
     here) so the spine owns the timestamp source.
+
+    ``gen`` is the dispatch generation — a monotonic counter bumped by the spine
+    on every write for ``(phase, task, subtask)`` so the dedupe hook's in-flight
+    test can be gen-based (decoupled from git HEAD). Default ``1``; the spine
+    computes ``prev_gen + 1`` before calling.
     """
     path = marker_path(track_dir, phase, task, subtask)
     try:
@@ -92,6 +116,7 @@ def write(track_dir, phase, task, subtask, start_sha, written_at_iso):
             "subtask": subtask,
             "start_sha": start_sha,
             "written_at": written_at_iso,
+            "gen": gen,
         }
         path.write_text(json.dumps(data, ensure_ascii=False))
     except OSError:

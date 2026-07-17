@@ -643,8 +643,15 @@ def _clear_stale_result(track_dir):
 
 def _dispatch_inflight_write(track_dir, pi, ti, si, start_sha, written_at_iso):
     """Stamp the inflight dispatch marker (see lib/dispatch_inflight). Thin
-    wrapper so callers stay within the ``_``-prefixed private-helper convention."""
-    _inflight.write(track_dir, pi, ti, si, start_sha, written_at_iso)
+    wrapper so callers stay within the ``_``-prefixed private-helper convention.
+
+    Bumps the dispatch ``gen`` (read-modify-write): a re-dispatch of the same
+    ``(phase, task, subtask)`` stamps a NEW generation, so the dedupe hook sees
+    a fresh in-flight state rather than the stale one from the prior dispatch.
+    First write for a key → gen 1 (``read_gen`` returns 0 when no marker)."""
+    prev_gen = _inflight.read_gen(track_dir, pi, ti, si)
+    _inflight.write(track_dir, pi, ti, si, start_sha, written_at_iso,
+                    gen=prev_gen + 1)
 
 
 def _dispatch_inflight_clear(track_dir, pi, ti, si):
@@ -655,6 +662,39 @@ def _dispatch_inflight_clear(track_dir, pi, ti, si):
 def _dispatch_inflight_clear_all(track_dir):
     """Clear every inflight marker in this track (crash-recovery; see lib/dispatch_inflight)."""
     _inflight.clear_all(track_dir)
+
+
+def _emit_redispatch_telemetry(track_dir, pi, ti, si):
+    """Emit a ``re-dispatch`` dispatch-lifecycle event for the interrupted branch.
+
+    ``cmd_step`` re-dispatches a task *without* finalize when HEAD is still the
+    Start commit and no result.json landed — i.e. the prior dispatch never ran
+    (interrupted / pre-empted before any work). That re-dispatch burns no retry
+    and is otherwise indistinguishable from a fresh dispatch in the log. This
+    makes it visible: a grep for ``event=re-dispatch`` surfaces an
+    interrupted→re-dispatch loop (``re-dispatch … re-dispatch … re-dispatch``
+    with no intervening ``finalize``) — the signature that would justify routing
+    interrupted-dispatch to FAILURE rather than silently retrying.
+
+    Telemetry-only: no control-flow change, and best-effort (lazy import + broad
+    except) so a logging fault can never perturb the spine.
+
+    The ``gen`` recorded is the PRIOR (interrupted) dispatch's generation — read
+    before ``_step_emit_dispatch`` re-stamps the marker with gen+1. A run of
+    ``re-dispatch gen=1``, ``gen=2``, ``gen=3`` (each one higher than the last)
+    is the loop signature: successive interruptions of fresh dispatches.
+    """
+    try:
+        from lib import dispatch_lifecycle as lifecycle
+        gen = _inflight.read_gen(track_dir, pi, ti, si)
+        lifecycle.emit(
+            event="re-dispatch", session="-",
+            agent="task-executor",
+            phase=pi, task=ti, subtask=si,
+            gen=str(gen) if gen else "-",
+        )
+    except Exception:
+        pass
 
 
 def prepare_dispatch(track_dir):
@@ -2030,6 +2070,7 @@ def cmd_step(track_dir, compact=True):
             # Interrupted before any work: HEAD still the Start commit, no result.
             # Re-dispatch WITHOUT finalize so we don't burn a retry on a dispatch
             # that never ran. prepare's is_resume path skips the start commit.
+            _emit_redispatch_telemetry(track_dir, pi, ti, si)
             return _step_emit_dispatch(track_dir, compact)
 
     # No in_progress task awaiting finalize → resolve the next leaf.

@@ -222,7 +222,42 @@ class StepFinalizeRouteTests(TestCase):
         self.assertEqual(tgt["status"], "in_progress")
         self.assertEqual(tgt.get("retry_count", 0), 0)
 
-    def test_dispatch_stamps_inflight_marker(self):
+    def test_interrupted_before_work_emits_redispatch_telemetry(self):
+        # Same interrupted state as above, but asserts the silent re-dispatch is
+        # made observable: a ``re-dispatch`` line lands in dispatch-lifecycle.log
+        # carrying the phase/task + the inflight gen, so an interrupted→re-dispatch
+        # loop becomes grep-able (the evidence that would justify routing to FAILURE).
+        import os as _os
+        log_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, log_dir, ignore_errors=True)
+        # Point the data dir at a temp root so we read the EXACT log this run wrote.
+        # get_data_dir() re-resolves CLAUDE_PLUGIN_DATA each call (no memo).
+        prior = _os.environ.get("CLAUDE_PLUGIN_DATA")
+        _os.environ["CLAUDE_PLUGIN_DATA"] = log_dir
+        try:
+            state = _make_state(phases=[{"name": "Phase 1", "status": "pending", "tasks": [
+                {"name": "Task A", "status": "pending"}]}])
+            d = _git_track_dir(state)
+            self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+            _step(d)            # locks Task A + Start commit
+            o = _step(d)        # interrupted → re-dispatch
+            self.assertEqual(o["action"], "dispatch")
+            log_path = Path(log_dir) / "logs" / "dispatch-lifecycle.log"
+            self.assertTrue(log_path.exists(), "lifecycle log must be written")
+            line = log_path.read_text()
+            self.assertIn("event=re-dispatch", line)
+            self.assertIn("phase=1", line)
+            self.assertIn("task=1", line)
+            # The re-dispatch bumped gen → the marker now sits at gen 2; the line
+            # records the gen that was current at emit time (>=1).
+            self.assertIn("gen=", line)
+        finally:
+            if prior is None:
+                _os.environ.pop("CLAUDE_PLUGIN_DATA", None)
+            else:
+                _os.environ["CLAUDE_PLUGIN_DATA"] = prior
+
+
         # prepare_dispatch must stamp the inflight marker with the Start-commit
         # SHA so the PreToolUse:Agent dedupe hook can deny a second concurrent
         # dispatch for the same task. Pins the spine-side half of the

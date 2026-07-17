@@ -313,5 +313,51 @@ class DispatchInflightLibTests(TestCase):
         self.assertEqual(p.name, ".dispatch-inflight-1-1.json")
 
 
+# --- gen marker tests --------------------------------------------------------
+class InflightGenTests(TestCase):
+    """The inflight marker carries a dispatch ``gen`` (monotonic per
+    phase/task/subtask), bumped by the spine on every write. Two probes with the
+    SAME gen = a single dispatch spawned twice (the concurrent relapse); a higher
+    gen on the second = the spine re-dispatched (fresh prepare)."""
+
+    def test_first_write_stamps_gen_1(self):
+        d = tempfile.mkdtemp()
+        inflight.write(d, 1, 1, None, "abc1234", "2026-07-17T00:00:00+00:00")
+        self.assertEqual(inflight.read_gen(d, 1, 1, None), 1)
+        marker = inflight.read(d, 1, 1, None)
+        self.assertEqual(marker["gen"], 1)
+
+    def test_read_gen_zero_when_no_marker(self):
+        d = tempfile.mkdtemp()
+        self.assertEqual(inflight.read_gen(d, 1, 1, None), 0)
+
+    def test_read_gen_defaults_missing_field_to_1(self):
+        """A marker written before gen existed has no gen key → read_gen treats
+        it as gen 1 (so the spine's next bump lands on 2, not on garbage)."""
+        import json as _json
+        from pathlib import Path
+        d = tempfile.mkdtemp()
+        p = inflight.marker_path(d, 1, 1, None)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(_json.dumps({"phase": 1, "task": 1, "start_sha": "x"}))
+        self.assertEqual(inflight.read_gen(d, 1, 1, None), 1)
+
+    def test_read_gen_tolerates_corrupt_gen(self):
+        import json as _json
+        d = tempfile.mkdtemp()
+        p = inflight.marker_path(d, 1, 1, None)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(_json.dumps({"phase": 1, "task": 1, "start_sha": "x",
+                                  "gen": "not-a-number"}))
+        self.assertEqual(inflight.read_gen(d, 1, 1, None), 1)
+
+    def test_clear_resets_gen(self):
+        d = tempfile.mkdtemp()
+        inflight.write(d, 1, 1, None, "abc1234", "t", gen=3)
+        self.assertEqual(inflight.read_gen(d, 1, 1, None), 3)
+        inflight.clear(d, 1, 1, None)
+        self.assertEqual(inflight.read_gen(d, 1, 1, None), 0)
+
+
 if __name__ == "__main__":
     main()
