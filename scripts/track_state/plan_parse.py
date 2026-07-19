@@ -71,7 +71,7 @@ _BRACKET_TOKEN = re.compile(r"^(\s*)-\s+(\[[^\]]*\])")
 # the malformed guard below skips them. Dispatch tags mirror plan-format-
 # contract.md §"Task Type Tags"; trailing markers mirror _RE_TRAILING_MARKER.
 _KNOWN_BRACKET_TOKEN = re.compile(
-    r"^\[(?:Manual|Explore|Docs|Config|Chore|N/A|verified|[0-9a-fA-F]{7,})\]$",
+    r"^\[(?:Manual|Explore|Docs|Config|Chore|Migrate|N/A|verified|[0-9a-fA-F]{7,})\]$",
     re.IGNORECASE,
 )
 

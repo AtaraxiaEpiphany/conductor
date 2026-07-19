@@ -72,7 +72,7 @@ _BRACKET_TOKEN = re.compile(r"^(\s*)-\s+(\[[^\]]*\])")
 # _MISSING_CHECKBOX path (tag-but-no-checkbox) below for a more accurate message
 # rather than being flagged as malformed. Mirrors plan_parse._KNOWN_BRACKET_TOKEN.
 _KNOWN_BRACKET_TOKEN = re.compile(
-    r"^\[(?:Manual|Explore|Docs|Config|Chore|N/A|verified|[0-9a-fA-F]{7,})\]$",
+    r"^\[(?:Manual|Explore|Docs|Config|Chore|Migrate|N/A|verified|[0-9a-fA-F]{7,})\]$",
     re.IGNORECASE,
 )
 

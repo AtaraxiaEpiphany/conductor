@@ -110,6 +110,12 @@ If the Layer-1 task tag is `[Docs]`, `[Config]`, or `[Chore]` → **TDD-exempt**
 
 Then go **straight to §4.0 Step 8**. For any other tag → continue to Layer 2.
 
+**`[Migrate]` is NOT this fast path.** A migration task loads Layers 1-3 normally
+(reads spec.md ACs, the styleguide, and `task-workflow.md`) — it needs AC context
+for the checkpoint's `ac-tracer` trace and it commits real code. It diverges only
+at §4.0, where it takes the `[Migrate]` branch (suite-green, no Red, no coverage
+gate) instead of full TDD. Continue to Layer 2 when the tag is `[Migrate]`.
+
 ### Layer 2: Acceptance Criteria (READ BEFORE Step 3)
 
 Read `{TRACK_DIR}/spec.md`. Using AC IDs from Layer 1:
@@ -152,8 +158,43 @@ Check task tag to determine workflow:
 | Tag | Workflow |
 |-----|----------|
 | `[Docs]`, `[Config]`, `[Chore]` | TDD Gate exempt → Step 8 only |
+| `[Migrate]` | Migration workflow — §4.M below (suite-green required; no Red, no coverage gate) |
 | Default | Full TDD (Steps 3-8) |
 | `[Explore]` | **ERROR** → report FAILURE |
+
+### §4.M Migration workflow (`[Migrate]` tag)
+
+A `[Migrate]` task is code-changing work where an **existing** test suite is the
+safety net and the TDD red-green model is inverted: **Red is the starting state**
+(the version bump / package rename / API removal already broke the suite),
+**Green is the goal.** You are not writing a new failing test first; you are
+making the existing suite pass again.
+
+- **No Step 3 (Red).** Do not author a new failing test for the migration. The
+  suite's current failures ARE the red state.
+- **Step 4 is the whole task (Green).** Run the existing suite, read the failures
+  from the digester (§4.5, `PURPOSE=coverage` — read as "run the suite once"),
+  fix the compile/runtime breaks (deprecated APIs, `javax→jakarta` renames,
+  removed methods, renamed config keys) until the suite is green. Commit each
+  fix as `fix(migrate): …`; a behavior-preserving mass change may commit as
+  `refactor(migrate): …`. **Both commit types are F2-exempt** (the F2 gate keys
+  on commit type `feat`/`fix`, and `fix` carries a test only when one applies —
+  during a migration the existing suite already covers the behavior).
+- **Step 5 (Refactor) stays.** A bounded, diff-scoped, behavior-preserving pass
+  under green is still appropriate (e.g. consolidating the rename). Skip if it'd
+  trip the §7.0 tripwire.
+- **No Step 6 coverage gate.** Coverage is suspended for `[Migrate]`
+  (`_tag_exempt_from_coverage`); you are preserving behavior, not adding it. Do
+  not invent tests to hit 80%.
+- **Step 7 (Deviations) and Step 8 (Commit) apply normally.** If the migration
+  diverges from the recorded tech stack (e.g. new framework version), update
+  `tech-stack.md` in Step 7.
+
+**Stop conditions:** suite green → success (`--status success`, the existing
+suite is your evidence); suite still red after exhausting the failure list and
+your turns → `--status failure` with the remaining failing tests in
+`--failure-reason` (the phase-checker treats an all-migration phase's red exit as
+a FAILED report, not a fix-and-retry trigger — see phase-checker.md §3.0).
 
 **Canonical TDD cycle (Steps 3-8):** `conductor/workflow/task-workflow.md` is authoritative — read its **Steps 3-8 section only** (skip Steps 1-2, 9-11, orchestrator-owned). Agent-specific bindings below override/extend the template.
 
@@ -210,7 +251,7 @@ PURPOSE=coverage
 ## 5.0 FIREWALL
 
 Mandatory gates: F2 (TDD), F3 (Coverage), F6 (Context Guard).
-Exempted: `[Docs]`, `[Config]`, `[Chore]`.
+Exempted: `[Docs]`, `[Config]`, `[Chore]`, `[Migrate]` (F2/F3; `[Migrate]` keeps the suite-green obligation from §4.M — exempt from the *TDD discipline* and the *coverage bar*, not from "the suite must end green").
 
 Prohibited: V1 (code before test), V3 (skip coverage), V8 (modify state).
 SHA handling: orchestrator appends SHAs — you do NOT modify plan markers.

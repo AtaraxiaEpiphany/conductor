@@ -171,7 +171,7 @@ def cmd_quality_snapshot(track_dir):
     spec-deviation count, computed on demand. No persistence format is baked
     in — a future ledger can append this JSON, or skills/the orchestrator read
     it directly. Coverage is aggregated only over completed non-exempt tasks
-    ([Docs]/[Config]/[Chore]/[Manual] are excluded), from each task's
+    ([Docs]/[Config]/[Chore]/[Manual]/[Migrate] are excluded), from each task's
     ``evidence.coverage_pct`` written by process-result/dispatch-finalize.
     """
     state = load(track_dir)

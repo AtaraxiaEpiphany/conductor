@@ -47,8 +47,8 @@ class ContractDocTests(TestCase):
         self.assertIn("AC Traceability", self.text)
 
     def test_task_type_tag_table_relocated(self):
-        # All five dispatch tags + the TDD-required column.
-        for tag in ("[Explore]", "[Docs]", "[Config]", "[Chore]", "[Manual]"):
+        # All six dispatch tags + the TDD-required column.
+        for tag in ("[Explore]", "[Docs]", "[Config]", "[Chore]", "[Manual]", "[Migrate]"):
             self.assertIn(tag, self.text)
         self.assertIn("TDD Required", self.text)
 

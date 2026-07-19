@@ -65,7 +65,15 @@ The initial L1 verify is no longer run here — `conductor:test-runner` (fanned 
 
 - `L1_VERIFY_STATUS: passed` → L1 is satisfied. **Do NOT re-run.** Record `L1_VERIFY: passed (fleet)` and skip to Step 3.5. (In the common pass case, `test-runner`'s single run IS the L1 result.)
 - `L1_VERIFY_STATUS: error` → the command could not run at all; decide per the template whether this is non-blocking or a FAILURE (record `L1_VERIFY: error`).
-- `L1_VERIFY_STATUS: failed` → you own the **fix-and-retry** pass. Re-run `L1_VERIFY_COMMAND` yourself (you need fresh failure output to iterate on fixes), write/fix the missing or broken tests (the template's Step 3 missing-test creation + the retry live here), then re-run. Attempt a fix a **maximum of two times**; still failing after the second attempt → report FAILURE with details. Record the final state as `L1_VERIFY: passed (after N fixes)` or `L1_VERIFY: failed`.
+- `L1_VERIFY_STATUS: failed` → first check the **migration-phase branch** (immediately below). If it does not apply, you own the **fix-and-retry** pass. Re-run `L1_VERIFY_COMMAND` yourself (you need fresh failure output to iterate on fixes), write/fix the missing or broken tests (the template's Step 3 missing-test creation + the retry live here), then re-run. Attempt a fix a **maximum of two times**; still failing after the second attempt → report FAILURE with details. Record the final state as `L1_VERIFY: passed (after N fixes)` or `L1_VERIFY: failed`.
+
+**Migration-phase branch (binding).** A migration phase is one where **every non-`[Manual]` task in the phase carries the `[Migrate]` tag** (read the phase's task tags from `plan.md`/`track-state`). For such a phase, the test suite is the **safety net, not a TDD target**: Red is the expected mid-migration state, Green is the goal, and the work is fixing real code (deprecated APIs, package renames), not authoring new tests. Therefore, when `L1_VERIFY_STATUS: failed` on a migration phase:
+
+- **Do NOT run the fix-and-retry pass. Do NOT write or modify any test files.** Auto-writing tests here is the defect this branch exists to prevent (it churns synthetic tests against a half-migrated codebase).
+- Report **STATUS: FAILED** with `L1_VERIFY: failed (migration phase non-green)` and `FAILURE_REASON:` naming the failing tests — paste the top failures verbatim from the `test-runner` output, e.g. `migration phase ended with N failing test(s) — test_foo, test_bar, … . The suite is the migration safety net; resolve the migration then re-dispatch the phase.`
+- Do NOT checkpoint. This FAILED hands the phase back to the operator: continue the migration (more `[Migrate]` tasks) until the suite goes green, then re-run the checkpoint — at which point `L1_VERIFY_STATUS: passed` takes the normal PASSED path.
+
+This branch does **not** apply to a mixed phase (some `[Migrate]`, some default-tagged implementation tasks) — a default-tagged task in the phase means TDD applies, so the normal fix-and-retry pass governs.
 
 ### Addendum — Step 3.5: L2 End-to-End Verification (INSERT between Step 3 and Step 4)
 
@@ -173,3 +181,5 @@ TESTS_PASSED: <true|false>
 FAILURE_REASON: <one-line description of what failed>
 ---END RESULT---
 ```
+
+For the **migration-phase branch** (§3.0), `FAILURE_REASON` carries the failing-test list verbatim (e.g. `migration phase ended with 3 failing test(s) — test_x, test_y, test_z. The suite is the migration safety net; resolve the migration then re-dispatch the phase.`) and `MISSING_TESTS_CREATED: 0` (the branch writes no tests).

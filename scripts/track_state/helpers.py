@@ -275,7 +275,7 @@ def extract_tags(name):
     # (e.g. [Config]) sitting in the name to false-positive below.
     clean_name = re.sub(r'<!--.*?-->', '', name, flags=re.DOTALL)
     # Use lookahead/lookbehind to avoid consuming whitespace between consecutive tags
-    pattern = r'(?<!\S)\[(Explore|Docs|Config|Chore|Manual)\](?!\S)'
+    pattern = r'(?<!\S)\[(Explore|Docs|Config|Chore|Manual|Migrate)\](?!\S)'
     matches = re.findall(pattern, clean_name)
     # Extract tag names and preserve order while removing duplicates
     seen = set()
@@ -382,13 +382,13 @@ def _extract_tags_for_task(state, phase_str, task_str):
 
 def _tag_exempt_from_coverage(tags):
     """Tags that don't require coverage gate enforcement."""
-    return bool(set(tags) & {"Docs", "Config", "Chore", "Manual"})
+    return bool(set(tags) & {"Docs", "Config", "Chore", "Manual", "Migrate"})
 
 
 
 def _tag_exempt_from_tdd(tags):
     """Tags that don't require TDD gate enforcement."""
-    return bool(set(tags) & {"Explore", "Docs", "Config", "Chore", "Manual"})
+    return bool(set(tags) & {"Explore", "Docs", "Config", "Chore", "Manual", "Migrate"})
 
 
 

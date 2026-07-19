@@ -167,6 +167,35 @@ class F2GateIntegrationTests(TestCase):
         finally:
             shutil.rmtree(d, ignore_errors=True)
 
+    def test_fix_migrate_source_exempt(self):
+        # A migration task commits each fix as fix(migrate): — F2 keys on commit
+        # TYPE (feat/fix gated). `fix` IS gated, so a fix(migrate) that stages
+        # source WITHOUT a test file still trips F2: the commit hook cannot see
+        # the [Migrate] task tag. This is the intended seam — the migration
+        # exemption comes from task-executor §4.M (no Step-3 Red test required)
+        # and the [Migrate] tag's _tag_exempt_from_tdd chokepoint at finalize,
+        # NOT from the commit hook. So a migration commit that carries the
+        # existing suite's test in the same commit passes F2 (test present):
+        d = _git_repo()
+        try:
+            _stage(d, {"src/Foo.java": "x", "test/org/FooTest.java": "y"})
+            rc, out = _run_hook(d, 'git commit -m "fix(migrate): javax->jakarta"')
+            self._expect_allow(rc, out)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_fix_migrate_source_only_denies(self):
+        # …and a fix(migrate) that stages only source (no test) is denied by F2,
+        # same as any fix: the tag is invisible to the commit hook. The workflow
+        # resolves this via the [Migrate] tag at finalize, not by weakening F2.
+        d = _git_repo()
+        try:
+            _stage(d, {"src/Foo.java": "x"})
+            rc, out = _run_hook(d, 'git commit -m "fix(migrate): javax->jakarta"')
+            self._expect_deny(rc, out)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
     def test_feat_only_docs_allows(self):
         d = _git_repo()
         try:

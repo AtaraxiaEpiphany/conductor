@@ -1,0 +1,126 @@
+"""Wiring tests for the `[Migrate]` task-type tag.
+
+`[Migrate]` (added for framework/version migrations like springboot2→3) is a
+code-changing task where an existing test suite is the safety net and TDD
+red-green is the wrong model — the suite STARTS red (the bump broke it), success
+is making it green again. These tests pin the tag's plumbing across the gating
+chain:
+
+- ``extract_tags`` recognizes ``[Migrate]`` (the one regex every consumer reads).
+- ``_tag_exempt_from_tdd`` / ``_tag_exempt_from_coverage`` honor it (F2/F3
+  exemption propagates CLI-wide from these two chokepoints).
+- ``_classify_task`` routes it to ``executor`` (runs task-executor — NOT
+  manual/explore, which would skip the code work), so it stays wave-eligible.
+- The phase-checker's migration-phase branch keys on a phase where every
+  non-Manual task is [Migrate]; the agent doc carries that branch.
+- The plan-format contract (the source spec-planner reads) documents the tag.
+"""
+from pathlib import Path
+from unittest import TestCase, main
+
+from scripts.track_state.helpers import (
+    extract_tags,
+    _tag_exempt_from_coverage,
+    _tag_exempt_from_tdd,
+)
+from scripts.track_state.dispatch import _classify_task
+
+ROOT = Path(__file__).resolve().parent.parent
+CONTRACT = ROOT / "runtime" / "contracts" / "plan-format-contract.md"
+PHASE_CHECKER = (ROOT / "agents" / "phase-checker.md").read_text(encoding="utf-8")
+TASK_EXECUTOR = (ROOT / "agents" / "task-executor.md").read_text(encoding="utf-8")
+
+
+class TagExtractionTests(TestCase):
+    def test_extract_migrate(self):
+        self.assertEqual(
+            extract_tags("- [ ] [Migrate] fix javax->jakarta"),
+            ["Migrate"],
+        )
+
+    def test_extract_migrate_with_comment(self):
+        # AC/TC HTML comment must not false-positive or swallow the tag.
+        self.assertEqual(
+            extract_tags("[Migrate] rename packages <!-- AC-1, TC-1.1 -->"),
+            ["Migrate"],
+        )
+
+    def test_extract_migrate_preserves_others(self):
+        # A task may carry Migrate alongside another tag; both are returned.
+        self.assertEqual(
+            extract_tags("[Chore] [Migrate] bump spring-boot"),
+            ["Chore", "Migrate"],
+        )
+
+
+class ExemptionChokepointTests(TestCase):
+    """helpers.py:385/391 are the single F2/F3 exemption sets CLI-wide."""
+
+    def test_exempt_from_tdd(self):
+        self.assertTrue(_tag_exempt_from_tdd(["Migrate"]))
+        self.assertTrue(_tag_exempt_from_tdd(["Migrate", "Chore"]))
+
+    def test_exempt_from_coverage(self):
+        self.assertTrue(_tag_exempt_from_coverage(["Migrate"]))
+
+    def test_default_tag_not_exempt(self):
+        # Untagged implementation work stays fully gated.
+        self.assertFalse(_tag_exempt_from_tdd([]))
+        self.assertFalse(_tag_exempt_from_coverage([]))
+
+
+class RoutingTests(TestCase):
+    """[Migrate] routes to executor (runs task-executor), NOT manual/explore.
+
+    This is load-bearing: routing to explore/manual would skip the code work the
+    migration requires. _classify_task is the single routing source of truth.
+    """
+
+    def test_routes_to_executor(self):
+        self.assertEqual(_classify_task(["Migrate"]), "executor")
+
+    def test_routes_to_executor_alongside_chore(self):
+        self.assertEqual(_classify_task(["Migrate", "Chore"]), "executor")
+
+
+class ContractDocTests(TestCase):
+    def setUp(self):
+        self.assertTrue(CONTRACT.exists(), "plan-format-contract.md must exist")
+        self.text = CONTRACT.read_text(encoding="utf-8")
+
+    def test_contract_documents_migrate_tag(self):
+        self.assertIn("[Migrate]", self.text)
+        # The distinguishing semantics — suite is the safety net, not a TDD target.
+        self.assertIn("suite", self.text.lower())
+
+    def test_contract_migrate_row_says_tdd_no(self):
+        # The [Migrate] row sits in the tag table; its TDD column is NO.
+        # Find the row line and assert it carries **NO** (TDD not required).
+        migrate_line = next(
+            (ln for ln in self.text.splitlines() if "[Migrate]" in ln),
+            "",
+        )
+        self.assertIn("[Migrate]", migrate_line, "[Migrate] row missing from tag table")
+        self.assertIn("**NO**", migrate_line, "[Migrate] row must mark TDD as NO")
+
+
+class AgentDocTests(TestCase):
+    def test_phase_checker_has_migration_branch(self):
+        # The load-bearing phase-gate change: an all-migration phase ending red
+        # is reported FAILED with the failing-test list, not fix-and-retried.
+        self.assertIn("migration-phase branch", PHASE_CHECKER.lower().replace("Migration-phase", "migration-phase"))
+        self.assertIn("[Migrate]", PHASE_CHECKER)
+        self.assertIn("safety net", PHASE_CHECKER)
+
+    def test_task_executor_has_migrate_workflow(self):
+        self.assertIn("[Migrate]", TASK_EXECUTOR)
+        self.assertIn("§4.M", TASK_EXECUTOR)
+        # §5.0 exempts Migrate from F2/F3 (alongside Docs/Config/Chore).
+        self.assertRegex(
+            TASK_EXECUTOR,
+            r"Exempted:.*\[Docs\].*\[Config\].*\[Chore\].*\[Migrate\]",
+        )
+
+
+if __name__ == "__main__":
+    main()

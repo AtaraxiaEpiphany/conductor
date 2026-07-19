@@ -51,7 +51,7 @@ _TOP_TASK = re.compile(rf"^-\s+\[{_VALID_MARKER_CLASS}\]")
 # Dispatch tag that exempts a task from the annotation requirement (non-
 # implementation work). Boundary-anchored like helpers.extract_tags, so the
 # orchestrator's tag-based TDD gating and this hook agree on what's exempt.
-_EXEMPT_TAG = re.compile(r"(?<!\S)\[(?:Explore|Docs|Config|Chore|Manual)\](?!\S)")
+_EXEMPT_TAG = re.compile(r"(?<!\S)\[(?:Explore|Docs|Config|Chore|Manual|Migrate)\](?!\S)")
 
 
 def _comment_refs(line: str):
