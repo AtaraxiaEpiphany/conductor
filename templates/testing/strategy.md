@@ -46,6 +46,18 @@ Before creating any test file:
 2. If files exist, follow the established naming and placement convention.
 3. If no files exist, use the language's default pattern from the table above.
 
+### Scripts & Dev Commands
+
+Project scripts (run/build helpers, `start.sh`, `seed.sql`, one-off CLIs) belong at the **project root** in conventional locations — **not** under `conductor/`. The `conductor/` tree is the spec/wiki/planning map that Conductor agents route on; it is not a home for executable code.
+
+| File type | Location |
+|-----------|----------|
+| Dev/run scripts (`start.sh`, `run.sh`) | `./scripts/` at project root, or a `Makefile` / `package.json` script |
+| Test scripts | `{TEST_ROOT}/` (above) |
+| One-off CLIs / bins | `./bin/` |
+
+Rationale: tooling (`pytest`, `make`, CI) already looks in these places, and keeping executable code out of `conductor/` preserves the doc map's integrity — a `scripts/` row in `conductor/index.md` would be non-documentation noise that no agent routes on.
+
 ## Test Types
 
 | Type | Directory | Purpose | Scope |

@@ -139,6 +139,10 @@ python3 -m pytest tests/
 
 Conductor verifies work across a ladder — **L0** static, **L1** unit/integration, **L2** browser-E2E (opportunistic, when a browser-automation MCP is connected), **L4** human manual plan. It does **not** cover **L3** (production logs/metrics/traces): that rung is project-specific infrastructure a generic plugin cannot provision and is left to the host project.
 
+## Project conventions
+
+**Scripts and dev commands belong in the target project, not under `conductor/`.** Put run/build helpers (`start.sh`, `run.sh`) at the project root in `./scripts/` or a `Makefile`/`package.json` script; tests go in the test root `setup` resolves (detected from `conductor/.conductor/analysis.json`, else `tests/`); one-off CLIs go in `./bin/`. The `conductor/` tree is the spec/wiki/planning map that Conductor agents route on — it is not a home for executable code, so it intentionally has no `scripts/` slot and no row in `conductor/index.md`. See `templates/testing/strategy.md` → *Scripts & Dev Commands* for the full placement table.
+
 ## License
 
 [MIT](LICENSE)
