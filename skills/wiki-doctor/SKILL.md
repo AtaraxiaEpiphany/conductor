@@ -140,6 +140,7 @@ Status: <PASS / WARN / FAIL>
 | Coverage Gaps | <N> | <semicolon-separated list or "None"> |
 | Log Issues | <N> | <semicolon-separated list or "None"> |
 | Missing Frontmatter | <N> | <semicolon-separated list of scoped docs missing provenance, or "None"> |
+| Missing Seeded Docs | <N> | <semicolon-separated list of `seeded` rows in `conductor/index.md` whose files are missing, or "None"> |
 
 ## Summary
 <one-line summary from doc-linter>
@@ -152,6 +153,8 @@ Based on STATUS:
 - **PASS:** "Wiki is healthy. No action needed."
 - **WARN:** "Issues detected. Consider running targeted fixes or re-ingesting affected sources."
 - **FAIL:** "Significant issues found. Review the details above and address ERROR-level findings."
+
+**Missing Seeded Docs** is computed by `scripts/lint-conductor-index.py` — a row tagged `seeded` in `conductor/index.md` whose file is missing means setup didn't finish or a file was deleted. `wiki-doctor` has no `Bash`, so surface the count in the report and recommend the user run the check directly: ``! python3 "${CLAUDE_PLUGIN_ROOT}/scripts/lint-conductor-index.py"`` (exit 1 + the exact missing paths). Rows tagged `auto`/`on-demand` are intentionally absent until a skill or the user creates them — they are NOT failures.
 
 ---
 

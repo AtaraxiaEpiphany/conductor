@@ -1,52 +1,27 @@
-"""Drift gate + placement coverage for the Conductor file maps.
+"""Placement coverage + role tests for the Conductor file maps.
 
 Two maps govern doc placement/reading:
 - ``templates/claude-md-toc.md``  → creation map (pasted into project CLAUDE.md)
 - ``templates/project-index.md``  → read-strategy map (→ ``conductor/index.md``)
 
-They group docs differently but MUST list the same first-class spine, else an
-agent resolving a path via CLAUDE.md can't find or place a doc the read-map
-knows about (the ``purpose.md`` omission bug). ``doc-conventions.md`` must in
-turn give every frontmatter ``type`` a canonical folder — closing the
-``concept``/``entity`` "no home" gap.
+The **spine-agreement** invariant between them (every read-map category must
+have a creation-map home, and every row must carry a seeded/auto/on-demand
+status) is enforced data-driven by ``scripts/check-index-maps.py``, exercised in
+``test_index_maps.py``. This file keeps the human-readable placement contract
+that the script does NOT cover: the creation map is the intentional superset
+(decision records, plugin-provided authoring rules), it states its own role vs.
+``conductor/index.md``, and ``doc-conventions.md`` gives every frontmatter
+``type`` a canonical folder (closing the ``concept``/``entity`` "no home" gap).
 """
 from pathlib import Path
 from unittest import TestCase, main
 
 ROOT = Path(__file__).resolve().parent.parent
 TOC = (ROOT / "templates" / "claude-md-toc.md").read_text(encoding="utf-8")
-INDEX = (ROOT / "templates" / "project-index.md").read_text(encoding="utf-8")
 CONVENTIONS = (ROOT / "runtime" / "contracts" / "doc-conventions.md").read_text(encoding="utf-8")
-
-# First-class docs BOTH maps must list. Adding a spine doc to one map forces
-# adding it to the other — this list is the contract that enforces agreement.
-SPINE = [
-    "conductor/product/product.md",
-    "conductor/product/product-guidelines.md",
-    "conductor/design/tech-stack.md",
-    "conductor/resource/glossary.md",
-    "conductor/overview.md",
-    "conductor/purpose.md",
-    "conductor/log.md",
-    "conductor/requirement/ux-ui/design-spec.md",
-    "conductor/design/architecture/system-architecture.md",
-    "conductor/design/api-specs",
-    "conductor/design/database",
-    "conductor/workflow/index.md",
-    "conductor/workflow/git-flow.md",
-    "conductor/workflow/testing/strategy.md",
-    "conductor/tracks.md",
-]
 
 
 class MapAgreementTests(TestCase):
-    def test_spine_listed_in_both_maps(self):
-        for frag in SPINE:
-            self.assertIn(frag, TOC,
-                          f"creation map (claude-md-toc.md) missing {frag!r}")
-            self.assertIn(frag, INDEX,
-                          f"read map (project-index.md) missing {frag!r}")
-
     def test_creation_map_is_the_superset(self):
         # Placement targets the creation map must surface even when the
         # read-map doesn't single them out: decision records + authoring rules.

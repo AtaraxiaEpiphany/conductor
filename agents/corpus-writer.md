@@ -198,7 +198,7 @@ For confirmed cross-references (5.9):
 For confirmed graduation harvests (§5.10):
 
 7. **Merge** — for each confirmed merge, Edit the target doc to add the finding as a bullet under its canonical `##` section (merge, never append a new subsection). Skip if the finding is already present (idempotent). Bump the doc's frontmatter `last_verified` (step 2 rule).
-8. **Seed** — for each confirmed seed, Write the target doc **with a provenance frontmatter block** (`type`, `sources: [<{TRACK_ID} | handoff_stem>...]`, `last_verified`), followed by focused content (title + the finding under the appropriate `##` heading, plus a `## See Also` linking to related docs), then add a row to the `conductor/index.md` Scoped Docs table: `| {Category} | {path} | {Match Strategy} |`.
+8. **Seed** — for each confirmed seed, Write the target doc **with a provenance frontmatter block** (`type`, `sources: [<{TRACK_ID} | handoff_stem>...]`, `last_verified`), followed by focused content (title + the finding under the appropriate `##` heading, plus a `## See Also` linking to related docs), then add a row to the `conductor/index.md` Scoped Docs table. The table has a **Status** column (`seeded` / `auto` / `on-demand`) — a graduated seed is created by a skill, so its status is `auto`: `| {Category} | {path} | {auto} | {Match Strategy} |`.
 9. Record each graduated doc (merge or seed) so wiki-synthesizer can emit the GRADUATE log row.
 
 After all confirmed updates, cross-references, and harvests are applied:

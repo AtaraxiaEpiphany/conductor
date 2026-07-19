@@ -154,6 +154,7 @@ Save state: `2.4_workflow`.
    ```bash
    cp "${CLAUDE_PLUGIN_ROOT}/templates/project-index.md" conductor/index.md
    ```
+   The template's **Status** column classifies every row `seeded` (setup creates it — exists now), `auto` (a skill creates it later), or `on-demand` (user/agent creates it when needed). This is why some referenced paths don't exist after setup — they are intentional slots, not broken links. `scripts/check-index-maps.py` (run by the test suite) enforces that every `seeded` row is actually written by setup, so the two can't drift.
 
 4. **Wiki cold-start (brownfield only — optional, never blocks).** The scaffolded wiki (§2.4 step 6) is placeholder text until a track runs or sources are filed — which is why a fresh project's wiki reads as empty. If this is brownfield (analyzer ran / `conductor/.conductor/analysis.json` exists) AND the project has pre-existing docs worth filing, offer to populate the wiki from them now so it compounds from day one. Detect candidates with `Glob`: `README.md`, `docs/**/*.md`, and root `*.md` — excluding anything under `conductor/` (never re-ingest the wiki into itself). If candidates exist → `AskUserQuestion`: "Populate the wiki from your existing docs now via `/wiki build`?" → **Yes** → invoke `/conductor:wiki build <path>` (`docs/` if a docs tree exists, else the project root, else `README.md`). **No, or no candidates** → skip. `/wiki build` is idempotent, so a setup re-run that re-offers it is a safe no-op; the wiki can also be built any time later via `/conductor:wiki build`.
 
