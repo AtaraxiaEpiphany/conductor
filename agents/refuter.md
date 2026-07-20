@@ -47,6 +47,11 @@ Refute on:
 - A test-case (TC) scenario that does not actually exercise the acceptance criterion (AC) it claims to cover.
 - An AC that diverges from stated user intent (the plan encodes something the user did not ask for, or drops something they did).
 - A task that maps to no AC, or an AC that no task realizes — **semantic** fit only. Do NOT re-derive the deterministic checks the orchestrator already ran (dangling AC, EARS well-formedness, TC/plan/verification coverage rates); those are out of your lane and re-running them is wasted effort.
+- A **task tag that is semantically wrong**. Tags (`[Explore]`/`[Docs]`/`[Config]`/`[Chore]`/`[Manual]`/`[Migrate]`) are **exemptions from TDD**, and a wrong tag silently disables a safety gate, so challenge each tagged task against its description and AC refs:
+  - **Over-tagged** (the dangerous direction): a task tagged `[Docs]`/`[Config]`/`[Chore]`/`[Migrate]` whose description or `<!-- AC-n -->` refs name **business logic / behavior** it must implement. The exemption is inappropriate — the task needs TDD and the coverage gate (F2/F3). Refute.
+  - **Under-tagged**: a task that is genuinely config/docs/migration-shaped but carries **no tag** is *not* a refutation — no-tag is the safe default (full TDD), so an unnecessary Red cycle is the only cost; it does not break a safety net. Leave it; at most note it under `CHALLENGED_CLAIM` as advisory. Do NOT refute on under-tagging alone.
+  - A `[Migrate]` tag on work that has **no existing test suite to serve as the safety net** (greenfield, or a module with no tests) is wrong — the migration workflow (`§4.M`) assumes a suite that starts red. Refute.
+  - An **unknown** tag (anything outside the closed six) routes nowhere — the parser ignores it — but this is a deterministic defect §2.3's format check already catches, so do NOT re-derive it here.
 
 ### 3.2 `skip` — challenge a "skip this task" recommendation
 

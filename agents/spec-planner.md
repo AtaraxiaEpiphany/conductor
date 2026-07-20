@@ -113,6 +113,18 @@ Structure:
 
 **Mandatory format contract:** Read `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/plan-format-contract.md` and follow it exactly when generating `plan.md`. It defines the status-marker, dispatch-tag, and subtask rules the orchestrator's plan parser and dispatch router depend on — a task line without `[ ]` is silently dropped by the parser, and dispatch tags (`[Explore]`, `[Docs]`, `[Config]`, `[Chore]`, `[Manual]`) drive routing and TDD gating. Violating any rule breaks the orchestrator.
 
+**Task-tag decision rule (apply to EVERY task line before writing it).** Tags are **exemptions from the default TDD workflow**, not classifications — the closed set is `[Explore]`/`[Docs]`/`[Config]`/`[Chore]`/`[Manual]`/`[Migrate]`, and a task with **no tag is the default** (full Red→Green→Refactor TDD, which is the correct path for most implementation work). Decide each task by asking, in order:
+
+1. Does the task edit `.env`/`.yaml`/`.json` config with **no business logic**? → `[Config]`.
+2. Dependencies, tooling, CI/CD, or build scripts with **no feature code**? → `[Chore]`.
+3. Markdown/docs **only**, no code touched? → `[Docs]`.
+4. Investigation/analysis that **produces no code or file change** (architecture mapping, dependency survey)? → `[Explore]`.
+5. Framework/version migration, package rename, or major-dep bump where an **existing test suite is the safety net** (the suite starts red, success is making it green — not writing a new failing test)? → `[Migrate]`.
+6. Requires a **human** (UI walkthrough, cross-browser check, staging deploy, accessibility audit, email-delivery confirmation)? → `[Manual]`.
+7. None of the above — it writes new or changed **business logic**? → **no tag** (default TDD). This is the expected outcome for the majority of tasks.
+
+**When unsure between an exemption tag and no-tag, leave it UNTAGGED.** The default TDD path is the safe failure mode: a wrongly-untagged `[Config]` task costs one extra Red cycle, but a wrongly-tagged feature task silently skips TDD and the coverage gate (F2/F3 exempt). Defaulting to no-tag biases toward correctness. Never invent a tag outside the closed set (e.g. `[Feature]`, `[Bugfix]`, `[Test]`, `[TDD]`) — the parser ignores unknown tags and they route nowhere.
+
 **Declare inter-task dependencies (optional but encouraged):** when a task is *not file-disjoint* from its siblings — it builds on an artifact an earlier task produced (a model, utility, config key) — append a second HTML comment `<!-- deps: P{n}.T{n} -->` naming that predecessor by its positional coordinate (e.g. `P1.T1` = Phase 1, Task 1). The AC/TC comment is still mandatory and separate. Omit `deps` only when tasks in a phase touch genuinely disjoint files/modules. Making coupling explicit keeps the dependency graph machine-checkable (the parser validates dangling refs, self-deps, and cycles at `init-from-plan --check`) rather than implicit in ordering. See `plan-format-contract.md` §Inter-Task Dependencies.
 
 ### 4.3 Write Files

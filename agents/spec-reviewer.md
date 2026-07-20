@@ -106,6 +106,14 @@ Ask user: `"Review plan.md — Approve, Request Changes, or Read Full?"`
 - **Request Changes** → ask what to change → apply edits → re-present summary → repeat until approved.
 - **Read Full** → present the full plan.md → then ask again.
 
+**Plan tag audit (run before presenting §3.3, fold results into the summary).** Scan every task line for its tag. Tags (`[Explore]`/`[Docs]`/`[Config]`/`[Chore]`/`[Manual]`/`[Migrate]`) are **TDD exemptions** — a wrong tag silently skips the Red→Green→Refactor cycle and the coverage gate, so flag the dangerous direction:
+
+- **Over-tagged (flag for the user):** a task tagged `[Docs]`/`[Config]`/`[Chore]`/`[Migrate]` whose description or `<!-- AC-n -->` refs name business logic/behavior it must implement → the exemption is wrong, the task needs full TDD. Present as a suggested fix (drop the tag).
+- **Under-tagged (advisory only, do NOT auto-edit):** a task that looks config/docs/migration-shaped but has no tag is **not an error** — no-tag is the safe default (full TDD). You may note it as a possible time-saver ("this looks config-only — tag `[Config]` to skip the TDD cycle?"), but never treat it as a defect and never remove a safety net without the user's confirmation.
+- **Unknown tag** (outside the closed six) is ignored by the parser → present as a suggested fix.
+
+When you flag over-tagged or unknown tags, list them in the §3.3 summary under a `### Task tags to review` subsection (`- P{n}.T{n}: [Tag] → <reason>`). Apply a tag fix only when the user confirms (§3.4 revision rules — a tag change is a description edit, not a structure change, so `STRUCTURE_CHANGED` stays `false`).
+
 ### 3.4 Revision Rules
 
 When making revisions:

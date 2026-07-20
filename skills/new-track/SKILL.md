@@ -149,7 +149,7 @@ Dispatch `conductor:refuter`, prompt:
 ```
 PROJECT_DIR={project_root}
 DOMAIN=plan
-CLAIM=The spec.md + plan.md are semantically sound — every acceptance criterion reflects the user's stated intent, every AC is genuinely exercised by a Test Scenario (not merely name-matched), and no task is semantically orphaned from the AC it claims to realize.
+CLAIM=The spec.md + plan.md are semantically sound — every acceptance criterion reflects the user's stated intent, every AC is genuinely exercised by a Test Scenario (not merely name-matched), no task is semantically orphaned from the AC it claims to realize, AND every task tag is semantically correct (no business-logic task is wrongly exempted from TDD by a [Docs]/[Config]/[Chore]/[Migrate] tag, and no [Migrate] task lacks an existing test suite to serve as its safety net).
 CONTEXT_PATHS={track_dir}/spec.md {track_dir}/plan.md {USER_ANSWERS path or N/A}
 AC_EVIDENCE={the ac_evidence list from the §2.3 spec-integrity JSON — each AC's measured/claimed/missing TCs}
 ```
