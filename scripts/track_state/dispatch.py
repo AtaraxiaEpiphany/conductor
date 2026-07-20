@@ -26,7 +26,7 @@ from .git_ops import (
     docs_synced_for_track, wiki_phase2_committed_for_track,
     _git_rev_parse_toplevel,
 )
-from .handoff import _append_execution_record
+from .handoff import _append_execution_record, compile_track_findings
 from .misc import _get_all_shas, _stamp_checkpoint_in_plan
 from .quality import _finalize_track
 from .validate import _fix_plan_mismatches, ensure_healthy
@@ -2174,6 +2174,13 @@ def cmd_phase_checkpoint_review(track_dir, status, sha, reason):
             out(dict(error=result["error"], track_dir=td))
             return
         _phase_cp_clear_marker(track_dir)
+        # Advisory: compile durable findings for later phases. Fail-open — a
+        # compile error must never block the phase advance (the checkpoint is
+        # already stamped). cross-phase findings live in .conductor/track-findings.md.
+        try:
+            compile_track_findings(track_dir)
+        except Exception as exc:  # noqa: BLE001 — advisory, never fatal
+            sys.stderr.write(f"track-findings compile skipped (advisory): {exc}\n")
         out(dict(ok=True, stamped=True, phase=cp, sha=sha, track_dir=td))
     elif verdict == "FAILED":
         _phase_cp_clear_marker(track_dir)

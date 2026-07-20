@@ -75,7 +75,15 @@ Read the returned `content` and extract the `## Exploration Notes` section (Summ
 
 Read `conductor/index.md` → the **Scoped Docs** table. For each entry whose **Match Strategy** matches this task's scope (areas/components named in the task description or spec ACs), open the matching doc. Routing: `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/doc-routing.md`. Read only matching docs — never the whole corpus.
 
-### Layer 0(c): Nested read fan-out (OPT-IN — else skip to Layer 1)
+### Layer 0(c): Track findings (cross-phase bridge — READ BEFORE Layer 1)
+
+If `{TRACK_DIR}/.conductor/track-findings.md` exists, Read it. This is the **cross-phase bridge**: durable findings + technical decisions earlier phases of *this track* recorded, compiled automatically at each phase checkpoint. It complements (a) this task's own Exploration Notes and (b) the project-scoped corpus docs of Layer 0(b).
+
+- A finding here is prior art — honor its gotchas/constraints and any recorded decision's `Chosen`/`Reasoning`; don't re-derive what an earlier phase already established.
+- Verify a finding still holds against the current code before relying on it (the compile is a point-in-time snapshot; code may have moved on).
+- If the file is absent (first phase, or no `[Explore]` task ran yet) → skip silently. This is expected, not an error.
+
+### Layer 0(d): Nested read fan-out (OPT-IN — else skip to Layer 1)
 
 **Opt-in gate** (both checked): the task name carries a `[Probe]` marker **OR** env `CONDUCTOR_TASK_FANOUT=1` is set. If NEITHER → this layer is skipped; do the Layer 0(b) reads directly (the default — bulk reads stay in your context).
 
@@ -244,7 +252,7 @@ PURPOSE=coverage
 | `error` | Read `REASON`. `no test command resolvable` → record `SPEC_DEVIATION`/surface; otherwise re-dispatch once. | Same. |
 
 > The `Agent` tool is fenced to §4.5 `test-digester` dispatches and the opt-in
-> §3.0c `doc-probe` fan-out — see the §5.0 firewall. No other nested subagent.
+> §3.0d `doc-probe` fan-out — see the §5.0 firewall. No other nested subagent.
 
 ---
 
@@ -258,7 +266,7 @@ SHA handling: orchestrator appends SHAs — you do NOT modify plan markers.
 
 **Nesting fence (the `Agent` tool):** permitted for exactly two dispatch kinds, no other nested subagent:
 1. a §4.5 `test-digester` dispatch per Step 3 / Step 6;
-2. the **opt-in** §3.0c `doc-probe` fan-out — only when the gate fires
+2. the **opt-in** §3.0d `doc-probe` fan-out — only when the gate fires
    (`[Probe]` marker or `CONDUCTOR_TASK_FANOUT=1`), one parallel dispatch per
    matching Layer 0(b) doc.
 

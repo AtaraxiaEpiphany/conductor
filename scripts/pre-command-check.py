@@ -94,7 +94,7 @@ _SANCTIONED_TS_SUBCOMMANDS = {
     # already caught by is_direct_track_state_modification(). Keep in sync with
     # _COMMAND_GROUPS — the test suite asserts this set covers it.
     "add-checkpoint", "append-handoff", "archive", "block", "check",
-    "checklist-verify", "complete", "defer", "deferred-report", "derive-name",
+    "checklist-verify", "complete", "compile-track-findings", "defer", "deferred-report", "derive-name",
     "dispatch-finalize", "dispatch-next", "dispatch-prepare", "dispatch-wave",
     "fail", "failure-analyst-verdict", "finalize", "gc", "get-handoff", "harvest-candidates", "help",
     "indices", "init-from-plan", "lock", "new-track-finalize", "new-track-init",

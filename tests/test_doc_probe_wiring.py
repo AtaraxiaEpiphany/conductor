@@ -89,10 +89,11 @@ class DocProbeAgentTests(unittest.TestCase):
 
 
 class TaskExecutorNestingTests(unittest.TestCase):
-    def test_section_3_0c_dispatches_doc_probe(self):
-        # §3.0c must delegate to doc-probe via the canonical dispatch form, with
+    def test_section_3_0d_dispatches_doc_probe(self):
+        # §3.0d (the opt-in doc-probe fan-out layer; track-findings is §3.0c)
+        # must delegate to doc-probe via the canonical dispatch form, with
         # DOC_PATH + TASK_SCOPE in the fenced prompt.
-        self.assertIn("0(c)", TASK_EXECUTOR)
+        self.assertIn("0(d)", TASK_EXECUTOR)
         self.assertIn("Dispatch `doc-probe`", TASK_EXECUTOR)
         self.assertIn("DOC_PATH=", TASK_EXECUTOR)
         self.assertIn("TASK_SCOPE=", TASK_EXECUTOR)
@@ -113,7 +114,7 @@ class TaskExecutorNestingTests(unittest.TestCase):
 
     def test_firewall_fences_agent_tool_to_both_children(self):
         # The Agent tool fence must name BOTH permitted children (§4.5 test-digester
-        # + §3.0c doc-probe) — the exception can't widen to arbitrary nesting, and
+        # + §3.0d doc-probe) — the exception can't widen to arbitrary nesting, and
         # the doc-probe branch must be visibly gated, not silent.
         for child in ("test-digester", "doc-probe"):
             self.assertIn(child, TASK_EXECUTOR,

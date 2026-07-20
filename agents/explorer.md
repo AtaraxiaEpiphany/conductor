@@ -53,6 +53,14 @@ The durable architecture you are paid to investigate is *already documented* in 
 4. **Record provenance** — collect every corpus doc you opened into a `consulted_docs` list (path + one-line relevance) — **including any saved queries from step 3**. This list becomes the `### Corpus Consulted` section of your handoff (§4.2), so the downstream task-executor and corpus-writer know *which* documented knowledge your findings extend (and can flag where your findings contradict the corpus).
 5. **Greenfield / no match** — if the corpus has no matching scoped doc (greenfield project, or a genuinely novel area), record `consulted_docs: []` and note "no matching corpus doc — first documentation of this area" (this is a graduation signal: your findings will *seed* the corpus). Never skip the consult step silently.
 
+### 3.2 Track Findings (READ BEFORE code exploration)
+
+If `{TRACK_DIR}/.conductor/track-findings.md` exists, Read it. This is the **cross-phase bridge**: durable findings + technical decisions an earlier phase of *this track* recorded, compiled automatically at each phase checkpoint. It is prior art scoped to this track — read it before you explore so you don't rediscover what a prior phase already established.
+
+- Treat each finding as a starting point to **verify against code**, not inherit blindly.
+- Findings you build on (confirm, extend, or contradict) belong in your `consulted_docs` list (§3.1 step 4) as `{path: ".conductor/track-findings.md", relevance: "<one line>"}` so the downstream task-executor inherits them via your handoff.
+- If the file is absent (first phase, or no explorer ran yet) → skip silently. This is expected; it is not a missing-corpus signal.
+
 ---
 
 ## 4.0 EXPLORATION PROTOCOL

@@ -27,7 +27,7 @@ from .misc import (
     cmd_resolve_track, cmd_check, _resolve_track_dir_or_halt,
 )
 from .spec_integrity import cmd_spec_anchors
-from .handoff import cmd_get_handoff, cmd_sync_handoff, cmd_append_handoff, cmd_harvest_candidates
+from .handoff import cmd_get_handoff, cmd_sync_handoff, cmd_append_handoff, cmd_harvest_candidates, cmd_compile_track_findings
 from .sync import cmd_sync_plan
 from .wave import (
     cmd_dispatch_wave, cmd_wave_status, cmd_wave_finalize, cmd_wave_abort,
@@ -232,6 +232,8 @@ COMMAND_HELP = {
                        "Append notes to a task's handoff file"),
     "harvest-candidates": ("harvest-candidates <track-dir>",
                            "Extract durable findings (graduation candidates + decisions) from handoffs for corpus-writer"),
+    "compile-track-findings": ("compile-track-findings <track-dir>",
+                                "Compile durable findings into .conductor/track-findings.md (cross-phase bridge; auto-runs at each PASSED checkpoint)"),
     "registry-update": ("registry-update <track-dir> <tracks-md-path>",
                         "Update track entry in Tracks Registry (tracks.md)"),
     "registry-add": ("registry-add <track-dir> [<tracks-md-path>]",
@@ -359,7 +361,8 @@ _COMMAND_GROUPS = [
     ("State Mutations", ["lock", "complete", "fail", "skip", "defer", "block", "reset",
                          "set-max-retries", "split"]),
     ("Sync & Registry", ["sync-plan", "sync-handoff", "registry-update", "registry-add"]),
-    ("Handoff", ["get-handoff", "append-handoff", "harvest-candidates"]),
+    ("Handoff", ["get-handoff", "append-handoff", "harvest-candidates",
+                 "compile-track-findings"]),
     ("Result Processing", ["write-result", "process-result"]),
     ("Dispatch Composites", ["dispatch-prepare", "dispatch-finalize", "record-summary"]),
     ("Rail B-min Spines", ["step", "post-loop-step", "post-loop-review",
@@ -645,6 +648,8 @@ def main():
                               flag(args, "--subtask"))
         elif cmd == "harvest-candidates":
             cmd_harvest_candidates(track_dir)
+        elif cmd == "compile-track-findings":
+            cmd_compile_track_findings(track_dir)
         elif cmd == "preflight":
             cmd_preflight(track_dir)
         elif cmd == "derive-name":

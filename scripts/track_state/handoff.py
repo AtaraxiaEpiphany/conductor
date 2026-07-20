@@ -646,5 +646,113 @@ def cmd_harvest_candidates(track_dir):
     out(result)
 
 
+# ── Track Findings (durable findings compiled for later phases) ──────
+
+def _track_findings_path(track_dir):
+    """Path to the compiled track-findings doc (track-scoped scratch)."""
+    return conductor_dir(track_dir) / "track-findings.md"
+
+
+def _render_track_findings(track_dir, state, harvested):
+    """Render the track-findings markdown from a harvested candidate set.
+
+    Pure function of its inputs — rewritten from scratch at every compile,
+    so stale entries never accumulate and no merge logic is needed. Returns
+    the markdown text (or ``None`` when the harvest is empty and nothing
+    has been compiled yet, signalling the caller may skip the write).
+    """
+    graduation = harvested.get("graduation", [])
+    decisions = harvested.get("decisions", [])
+    description = state.get("description", "") if state else ""
+    track_id = state.get("track_id", "track") if state else "track"
+    title = description.strip() or track_id
+
+    lines = [
+        f"# Track Findings — {title}",
+        "",
+        ("Compiled at each phase checkpoint from explorer handoffs. Prior art "
+         "for later phases — read *before* re-exploring (verify against code, "
+         "don't rediscover). Track-scoped; superseded by the project corpus at "
+         "archive."),
+        "",
+        f"_Last compiled: {now_iso()}_",
+        "",
+    ]
+
+    if not graduation and not decisions:
+        lines.append("_No durable findings recorded yet._")
+        lines.append("")
+        return "\n".join(lines)
+
+    lines.append("## Durable Findings")
+    lines.append("")
+    if graduation:
+        for g in graduation:
+            lines.append(f"- {g['text']} _— source: {g.get('source', '?')}_")
+    else:
+        lines.append("_None._")
+    lines.append("")
+    lines.append("## Technical Decisions")
+    lines.append("")
+    if decisions:
+        for dec in decisions:
+            lines.append(f"### {dec.get('title', '(untitled)')} "
+                         f"_— source: {dec.get('source', '?')}_")
+            if dec.get("chosen"):
+                lines.append(f"- **Chosen**: {dec['chosen']}")
+            if dec.get("reasoning"):
+                lines.append(f"- **Reasoning**: {dec['reasoning']}")
+            lines.append("")
+    else:
+        lines.append("_None._")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def compile_track_findings(track_dir):
+    """Compile durable findings from every handoff into a track-scoped doc.
+
+    The cross-phase durability bridge: ``get-handoff`` is keyed per-task, so a
+    later phase's task-executor/explorer cannot read an earlier phase's
+    exploration. This compiles the existing harvest (``_extract_candidates`` —
+    deduped across all ``P*T*.md`` handoffs) into
+    ``{TRACK_DIR}/.conductor/track-findings.md``, which later phases read before
+    re-exploring. Idempotent: rewritten from scratch every call.
+
+    Returns a dict (``path``, ``graduation_count``, ``decisions_count``,
+    ``compiled`` bool). Does not emit — the CLI wrapper and the F5 hook decide
+    what to do with the result.
+    """
+    state = load(track_dir)
+    handoff_dir = Path(track_dir) / ".conductor" / "handoff"
+    harvested = _extract_candidates(handoff_dir)
+    md = _render_track_findings(track_dir, state, harvested)
+    path = _track_findings_path(track_dir)
+    compiled = False
+    if md is not None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(md, encoding="utf-8")
+        compiled = True
+    return {
+        "path": str(path),
+        "graduation_count": len(harvested.get("graduation", [])),
+        "decisions_count": len(harvested.get("decisions", [])),
+        "compiled": compiled,
+    }
+
+
+def cmd_compile_track_findings(track_dir):
+    """CLI wrapper — compile ``.conductor/track-findings.md`` from handoffs.
+
+    Runs automatically at every PASSED phase checkpoint
+    (``cmd_phase_checkpoint_review``); exposed as a command so it can be invoked
+    and tested in isolation. The compile is advisory (fail-open at the F5 hook):
+    a findings-compile error never blocks a phase advance.
+    """
+    result = compile_track_findings(track_dir)
+    result["ok"] = True
+    out(result)
+
+
 # ── Dispatch Composite Commands ──────────────────────────────────────
 

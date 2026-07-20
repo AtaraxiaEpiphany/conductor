@@ -11,6 +11,6 @@ from .misc import (
     cmd_deferred_report, cmd_phase_done, cmd_registry_update,
     cmd_record_summary,
 )
-from .handoff import cmd_get_handoff, cmd_sync_handoff, cmd_append_handoff
+from .handoff import cmd_get_handoff, cmd_sync_handoff, cmd_append_handoff, cmd_compile_track_findings
 from .sync import cmd_sync_plan
 from .cli import main
