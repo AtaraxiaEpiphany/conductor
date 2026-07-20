@@ -78,8 +78,8 @@ class CompileTrackFindingsTests(TestCase):
         self.assertEqual(r["decisions_count"], 1)
         doc = (Path(self.d) / ".conductor" / "track-findings.md").read_text()
         self.assertIn("Add token refresh", doc)  # description in title
-        self.assertIn("- auth uses JWT with 15m expiry _— source: P1T1_", doc)
-        self.assertIn("### Use JWT _— source: P1T1_", doc)
+        self.assertIn("- auth uses JWT with 15m expiry _— source P1T1 (Phase 1)_", doc)
+        self.assertIn("### Use JWT _— source P1T1 (Phase 1)_", doc)
         self.assertIn("**Chosen**: JWT", doc)
         self.assertIn("**Reasoning**: stateless", doc)
 
@@ -92,7 +92,7 @@ class CompileTrackFindingsTests(TestCase):
         r = compile_track_findings(self.d)
         self.assertEqual(r["graduation_count"], 2)  # shared + only-in-T1
         doc = (Path(self.d) / ".conductor" / "track-findings.md").read_text()
-        self.assertEqual(doc.count("- shared finding _— source:"), 1)
+        self.assertEqual(doc.count("- shared finding _— source"), 1)
         self.assertIn("only in T1", doc)
 
     def test_idempotent_recompilation(self):
@@ -105,6 +105,42 @@ class CompileTrackFindingsTests(TestCase):
         # Pure function of handoffs: the finding block is identical (the only
         # varying line is the _Last compiled_ timestamp).
         self.assertEqual(_strip_compiled_at(first), _strip_compiled_at(second))
+
+    def test_staleness_label_old_finding(self):
+        # A Phase-1 finding compiled at the Phase-5 checkpoint shows its age —
+        # the cue for a reader to verify harder before relying on it.
+        cmd_append_handoff(self.d, 1, 1, "explore",
+                           _explore_payload(["auth uses JWT with 15m expiry"]))
+        compile_track_findings(self.d, current_phase=5)
+        doc = (Path(self.d) / ".conductor" / "track-findings.md").read_text()
+        self.assertIn("Phase 1, 4 phases ago", doc)
+        # The header explains the convention so the age label is not mysterious.
+        self.assertIn("Staleness", doc)
+
+    def test_staleness_label_fresh_finding(self):
+        # Same-phase finding (recorded this checkpoint) shows no age — fresh.
+        cmd_append_handoff(self.d, 1, 1, "explore",
+                           _explore_payload(["just recorded"]))
+        compile_track_findings(self.d, current_phase=1)
+        doc = (Path(self.d) / ".conductor" / "track-findings.md").read_text()
+        self.assertIn("(Phase 1)", doc)
+        self.assertNotIn("ago", doc)
+
+    def test_staleness_label_one_phase_singular(self):
+        # 1-phase-old uses the singular "phase", not "phases".
+        cmd_append_handoff(self.d, 1, 1, "explore", _explore_payload(["x"]))
+        compile_track_findings(self.d, current_phase=2)
+        doc = (Path(self.d) / ".conductor" / "track-findings.md").read_text()
+        self.assertIn("Phase 1, 1 phase ago", doc)
+
+    def test_staleness_label_no_current_phase(self):
+        # Manual CLI invoke (no pending checkpoint) → source-phase-only label.
+        # The label must never lie about age it can't compute.
+        cmd_append_handoff(self.d, 1, 1, "explore", _explore_payload(["x"]))
+        compile_track_findings(self.d)  # current_phase defaults to None
+        doc = (Path(self.d) / ".conductor" / "track-findings.md").read_text()
+        self.assertIn("(Phase 1)", doc)
+        self.assertNotIn("ago", doc)
 
     def test_empty_harvest_writes_stub(self):
         # No explorer ran → the doc is still written as a minimal stub so the

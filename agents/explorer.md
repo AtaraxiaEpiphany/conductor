@@ -60,6 +60,7 @@ If `{TRACK_DIR}/.conductor/track-findings.md` exists, Read it. This is the **cro
 - Treat each finding as a starting point to **verify against code**, not inherit blindly.
 - Findings you build on (confirm, extend, or contradict) belong in your `consulted_docs` list (§3.1 step 4) as `{path: ".conductor/track-findings.md", relevance: "<one line>"}` so the downstream task-executor inherits them via your handoff.
 - If the file is absent (first phase, or no explorer ran yet) → skip silently. This is expected; it is not a missing-corpus signal.
+- If the file exists but reads `_No durable findings recorded yet._` (a prior checkpoint compiled an empty harvest) → treat it as absent: nothing durable to inherit, proceed to explore. Do not interpret the stub as a signal that exploration is pointless or that the area is documented.
 
 ---
 

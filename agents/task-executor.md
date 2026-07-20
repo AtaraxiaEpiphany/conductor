@@ -82,6 +82,7 @@ If `{TRACK_DIR}/.conductor/track-findings.md` exists, Read it. This is the **cro
 - A finding here is prior art — honor its gotchas/constraints and any recorded decision's `Chosen`/`Reasoning`; don't re-derive what an earlier phase already established.
 - Verify a finding still holds against the current code before relying on it (the compile is a point-in-time snapshot; code may have moved on).
 - If the file is absent (first phase, or no `[Explore]` task ran yet) → skip silently. This is expected, not an error.
+- If the file exists but reads `_No durable findings recorded yet._` (a prior checkpoint compiled an empty harvest) → treat it as absent: nothing durable to honor, proceed to Layer 1. The stub means the compile ran but no explorer promoted durable findings — not that the area was explored and found empty.
 
 ### Layer 0(d): Nested read fan-out (OPT-IN — else skip to Layer 1)
 

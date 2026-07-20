@@ -653,13 +653,49 @@ def _track_findings_path(track_dir):
     return conductor_dir(track_dir) / "track-findings.md"
 
 
-def _render_track_findings(track_dir, state, harvested):
+_SOURCE_PHASE = re.compile(r"^P(\d+)T\d+$")
+
+
+def _source_age_label(source, current_phase):
+    """Render a staleness label for a finding's ``source`` stem.
+
+    ``source`` is a handoff stem ``P{phase}T{task}`` (or ``?`` when unknown).
+    Returns a short label that makes a finding's *age* scannable: a reader in
+    ``current_phase`` sees at a glance whether a finding is fresh (this phase)
+    or old (N phases ago) — the cue to verify harder before relying on it.
+
+    - same phase      → ``(Phase N)``            (fresh — just recorded)
+    - earlier phase   → ``(Phase N, K phases ago)`` (stale — verify hard)
+    - unknown source  → ``(origin unknown — verify)``
+
+    ``current_phase`` is the checkpoint phase just stamped (1-based); when it
+    can't be determined (manual CLI invoke, no pending checkpoint) findings
+    get no age — only their source phase, so the label never lies.
+    """
+    m = _SOURCE_PHASE.match(source or "")
+    if not m:
+        return "(origin unknown — verify)"
+    src_phase = int(m.group(1))
+    if current_phase and current_phase >= 1:
+        age = current_phase - src_phase
+        if age <= 0:
+            return f"(Phase {src_phase})"
+        return f"(Phase {src_phase}, {age} phase{'s' if age != 1 else ''} ago)"
+    return f"(Phase {src_phase})"
+
+
+def _render_track_findings(track_dir, state, harvested, current_phase=None):
     """Render the track-findings markdown from a harvested candidate set.
 
     Pure function of its inputs — rewritten from scratch at every compile,
     so stale entries never accumulate and no merge logic is needed. Returns
     the markdown text (or ``None`` when the harvest is empty and nothing
     has been compiled yet, signalling the caller may skip the write).
+
+    ``current_phase`` (1-based) is the checkpoint just stamped, used to render
+    per-finding staleness labels (``_source_age_label``). Optional because the
+    CLI wrapper may be invoked manually with no pending checkpoint — in that
+    case findings show their source phase only (no relative age).
     """
     graduation = harvested.get("graduation", [])
     decisions = harvested.get("decisions", [])
@@ -673,7 +709,10 @@ def _render_track_findings(track_dir, state, harvested):
         ("Compiled at each phase checkpoint from explorer handoffs. Prior art "
          "for later phases — read *before* re-exploring (verify against code, "
          "don't rediscover). Track-scoped; superseded by the project corpus at "
-         "archive."),
+         "archive.\n\n"
+         "**Staleness:** each finding carries its source phase and age relative "
+         "to the current phase. Findings several phases old may describe code "
+         "since rewritten — verify harder the older the finding."),
         "",
         f"_Last compiled: {now_iso()}_",
         "",
@@ -688,7 +727,9 @@ def _render_track_findings(track_dir, state, harvested):
     lines.append("")
     if graduation:
         for g in graduation:
-            lines.append(f"- {g['text']} _— source: {g.get('source', '?')}_")
+            src = g.get("source", "?")
+            lines.append(f"- {g['text']} _— source {src} "
+                         f"{_source_age_label(src, current_phase)}_")
     else:
         lines.append("_None._")
     lines.append("")
@@ -696,8 +737,9 @@ def _render_track_findings(track_dir, state, harvested):
     lines.append("")
     if decisions:
         for dec in decisions:
+            src = dec.get("source", "?")
             lines.append(f"### {dec.get('title', '(untitled)')} "
-                         f"_— source: {dec.get('source', '?')}_")
+                         f"_— source {src} {_source_age_label(src, current_phase)}_")
             if dec.get("chosen"):
                 lines.append(f"- **Chosen**: {dec['chosen']}")
             if dec.get("reasoning"):
@@ -709,7 +751,7 @@ def _render_track_findings(track_dir, state, harvested):
     return "\n".join(lines)
 
 
-def compile_track_findings(track_dir):
+def compile_track_findings(track_dir, current_phase=None):
     """Compile durable findings from every handoff into a track-scoped doc.
 
     The cross-phase durability bridge: ``get-handoff`` is keyed per-task, so a
@@ -719,6 +761,10 @@ def compile_track_findings(track_dir):
     ``{TRACK_DIR}/.conductor/track-findings.md``, which later phases read before
     re-exploring. Idempotent: rewritten from scratch every call.
 
+    ``current_phase`` (1-based) flows to ``_source_age_label`` so each rendered
+    finding carries its age relative to the checkpoint just stamped (the F5 hook
+    passes it; the manual CLI path omits it → source-phase-only labels).
+
     Returns a dict (``path``, ``graduation_count``, ``decisions_count``,
     ``compiled`` bool). Does not emit — the CLI wrapper and the F5 hook decide
     what to do with the result.
@@ -726,7 +772,7 @@ def compile_track_findings(track_dir):
     state = load(track_dir)
     handoff_dir = Path(track_dir) / ".conductor" / "handoff"
     harvested = _extract_candidates(handoff_dir)
-    md = _render_track_findings(track_dir, state, harvested)
+    md = _render_track_findings(track_dir, state, harvested, current_phase)
     path = _track_findings_path(track_dir)
     compiled = False
     if md is not None:

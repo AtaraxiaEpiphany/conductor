@@ -2178,7 +2178,7 @@ def cmd_phase_checkpoint_review(track_dir, status, sha, reason):
         # compile error must never block the phase advance (the checkpoint is
         # already stamped). cross-phase findings live in .conductor/track-findings.md.
         try:
-            compile_track_findings(track_dir)
+            compile_track_findings(track_dir, current_phase=cp)
         except Exception as exc:  # noqa: BLE001 — advisory, never fatal
             sys.stderr.write(f"track-findings compile skipped (advisory): {exc}\n")
         out(dict(ok=True, stamped=True, phase=cp, sha=sha, track_dir=td))
