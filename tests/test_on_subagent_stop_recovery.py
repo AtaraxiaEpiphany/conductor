@@ -170,6 +170,25 @@ class RecoveryGuardTests(TestCase):
             self.assertEqual(rc, 0)
             self.assertNotIn("decision", out)
 
+    def test_spec_reviewer_without_close_tag_blocks(self):
+        """spec-reviewer runs STDOUT_BLOCK_AGENTS — its ---REVIEW RESULT--- block is
+        the only signal the parent parses for STATUS (APPROVED/CANCELLED/FAILURE).
+        Previously it fell into the no-recovery-contract branch, so a stop without
+        the block was silently lost and the parent fell back to reading the files
+        directly. A missing close tag earns one recovery turn."""
+        with tempfile.TemporaryDirectory() as d:
+            rc, out = self._run("spec-reviewer", d, last_message="stopped mid-review")
+            self.assertEqual(rc, 2)
+            self.assertEqual(out["decision"], "block")
+            self.assertIn("REVIEW RESULT", out["reason"])
+
+    def test_spec_reviewer_with_close_tag_allows(self):
+        with tempfile.TemporaryDirectory() as d:
+            msg = "Review done.\n---REVIEW RESULT---\nSTATUS: APPROVED\n---END REVIEW RESULT---"
+            rc, out = self._run("spec-reviewer", d, last_message=msg)
+            self.assertEqual(rc, 0)
+            self.assertNotIn("decision", out)
+
     # --- async agents: still no recovery contract ---
 
     def test_async_agent_without_result_allows(self):

@@ -126,6 +126,12 @@ When making revisions:
 
 ## 4.0 OUTPUT FORMAT
 
+The `---REVIEW RESULT---` block is the **only** signal the orchestrator parses for `STATUS`. If you stop without emitting it, the orchestrator cannot recover the verdict and falls back to reading `spec.md`/`plan.md` itself. **Rules:**
+
+- Emit the block as the **final** thing in your last message — no prose after `---END REVIEW RESULT---`.
+- If you are running low on turns (you have a 30-turn budget) and the user is still iterating, **stop iterating and emit the block** with the honest status rather than being cut off mid-review.
+- A `maxTurns` exhaustion with no block is treated as `FAILURE` by the parent's recovery path — avoid it by emitting proactively.
+
 Return **exactly** this compact block on completion:
 
 ```
