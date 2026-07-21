@@ -39,6 +39,19 @@ The three plan→state paths are NOT interchangeable:
 
 **Name-keying invariant:** identity is `(phase number, task name)` with dispatch tags (the §Task Type Tags vocabulary) and trailing `[sha]` markers stripped, case-folded. A pure tag-prefix edit therefore matches the same node and is bucketed as `tag_or_status` (the new name, tag and all, is persisted) rather than as an unmatched new task. Exact match only — **no fuzzy matching**, so a genuine rename must be supplied via `--rename "<phase>:<old>=<new>"`.
 
+## Editing spec.md mid-track: use `/conductor:re-spec` (the spec half), not a hand-edit + silence
+
+`reconcile-plan` covers the **plan.md** side of a post-`git reset` recovery. The **spec.md** side — rewording an Acceptance Criterion, adding a constraint, injecting workflow guidance for the remaining tasks — has a distinct hazard that `reconcile-plan` does **not** cover: **a changed AC can silently invalidate a completed task's SHA.** A task whose `<!-- AC-3 -->` annotation claimed the old AC text carries a `commit_sha` whose work may no longer satisfy the new, stricter AC. `reconcile-plan` reconciles *structure* (names/markers/tags); it cannot reason about *meaning*. `track-state spec-delta` is the engine that closes that gap, and `/conductor:re-spec` is the teleoperator that drives it.
+
+**Two invariants the re-spec path enforces:**
+
+1. **A spec edit gets its own scoped `docs(spec):` commit — never conductor staging.** Conductor's bookkeeping commit stages only `track-state.json`/`plan.md`/`.conductor/` (`git_ops.py:183`); `spec.md` is deliberately not in that set. So `/conductor:re-spec` runs `git add spec.md && git commit -m "docs(spec): …"` scoped to `spec.md` only. Extending the global staging set to sweep `spec.md` would drag every track's spec into every bookkeeping commit — a blast-radius trap. **Do not** add `spec.md` to `_git_commit`'s staging paths to "help."
+2. **A changed AC invalidates completed SHAs — surface, never auto-reset.** `spec-delta` joins changed ACs → plan tasks claiming them (via `<!-- AC-n -->`) → terminal tasks with a `commit_sha`, and reports that set as `at_risk_tasks`. `/conductor:re-spec` prints it and **halts for the user's keep-vs-reset decision**; it never runs `track-state reset` or `reconcile-plan --clear-dangling` itself. The SHA is the user's to keep or destroy. This mirrors reconcile's refuse-on-ambiguity philosophy.
+
+**Constraints ride a separate channel, not the parser.** `spec_parse`'s `_SECTION_HEADINGS` is a closed four-key set (FR/NFR/AC/TC); the `## Constraints` section is **not** parsed (`spec_parse.py:16-19`). So a new `## Constraints` bullet is dead text to every machine check. `/conductor:re-spec --add-constraint` therefore mirrors the constraint into `.conductor/track-directives.md` (under `.conductor/`, so conductor's existing staging sweeps it — no staging-set change). The parser is **not** extended to capture Constraints (that would be cross-consumer blast radius); the directive channel carries them instead.
+
+**The recovery pipeline:** `git reset --hard` (you) → `/conductor:re-spec` (edit spec, commit, surface at-risk SHAs, re-validate) → `/conductor:reconcile` (if plan.md also needs structural edits). `re-spec` never touches `plan.md` or `track-state.json`; `reconcile` never touches `spec.md`. The two compose, they don't overlap.
+
 ## Task Type Tags
 
 Prepend the tag BEFORE the task description. Tag determines whether TDD is required.

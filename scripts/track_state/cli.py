@@ -27,6 +27,7 @@ from .misc import (
     cmd_resolve_track, cmd_check, _resolve_track_dir_or_halt,
 )
 from .spec_integrity import cmd_spec_anchors
+from .spec_delta import cmd_spec_delta
 from .handoff import cmd_get_handoff, cmd_sync_handoff, cmd_append_handoff, cmd_harvest_candidates, cmd_compile_track_findings
 from .sync import cmd_sync_plan
 from .reconcile import cmd_reconcile_plan
@@ -340,6 +341,11 @@ COMMAND_HELP = {
                      "Read-only structural check: are the English machine anchors present in spec.md "
                      "(## Acceptance Criteria + '- AC-N:' bullets + ## Test Scenarios '| TC-N.M | AC-N |' table)? "
                      "Language-agnostic — checks anchor tokens, not prose. ok:false + named errors if missing."),
+    "spec-delta": ("spec-delta <track-dir> [--before <path>]",
+                   "Read-only diff of current spec.md vs a prior version (default: git show HEAD~1:spec.md). "
+                   "Reports changed/added/removed ACs+FRs+NFRs and, the headline, at_risk_tasks: completed tasks "
+                   "(with commit_sha) whose claimed AC was edited — SHAs that may no longer satisfy the new AC. "
+                   "Engine behind /conductor:re-spec; usable standalone after any committed spec edit."),
     "derive-name": ("derive-name <shortname>",
                     "Derive canonical track_id (<shortname>_<YYYYMMDD>) and track_dir for "
                     "today; idempotent. Uniqueness is the skill's job (new-track §2.6)."),
@@ -386,7 +392,7 @@ _COMMAND_GROUPS = [
                           "new-track-set-mode", "new-track-finalize"]),
     ("Diagnostics", ["validate", "gc", "shas", "post-loop-status", "checklist-verify",
                      "deferred-report", "phase-done", "add-checkpoint", "preflight",
-                     "quality-snapshot", "spec-integrity", "spec-anchors"]),
+                     "quality-snapshot", "spec-integrity", "spec-anchors", "spec-delta"]),
 ]
 
 
@@ -570,6 +576,11 @@ def main():
             cmd_spec_integrity(track_dir)
         elif cmd == "spec-anchors":
             cmd_spec_anchors(track_dir)
+        elif cmd == "spec-delta":
+            # before defaults to `git show HEAD~1:spec.md` inside the cmd; an
+            # explicit --before <path> overrides (used by re-spec when the edit
+            # isn't committed yet, or to compare against a saved baseline).
+            cmd_spec_delta(track_dir, before=flag(args, "--before"))
         elif cmd == "add-checkpoint":
             if len(pos) < 2:
                 out(dict(error="Missing phase or sha argument"))
