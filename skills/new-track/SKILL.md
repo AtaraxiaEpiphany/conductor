@@ -58,6 +58,7 @@ CRITICAL: Validate every tool call. On failure → halt → announce.
    track-state derive-name <slug>
    ```
    Parse the JSON. Use `track_id` and `track_dir` from the result for **everything** below (resume marker, spec-planner `TRACK_DIR`, §2.6 init `--track-id` and `<track_dir>`). Never hand-write the date — the command stamps it from the clock.
+   > **Existing-track adoption:** If `$ARGUMENTS` is a bare track_id whose `<track_dir>` already exists (commonly one carrying a `brief.md` from `/conductor:brief`, but any existing track dir qualifies), **adopt that track_id/track_dir directly** — do NOT re-derive (re-deriving would mint a new dated id and orphan the Brief). Skip `derive-name` for this case.
 4. **Initialize resume marker** (skip if resuming — `new-track-resume` already found it). Creates `<track_dir>/.conductor/` and the marker in one call (idempotent — a no-op if the marker already exists):
    ```bash
    track-state new-track-init "<track_dir>" --track-id <id> --description "<desc>" --type <type>
@@ -70,6 +71,20 @@ CRITICAL: Validate every tool call. On failure → halt → announce.
 3. **Not found** → ask user: interactive Q&A (2-5 questions sequentially), manual context, or correct paths. Pass answers as `USER_ANSWERS`.
 
 > Context content is loaded by spec-planner itself. The orchestrator handles only paths and summaries.
+
+### 2.2b Brief Detection (authoritative pre-planned input)
+
+Before the §2.2 Q&A branch above, check for a **Track Brief** at `<track_dir>/brief.md` (written by `/conductor:brief`). A Brief is comprehensive, human-authored context; when present it is the **authoritative** planning input and supersedes the scan/Q&A fallback.
+
+1. Check `<track_dir>/brief.md`.
+2. **Found** → Read it. Announce: *"Consuming brief.md at `<track_dir>/brief.md` as authoritative planning input."* Then:
+   - **Skip the §2.2 interactive Q&A entirely** — the Brief already captured it.
+   - Set `RELATED_DOCS` from the Brief's `## References` section (paths only; if empty, `N/A`).
+   - Build a rich `USER_ANSWERS` block for spec-planner from the Brief's structured sections: Problem & Motivation, Goals, **Out of Scope (verbatim)**, Context & Constraints, Stakeholders, Open Questions, Suggested Acceptance Signals. Prefix it `USER_CONTEXT: brief`.
+   - Pass `USER_ANSWERS` (with `USER_CONTEXT: brief`) and `RELATED_DOCS` to the §2.3 dispatch. spec-planner §3.0 reads the Brief itself first and honors `## Out of Scope` verbatim.
+3. **Not found** → proceed with §2.2 unchanged (scan → Q&A fallback). This is the default; no Brief means new-track behaves exactly as before.
+
+> The Brief is additive: it only changes behavior when present. A re-invoked new-track on a track with a Brief will plan from the Brief; without one, the original flow applies.
 
 ### 2.3 Dispatch Spec-Planner
 

@@ -85,6 +85,7 @@ AGENT_REMINDERS = {
     "apply-fixes": "[Conductor] Result format: ---FIX RESULT--- ... ---END RESULT---",
     "refactorer": "[Conductor] Result format: ---REFACTOR RESULT--- ... ---END RESULT---",
     "strategy-writer": "[Conductor] Result format: ---STRATEGY RESULT--- ... ---END RESULT---",
+    "track-brief-writer": "[Conductor] Result format: ---BRIEF RESULT--- ... ---END BRIEF RESULT---",
 }
 
 

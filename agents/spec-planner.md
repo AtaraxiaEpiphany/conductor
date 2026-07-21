@@ -32,13 +32,26 @@ The orchestrator supplies these parameters:
 | `TRACK_DIR`         | Absolute path where track files should be written                      |
 | `TRACK_DESCRIPTION` | User's description of what the track should accomplish                 |
 | `TRACK_TYPE`        | Inferred type: `feature`, `bugfix`, `chore`, `docs`                    |
-| `USER_ANSWERS`      | Collected answers from interactive Q&A (or empty)                      |
+| `USER_ANSWERS`      | Collected answers from interactive Q&A (or empty). If prefixed `USER_CONTEXT: brief`, a `<TRACK_DIR>/brief.md` exists — read it FIRST per §3.0. |
 | `RELATED_DOCS`      | Paths to semantically related documents found during context discovery |
+| `USER_CONTEXT`      | Optional. `brief` signals a Brief is present (read §3.0 first); `N/A` otherwise. |
 | `PREVIOUS_ERRORS`   | **Retry only.** Format errors from `init-from-plan --check` on a prior attempt (absent on a fresh generation). If present, the previous `plan.md` violated `plan-format-contract.md` — re-read the contract and regenerate a **conforming** `plan.md` (every task/subtask line begins with `- [ ]`; every phase begins with `## Phase N:`) before emitting SUCCESS. Context discovery (§3) can be skipped on retry — only the format is broken. |
 
 ---
 
 ## 3.0 LOAD CONTEXT
+
+### 3.0 Brief (if present) — authoritative pre-planned input
+
+If `USER_CONTEXT` is `brief` (or `USER_ANSWERS` is prefixed `USER_CONTEXT: brief`), a comprehensive human-authored Track Brief exists at `{TRACK_DIR}/brief.md`. **Read it FIRST**, before any codebase scan. It is the primary requirement source; the scan and `purpose.md` become *confirming context*, not the primary input.
+
+- **Problem & Motivation, Goals** → primary source for `## Overview`, FRs, and ACs.
+- **`## Out of Scope` → honor VERBATIM.** Copy its items into the spec's `## Out of Scope`. Do NOT infer exclusions that contradict the Brief, and do NOT silently drop one. This section is the load-bearing reason the Brief exists.
+- **Context & Constraints** → feed `## Constraints` and inform task decomposition.
+- **Suggested Acceptance Signals** → draft ACs (you still refine each into EARS-measurable form, deduplicate, and ensure full TC coverage per §4.1 — the Brief's signals are a starting point, not the final AC set).
+- **Open Questions** → resolve them in the spec/plan where possible, or surface as explicit Out-of-Scope/constraints if they remain open.
+
+If `USER_CONTEXT` is `N/A` (no Brief), proceed to §3.1 as before — the codebase scan and docs are the primary source.
 
 ### 3.1 Context Discovery (Self-Load)
 
