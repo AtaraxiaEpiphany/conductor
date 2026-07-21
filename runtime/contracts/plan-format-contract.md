@@ -21,6 +21,24 @@ These rules are **non-negotiable**. Violating any rule will break the orchestrat
 6. **AC Traceability**: Each implementation task MUST have an HTML comment `<!-- AC-n, TC-n.n, ... -->` linking to the acceptance criteria and test scenarios it covers. This enables the orchestrator to pass precise AC context to conductor:task-executor subagents. **Only the parent task carries the AC annotation** — subtasks inherit AC context from their parent. This rule is **enforced by the `check-plan-annotations` PreToolUse hook** (sibling to `check-plan-checkboxes`): a missing or malformed annotation on an untagged implementation task line hard-denies the Write/Edit before it lands — otherwise the parser silently records empty refs and the task loses all traceability. Dispatch-tagged tasks (`[Explore]`/`[Docs]`/`[Config]`/`[Chore]`/`[Manual]`) and indented subtasks are exempt.
 7. **Test ↔ TC Naming Link**: Each `TC-{n}.{m}` row is verified by a test function named `test_TC_{n}_{m}_*(…)` — one function per TC row (`async def` is fine; the `{n}.{m}` become underscores). This **closes the traceability loop**: the orchestrator's `tc_consistency_gate` resolves the TCs a task *claims* (`tc_coverage`) to these real functions (the third link of the self-extraction chain: declared → claimed → grounded), and `ac_verification_measured_rate` measures how many ACs are backed by such tests. Without the link the gate can only trust self-report. The check measures *naming* coverage, not test isolation — a kitchen-sink `test_TC_2_1_and_2_2` grounds both TC-2.1 and TC-2.2, which is accepted.
 
+## Editing plan.md mid-track: use `reconcile-plan`, not `sync-plan` / `init-from-plan`
+
+After a track is running you will sometimes hand-edit `plan.md` — typically after a `git reset` that undid a divergent task-executor run (large refactor / tech-stack-upgrade that violated a constraint): you change a task's tag, split a task, or reorder/reconstruct the remaining tasks. **`track-state.json` must then be brought back in sync without losing the `commit_sha` records on tasks whose work survived.**
+
+The three plan→state paths are NOT interchangeable:
+
+| Path | Matching | SHA handling | Use when |
+|---|---|---|---|
+| `sync-plan` | **positional** (phase/task index) | re-renders state→plan; rebinding on reorder is silent | only a plain marker re-render, no structural edit |
+| `init-from-plan --force` | full rebuild | **wipes every SHA** to `pending` (V7 invariant) | a fresh start; never mid-track |
+| **`reconcile-plan`** | **by phase number + task name** (tag-insensitive) | **preserves `commit_sha`** on tasks whose work survives; refuses unmatched nodes until resolved | any hand-edit after a reset |
+
+**`sync-plan`'s positional matching is the trap:** it indexes `state["phases"][n]["tasks"][m]` by the task's *position* in the plan (`sync.py:42-67`). Reorder or insert a task above a completed one and the completed task's SHA silently rebinds to whichever task now occupies that slot — the history is lost with no error. `reconcile-plan` keys by name instead, so a SHA stays on its named task across reorders (the headline safety test: `test_reorder_does_not_rebind_shas`).
+
+`reconcile-plan` is **dry-run by default**: it prints a bucketed diff (`unchanged` / `tag_or_status` / `split` / `unmatched` / `dangling_sha`) and writes nothing until `--apply`. `unmatched` nodes (a rename-vs-delete ambiguity) are **refused** until resolved by an explicit `--rename` / `--drop` flag — the command never guesses. `dangling_sha` flags a terminal node whose `commit_sha` is unreachable in git (you reset past its Complete commit); the terminal marker is respected and the SHA reported as a warning, with `--clear-dangling` to requeue if the work should be redone. See `/conductor:reconcile`.
+
+**Name-keying invariant:** identity is `(phase number, task name)` with dispatch tags (the §Task Type Tags vocabulary) and trailing `[sha]` markers stripped, case-folded. A pure tag-prefix edit therefore matches the same node and is bucketed as `tag_or_status` (the new name, tag and all, is persisted) rather than as an unmatched new task. Exact match only — **no fuzzy matching**, so a genuine rename must be supplied via `--rename "<phase>:<old>=<new>"`.
+
 ## Task Type Tags
 
 Prepend the tag BEFORE the task description. Tag determines whether TDD is required.

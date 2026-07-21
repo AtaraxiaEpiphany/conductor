@@ -6,7 +6,7 @@ from pathlib import Path
 
 from .core import load
 from .constants import EXECUTION_MODES
-from .helpers import out, flag
+from .helpers import out, flag, flags_all
 from .mutations import cmd_lock, cmd_fail, cmd_skip, cmd_block, cmd_defer, cmd_set_max_retries, cmd_split
 from .cmd_complete import cmd_complete
 from .dispatch import (
@@ -29,6 +29,7 @@ from .misc import (
 from .spec_integrity import cmd_spec_anchors
 from .handoff import cmd_get_handoff, cmd_sync_handoff, cmd_append_handoff, cmd_harvest_candidates, cmd_compile_track_findings
 from .sync import cmd_sync_plan
+from .reconcile import cmd_reconcile_plan
 from .wave import (
     cmd_dispatch_wave, cmd_wave_status, cmd_wave_finalize, cmd_wave_abort,
     cmd_wave_step,
@@ -222,6 +223,16 @@ COMMAND_HELP = {
                 "Archive a completed track (refuses unless doc-sync ran; --force to skip)"),
     "sync-plan": ("sync-plan <track-dir>",
                   "Sync plan.md checkbox markers from track-state.json"),
+    "reconcile-plan": ("reconcile-plan <track-dir> [--apply [--force]]\n"
+                       "                [--rename \"<phase>:<old>=<new>\"]...\n"
+                       "                [--drop \"<phase>:<task[.subtask]>\"]...\n"
+                       "                [--clear-dangling \"<phase>:<task[.subtask]>\"]...",
+                       "Reconcile a hand-edited plan.md into state BY NAME (not position), "
+                       "preserving commit_sha on tasks whose work survives a git reset / "
+                       "tag edit / split / reorder. Dry-run by default; --apply writes one "
+                       "transaction + one bookkeeping commit. Unmatched nodes are refused "
+                       "until resolved via --rename/--drop; dangling SHAs (git reset past a "
+                       "Complete commit) are flagged and --clear-dangling or auto-cleared."),
     "sync-handoff": ("sync-handoff <track-dir>",
                      "Regenerate handoff.md index from current state"),
     "get-handoff": ("get-handoff <track-dir> <phase> <task> [--subtask <n>]",
@@ -360,7 +371,7 @@ _COMMAND_GROUPS = [
     ("Navigation", ["next", "dispatch-next", "recover", "indices"]),
     ("State Mutations", ["lock", "complete", "fail", "skip", "defer", "block", "reset",
                          "set-max-retries", "split"]),
-    ("Sync & Registry", ["sync-plan", "sync-handoff", "registry-update", "registry-add"]),
+    ("Sync & Registry", ["sync-plan", "reconcile-plan", "sync-handoff", "registry-update", "registry-add"]),
     ("Handoff", ["get-handoff", "append-handoff", "harvest-candidates",
                  "compile-track-findings"]),
     ("Result Processing", ["write-result", "process-result"]),
@@ -518,6 +529,17 @@ def main():
             cmd_deferred_report(track_dir)
         elif cmd == "sync-plan":
             cmd_sync_plan(track_dir)
+        elif cmd == "reconcile-plan":
+            # Dry-run by default; --apply mutates. --rename/--drop/--clear-dangling
+            # are repeatable conflict-resolution flags (see helpers.flags_all).
+            cmd_reconcile_plan(
+                track_dir,
+                apply="--apply" in args,
+                force="--force" in args,
+                renames=flags_all(args, "--rename"),
+                drops=flags_all(args, "--drop"),
+                clear_dangling=flags_all(args, "--clear-dangling"),
+            )
         elif cmd == "registry-update":
             if len(pos) < 1:
                 out(dict(error="Missing tracks-md-path argument"))
