@@ -30,7 +30,9 @@ _HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*$")
 # eats the ``:``/space/dash between ID and body so it isn't carried into the text.
 _FR = re.compile(r"^-\s+FR-(\d+)\b[\s:\-]*([^\n]*)")
 _NFR = re.compile(r"^-\s+NFR-(\d+)\b[\s:\-]*([^\n]*)")
-_AC = re.compile(r"^-\s+AC-(\d+)\b")
+# AC bullets capture the body too (group(2)); spec_delta diffs the body to detect
+# a *changed* AC rather than just an added/removed one.
+_AC = re.compile(r"^-\s+AC-(\d+)\b[\s:\-]*([^\n]*)")
 
 # Test-scenario table row: ``| TC-1.1 | AC-1 | ... |``. group(1)/group(2)=TC
 # numbers, group(3)=the AC number it traces to.
@@ -53,6 +55,7 @@ def parse_spec(spec_path):
         {"frs": ["FR-1", ...], "nfrs": [...], "acs": [...],
          "fr_items": [{"id": "FR-1", "text": "<body>"}, ...],
          "nfr_items": [{"id": "NFR-1", "text": "<body>"}, ...],
+         "ac_items": [{"id": "AC-1", "text": "<body>"}, ...],
          "tcs": [{"id": "TC-1.1", "ac": "AC-1"}, ...],
          "tc_to_ac": {"TC-1.1": "AC-1", ...},
          "errors": [...], "warnings": [...]}
@@ -61,14 +64,22 @@ def parse_spec(spec_path):
     need a universe normalize via ``set``). ``errors`` block nothing here (the
     parser is best-effort); ``warnings`` are advisory.
     """
+    return parse_spec_text(Path(spec_path).read_text())
+
+
+def parse_spec_text(text):
+    """Parse spec.md text → inventory dict (see ``parse_spec`` for the shape).
+
+    ``parse_spec(spec_path)`` delegates here so text-input callers (e.g.
+    ``spec_delta``) reuse the same section-walk instead of re-implementing it.
+    """
     errors = []
     warnings = []
     frs, nfrs, acs = [], [], []
-    fr_items, nfr_items = [], []
+    fr_items, nfr_items, ac_items = [], [], []
     tcs = []
     tc_to_ac = {}
 
-    text = Path(spec_path).read_text()
     section = None  # one of "fr" / "nfr" / "ac" / "tc" / None
     for lineno, raw in enumerate(text.splitlines(), 1):
         line = raw.rstrip()
@@ -93,7 +104,9 @@ def parse_spec(spec_path):
         elif section == "ac":
             m = _AC.match(line.lstrip())
             if m:
-                acs.append(f"AC-{m.group(1)}")
+                rid = f"AC-{m.group(1)}"
+                acs.append(rid)
+                ac_items.append({"id": rid, "text": m.group(2).strip()})
         elif section == "tc":
             m = _TC_ROW.match(line)
             if m:
@@ -111,6 +124,7 @@ def parse_spec(spec_path):
         "acs": acs,
         "fr_items": fr_items,
         "nfr_items": nfr_items,
+        "ac_items": ac_items,
         "tcs": tcs,
         "tc_to_ac": tc_to_ac,
         "errors": errors,

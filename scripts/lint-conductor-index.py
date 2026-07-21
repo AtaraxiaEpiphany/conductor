@@ -19,38 +19,11 @@ remediation listing the missing paths otherwise (mirrors ``scaffold-strategy.py`
 exit discipline).
 """
 import argparse
-import re
 import sys
 from pathlib import Path
 
-
-_STATUS_RE = re.compile(r"\*{0,2}(seeded|auto|on-demand)\*{0,2}")
-# Extract a ``conductor/...`` path from a table cell (stops at whitespace or ``|``).
-_PATH_RE = re.compile(r"\.?/?((?:conductor/)[^\s|`]+)")
-
-
-def _table_rows(text):
-    for line in text.splitlines():
-        s = line.strip()
-        if not s.startswith("|") or set(s.replace("|", "").strip()) <= {"-"}:
-            continue
-        cells = [c.strip() for c in s.strip("|").split("|")]
-        if all(set(c) <= {"-", ":"} for c in cells):
-            continue
-        yield cells
-
-
-def _seeded_paths(text):
-    """Return the set of ``conductor/...`` paths tagged ``seeded`` in the index."""
-    out = set()
-    for cells in _table_rows(text):
-        joined = " | ".join(cells)
-        m = _STATUS_RE.search(joined)
-        if not m or m.group(1) != "seeded":
-            continue
-        for pm in _PATH_RE.finditer(joined):
-            out.add(pm.group(1).rstrip("./").rstrip("/"))
-    return out
+sys.path.insert(0, str(Path(__file__).parent / "lib"))
+from index_map import seeded_paths
 
 
 def main():
@@ -66,7 +39,7 @@ def main():
     if not index_path.exists():
         sys.exit(f"HALT: {index_path} not found — run /conductor:setup first.")
 
-    seeded = _seeded_paths(index_path.read_text(encoding="utf-8"))
+    seeded = seeded_paths(index_path.read_text(encoding="utf-8"))
     if not seeded:
         # Not an error per se, but worth surfacing — a seeded-less index means
         # setup's own writes aren't promised anywhere.

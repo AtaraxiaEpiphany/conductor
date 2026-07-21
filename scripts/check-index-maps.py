@@ -33,6 +33,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent / "lib"))
 from env import get_plugin_root
+from index_map import STATUS_RE as _STATUS_RE
+from index_map import PATH_RE as _PATH_RE
+from index_map import table_rows as _table_rows
+from index_map import VALID_STATUS
 
 
 # Paths ``conductor:setup`` actually writes (§2.1–§2.5 of skills/setup/SKILL.md).
@@ -60,15 +64,7 @@ SEED_PATHS = [
 # claude-md-toc.md uses ``*(plugin-provided)*`` as its path for non-project docs.
 # Those rows carry a status but no project path; exclude them from path checks
 # (detected inline via a substring test in _parse_map, not this constant).
-VALID_STATUS = {"seeded", "auto", "on-demand"}
-
-# Match a status tag at the start of a Creation Rule / Status cell. The maps use
-# bold ``**seeded**`` (toc) and plain ``seeded`` (index); tolerate both.
-_STATUS_RE = re.compile(r"\*{0,2}(seeded|auto|on-demand)\*{0,2}")
-
-# Extract a ``conductor/...`` path from a table cell (stops at whitespace or ``|``).
-# Tolerates ``./`` prefixes (claude-md-toc) and ``<placeholder>``/``*glob`` segments.
-_PATH_RE = re.compile(r"\.?/?((?:conductor/)[^\s|`]+)")
+# The shared table parser + status/path regexes live in ``lib/index_map.py``.
 
 # Strip ``<placeholder>`` and ``*glob`` segments so a creation-pattern path
 # (``conductor/design/api-specs/<endpoint>.md``) normalizes to the same routing
@@ -94,19 +90,6 @@ def _normalize_prefix(path):
     if len(parts) > 2 and "." in parts[-1]:
         parts = parts[:-1]
     return "/".join(parts[:3])
-
-
-def _table_rows(text):
-    """Yield each markdown table data row (list of cell strings), skipping headers."""
-    for line in text.splitlines():
-        s = line.strip()
-        if not s.startswith("|") or set(s.replace("|", "").strip()) <= {"-"}:
-            continue
-        cells = [c.strip() for c in s.strip("|").split("|")]
-        # Drop separator rows like ``| :-- | :-: |`` (already caught above, but be safe).
-        if all(set(c) <= {"-", ":"} for c in cells):
-            continue
-        yield cells
 
 
 def _parse_map(text):

@@ -23,7 +23,6 @@ intelligence is composition of existing parsers (``spec_parse.parse_spec``,
 closed 4-key ``_SECTION_HEADINGS`` stays — constraints ride the directive
 channel, ``.conductor/track-directives.md``, not the parser).
 """
-import re
 import subprocess
 from pathlib import Path
 
@@ -32,38 +31,15 @@ from . import spec_parse
 from .plan_parse import parse_plan
 from .core import load
 
-# AC bullet WITH body capture — parse_spec's _AC keeps only the number; the body
-# is what we diff to detect a *changed* AC (not just added/removed). Mirrors the
-# _AC shape (``- AC-N: body``) but captures the text after the ID.
-_AC_BODY = re.compile(r"^-\s+AC-(\d+)\b[\s:\-]*([^\n]*)")
-
 # Terminal statuses that carry a commit_sha worth flagging as at-risk.
 # (Mirrors constants.SHA_MARKERS conceptually, without importing it — a node is
 # "at risk" iff it claims done-ness AND has a SHA to lose.)
 _TERMINAL_WITH_SHA = ("completed", "skipped")
 
 
-def _ac_bodies(text):
-    """``{AC-N: body_text}`` for every AC bullet in ``text``.
-
-    Re-uses the parser's section-walk discipline: only bullets under an
-    ``## Acceptance Criteria`` heading count, so a stray ``- AC-1`` under
-    Constraints is ignored (same contract as ``spec_parse``).
-    """
-    bodies = {}
-    section = None
-    for raw in text.splitlines():
-        line = raw.rstrip()
-        hm = spec_parse._HEADING.match(line)
-        if hm:
-            title = hm.group(2).strip().lower()
-            section = spec_parse._SECTION_HEADINGS.get(title)
-            continue
-        if section == "ac":
-            m = _AC_BODY.match(line.lstrip())
-            if m:
-                bodies[f"AC-{m.group(1)}"] = m.group(2).strip()
-    return bodies
+def _ac_body_map(spec):
+    """``{AC-N: body_text}`` from a ``parse_spec_text`` result's ``ac_items``."""
+    return {item["id"]: item["text"] for item in spec.get("ac_items", [])}
 
 
 def _id_set(parsed, key):
@@ -101,14 +77,14 @@ def compute_spec_delta(before_text, after_text, plan_tasks):
     """
     errors = []
     try:
-        before_spec = _parse_spec_text(before_text)
-        after_spec = _parse_spec_text(after_text)
+        before_spec = spec_parse.parse_spec_text(before_text)
+        after_spec = spec_parse.parse_spec_text(after_text)
     except Exception as exc:  # best-effort, like spec_parse itself
         errors.append(f"spec parse failed: {exc}")
-        before_spec = after_spec = {"frs": [], "nfrs": [], "acs": []}
+        before_spec = after_spec = {"frs": [], "nfrs": [], "acs": [], "ac_items": []}
 
-    before_ac = _ac_bodies(before_text)
-    after_ac = _ac_bodies(after_text)
+    before_ac = _ac_body_map(before_spec)
+    after_ac = _ac_body_map(after_spec)
 
     def _delta_body(before_map, after_map):
         changed, added, removed = [], [], []
@@ -165,40 +141,6 @@ def compute_spec_delta(before_text, after_text, plan_tasks):
         "at_risk_tasks": at_risk,
         "errors": errors,
     }
-
-
-def _parse_spec_text(text):
-    """``parse_spec`` on text (it takes a path) — write to a temp is avoided by
-    duplicating its walk against the in-memory text via the same regexes.
-
-    Kept tiny: we only need the ID lists (frs/nfrs/acs) for set deltas; AC
-    *bodies* come from ``_ac_bodies``. If ``spec_parse`` ever grows a
-    text-input entry point, swap this for it.
-    """
-    # parse_spec reads from a Path; rather than touch it, re-derive the ID
-    # inventories with its own regexes. AC bodies are handled separately above.
-    frs, nfrs, acs = [], [], []
-    section = None
-    for raw in text.splitlines():
-        line = raw.rstrip()
-        hm = spec_parse._HEADING.match(line)
-        if hm:
-            title = hm.group(2).strip().lower()
-            section = spec_parse._SECTION_HEADINGS.get(title)
-            continue
-        if section == "fr":
-            m = spec_parse._FR.match(line.lstrip())
-            if m:
-                frs.append(f"FR-{m.group(1)}")
-        elif section == "nfr":
-            m = spec_parse._NFR.match(line.lstrip())
-            if m:
-                nfrs.append(f"NFR-{m.group(1)}")
-        elif section == "ac":
-            m = spec_parse._AC.match(line.lstrip())
-            if m:
-                acs.append(f"AC-{m.group(1)}")
-    return {"frs": frs, "nfrs": nfrs, "acs": acs}
 
 
 def _enrich_tasks(track_dir, state):

@@ -29,7 +29,7 @@ from pathlib import Path
 from .constants import MARKER_MAP, SHA_MARKERS
 from .core import load, transaction
 from .helpers import (
-    out, now_iso, clean, extract_tags, _clean_trailing_markers,
+    out, now_iso, clean, extract_tags, strip_tags, _clean_trailing_markers,
 )
 from .plan_parse import parse_plan
 from .sync import _do_sync_plan
@@ -39,10 +39,10 @@ from .git_ops import _git_commit_ensured
 # status char → status name (inverse of MARKER_MAP). Built once.
 _MARKER_TO_STATUS = {v: k for k, v in MARKER_MAP.items()}
 
-# Dispatch tags stripped before name-keying so a pure tag edit (``Task A`` →
-# ``[Docs] Task A``) matches the same state node instead of looking like a new
-# task. Mirrors the vocabulary in helpers.extract_tags.
-_TAG_RE = re.compile(r"(?<!\S)\[(?:Explore|Docs|Config|Chore|Manual|Migrate)\](?!\S)")
+# Status NAMES whose marker is SHA-bearing (terminal). Derived once from the
+# constants so reconcile's four "is this node terminal-with-SHA?" checks share
+# one set instead of rebuilding the comprehension per call.
+_SHA_STATUSES = {name for name, char in MARKER_MAP.items() if char in SHA_MARKERS}
 
 
 # A normalized, tag-insensitive identity key for matching plan-side and state-side
@@ -53,8 +53,7 @@ _TAG_RE = re.compile(r"(?<!\S)\[(?:Explore|Docs|Config|Chore|Manual|Migrate)\](?
 def _name_key(name):
     if not name:
         return ""
-    stripped = _clean_trailing_markers(name).strip()
-    stripped = _TAG_RE.sub("", stripped).strip()
+    stripped = strip_tags(_clean_trailing_markers(name).strip())
     return re.sub(r"\s+", " ", stripped).lower()
 
 
@@ -320,7 +319,7 @@ def _classify_marker_change(result, loc, phase, state_path, node,
     if not status_changed and not name_changed:
         result["unchanged"].append({"loc": loc, "phase": phase, "state_path": state_path})
         return
-    keep_sha = new_status in {k for k, v in MARKER_MAP.items() if v in SHA_MARKERS}
+    keep_sha = new_status in _SHA_STATUSES
     result["tag_or_status"].append({
         "loc": loc, "phase": phase, "state_path": state_path,
         "name": node.get("name", ""), "new_name": edited_name,
@@ -332,8 +331,7 @@ def _classify_marker_change(result, loc, phase, state_path, node,
 
 def _probe_liveness(track_dir, result, p_idx, t_idx, s_idx, node):
     sha = node.get("commit_sha", "")
-    if not sha or node.get("status") not in {
-        k for k, v in MARKER_MAP.items() if v in SHA_MARKERS}:
+    if not sha or node.get("status") not in _SHA_STATUSES:
         return
     if _is_sha_live(track_dir, sha):
         return
@@ -371,7 +369,7 @@ def _resolve_index_from_spec(spec_part, names_in_order):
     return None
 
 
-def _apply_reconciliation(track_dir, diff, drops, clear_dangling):
+def _apply_reconciliation(track_dir, diff, drops, clear_dangling, state=None):
     """Mutate state in one transaction to realize ``diff``.
 
     Resolves the repeatable ``--drop`` / ``--clear-dangling`` flags against the
@@ -380,6 +378,10 @@ def _apply_reconciliation(track_dir, diff, drops, clear_dangling):
     applies bucket mutations. SHA preservation follows the keep-set discipline of
     ``_do_split``. ``--rename`` is resolved upstream (pre-diff alias map).
     Returns ``(ok, errors, warnings)``.
+
+    ``state`` may be passed by a caller that already loaded it (e.g.
+    ``cmd_reconcile_plan``) to avoid a redundant ``track-state.json`` re-read;
+    if omitted, it is loaded here for standalone use.
     """
     errors = []
 
@@ -389,7 +391,8 @@ def _apply_reconciliation(track_dir, diff, drops, clear_dangling):
     drop_paths = set()
     clear_paths = set()
 
-    state = load(track_dir)
+    if state is None:
+        state = load(track_dir)
 
     for phase, rest in drops:
         sub = None
@@ -453,15 +456,16 @@ def _apply_reconciliation(track_dir, diff, drops, clear_dangling):
                           f"{u['loc']} {u.get('name', '')!r} — {u['detail']}")
     # Advisory dangling-SHA warnings for nodes NOT auto-cleared (unchanged or
     # edited-to-terminal). Non-terminal edits are auto-cleared silently below.
+    # ``edited_status`` is reused in the apply phase — diff is immutable between
+    # the two, so build it once here.
     edited_status = {item["state_path"]: item["new_status"]
                      for item in diff["tag_or_status"]}
-    terminal_statuses = {k for k, v in MARKER_MAP.items() if v in SHA_MARKERS}
     for d in diff["dangling_sha"]:
         path = d["state_path"]
         if path in clear_paths:
             continue  # explicit clear — handled below, no warning
         new_status = edited_status.get(path)
-        if new_status is not None and new_status not in terminal_statuses:
+        if new_status is not None and new_status not in _SHA_STATUSES:
             continue  # edited to non-terminal → auto-clear (no warning)
         warnings.append(
             f"{d['loc']} {d.get('name', '')!r}: commit_sha {d['commit_sha']} is "
@@ -506,8 +510,6 @@ def _apply_reconciliation(track_dir, diff, drops, clear_dangling):
         # recovery: they saw the reset, marked it pending/in_progress, reconcile
         # requeues). Dangling SHAs on unchanged or terminal-edited nodes are
         # advisory (left alone, warned above) — never silently cleared.
-        edited_status = {item["state_path"]: item["new_status"]
-                         for item in diff["tag_or_status"]}
         clear_all = set(clear_paths)
         for d in diff["dangling_sha"]:
             path = d["state_path"]
@@ -516,7 +518,7 @@ def _apply_reconciliation(track_dir, diff, drops, clear_dangling):
             new_status = edited_status.get(path)
             if new_status is None:
                 continue  # unchanged node — leave its SHA (advisory only)
-            if new_status in {k for k, v in MARKER_MAP.items() if v in SHA_MARKERS}:
+            if new_status in _SHA_STATUSES:
                 continue  # edited to terminal — respect the marker (advisory)
             clear_all.add(path)  # edited to non-terminal — auto-clear + requeue
         for path in clear_all:
@@ -631,7 +633,7 @@ def cmd_reconcile_plan(track_dir, apply=False, force=False,
 
     ok, errors, warnings = _apply_reconciliation(
         track_dir, diff,
-        _parse_resolution(drops), _parse_resolution(clear_dangling))
+        _parse_resolution(drops), _parse_resolution(clear_dangling), state=state)
     if not ok:
         out(dict(error="reconcile refused — resolve the following and re-run",
                  conflicts=errors))

@@ -12,6 +12,13 @@ from .constants import (
     TERMINAL_FOR_PARENT, AUTO_COMPLETE_OK, _RE_TRAILING_MARKER, _RESET_FIELDS,
 )
 
+# Closed vocabulary of dispatch tags (TDD/routing exemptions). Single source of
+# truth for the ``[Tag]`` brackets that may prefix/suffix a task name; both
+# ``extract_tags`` and ``strip_tags`` build their regexes from this so adding a
+# tag is a one-line change here, not a scattered grep-and-patch. Keep in sync
+# with the tag table in runtime/contracts/plan-format-contract.md.
+DISPATCH_TAGS = ("Explore", "Docs", "Config", "Chore", "Manual", "Migrate")
+
 
 def _resolve_conductor_root(track_dir):
     """Walk up from ``track_dir`` to the conductor root (the dir holding tracks.md).
@@ -275,7 +282,7 @@ def extract_tags(name):
     # (e.g. [Config]) sitting in the name to false-positive below.
     clean_name = re.sub(r'<!--.*?-->', '', name, flags=re.DOTALL)
     # Use lookahead/lookbehind to avoid consuming whitespace between consecutive tags
-    pattern = r'(?<!\S)\[(Explore|Docs|Config|Chore|Manual|Migrate)\](?!\S)'
+    pattern = r'(?<!\S)\[(' + '|'.join(DISPATCH_TAGS) + r')\](?!\S)'
     matches = re.findall(pattern, clean_name)
     # Extract tag names and preserve order while removing duplicates
     seen = set()
@@ -285,6 +292,19 @@ def extract_tags(name):
             seen.add(tag)
             result.append(tag)
     return result
+
+
+def strip_tags(name):
+    """Remove all dispatch tags ([Docs], [Config], …) from a name.
+
+    The tag-stripping counterpart of ``extract_tags``, built from the same
+    ``DISPATCH_TAGS`` vocabulary so callers that need a tag-insensitive identity
+    key (e.g. ``reconcile``) don't re-declare the regex.
+    """
+    if not name:
+        return ""
+    pattern = r'(?<!\S)\[(?:' + '|'.join(DISPATCH_TAGS) + r')\](?!\S)'
+    return re.sub(pattern, '', re.sub(r'<!--.*?-->', '', name, flags=re.DOTALL)).strip()
 
 
 def _inherit_tags(sub_tags, parent_name):
