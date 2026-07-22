@@ -765,8 +765,16 @@ def prepare_dispatch(track_dir):
     # Lock + sync-plan for explore/execute
     # Detect resume: if the target is already in_progress, this is a recovery
     # from a previous interrupted run — avoid duplicate "Start task" commits.
+    # ALSO treat it as a resume when HEAD is already a Start-task commit, even
+    # if the stale-lock reaper flipped status to pending (validate._fix_stale_lock
+    # reaps in_progress tasks older than STALE_LOCK_SECONDS to pending so a
+    # killed session unblocks). A HEAD that's still the Start commit means the
+    # prior dispatch produced no implementation work — re-dispatching it must NOT
+    # emit a second Start commit (mirrors cmd_step's interrupted-dispatch
+    # discriminator at the _is_start_commit gate). retry_count survives the reap
+    # + re-lock (both preserve it), so this path counts correctly against budget.
     tgt = target(state, pi, ti, si)
-    is_resume = tgt.get("status") == "in_progress"
+    is_resume = tgt.get("status") == "in_progress" or _is_start_commit(track_dir)
 
     # Clear any result.json left by a prior attempt so finalize can't read it
     # as this run's result (see _clear_stale_result).

@@ -2,9 +2,12 @@ r"""Tests for the stuck-lock reaper (Gap #2).
 
 ``_do_lock`` now stamps ``locked_at`` (epoch) on the task — a heartbeat. A task
 still ``in_progress`` past ``STALE_LOCK_SECONDS`` (30 min) is a killed-session
-orphan: ``_fix_stale_lock`` resets it to ``pending`` so the next ``recover``
+orphan: ``_fix_stale_lock`` reaps it to ``pending`` so the next ``recover``
 unblocks in minutes instead of waiting for the 24h whole-state reaper (which
-still governs legacy state without ``locked_at``).
+still governs legacy state without ``locked_at``). The reap PRESERVES
+``retry_count`` / ``last_failure_summary`` / ``commit_sha`` — a stale lock is
+recovery, not a reset, so a re-dispatched attempt still counts against the
+per-task budget (the explicit ``reset`` command, not the reaper, wipes history).
 """
 import io
 import json
@@ -27,8 +30,13 @@ def _recent_iso():
 
 
 def _state(locked_at="skip", task_status="in_progress"):
-    """One-phase/one-task track; locked_at='skip' omits the field."""
-    task = {"name": "Task A", "status": task_status, "retry_count": 0}
+    """One-phase/one-task track; locked_at='skip' omits the field.
+
+    retry_count=2 + commit_sha set so a surviving value is distinguishable
+    from a default/zeroed one (pins the history-preservation contract).
+    """
+    task = {"name": "Task A", "status": task_status, "retry_count": 2,
+            "commit_sha": "abc1234", "last_failure_summary": "boom"}
     if locked_at != "skip":
         task[LOCKED_AT_FIELD] = locked_at
     return {
@@ -76,9 +84,26 @@ class StaleLockReaperTests(TestCase):
     def test_stale_lock_is_reaped(self):
         st = _state(locked_at=time.time() - 3600)  # 1h old, past 30min threshold
         fixes = _fix_stale_lock(st)
-        self.assertEqual(st["phases"][0]["tasks"][0]["status"], "pending")
+        reaped = st["phases"][0]["tasks"][0]
+        self.assertEqual(reaped["status"], "pending")
         self.assertEqual(len(fixes), 1)
         self.assertIn("stale lock", fixes[0])
+        # History survives the reap (the core fix for the user's bug).
+        self.assertEqual(reaped["retry_count"], 2)
+        self.assertEqual(reaped["commit_sha"], "abc1234")
+        self.assertEqual(reaped["last_failure_summary"], "boom")
+
+    def test_reap_preserves_retry_history(self):
+        """The regression at the heart of the user's report: a cleared session
+        followed by a re-run must NOT zero retry_count/commit_sha. A stale lock
+        is recovery, not a reset."""
+        st = _state(locked_at=time.time() - 3600)
+        _fix_stale_lock(st)
+        reaped = st["phases"][0]["tasks"][0]
+        self.assertEqual(reaped["status"], "pending")
+        self.assertEqual(reaped["retry_count"], 2)
+        self.assertEqual(reaped["commit_sha"], "abc1234")
+        self.assertNotIn(LOCKED_AT_FIELD, reaped)  # pending → no lock heartbeat
 
     def test_fresh_lock_not_reaped(self):
         st = _state(locked_at=time.time())
@@ -104,7 +129,10 @@ class StaleLockReaperTests(TestCase):
             # reported in fixes_applied so the orchestrator/user sees the recovery.
             self.assertIn("fixes_applied", out)
             self.assertTrue(any("stale lock" in f for f in out["fixes_applied"]))
-            self.assertEqual(load(str(tdir))["phases"][0]["tasks"][0]["status"], "pending")
+            reaped = load(str(tdir))["phases"][0]["tasks"][0]
+            self.assertEqual(reaped["status"], "pending")
+            # History survives the full recover path, not just the unit reaper.
+            self.assertEqual(reaped["retry_count"], 2)
 
 
 if __name__ == "__main__":

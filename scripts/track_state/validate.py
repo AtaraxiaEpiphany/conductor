@@ -8,7 +8,7 @@ from pathlib import Path
 from .core import load, save
 from .helpers import (
     out, now_iso, _is_phase_terminal,
-    _reset_task,
+    _reset_lock_reap,
 )
 from .constants import TERMINAL_STATUSES, TERMINAL_FOR_PARENT, STALE_LOCK_SECONDS, LOCKED_AT_FIELD
 from .plan_parse import parse_plan
@@ -250,8 +250,13 @@ def _fix_stale_lock(state, threshold_seconds=STALE_LOCK_SECONDS, track_dir=None)
     ``wave-abort`` owns its teardown — reaping members one-by-one to pending
     would corrupt the wave (the ledger would still reference torn-down worktrees).
 
-    Reset clears ``retry_count`` (it's in ``_RESET_FIELDS``) — acceptable, since a
-    stuck lock means the attempt is dead and the retry budget should restart.
+    Reset flips ``status → pending`` via :func:`_reset_lock_reap`, which
+    PRESERVES ``retry_count`` / ``last_failure_summary`` / ``commit_sha``
+    (intrinsic task history) — a stale lock is recovery from a paused/killed
+    session, not a reset, so the re-dispatched attempt still counts against the
+    per-task budget. ``locked_at`` is dropped (a ``pending`` task carries no
+    lock heartbeat), and this function only acts on ``status == "in_progress"``,
+    so the reaped task isn't immediately re-reaped.
     Returns the list of fixes applied.
     """
     exempt = _wave_inflight_locs(track_dir)
@@ -264,7 +269,7 @@ def _fix_stale_lock(state, threshold_seconds=STALE_LOCK_SECONDS, track_dir=None)
             if task.get("status") == "in_progress":
                 locked_at = task.get(LOCKED_AT_FIELD)
                 if isinstance(locked_at, (int, float)) and (now - locked_at) > threshold_seconds:
-                    _reset_task(task)
+                    _reset_lock_reap(task)
                     fixes.append(
                         f"P{pi}.T{ti}.{task.get('name', '?')}: "
                         f"reset stale lock → pending ({(now - locked_at) / 60:.0f}min since lock)")
@@ -272,7 +277,7 @@ def _fix_stale_lock(state, threshold_seconds=STALE_LOCK_SECONDS, track_dir=None)
                 if sub.get("status") == "in_progress":
                     locked_at = sub.get(LOCKED_AT_FIELD)
                     if isinstance(locked_at, (int, float)) and (now - locked_at) > threshold_seconds:
-                        _reset_task(sub)
+                        _reset_lock_reap(sub)
                         fixes.append(
                             f"P{pi}.T{ti}.S{si}.{sub.get('name', '?')}: "
                             f"reset stale lock → pending ({(now - locked_at) / 60:.0f}min since lock)")
@@ -283,7 +288,10 @@ def _fix_stale_in_progress(state, threshold_hours=24):
     """Reset in_progress tasks that haven't been updated within threshold.
 
     Handles agent crashes that leave tasks stuck as in_progress indefinitely.
-    Returns list of fixes applied.
+    Like :func:`_fix_stale_lock`, this reaps via :func:`_reset_lock_reap` so
+    ``retry_count``/``last_failure_summary``/``commit_sha`` (intrinsic history)
+    survive — a stale lock is recovery, not a reset. Returns list of fixes
+    applied.
     """
     fixes = []
     try:
@@ -302,13 +310,13 @@ def _fix_stale_in_progress(state, threshold_hours=24):
     for pi, phase in enumerate(state.get("phases", []), 1):
         for ti, task in enumerate(phase.get("tasks", []), 1):
             if task.get("status") == "in_progress":
-                _reset_task(task)
+                _reset_lock_reap(task)
                 fixes.append(
                     f"P{pi}.T{ti}.{task.get('name', '?')}: "
                     f"reset stale in_progress → pending ({age_hours:.0f}h old)")
             for si, sub in enumerate(task.get("subtasks", []), 1):
                 if sub.get("status") == "in_progress":
-                    _reset_task(sub)
+                    _reset_lock_reap(sub)
                     fixes.append(
                         f"P{pi}.T{ti}.S{si}.{sub.get('name', '?')}: "
                         f"reset stale in_progress → pending ({age_hours:.0f}h old)")

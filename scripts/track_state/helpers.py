@@ -10,6 +10,7 @@ from .core import load, save
 from .constants import (
     MARKER_MAP, SHA_MARKERS, TERMINAL_STATUSES,
     TERMINAL_FOR_PARENT, AUTO_COMPLETE_OK, _RE_TRAILING_MARKER, _RESET_FIELDS,
+    LOCKED_AT_FIELD,
 )
 
 # Closed vocabulary of dispatch tags (TDD/routing exemptions). Single source of
@@ -465,3 +466,24 @@ def _reset_task(tgt):
     tgt["status"] = "pending"
     for k in _RESET_FIELDS:
         tgt.pop(k, None)
+
+
+def _reset_lock_reap(tgt):
+    """Reap a stale in_progress lock: flip status→pending, KEEP task history.
+
+    Distinct from :func:`_reset_task` (full reset for the explicit ``reset``
+    command, which legitimately wipes ``retry_count``/``commit_sha``): a
+    stale-LOCK reap is RECOVERY from a killed/paused session, not a reset. The
+    attempt wasn't abandoned — ``retry_count``/``last_failure_summary``/
+    ``commit_sha`` are intrinsic task history and must survive so the
+    re-dispatched attempt still counts against the per-task budget. A session
+    clear is a pause, not a crash. Mirrors the preservation contract of
+    ``mutations.reactivate_for_modified_retry``.
+
+    ``locked_at`` is dropped explicitly: a reaped task is no longer in_progress,
+    so advertising a stale lock heartbeat is misleading, and this function only
+    re-reaps ``status == "in_progress"`` tasks, so dropping it is safe.
+    """
+    tgt["status"] = "pending"
+    tgt.pop(LOCKED_AT_FIELD, None)
+    clean(tgt, {"status", "retry_count", "last_failure_summary", "commit_sha"})

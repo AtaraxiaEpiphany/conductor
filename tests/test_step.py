@@ -98,6 +98,19 @@ def _result(track_dir, body):
     (cond / "result.json").write_text(json.dumps(body))
 
 
+def _start_commit_count(track_dir):
+    """Count consecutive `chore(conductor): Start task` commits from HEAD.
+
+    Mirrors git_ops._is_start_commit's prefix. Used to assert the re-dispatch /
+    reaper path does NOT emit a duplicate Start-task commit on re-entry.
+    """
+    out = subprocess.run(
+        ["git", "-C", track_dir, "log", "--format=%s"],
+        capture_output=True, text=True, check=True)
+    return sum(1 for line in out.stdout.splitlines()
+               if line.startswith("chore(conductor): Start task "))
+
+
 def _commit(track_dir, msg, files=None):
     """Make a real impl commit so finalize records a SHA / _is_start_commit is False."""
     env = {
@@ -221,6 +234,45 @@ class StepFinalizeRouteTests(TestCase):
         tgt = load(d)["phases"][0]["tasks"][0]
         self.assertEqual(tgt["status"], "in_progress")
         self.assertEqual(tgt.get("retry_count", 0), 0)
+
+    def test_step_reentry_after_clear_preserves_retry_count(self):
+        # The user's reported bug: task-executor returned no result, session was
+        # CLEARED, user re-ran implement-step >30 min later. The stale-lock
+        # reaper (ensure_healthy → _fix_stale_lock) used to zero retry_count via
+        # _reset_task, flipping the task to pending so is_resume=False → a fresh
+        # Start-task commit + retry budget restart. Now the reaper must PRESERVE
+        # retry_count/commit_sha: the task re-dispatches, but with full history,
+        # and no second Start-task commit.
+        import time as _time
+        from scripts.track_state.constants import LOCKED_AT_FIELD
+        state = _make_state(phases=[{"name": "Phase 1", "status": "pending", "tasks": [
+            {"name": "Task A", "status": "pending"}]}])
+        d = _git_track_dir(state)
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        first = _step(d)  # locks Task A + Start commit
+        self.assertEqual(first["action"], "dispatch")
+        start_count = _start_commit_count(d)
+        self.assertEqual(start_count, 1)
+
+        # Simulate the cleared session: the task is still in_progress with a
+        # prior-attempt history, but locked_at has aged past STALE_LOCK_SECONDS.
+        st = load(d)
+        tgt = st["phases"][0]["tasks"][0]
+        tgt["retry_count"] = 1
+        tgt["last_failure_summary"] = "prior attempt failed"
+        tgt[LOCKED_AT_FIELD] = _time.time() - 3600  # 1h old, past 30min threshold
+        save(d, st)
+
+        o = _step(d)  # reaper runs, then re-dispatch branch
+        self.assertEqual(o["action"], "dispatch")
+        # retry_count survived BOTH the reap AND the re-lock (the core assertion:
+        # _lock_inplace preserves it, and the reaper no longer zeroes it).
+        after = load(d)["phases"][0]["tasks"][0]
+        self.assertEqual(after.get("retry_count"), 1)
+        self.assertEqual(after.get("last_failure_summary"), "prior attempt failed")
+        # No second Start-task commit (is_resume path skipped it; the reaper did
+        # not flip the task to pending in a way that re-triggers a fresh start).
+        self.assertEqual(_start_commit_count(d), 1)
 
     def test_interrupted_before_work_emits_redispatch_telemetry(self):
         # Same interrupted state as above, but asserts the silent re-dispatch is
