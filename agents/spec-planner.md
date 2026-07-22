@@ -122,6 +122,18 @@ Structure:
 - [ ] [Manual] Conductor - User Manual Verification 'Phase 2' (Protocol in task-workflow.md)
 ```
 
+For a **staged migration**, add the phase-verify directive to each heading:
+
+```markdown
+## Phase 1: Migrate dependencies <!-- verify: compile -->
+- [ ] [Migrate] {bump spring-boot parent, resolve dependency tree} <!-- AC-1 -->
+- [ ] [Manual] Conductor - User Manual Verification 'Phase 1' (Protocol in task-workflow.md)
+
+## Phase 2: Migrate source and boot <!-- verify: test,start -->
+- [ ] [Migrate] {javax → jakarta rename, fix config} <!-- AC-1 -->
+- [ ] [Manual] Start the app and confirm it boots
+```
+
 **Within-track parallelism is flat-only (v1).** `conductor:parallel` fans out worktree-isolated waves, but a task with **subtasks can never be a wave member** — the wave scheduler rejects subtasked tasks before checking deps (plan-format-contract.md §8 rule 6). The planner's default is to decompose non-trivial work into subtasks, so by default *nothing* is wave-eligible. When the user asks for parallelism (or you see genuinely disjoint, independent units of work in one phase), author those tasks **flat** — no subtasks, the steps inlined as the task body — and add an empty `<!-- deps: -->` (independent) or `<!-- deps: P1.T1 -->` (depends on a sibling). Independent tasks you want concurrent must BOTH be flat and BOTH carry a deps comment.
 
 **Mandatory format contract:** Read `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/plan-format-contract.md` and follow it exactly when generating `plan.md`. It defines the status-marker, dispatch-tag, and subtask rules the orchestrator's plan parser and dispatch router depend on — a task line without `[ ]` is silently dropped by the parser, and dispatch tags (`[Explore]`, `[Docs]`, `[Config]`, `[Chore]`, `[Manual]`) drive routing and TDD gating. Violating any rule breaks the orchestrator.
@@ -137,6 +149,8 @@ Structure:
 7. None of the above — it writes new or changed **business logic**? → **no tag** (default TDD). This is the expected outcome for the majority of tasks.
 
 **When unsure between an exemption tag and no-tag, leave it UNTAGGED.** The default TDD path is the safe failure mode: a wrongly-untagged `[Config]` task costs one extra Red cycle, but a wrongly-tagged feature task silently skips TDD and the coverage gate (F2/F3 exempt). Defaulting to no-tag biases toward correctness. Never invent a tag outside the closed set (e.g. `[Feature]`, `[Bugfix]`, `[Test]`, `[TDD]`) — the parser ignores unknown tags and they route nowhere.
+
+**Phase-verify directive (migration tracks).** A `## Phase N:` heading MAY carry a `<!-- verify: <modes> -->` comment declaring that phase's checkpoint gate (plan-format-contract.md §"Phase Verify Directives"). Use it for **staged migrations**: the intermediate phases — where the test suite is expected red and the goal is only "it compiles" — each get `<!-- verify: compile -->`, so `phase-checker` gates them on the build instead of forcing the (red) suite green. The **final** integration phase — whose goal is "starts + tests green" — gets `<!-- verify: test,start -->`. Emit the directive on every migration phase; emit nothing on non-migration phases (the default full gate is correct for feature work). This is the lever that lets a migration span multiple phases without every intermediate phase failing its checkpoint on a red suite.
 
 **Declare inter-task dependencies (optional but encouraged):** when a task is *not file-disjoint* from its siblings — it builds on an artifact an earlier task produced (a model, utility, config key) — append a second HTML comment `<!-- deps: P{n}.T{n} -->` naming that predecessor by its positional coordinate (e.g. `P1.T1` = Phase 1, Task 1). The AC/TC comment is still mandatory and separate. Omit `deps` only when tasks in a phase touch genuinely disjoint files/modules. Making coupling explicit keeps the dependency graph machine-checkable (the parser validates dangling refs, self-deps, and cycles at `init-from-plan --check`) rather than implicit in ordering. See `plan-format-contract.md` §Inter-Task Dependencies.
 

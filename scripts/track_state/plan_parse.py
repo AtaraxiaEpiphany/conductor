@@ -97,6 +97,20 @@ _TC_REF = re.compile(r"TC-\d+\.\d+")
 _DEPS_COMMENT = re.compile(r"^\s*deps\s*:", re.IGNORECASE)
 _DEPS_REF = re.compile(r"P(\d+)\.T(\d+)")
 
+# Per-phase verify directive, inside a ``<!-- verify: compile -->`` comment on
+# the ``## Phase N:`` heading line (plan-format-contract.md §"Phase Verify
+# Directives"). A phase whose goal is "compiles" (a mid-migration phase where
+# the test suite is expected red) declares ``verify: compile``; the final
+# integration phase may declare ``verify: test,start``. Absent = full gate (the
+# default, backward-compatible). Like ac_refs/deps_refs this is advisory
+# metadata parsed for validation surface and the phase-checker's direct read of
+# plan.md — NOT persisted into track-state.json (to_plan_structure drops it).
+_VERIFY_COMMENT = re.compile(r"^\s*verify\s*:", re.IGNORECASE)
+# Closed mode vocabulary. ``compile`` gates on a green build (not the suite);
+# ``test`` gates on the suite (the default); ``start`` adds a one-shot app-boot
+# smoke check. Comma-separated, order-independent.
+_VERIFY_MODES = ("compile", "test", "start")
+
 _VALID_MARKERS = set(MARKER_MAP.values())
 
 
@@ -173,6 +187,42 @@ def _extract_deps(rest):
     return deps_refs, has_deps_comment, failures
 
 
+def _extract_verify(rest):
+    """Pull the per-phase verify modes from a ``<!-- verify: ... -->`` comment.
+
+    Returns ``(verify_modes, has_verify_comment, failures)``:
+    - verify_modes: de-duped lowercased modes from the closed vocabulary
+      (``compile``/``test``/``start``), first-seen order.
+    - has_verify_comment: True iff a ``<!-- verify: ... -->`` comment was
+      present, so a comment that yielded no valid mode (likely a typo) can be
+      flagged.
+    - failures: tokens inside a verify comment that did not match a known mode
+      (e.g. ``buil``), surfaced as parse warnings.
+
+    Only a comment whose body starts with ``verify:`` is treated as a verify
+    directive — a stray ``verify`` inside an AC/TC comment cannot trigger this.
+    """
+    modes, seen = [], set()
+    has_verify_comment = False
+    failures = []
+    for m in _HTML_COMMENT.finditer(rest):
+        body = m.group(1)
+        if not _VERIFY_COMMENT.match(body):
+            continue
+        has_verify_comment = True
+        payload = _VERIFY_COMMENT.sub("", body, count=1)
+        for tok in re.split(r"[,\s]+", payload):
+            if not tok:
+                continue
+            low = tok.lower()
+            if low in _VERIFY_MODES and low not in seen:
+                seen.add(low)
+                modes.append(low)
+            elif low not in _VERIFY_MODES:
+                failures.append(tok)
+    return modes, has_verify_comment, failures
+
+
 def parse_plan(plan_path):
     """Parse plan.md → {"phases": [...], "errors": [...], "warnings": [...]}.
 
@@ -202,7 +252,12 @@ def parse_plan(plan_path):
         pm = _PHASE_HEADING.match(line)
         if pm:
             num = int(pm.group(1))
-            name = _CHECKPOINT.sub("", pm.group(2) or "").strip()
+            raw_name = pm.group(2) or ""
+            # Extract the verify directive from the RAW heading remainder
+            # (before _CHECKPOINT.sub / _clean_name strip the comment) — same
+            # capture-before-strip discipline as task ac_refs/tc_refs.
+            verify_modes, has_verify, verify_failures = _extract_verify(raw_name)
+            name = _CHECKPOINT.sub("", raw_name).strip()
             if num in seen_phase_numbers:
                 errors.append(f"line {lineno}: duplicate phase number {num}")
             if num != expected_next:
@@ -211,7 +266,12 @@ def parse_plan(plan_path):
                     f"(expected Phase {expected_next})")
             seen_phase_numbers.add(num)
             expected_next = num + 1
-            current_phase = {"name": name, "number": num, "line": lineno, "tasks": []}
+            current_phase = {
+                "name": name, "number": num, "line": lineno, "tasks": [],
+                "verify_modes": verify_modes,
+                "verify_has_comment": has_verify,
+                "verify_failures": verify_failures,
+            }
             phases.append(current_phase)
             current_task = None
             if not name:
@@ -335,6 +395,23 @@ def parse_plan(plan_path):
         warnings.append(
             f"{issue['at']}: dependency annotation issue ({issue['kind']}) "
             f"— {issue['detail']}")
+
+    # Per-phase verify-directive validation (plan-format-contract.md §"Phase
+    # Verify Directives"). Advisory — the directive is read directly from
+    # plan.md by phase-checker, so an unknown mode warns at init but does not
+    # block (same posture as deps). A typo'd mode would otherwise be silently
+    # ignored at checkpoint, leaving the phase on the (safe) full gate — so the
+    # warning is the operator's only signal their directive didn't take.
+    for ph in phases:
+        label = f"Phase {ph['number']}" + (f" '{ph['name']}'" if ph["name"] else "")
+        if ph.get("verify_has_comment") and not ph.get("verify_modes"):
+            warnings.append(
+                f"{label}: <!-- verify: --> comment has no valid mode "
+                f"(expected one or more of: {', '.join(_VERIFY_MODES)})")
+        for tok in ph.get("verify_failures", []) or []:
+            warnings.append(
+                f"{label}: unrecognized verify mode '{tok}' "
+                f"(expected one or more of: {', '.join(_VERIFY_MODES)})")
 
     return {"phases": phases, "errors": errors, "warnings": warnings}
 

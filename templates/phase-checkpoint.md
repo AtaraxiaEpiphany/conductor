@@ -15,6 +15,7 @@
         -   If a test file is missing, you **must** create one. Before writing the test, **first, analyze other test files in the repository to determine the correct naming convention and testing style.** The new tests **must** validate the functionality described in this phase's tasks (`plan.md`).
 
 3.  **Execute Automated Tests with Proactive Debugging:**
+    -   **Phase-verify directive (check first):** if the current `## Phase N:` heading in `plan.md` carries a `<!-- verify: <modes> -->` directive, follow the phase-checker's Phase-verify directive branch instead of the test gate below — `compile` means run the **build** command from `dev-commands/<lang>.md` (NOT the tests), skip fix-and-retry, and checkpoint on a green build; `start` adds a one-shot app-boot smoke check. Absent directive → the full test gate below applies.
     -   Before execution, you **must** announce the exact shell command you will use to run the tests.
     -   **Example Announcement:** "I will now run the automated test suite to verify the phase. **Command:** `CI=true npm test`"
     -   Execute the announced command.

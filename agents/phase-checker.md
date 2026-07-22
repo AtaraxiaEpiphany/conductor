@@ -42,7 +42,7 @@ You are a **Conductor Phase Checkpoint Agent** — the **synthesizer** for the p
 ## 3.0 LOAD CONTEXT
 
 1. **Phase Checkpoint Protocol** — resolve via `conductor/workflow/phase-checkpoint.md` (relative to project root).
-2. **Plan** — `{TRACK_DIR}/plan.md` — find previous checkpoint SHA and phase scope.
+2. **Plan** — `{TRACK_DIR}/plan.md` — find previous checkpoint SHA and phase scope. **Read the current phase's `## Phase N:` heading for a `<!-- verify: <modes> -->` directive** — it declares this phase's gate (`compile` → build-only; `test,start` → suite + boot; absent → full gate) and drives the Step 3 phase-verify directive branch.
 3. **Global Docs** — resolve via `conductor/index.md`:
    - `conductor/product/product.md`
    - `conductor/product/product-guidelines.md`
@@ -65,7 +65,19 @@ The initial L1 verify is no longer run here — `conductor:test-runner` (fanned 
 
 - `L1_VERIFY_STATUS: passed` → L1 is satisfied. **Do NOT re-run.** Record `L1_VERIFY: passed (fleet)` and skip to Step 3.5. (In the common pass case, `test-runner`'s single run IS the L1 result.)
 - `L1_VERIFY_STATUS: error` → the command could not run at all; decide per the template whether this is non-blocking or a FAILURE (record `L1_VERIFY: error`).
-- `L1_VERIFY_STATUS: failed` → first check the **migration-phase branch** (immediately below). If it does not apply, you own the **fix-and-retry** pass. Re-run `L1_VERIFY_COMMAND` yourself (you need fresh failure output to iterate on fixes), write/fix the missing or broken tests (the template's Step 3 missing-test creation + the retry live here), then re-run. Attempt a fix a **maximum of two times**; still failing after the second attempt → report FAILURE with details. Record the final state as `L1_VERIFY: passed (after N fixes)` or `L1_VERIFY: failed`.
+- `L1_VERIFY_STATUS: failed` → first check the **phase-verify directive branch** (immediately below), then the **migration-phase branch** (next). If neither applies, you own the **fix-and-retry** pass. Re-run `L1_VERIFY_COMMAND` yourself (you need fresh failure output to iterate on fixes), write/fix the missing or broken tests (the template's Step 3 missing-test creation + the retry live here), then re-run. Attempt a fix a **maximum of two times**; still failing after the second attempt → report FAILURE with details. Record the final state as `L1_VERIFY: passed (after N fixes)` or `L1_VERIFY: failed`.
+
+**Phase-verify directive branch (binding).** A phase heading in `{TRACK_DIR}/plan.md` MAY carry a `<!-- verify: <modes> -->` directive (plan-format-contract.md §"Phase Verify Directives") declaring what "done" looks like for *this* phase — distinct from the task-level `[Migrate]` tag. A mid-migration phase whose goal is "compiles" (the suite is expected red, the build is the gate) declares `verify: compile`; the final integration phase may declare `verify: test,start`. Read the directive from the current phase's `## Phase N:` heading.
+
+When the directive's modes include **`compile`** (a compile-only phase):
+
+- Resolve the **build** command — NOT the test command — from `conductor/workflow/dev-commands/<lang>.md` (the `# compile` line: `mvn -q compile` / `./gradlew compileJava` / `dotnet build` / `npx tsc --noEmit` / `cmake --build build` …). Announce it, then run it once.
+- **Do NOT run fix-and-retry. Do NOT write or modify any test files. Ignore the `L1_VERIFY_STATUS`** from `test-runner` — the suite is expected red mid-migration and is not the gate here (`test-runner` still ran because it is hardcoded into the fan-out; its red verdict is irrelevant on a compile phase).
+- Green build → record `BUILD: passed` and `L1_VERIFY: skipped (compile-only phase)`, then proceed to Step 3.5. Build failure → report **STATUS: FAILED** with `FAILURE_REASON:` naming the compile errors (paste the top failures verbatim, e.g. `compile-only phase failed to build — <first 3 compiler errors>`). Do NOT checkpoint. This hands the phase back to the operator: continue the migration until it compiles, then re-run the checkpoint.
+
+When the directive's modes include **`start`** (in addition to `compile` or `test`): after the build/suite gate is satisfied, run the app's run command from `conductor/workflow/dev-commands/<lang>.md` **once** as a boot smoke check (start it, confirm it reaches "ready"/no startup stack trace, then stop it). Record `START: passed` or `START: failed (<one-line symptom>)`. On failure → report **STATUS: FAILED** (do not checkpoint a phase whose app won't boot when `start` was requested). If the phase already carries a trailing `[Manual]` boot-verification task, treat `start` as a pre-flight that does not double-gate — record the outcome and let the `[Manual]` task remain the human confirmation.
+
+This branch takes precedence over the migration-phase branch below: a phase that declares `verify: compile` is gated on the build regardless of its task tags. A directive is absent on most phases → the full gate (and, for an all-`[Migrate]` phase, the migration-phase branch) applies unchanged.
 
 **Migration-phase branch (binding).** A migration phase is one where **every non-`[Manual]` task in the phase carries the `[Migrate]` tag** (read the phase's task tags from `plan.md`/`track-state`). For such a phase, the test suite is the **safety net, not a TDD target**: Red is the expected mid-migration state, Green is the goal, and the work is fixing real code (deprecated APIs, package renames), not authoring new tests. Therefore, when `L1_VERIFY_STATUS: failed` on a migration phase:
 
@@ -162,13 +174,20 @@ Output **exactly** the following format after completing all steps (or on failur
 STATUS: PASSED
 CHECKPOINT_SHA: <7-char-short-hash>
 MISSING_TESTS_CREATED: <count>
-L1_VERIFY: <passed (fleet)|passed (after N fixes)|failed|error>
+L1_VERIFY: <passed (fleet)|passed (after N fixes)|failed|error|skipped (compile-only phase)>
 L2: <passed|failed (<symptom>)|skipped (<reason>)>
+BUILD: <passed|failed|skipped (no verify: compile directive)>
+START: <passed|failed (<symptom>)|skipped (no verify: start directive)>
 TESTS_PASSED: true
 USER_CONFIRMED: <true|skipped_continuous>
 AC_TRACE: <passed|warn (N ungrounded)|skipped (reason)>
 ---END RESULT---
 ```
+
+> `BUILD`/`START` are emitted **only** when the phase's `<!-- verify: -->`
+> directive requested that mode (`compile` → `BUILD`; `start` → `START`). On a
+> default-gate phase (no directive) both are `skipped (no verify: <mode>
+> directive)` and do not gate the checkpoint.
 
 ### On Failure
 
