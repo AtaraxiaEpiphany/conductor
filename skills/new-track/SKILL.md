@@ -117,7 +117,9 @@ USER_ANSWERS={answers or N/A}
 RELATED_DOCS={paths or N/A}
 ```
 
-Parse `---SPEC PLAN RESULT---` block. Confirm `STATUS: SUCCESS` (halt on FAILURE and announce `SUMMARY`). `plan.md` and `spec.md` are now on disk — `PLAN_STRUCTURE` is **no longer required**: Section 2.6 derives the full task/subtask structure mechanically from `plan.md`, eliminating manual transcription.
+Parse `---SPEC PLAN RESULT---` block. Confirm `STATUS: SUCCESS` (halt on FAILURE and announce `SUMMARY`).
+
+**Absent block (spec-planner exhausted turns mid-generation).** If the `---SPEC PLAN RESULT---` block is **missing entirely** (not `STATUS: FAILURE` — the block itself never appeared), the spec-planner ran out of turns reading context before it could emit §5.0. **Do NOT read `spec.md`/`plan.md` to recover** (the read-guard hook denies that while a dispatch is open, and doing the work yourself violates the thin-router contract). The `on-subagent-stop` recovery hook fires a bounded recovery turn first; this is the backstop when recovery is exhausted. **Re-dispatch `conductor:spec-planner` once** with `PREVIOUS_ERRORS: prior attempt returned no result block — emit §5.0 FIRST, then do only minimal §3.0 discovery`. If the second dispatch also returns no block → **halt**: `"spec-planner failed to emit a result block after 2 attempts — inspect <track_dir>/plan.md / spec.md manually."` `plan.md` and `spec.md` are now on disk — `PLAN_STRUCTURE` is **no longer required**: Section 2.6 derives the full task/subtask structure mechanically from `plan.md`, eliminating manual transcription.
 
 **Validate the generated plan + spec before §2.6.** Run three read-only checks; re-dispatch spec-planner with the combined defects if any fails. Max **2 re-dispatches (3 total attempts)**, counting from the first dispatch above:
 

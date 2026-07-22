@@ -46,6 +46,10 @@ Read `action` and do **only** that:
 
 A single-member `dispatch_batch` with `is_resume: true` is a **re-dispatch of one interrupted member** — fire that one agent (the prompt is already pinned to the existing worktree). Do not finalize it; the next `wave-step` does.
 
+### Absent member result (don't improvise)
+
+A wave member that returns **no** `---TASK RESULT---` block is owned by `wave-finalize` (it synthesizes from the member's worktree git state — committed code → SUCCESS; nothing → FAILURE + retry), **not** by you. Do **not** read the member's worktree `spec.md`/`plan.md`/source, and do **not** implement the task — run `track-state wave-step "<td>"` again and relay the next action. The `on-orchestrator-read-guard` hook denies business-file reads while any member is in flight, so the only forward path is the spine.
+
 ### Non-spine branches (B-min boundary — hand off, then resume this loop)
 
 | action | hand-off |

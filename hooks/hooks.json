@@ -71,6 +71,16 @@
             "timeout": 3
           }
         ]
+      },
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/on-orchestrator-read-guard.py\"",
+            "timeout": 3
+          }
+        ]
       }
     ],
     "SessionStart": [

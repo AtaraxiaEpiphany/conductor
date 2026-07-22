@@ -178,6 +178,8 @@ Then `track-state sync-plan "<track_dir>"` → `git commit -m "chore(conductor):
 
 **ALWAYS** call `dispatch-finalize` after the task-executor returns — even with no/incomplete result block (it synthesizes a result from state: committed code → SUCCESS; nothing → FAILURE with retry handoff). `dispatch-finalize` creates the conductor commit internally — **do NOT commit separately**.
 
+> **A missing `---TASK RESULT---` block is not a signal to do the work yourself.** It means task-executor exhausted turns (e.g. a hard task hit the §7.0 tripwire). `dispatch-finalize` synthesizes a result from git state and the retry/skip queue takes over. **Never read `spec.md`/`plan.md`/source to compensate** — enforced by the `on-orchestrator-read-guard` hook, which denies those reads while a task is in flight.
+
 ```bash
 track-state dispatch-finalize "<track_dir>"
 ```

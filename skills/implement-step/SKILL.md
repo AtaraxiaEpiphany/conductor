@@ -47,6 +47,10 @@ Read `action` and do **only** that:
 | `done` | Track finalized → hand off to the post-loop spine: `/conductor:post-loop-step "<td>"` (one-line skill invocation; no prose template read). |
 | `error` | Announce the error → STOP. |
 
+### Absent result block (don't improvise)
+
+If `conductor:task-executor` returns **no** `---TASK RESULT---` block, do **nothing but** run `track-state step "<td>"` again — the spine's re-dispatch/finalize branch owns recovery, and `dispatch-finalize` synthesizes a result from git state (committed code → SUCCESS; nothing → FAILURE + retry handoff). **Never read `spec.md`/`plan.md`/source, and never implement the task yourself.** A vanished result block is a model-judgment gap the `on-orchestrator-read-guard` hook now closes deterministically — business-file reads are denied while a task is in flight, so the only forward path is the spine.
+
 ### Non-spine branch (B-min boundary — hand off to another spine)
 
 `wave_active` needs a different spine, so `step` surfaces it as a named action rather than collapsing it: hand the track to `/conductor:parallel` (the wave spine owns it). That is the measured B-min boundary, not a gap.
