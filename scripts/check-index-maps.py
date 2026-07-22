@@ -37,6 +37,7 @@ from index_map import STATUS_RE as _STATUS_RE
 from index_map import PATH_RE as _PATH_RE
 from index_map import table_rows as _table_rows
 from index_map import VALID_STATUS
+from category_dirs import category_for
 
 
 # Paths ``conductor:setup`` actually writes (§2.1–§2.5 of skills/setup/SKILL.md).
@@ -177,6 +178,27 @@ def main():
             errors.append(
                 f"{label}: rows tagged 'seeded' but NOT written by setup (fix the tag or "
                 f"add the path to SEED_PATHS): " + ", ".join(liars)
+            )
+
+    # 4. Category-index is lazy — no row tagged ``seeded`` may point at a category
+    #    ``index.md``. Category indices (``conductor/design/api-specs/index.md``,
+    #    ``.../database/index.md``, …) are created on FIRST SEED by corpus-writer
+    #    (``seed-category-doc.py``), never pre-created by setup. A ``seeded`` tag on
+    #    one is the precise lie that would create an empty stub and let it rot —
+    #    the opposite of the lazy-by-design contract. Paths are repo-relative here
+    #    (they come from the templates), so ``category_for`` matches them directly.
+    for label, m in (("project-index.md", index_map), ("claude-md-toc.md", toc_map)):
+        bad = sorted(
+            p for p, st in m.items()
+            if st == "seeded"
+            and p.endswith("index.md")
+            and category_for(p) is not None
+        )
+        if bad:
+            errors.append(
+                f"{label}: category index.md rows tagged 'seeded' but category indices "
+                f"are lazy (created on first seed by corpus-writer, never by setup). "
+                f"Re-tag as 'auto': " + ", ".join(bad)
             )
 
     if errors:

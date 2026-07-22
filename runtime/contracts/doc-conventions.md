@@ -58,6 +58,10 @@ The frontmatter `type` (above) tells checkers *what* a doc is; this table tells 
 
 `overview.md`, `purpose.md`, `log.md`, and every `index.md` are exempt navigation/synthesis pages — they have no `type` and are not placed by this table.
 
+## Category Index Files
+
+Each category directory in the placement table above carries an `index.md` — the read-side entry point the `conductor/index.md` Scoped Docs table and `[[runtime/contracts/doc-routing]]` route into (e.g. `conductor/design/api-specs/index.md`).
+
 ## See Also
 
 - [[runtime/core-contract]] — behavioral invariants; resident in every session.

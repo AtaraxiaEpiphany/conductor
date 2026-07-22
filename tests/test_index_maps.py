@@ -107,5 +107,19 @@ class SeededReallyCreatedTests(TestCase):
             self.assertIn("conductor/workflow/git-flow.md", r.stderr)
 
 
+class CategoryIndexLazyTests(TestCase):
+    def test_seeded_category_index_is_caught(self):
+        # A category index.md (lazy — created on first seed by corpus-writer)
+        # must never be tagged 'seeded'. Re-tag the api-specs index row, which
+        # is genuinely 'auto'.
+        with _MapSandbox(_INDEX) as m:
+            m.replace("conductor/design/api-specs/index.md | auto",
+                      "conductor/design/api-specs/index.md | seeded")
+            r = _run()
+            self.assertEqual(r.returncode, 1, r.stdout)
+            self.assertIn("category indices are lazy", r.stderr)
+            self.assertIn("conductor/design/api-specs/index.md", r.stderr)
+
+
 if __name__ == "__main__":
     main()

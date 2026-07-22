@@ -55,7 +55,7 @@ Apply the approved plan. The pipeline contract (ad-hoc Phase 1 / Phase 2 / advis
    ```bash
    rm -f /tmp/wiki-build-*   # chunk files + plan file
    ```
-2. **Summarize:** sources filed (union of chunks' `UPDATED_FILES` / `GRADUATED_FINDINGS`, grouped by target home), whether overview/purpose were regenerated (Phase 2 `OVERVIEW_REGENERATED` / `PURPOSE_UPDATED` / `LOG_ENTRIES_ADDED`), any advisory drift (the `---WIKI DIFF RESULT---` STALE/MOVED/UNCOVERED counts), and any advisory lint counts. The tracked artifacts are the corpus + wiki pages the agents committed — the raw sources and the plan are gone by design.
+2. **Summarize:** sources filed (union of chunks' `UPDATED_FILES` / `GRADUATED_FINDINGS`, grouped by target home), whether overview/purpose were regenerated (Phase 2 `OVERVIEW_REGENERATED` / `PURPOSE_UPDATED` / `LOG_ENTRIES_ADDED`), any advisory drift (the `---WIKI DIFF RESULT---` STALE/MOVED/UNCOVERED counts), any advisory lint counts, and any **category directories newly seeded** this batch (a chunk's `corpus-writer` runs `seed-category-doc.py`, whose `category_index: "created"` output marks a brand-new category dir + `index.md` — surface these so the human knows the wiki gained a new section, not just new docs). The tracked artifacts are the corpus + wiki pages the agents committed — the raw sources and the plan are gone by design.
 
 ### 7.5 No-Op / Partial Path
 
