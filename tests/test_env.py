@@ -70,7 +70,12 @@ class GetDataDirResolutionTests(unittest.TestCase):
         self.assertEqual(env.get_data_dir(), Path(tmp) / ".conductor")
 
     def test_no_cwd_fallback_without_tracks(self):
-        """No env vars + no conductor/tracks/ in cwd → plugin/.data fail-safe."""
+        """No env vars + no conductor/tracks/ in cwd → plugin/.data fail-safe.
+
+        The fallback is the LAST resort — it collides across concurrent
+        projects, so it must be LOUD (a stderr warning) rather than silent.
+        Assert the fallback is used AND the warning fired.
+        """
         os.environ.pop("CLAUDE_PLUGIN_DATA", None)
         os.environ.pop("CLAUDE_PROJECT_DIR", None)
         tmp = tempfile.mkdtemp()
@@ -78,10 +83,45 @@ class GetDataDirResolutionTests(unittest.TestCase):
         # Bare dir, no conductor/tracks — must NOT match the cwd heuristic.
         os.chdir(tmp)
         env = self._import_env()
+        # Reset the one-shot warning guard so this test observes the fire.
+        env._PLUGIN_FALLBACK_WARNED = False
+        import io
+        from contextlib import redirect_stderr
+        buf = io.StringIO()
+        with redirect_stderr(buf):
+            data_dir = env.get_data_dir()
         # Should be the plugin fail-safe, NOT tmp/.conductor.
-        self.assertNotEqual(env.get_data_dir(), Path(tmp) / ".conductor")
-        self.assertTrue(str(env.get_data_dir()).endswith(os.path.join(".claude", "conductor-plugin", ".data"))
-                        or env.get_data_dir().name == ".data")
+        self.assertNotEqual(data_dir, Path(tmp) / ".conductor")
+        self.assertTrue(str(data_dir).endswith(os.path.join(".claude", "conductor-plugin", ".data"))
+                        or data_dir.name == ".data")
+        # The trap must be visible, not silent.
+        self.assertIn("SHARED plugin dir", buf.getvalue())
+
+    def test_infer_project_dir_from_payload_cwd(self):
+        """Payload cwd with conductor/tracks/ promotes to CLAUDE_PROJECT_DIR.
+
+        This is the core concurrency fix: a hook whose PROCESS cwd is the
+        plugin dir (common) still resolves the PROJECT from the payload, so
+        logs land project-scoped instead of in the shared plugin dir. Without
+        it, two concurrent projects collide into one unreadable log.
+        """
+        os.environ.pop("CLAUDE_PLUGIN_DATA", None)
+        os.environ.pop("CLAUDE_PROJECT_DIR", None)
+        env = self._import_env()
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        # Real project shape: conductor/tracks present.
+        (Path(project) / "conductor" / "tracks").mkdir(parents=True)
+        # Process cwd is ELSEWHERE (simulating a hook firing from the plugin).
+        elsewhere = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, elsewhere, ignore_errors=True)
+        os.chdir(elsewhere)
+        # Payload carries the project cwd.
+        resolved = env.infer_project_dir_from_payload({"cwd": project})
+        self.assertEqual(resolved, project)
+        self.assertEqual(os.environ["CLAUDE_PROJECT_DIR"], project)
+        # And get_data_dir now resolves the project, NOT the plugin fallback.
+        self.assertEqual(env.get_data_dir(), Path(project) / ".conductor")
 
     def test_project_dir_env_beats_cwd_heuristic(self):
         """Explicit CLAUDE_PROJECT_DIR takes precedence over the cwd heuristic."""

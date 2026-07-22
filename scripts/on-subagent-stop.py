@@ -192,6 +192,44 @@ def _wave_agent_track_dir(cwd):
     return None
 
 
+def _resolve_dispatched_for(cwd, locked):
+    """The ``(phase, task, subtask, track_dir)`` this stop belongs to, or None.
+
+    The lock is frequently already released by SubagentStop time (finalize
+    moves the cursor on before the stop event fires), so ``locked`` is often
+    ``None`` and the telemetry line would render ``phase=- task=-`` — making the
+    dispatch unjoinable to its task in ``dispatch-lifecycle.log``. The inflight
+    marker (``.dispatch-inflight-*.json``) persists until finalize/reap and IS
+    "a dispatch was born for this task and not yet finalized," so it identifies
+    the task this stop belongs to even after the lock moves on.
+
+    Prefer the live lock (authoritative); fall back to the inflight marker
+    (recoverable) only when the lock is gone. Best-effort: any error → ``None``
+    (the telemetry line falls back to today's ``-`` rendering, never raises).
+    """
+    if locked is not None:
+        td, p, t, s = locked
+        return p, t, s, td
+    try:
+        p = Path(cwd).resolve()
+    except OSError:
+        return None
+    # Walk up to the track_dir holding .conductor/, then glob the marker.
+    for cand in (p, *p.parents):
+        cdir = cand / ".conductor"
+        if cdir.is_dir():
+            try:
+                from lib import dispatch_inflight as _inf
+                hit = _inf.find_active(str(cand))
+                if hit is not None:
+                    p2, t2, s2 = hit
+                    return p2, t2, s2, str(cand)
+            except Exception:
+                return None
+            break
+    return None
+
+
 def _log_result_event(log_file, session_id: str, agent_type: str,
                       outcome: str, reason: str) -> None:
     """Record a result-file-agent stop outcome to the recovery-rate log.
@@ -236,6 +274,21 @@ def main():
         else:
             p = t = s = None
             track_dir = None
+        # The lock is frequently already released by SubagentStop time, which
+        # would render phase=- task=- and make the stop unjoinable to its task
+        # in dispatch-lifecycle.log. Recover the (phase, task, subtask) from the
+        # persistent inflight marker when the lock is gone — it identifies the
+        # task THIS dispatch was for. The freshness probe below keeps using the
+        # lock-derived track_dir (None when no lock) so a marker in another
+        # track can't satisfy it; the indices are advisory-only here.
+        if p is None:
+            dispatched_for = _resolve_dispatched_for(cwd, locked)
+            if dispatched_for is not None:
+                p, t, s, td = dispatched_for
+                # Scope the freshness probe to the marker's track too, so a
+                # fresh result in ANOTHER track can't satisfy this probe when
+                # the lock is gone. (When the lock is live this is unchanged.)
+                track_dir = td
         if agent_type in RESULT_FILE_AGENT_TYPES:
             had = "1" if fresh_result_exists(cwd, track_dir=track_dir) else "0"
         else:

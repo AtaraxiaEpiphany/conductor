@@ -24,12 +24,24 @@ _cached_hook_input: Optional[Dict[str, Any]] = None
 def read_hook_input() -> Dict[str, Any]:
     """Read hook input JSON from stdin (cached)
 
+    Also promotes the payload's ``cwd`` into ``$CLAUDE_PROJECT_DIR`` (once, via
+    ``lib.env.infer_project_dir_from_payload``) so the rest of this process
+    resolves the *project* for logs/telemetry — not the shared plugin dir. This
+    is the single chokepoint where every hook reads its payload, so the ~10
+    ``get_data_dir`` call sites need no changes. Best-effort; never raises.
+
     Returns:
         Parsed JSON data
     """
     global _cached_hook_input
     if _cached_hook_input is None:
         _cached_hook_input = json.load(sys.stdin)
+        # Promote payload cwd → CLAUDE_PROJECT_DIR so logs land project-scoped.
+        try:
+            from lib.env import infer_project_dir_from_payload
+            infer_project_dir_from_payload(_cached_hook_input)
+        except Exception:
+            pass
     return _cached_hook_input
 
 

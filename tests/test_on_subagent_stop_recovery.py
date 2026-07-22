@@ -199,6 +199,45 @@ class RecoveryGuardTests(TestCase):
             self.assertEqual(rc, 0)
             self.assertNotIn("decision", out)
 
+    # --- Fix B: stop telemetry carries the dispatched-for task when lock is gone ---
+
+    def test_stop_event_carries_inflight_task_when_lock_gone(self):
+        """When the lock is released before SubagentStop (common — finalize moves
+        the cursor on), the stop telemetry must still carry (phase, task) from
+        the persistent inflight marker, so the dispatch is joinable to its task
+        in dispatch-lifecycle.log. Without this the line renders phase=- task=-."""
+        import os
+        with tempfile.TemporaryDirectory() as data_root, \
+                tempfile.TemporaryDirectory() as track_cwd:
+            # An inflight marker for P2.T3 (the dispatch was for THIS task).
+            cdir = Path(track_cwd) / ".conductor"
+            cdir.mkdir(parents=True, exist_ok=True)
+            (cdir / ".dispatch-inflight-2-3.json").write_text(json.dumps({
+                "phase": 2, "task": 3, "subtask": None,
+                "start_sha": "abc", "written_at": "2026-07-22T00:00:00+00:00",
+                "gen": 1,
+            }))
+            # No track-state.json → no lock resolved → fallback path engaged.
+            env = dict(os.environ, CLAUDE_PLUGIN_DATA=data_root)
+            hook_input = {
+                "agent_type": "skip-analyst",  # async → no block; pure telemetry
+                "session_id": "fixb-sess",
+                "cwd": track_cwd,
+                "last_assistant_message": "",
+            }
+            proc = subprocess.run(
+                [sys.executable, str(_HOOK)],
+                input=json.dumps(hook_input),
+                capture_output=True, text=True, env=env,
+            )
+            self.assertEqual(proc.returncode, 0)
+            log = Path(data_root) / "logs" / "dispatch-lifecycle.log"
+            self.assertTrue(log.exists(), "lifecycle log should have been written")
+            last_stop = [ln for ln in log.read_text().splitlines()
+                         if "event=stop" in ln and "agent=skip-analyst" in ln][-1]
+            self.assertIn("phase=2", last_stop)
+            self.assertIn("task=3", last_stop)
+
 
 if __name__ == "__main__":
     main()

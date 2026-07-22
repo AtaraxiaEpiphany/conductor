@@ -40,6 +40,7 @@ from .new_track import (
     cmd_new_track_resume, cmd_new_track_finalize,
 )
 from .brief import cmd_brief_init, cmd_brief_finalize, cmd_brief_resume
+from .logs_read import cmd_log_path, cmd_subagent_log
 
 
 _BOOL_FLAGS = {"--full", "--fix", "--check", "--force"}
@@ -348,6 +349,13 @@ COMMAND_HELP = {
                    "Reports changed/added/removed ACs+FRs+NFRs and, the headline, at_risk_tasks: completed tasks "
                    "(with commit_sha) whose claimed AC was edited — SHAs that may no longer satisfy the new AC. "
                    "Engine behind /conductor:re-spec; usable standalone after any committed spec edit."),
+    "log-path": ("log-path",
+                 "Print which data/logs dir resolved (and via which tier) + list the telemetry log files "
+                 "with size/mtime. Ends 'where did my subagent log go?' — the project vs plugin-fallback split."),
+    "subagent-log": ("subagent-log [<track-dir>] [--phase N --task N]",
+                     "Read-only dispatch timeline joined from dispatch-lifecycle.log + result-recovery.log: "
+                     "probe → start → stop → recovery outcome, grouped by (phase, task). Diagnoses 'subagent "
+                     "didn't return a structured result' without raw grep."),
     "derive-name": ("derive-name <shortname>",
                     "Derive canonical track_id (<shortname>_<YYYYMMDD>) and track_dir for "
                     "today; idempotent. Uniqueness is the skill's job (new-track §2.6)."),
@@ -403,6 +411,7 @@ _COMMAND_GROUPS = [
     ("Diagnostics", ["validate", "gc", "shas", "post-loop-status", "checklist-verify",
                      "deferred-report", "phase-done", "add-checkpoint", "preflight",
                      "quality-snapshot", "spec-integrity", "spec-anchors", "spec-delta"]),
+    ("Logs", ["log-path", "subagent-log"]),
 ]
 
 
@@ -441,7 +450,8 @@ def main():
 
     # Commands that take no track-dir positional (their [optional] positional is
     # a query/shortname, not a path). They may legally run with len(argv) == 2.
-    _NO_TRACK_DIR_COMMANDS = {"resolve-track", "check", "setup", "new-track-resume"}
+    _NO_TRACK_DIR_COMMANDS = {"resolve-track", "check", "setup", "new-track-resume",
+                              "log-path", "subagent-log"}
 
     cmd = sys.argv[1]
     if len(sys.argv) < 3 and cmd not in _NO_TRACK_DIR_COMMANDS:
@@ -591,6 +601,12 @@ def main():
             # explicit --before <path> overrides (used by re-spec when the edit
             # isn't committed yet, or to compare against a saved baseline).
             cmd_spec_delta(track_dir, before=flag(args, "--before"))
+        elif cmd == "log-path":
+            cmd_log_path()
+        elif cmd == "subagent-log":
+            cmd_subagent_log(track_dir,
+                             phase=flag(args, "--phase"),
+                             task=flag(args, "--task"))
         elif cmd == "add-checkpoint":
             if len(pos) < 2:
                 out(dict(error="Missing phase or sha argument"))

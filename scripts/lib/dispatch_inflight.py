@@ -145,6 +145,42 @@ def clear(track_dir, phase, task, subtask=None):
         pass
 
 
+def find_active(track_dir):
+    """The ``(phase, task, subtask)`` of the single active inflight marker, or ``None``.
+
+    Conductor locks one task at a time, so at most one inflight marker is
+    legitimate under a track's ``.conductor/`` at any moment. This globs for
+    any ``.dispatch-inflight-*.json`` and returns the parsed
+    ``(phase, task, subtask)`` from the first match — the identity of the task
+    THIS dispatch was for, recoverable even after the singleton cursor lock has
+    been released (the marker persists until finalize/reap).
+
+    Used by ``on-subagent-stop``'s telemetry: the lock is frequently already
+    gone by SubagentStop time, so without this the stop event renders
+    ``phase=- task=-`` and the dispatch can't be joined to its task in
+    ``dispatch-lifecycle.log``. The marker IS "a dispatch was born for this
+    task and not yet finalized" — exactly the task this stop belongs to.
+
+    Tolerant: missing/corrupt marker, no marker, or I/O error → ``None``.
+    Never raises.
+    """
+    cdir = Path(track_dir) / ".conductor"
+    try:
+        for path in cdir.glob(".dispatch-inflight-*.json"):
+            # Parse the marker directly — we're globbing precisely to DISCOVER
+            # the indices, so we can't pass them to ``read``. A marker is a
+            # small JSON dict written by ``write``.
+            try:
+                m = json.loads(path.read_text())
+                if isinstance(m, dict) and "phase" in m and "task" in m:
+                    return (m["phase"], m["task"], m.get("subtask"))
+            except (ValueError, OSError):
+                continue
+    except OSError:
+        pass
+    return None
+
+
 def clear_all(track_dir):
     """Remove EVERY inflight marker under this track's ``.conductor/``.
 

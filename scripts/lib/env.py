@@ -92,8 +92,96 @@ def get_data_dir() -> Path:
     cwd = Path.cwd()
     if (cwd / "conductor" / "tracks").is_dir():
         return cwd / ".conductor"
-    # Fail-safe: plugin-anchored (always writable, always exists).
+    # Fail-safe: plugin-anchored (always writable, always exists). This is the
+    # LAST resort — logs written here COLLIDE across concurrent projects (a
+    # user running Conductor in two projects at once gets one merged,
+    # unreadable file). Emit a one-line stderr warning so the trap is visible
+    # and the user knows to set CLAUDE_PROJECT_DIR or run from the project root.
+    # One-shot per process: the warning is advisory; don't spam a long-lived
+    # caller that resolves repeatedly.
+    _warn_plugin_fallback_once()
     return get_plugin_root() / ".data"
+
+
+# Process-local guard so the plugin-fallback warning fires at most once per
+# interpreter. Hooks are short-lived (one process per fire), but tests and any
+# future long-lived caller resolve repeatedly — repeat warnings would be noise.
+_PLUGIN_FALLBACK_WARNED = False
+
+
+def _warn_plugin_fallback_once() -> None:
+    """Emit a one-shot stderr warning that logs are landing in the plugin dir.
+
+    The plugin fallback collides across concurrent multi-project use (two
+    projects → one merged log file), which is the root cause of "I can't see
+    my subagent events." Surfacing it loudly — rather than silently writing —
+    is the difference between a fixable misconfiguration and an invisible one.
+    Never raises.
+    """
+    global _PLUGIN_FALLBACK_WARNED
+    if _PLUGIN_FALLBACK_WARNED:
+        return
+    _PLUGIN_FALLBACK_WARNED = True
+    try:
+        print(
+            "[conductor] WARNING: no project context resolved (CLAUDE_PROJECT_DIR "
+            "unset and cwd has no conductor/tracks/). Writing logs to the SHARED "
+            "plugin dir, which collides across concurrent projects. Run from your "
+            "project root or set CLAUDE_PROJECT_DIR to keep logs project-scoped.",
+            file=sys.stderr,
+        )
+    except Exception:
+        pass
+
+
+def infer_project_dir_from_payload(input_data) -> Optional[str]:
+    """Derive ``CLAUDE_PROJECT_DIR`` from a hook payload's ``cwd``, or ``None``.
+
+    The problem this solves
+    -----------------------
+    ``get_data_dir`` resolves the cwd-heuristic tier from the *process* cwd
+    (``Path.cwd()``). But a hook's process cwd is frequently the plugin dir or
+    some wrapper — not the project the hook is actually operating on. The
+    hook's logical project is in ``input_data["cwd"]`` (the payload). When
+    ``$CLAUDE_PROJECT_DIR`` is unset AND the process cwd isn't a track root,
+    the resolver silently falls through to the shared ``<plugin>/.data`` log —
+    which collides across concurrent projects and is why users "can't see"
+    their subagent events.
+
+    This helper is called once per hook (from ``lib.hook_io.read_hook_input``)
+    to promote the payload cwd into the env, so the rest of the process
+    resolves the *project* correctly without each of the ~10 ``get_data_dir``
+    call sites having to thread a new argument.
+
+    Rules (first non-empty wins; never raises):
+      - If ``$CLAUDE_PROJECT_DIR`` is already set, respect it — do nothing.
+      - If the payload ``cwd`` (or its ancestors) contains
+        ``conductor/tracks/``, that ancestor IS the project root.
+      - Otherwise: ``None`` (leave the resolver to its tiers, including the
+        loud plugin fallback).
+
+    Accepts a dict (``{"cwd": ...}``) or ``None``.
+    """
+    try:
+        if os.environ.get("CLAUDE_PROJECT_DIR"):
+            return None
+        if not isinstance(input_data, dict):
+            return None
+        raw = (input_data.get("cwd") or "").strip()
+        if not raw:
+            return None
+        p = Path(raw)
+        # Walk up looking for conductor/tracks — that ancestor is the project.
+        for cand in (p, *p.parents):
+            try:
+                if (cand / "conductor" / "tracks").is_dir():
+                    os.environ["CLAUDE_PROJECT_DIR"] = str(cand)
+                    return str(cand)
+            except OSError:
+                continue
+    except Exception:
+        pass
+    return None
 
 
 def get_logs_dir() -> Path:
