@@ -2068,13 +2068,31 @@ def cmd_step(track_dir, compact=True):
         except IndexError:
             tgt = None
         if tgt is not None and tgt.get("status") == "in_progress":
-            if result_path.exists() or not _is_start_commit(track_dir):
-                # Agent returned (or committed code without writing result) → finalize.
+            # The no-retry-burn contract (design: rail-b-step.md §"No-retry-burn"):
+            # a dispatch that NEVER ran (killed session, context-budget yield
+            # before any work) must not burn a retry. That state is *clean tree
+            # + still-Start HEAD + no result.json*. Any of the other two signals
+            # — a result.json, an impl commit past the Start commit, OR
+            # uncommitted implementation work in the tree — means the agent DID
+            # run and must finalize (synthesize SUCCESS from the commit, or
+            # FAILURE-with-handoff from the partial work). Routing those to
+            # re-dispatch would loop forever without incrementing retry_count.
+            impl_work_done = (
+                result_path.exists()
+                or not _is_start_commit(track_dir)
+                or bool(_git_uncommitted_files(track_dir))
+            )
+            if impl_work_done:
+                # Agent returned (or committed/did code work without writing
+                # result) → finalize. _synthesize_result_from_state resolves
+                # SUCCESS vs FAILURE from git state and increments retry_count
+                # on the FAILURE path.
                 return _step_route_after_finalize(
                     track_dir, finalize_dispatch(track_dir), compact)
-            # Interrupted before any work: HEAD still the Start commit, no result.
-            # Re-dispatch WITHOUT finalize so we don't burn a retry on a dispatch
-            # that never ran. prepare's is_resume path skips the start commit.
+            # Interrupted before any work: HEAD still the Start commit, clean
+            # tree, no result. Re-dispatch WITHOUT finalize so we don't burn a
+            # retry on a dispatch that never ran. prepare's is_resume path
+            # skips the start commit.
             _emit_redispatch_telemetry(track_dir, pi, ti, si)
             return _step_emit_dispatch(track_dir, compact)
 

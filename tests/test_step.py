@@ -235,6 +235,45 @@ class StepFinalizeRouteTests(TestCase):
         self.assertEqual(tgt["status"], "in_progress")
         self.assertEqual(tgt.get("retry_count", 0), 0)
 
+    def test_uncommitted_impl_work_finalizes_not_redispatch(self):
+        # Regression: a task-executor that DID work (left uncommitted impl files)
+        # but returned no result.json and made no commit used to be treated as
+        # "interrupted before any work" → re-dispatched forever without
+        # incrementing retry_count and with a wrong attempt number. The working
+        # tree is the discriminator: dirty tree (impl files beyond the
+        # conductor-managed set) means the agent ran → finalize so
+        # _synthesize_result_from_state can produce FAILURE-with-handoff (and
+        # bump retry_count), not loop.
+        state = _make_state(phases=[{"name": "Phase 1", "status": "pending", "tasks": [
+            {"name": "Task A", "status": "pending"}]}])
+        d = _git_track_dir(state)
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        first = _step(d)  # locks Task A + Start commit
+        self.assertEqual(first["action"], "dispatch")
+        # Simulate the agent: wrote impl files but returned no result block and
+        # committed nothing. HEAD is still the Start commit, tree is dirty.
+        Path(d, "impl_a.py").write_text("x=1")
+        o = _step(d)  # dirty tree → finalize (synthesize FAILURE-with-handoff)
+        # Finalize ran the FAILURE path. retry_count is now set (was absent
+        # before) — first failure records retry_count=0 — and last_failure_summary
+        # is populated (only _do_fail sets it). Pre-fix this re-dispatched
+        # silently with retry_count never written, looping forever at attempt 1.
+        tgt = load(d)["phases"][0]["tasks"][0]
+        self.assertIn("retry_count", tgt,
+                      "dirty tree must finalize (write retry_count), not "
+                      "silently re-dispatch (the pre-fix loop never did)")
+        self.assertTrue(tgt.get("last_failure_summary"),
+                        "finalize FAILURE must populate last_failure_summary")
+        # The decisive regression check: a SECOND dirty-tree no-result step must
+        # ESCALATE retry_count (0→1) and attempt (1→2). Pre-fix, both stayed flat
+        # forever — the orchestrator re-dispatched without incrementing, exactly
+        # the reported bug.
+        Path(d, "impl_b.py").write_text("y=1")
+        o2 = _step(d)
+        tgt2 = load(d)["phases"][0]["tasks"][0]
+        self.assertEqual(tgt2["retry_count"], 1)
+        self.assertEqual(o2["attempt"], 2)
+
     def test_step_reentry_after_clear_preserves_retry_count(self):
         # The user's reported bug: task-executor returned no result, session was
         # CLEARED, user re-ran implement-step >30 min later. The stale-lock
