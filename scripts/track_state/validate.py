@@ -13,7 +13,7 @@ from .helpers import (
 from .constants import TERMINAL_STATUSES, TERMINAL_FOR_PARENT, STALE_LOCK_SECONDS, LOCKED_AT_FIELD
 from .plan_parse import parse_plan
 from .sync import _do_sync_plan
-from .git_ops import _find_conductor_shas
+from .git_ops import _find_conductor_shas, _is_start_commit, _git_uncommitted_files, _git_head_sha
 
 
 def _wave_inflight_locs(track_dir):
@@ -260,6 +260,31 @@ def _fix_stale_lock(state, threshold_seconds=STALE_LOCK_SECONDS, track_dir=None)
     Returns the list of fixes applied.
     """
     exempt = _wave_inflight_locs(track_dir)
+    # Finalize-aware guard: the CURRENT in_progress task whose agent ACTUALLY
+    # produced work (an impl commit past the Start commit, OR uncommitted
+    # implementation files in the tree) must NOT be reaped to pending. Reaping
+    # it would skip the cmd_step finalize branch (status != in_progress) and
+    # silently re-dispatch a task whose work is on disk — the "completed but
+    # plan didn't advance, task retried" bug. The work discriminator mirrors
+    # cmd_step's finalize-vs-re-dispatch predicate (see dispatch.py cmd_step),
+    # so the reaper and the finalize branch agree on what "the agent ran" means.
+    #
+    # Scoped to the CURRENT task only: only current_phase_index/current_task_index
+    # could have made the HEAD commit, so a track-wide check would wrongly spare
+    # an unrelated stale-locked task (e.g. a wave run advanced HEAD past Start
+    # while a never-run "lonely" task in another phase is genuinely stale). Must
+    # also distinguish "HEAD is an impl commit" from "no git repo at all": a
+    # non-git track (no HEAD SHA) → fall back to reaping (pre-guard behavior),
+    # safe because the 30-min threshold still bounds genuinely-killed sessions.
+    # _is_start_commit alone is ambiguous (False for both "impl commit" and "no
+    # git"), hence the head_present gate.
+    cpi = state.get("current_phase_index", 0)
+    cti = state.get("current_task_index", 0)
+    head_present = track_dir is not None and _git_head_sha(track_dir) is not None
+    current_did_work = (
+        head_present
+        and (not _is_start_commit(track_dir) or bool(_git_uncommitted_files(track_dir)))
+    )
     fixes = []
     now = time.time()
     for pi, phase in enumerate(state.get("phases", []), 1):
@@ -269,6 +294,8 @@ def _fix_stale_lock(state, threshold_seconds=STALE_LOCK_SECONDS, track_dir=None)
             if task.get("status") == "in_progress":
                 locked_at = task.get(LOCKED_AT_FIELD)
                 if isinstance(locked_at, (int, float)) and (now - locked_at) > threshold_seconds:
+                    if current_did_work and pi == cpi and ti == cti:
+                        continue  # current task has work on disk → leave for finalize
                     _reset_lock_reap(task)
                     fixes.append(
                         f"P{pi}.T{ti}.{task.get('name', '?')}: "
@@ -277,6 +304,8 @@ def _fix_stale_lock(state, threshold_seconds=STALE_LOCK_SECONDS, track_dir=None)
                 if sub.get("status") == "in_progress":
                     locked_at = sub.get(LOCKED_AT_FIELD)
                     if isinstance(locked_at, (int, float)) and (now - locked_at) > threshold_seconds:
+                        if current_did_work and pi == cpi and ti == cti:
+                            continue  # current task has work on disk → leave for finalize
                         _reset_lock_reap(sub)
                         fixes.append(
                             f"P{pi}.T{ti}.S{si}.{sub.get('name', '?')}: "

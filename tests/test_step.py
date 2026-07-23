@@ -313,6 +313,42 @@ class StepFinalizeRouteTests(TestCase):
         # not flip the task to pending in a way that re-triggers a fresh start).
         self.assertEqual(_start_commit_count(d), 1)
 
+    def test_stale_lock_with_impl_work_advances_not_retries(self):
+        # Regression: a task-executor that completed + committed, but >30 min
+        # elapsed since dispatch-prepare stamped locked_at, used to be REAPED to
+        # pending by _fix_stale_lock BEFORE the finalize branch could mark it
+        # completed. The plan checkbox went [~]→[ ] and the done work was
+        # retried. The reaper must be finalize-aware: when the agent produced an
+        # impl commit (HEAD past the Start commit), leave the task in_progress so
+        # the finalize branch synthesizes SUCCESS and marks it completed.
+        import time as _time
+        from scripts.track_state.constants import LOCKED_AT_FIELD
+        state = _make_state(phases=[{"name": "Phase 1", "status": "pending", "tasks": [
+            {"name": "Task A", "status": "pending"}]}])
+        d = _git_track_dir(state)
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        first = _step(d)  # locks Task A + Start commit
+        self.assertEqual(first["action"], "dispatch")
+
+        # The agent completes: real impl commit + result.json.
+        _commit(d, "feat: Task A done", files={"a.py": "x"})
+        _result(d, {"status": "SUCCESS", "phase": 1, "task": 1, "subtask": None,
+                    "task_name": "Task A", "commit_sha": "abc1234"})
+
+        # Now >30 min pass (paused/long session). Age the lock past the threshold.
+        st = load(d)
+        st["phases"][0]["tasks"][0][LOCKED_AT_FIELD] = _time.time() - 3600
+        save(d, st)
+
+        o = _step(d)  # reaper runs BUT skips the task (impl work exists) → finalize
+        # Task A is completed (finalize synthesized SUCCESS from the impl commit),
+        # NOT reaped to pending + retried. This is the core Bug-2 fix.
+        after = load(d)["phases"][0]["tasks"][0]
+        self.assertEqual(after["status"], "completed",
+                         "a task with committed impl work must finalize to "
+                         "completed even after the stale-lock threshold, not be "
+                         "reaped to pending and retried")
+
     def test_interrupted_before_work_emits_redispatch_telemetry(self):
         # Same interrupted state as above, but asserts the silent re-dispatch is
         # made observable: a ``re-dispatch`` line lands in dispatch-lifecycle.log
