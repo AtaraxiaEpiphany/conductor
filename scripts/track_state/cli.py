@@ -9,6 +9,7 @@ from .constants import EXECUTION_MODES
 from .helpers import out, flag, flags_all
 from .mutations import cmd_lock, cmd_fail, cmd_skip, cmd_block, cmd_defer, cmd_set_max_retries, cmd_split
 from .cmd_complete import cmd_complete
+from .anchor import cmd_freeze, cmd_thaw, cmd_set_contract, cmd_anchor_status
 from .dispatch import (
     cmd_next, cmd_dispatch_next, cmd_dispatch_prepare, cmd_dispatch_finalize,
     cmd_recover, cmd_step, cmd_post_loop_step, cmd_post_loop_review,
@@ -43,7 +44,7 @@ from .brief import cmd_brief_init, cmd_brief_finalize, cmd_brief_resume
 from .logs_read import cmd_log_path, cmd_subagent_log
 
 
-_BOOL_FLAGS = {"--full", "--fix", "--check", "--force"}
+_BOOL_FLAGS = {"--full", "--fix", "--check", "--force", "--verify"}
 
 # Commands EXCLUDED from short-id resolution (their ``<track-dir>`` positional
 # is not "an existing track to locate"):
@@ -344,6 +345,23 @@ COMMAND_HELP = {
                      "Read-only structural check: are the English machine anchors present in spec.md "
                      "(## Acceptance Criteria + '- AC-N:' bullets + ## Test Scenarios '| TC-N.M | AC-N |' table)? "
                      "Language-agnostic — checks anchor tokens, not prose. ok:false + named errors if missing."),
+    "freeze": ("freeze <track-dir> [--force]",
+               "Freeze the Goodhart anchor (feature-list.json) from the spec's AC/TC inventory + measured "
+               "grounding tests. The exogenous baseline the coverage gate is anchored against — the executor "
+               "may flip only `passes`, never the assertion_contract/locators. Refuses an existing list "
+               "without --force (re-freezing would launder a weakened spec into the anchor)."),
+    "thaw": ("thaw <track-dir> (--locator <path::test> | --feature <F-AC-n>) --reason <why>",
+             "Governed removal of one frozen feature (recorded in audit — target changes are never silent). "
+             "The feature is marked thawed, not deleted, so the audit graph stays complete. "
+             "Required to amend a frozen test the write-guard otherwise denies."),
+    "set-contract": ("set-contract <track-dir> (--feature <F-AC-n> | --locator <path::test>) --text <contract>",
+                     "Set a frozen feature's assertion_contract — the exogenous-judgment field freeze leaves blank "
+                     "(the semantic check the AC requires; the measured AC twin can't see it). Sanctioned way to fill "
+                     "it post-freeze without thawing or tripping the write-guard. Use --text \"\" to clear."),
+    "anchor-status": ("anchor-status <track-dir> [--verify]",
+                      "Read-only view of the frozen anchor (features, grounded/ungrounded, thawed, audit). "
+                      "--verify runs the Goodhart counter-metric: executes the frozen subset and reports "
+                      "pass/skip/drift rates — the antagonistic pair to coverage_pct (Piece 3 of the anchor design)."),
     "spec-delta": ("spec-delta <track-dir> [--before <path>]",
                    "Read-only diff of current spec.md vs a prior version (default: git show HEAD~1:spec.md). "
                    "Reports changed/added/removed ACs+FRs+NFRs and, the headline, at_risk_tasks: completed tasks "
@@ -410,7 +428,9 @@ _COMMAND_GROUPS = [
     ("Brief", ["brief-resume", "brief-init", "brief-finalize"]),
     ("Diagnostics", ["validate", "gc", "shas", "post-loop-status", "checklist-verify",
                      "deferred-report", "phase-done", "add-checkpoint", "preflight",
-                     "quality-snapshot", "spec-integrity", "spec-anchors", "spec-delta"]),
+                     "quality-snapshot", "spec-integrity", "spec-anchors", "spec-delta",
+                     "anchor-status"]),
+    ("Anchor", ["freeze", "thaw", "set-contract"]),
     ("Logs", ["log-path", "subagent-log"]),
 ]
 
@@ -596,6 +616,24 @@ def main():
             cmd_spec_integrity(track_dir)
         elif cmd == "spec-anchors":
             cmd_spec_anchors(track_dir)
+        elif cmd == "freeze":
+            cmd_freeze(track_dir, force="--force" in args)
+        elif cmd == "thaw":
+            cmd_thaw(
+                track_dir,
+                locator=flag(args, "--locator"),
+                feature=flag(args, "--feature"),
+                reason=flag(args, "--reason"),
+            )
+        elif cmd == "set-contract":
+            cmd_set_contract(
+                track_dir,
+                feature=flag(args, "--feature"),
+                locator=flag(args, "--locator"),
+                text=flag(args, "--text"),
+            )
+        elif cmd == "anchor-status":
+            cmd_anchor_status(track_dir, verify="--verify" in args)
         elif cmd == "spec-delta":
             # before defaults to `git show HEAD~1:spec.md` inside the cmd; an
             # explicit --before <path> overrides (used by re-spec when the edit

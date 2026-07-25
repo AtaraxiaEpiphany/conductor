@@ -216,6 +216,16 @@ def cmd_quality_snapshot(track_dir):
     # AC integrity rates + advisory gate (None/"N/A" when no spec.md or no ACs).
     ac = compute_ac_integrity(track_dir)
 
+    # Goodhart counter-metric (Piece 3): the antagonistic pair to coverage.
+    # Structural-only here (run=False: drift+skip) — this snapshot runs in
+    # finalize paths and must not spawn subprocesses. ``anchor-status --verify``
+    # runs the full pass/fall measurement on demand. None when no frozen list.
+    from .anchor import compute_frozen_anchor_rate
+    try:
+        anchor = compute_frozen_anchor_rate(track_dir, run=False)
+    except Exception:
+        anchor = None
+
     out(dict(
         track_id=state.get("track_id"),
         total_units=total,
@@ -234,6 +244,9 @@ def cmd_quality_snapshot(track_dir):
         ac_integrity_reason=ac["ac_integrity_reason"],
         ears_warnings=ac["ears_warnings"],
         ears_gate=ac["ears_gate"],
+        frozen_anchor_pass_rate=(anchor or {}).get("frozen_anchor_pass_rate"),
+        frozen_anchor_skip_rate=(anchor or {}).get("frozen_anchor_skip_rate"),
+        frozen_anchor_drift_rate=(anchor or {}).get("frozen_anchor_drift_rate"),
     ))
 
 

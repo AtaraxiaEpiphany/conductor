@@ -93,10 +93,10 @@ _SANCTIONED_TS_SUBCOMMANDS = {
     # files, and the one catastrophic op (mutating track-state.json itself) is
     # already caught by is_direct_track_state_modification(). Keep in sync with
     # _COMMAND_GROUPS — the test suite asserts this set covers it.
-    "add-checkpoint", "append-handoff", "archive", "block", "check",
+    "add-checkpoint", "anchor-status", "append-handoff", "archive", "block", "check",
     "checklist-verify", "complete", "compile-track-findings", "defer", "deferred-report", "derive-name",
     "dispatch-finalize", "dispatch-next", "dispatch-prepare", "dispatch-wave",
-    "fail", "failure-analyst-verdict", "finalize", "gc", "get-handoff", "harvest-candidates", "help",
+    "fail", "failure-analyst-verdict", "finalize", "freeze", "gc", "get-handoff", "harvest-candidates", "help",
     "indices", "init-from-plan", "lock", "new-track-finalize", "new-track-init",
     "new-track-resume", "new-track-set-mode", "new-track-step", "next",
     "phase-checkpoint-review", "phase-done", "phase-verdict",
@@ -104,10 +104,10 @@ _SANCTIONED_TS_SUBCOMMANDS = {
     "post-loop-step", "preflight", "process-result", "quality-snapshot",
     "record-summary", "recover", "reconcile-plan", "registry-add", "registry-update", "reset",
     "resolve-track", "set-max-retries", "set-mode", "setup", "shas", "skip",
-    "skip-analyst-verdict", "skip-refute-review", "spec-anchors", "spec-delta",
+    "skip-analyst-verdict", "skip-refute-review", "set-contract", "spec-anchors", "spec-delta",
     "spec-integrity", "subagent-log", "log-path",
     "brief-init", "brief-finalize", "brief-resume",
-    "split", "start", "step", "sync-handoff", "sync-plan", "validate", "wave-abort",
+    "split", "start", "step", "sync-handoff", "sync-plan", "thaw", "validate", "wave-abort",
     "wave-finalize", "wave-status", "wave-step", "write-result",
 }
 

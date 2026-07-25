@@ -76,7 +76,8 @@ A `## Phase N:` heading MAY carry a `<!-- verify: <modes> -->` HTML comment decl
 ## Phase 1: Migrate dependencies <!-- verify: compile -->
 ## Phase 2: Migrate source        <!-- verify: compile -->
 ## Phase N: Wire up and boot      <!-- verify: test,start -->   ← final integration phase
-## Phase X: Standard feature                                   ← no directive = full gate (default)
+## Phase R: Refactor internals    <!-- verify: anchor -->       ← frozen subset must hold
+## Phase X: Standard feature                                    ← no directive = full gate (default)
 ```
 
 **Closed mode vocabulary** (comma-separated, order-independent):
@@ -86,9 +87,10 @@ A `## Phase N:` heading MAY carry a `<!-- verify: <modes> -->` HTML comment decl
 | `compile` | run the **build** command from `dev-commands/<lang>.md` (NOT the test suite); skip fix-and-retry; checkpoint on a green build | A mid-migration phase whose goal is "it compiles" — the test suite is expected red, the build is the gate. Canonical use: the intermediate phases of a staged framework/version migration. |
 | `test` | run the test suite (the default Step-3 gate) | Explicitly opt back into the suite gate, e.g. as part of `test,start`. Alone, equivalent to omitting the directive. |
 | `start` | additionally run the app's run command **once** as a boot smoke check (start, confirm "ready"/no startup stack trace, stop) | A phase whose deliverable includes "the app boots." Typically combined with `test` on the final integration phase, or with `compile` on the phase that first achieves a bootable build. Advisory pre-flight when the phase already has a trailing `[Manual]` boot task. |
+| `anchor` | run the **frozen test subset** (`track-state anchor-status <track> --verify`) and checkpoint on `frozen_anchor_pass_rate == 100%` AND `drift_rate == 0%` — the Goodhart counter-anchor to `coverage_pct` | A phase whose safety net is the frozen subset, not the full suite. `anchor` alone: a refactoring phase where the broader suite is in flux but the pinned anchor must hold (the mirror image of `compile`). `test,anchor`: both the suite AND the frozen subset must pass. No-op on an unfrozen track (degrades gracefully until `track-state freeze` is run). See the frozen-anchor commands (`track-state freeze`/`thaw`/`anchor-status`) and `scripts/track_state/anchor.py`. |
 | *(no directive)* | full gate: suite (L1) → L2 → L4 manual | The default. Backward-compatible — every existing phase behaves exactly as before. |
 
-**Resolution:** `phase-checker` reads the directive directly from the phase heading in `plan.md` (it does not flow through `track-state.json` or the dispatch marker). On `compile`, it **ignores** the `test-runner` verdict — the suite still runs (the fan-out is hardcoded) but its red result does not gate the checkpoint; the build does. The directive takes precedence over the all-`[Migrate]` migration-phase branch: a phase that declares `verify: compile` is gated on the build regardless of its task tags, and the migration branch remains the safety net for an all-migration phase that forgot its directive.
+**Resolution:** `phase-checker` reads the directive directly from the phase heading in `plan.md` (it does not flow through `track-state.json` or the dispatch marker). On `compile`, it **ignores** the `test-runner` verdict — the suite still runs (the fan-out is hardcoded) but its red result does not gate the checkpoint; the build does. On `anchor`, it runs the frozen subset via `anchor-status --verify` and gates on its measured pass/drift rate (no-op if the track has no frozen anchor yet). The directive takes precedence over the all-`[Migrate]` migration-phase branch: a phase that declares `verify: compile` or `verify: anchor` is gated on that signal regardless of its task tags, and the migration branch remains the safety net for an all-migration phase that forgot its directive.
 
 **Validation:** `init-from-plan --check` parses the directive and **warns** (does not block) on an unknown mode or an empty `<!-- verify: -->` comment — the same advisory posture as `<!-- deps: -->` typos. The directive is advisory metadata parsed for validation surface; it is **not persisted** into `track-state.json` (the parser drops it, like `ac_refs`/`deps_refs`).
 

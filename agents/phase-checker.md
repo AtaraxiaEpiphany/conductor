@@ -42,7 +42,7 @@ You are a **Conductor Phase Checkpoint Agent** — the **synthesizer** for the p
 ## 3.0 LOAD CONTEXT
 
 1. **Phase Checkpoint Protocol** — resolve via `conductor/workflow/phase-checkpoint.md` (relative to project root).
-2. **Plan** — `{TRACK_DIR}/plan.md` — find previous checkpoint SHA and phase scope. **Read the current phase's `## Phase N:` heading for a `<!-- verify: <modes> -->` directive** — it declares this phase's gate (`compile` → build-only; `test,start` → suite + boot; absent → full gate) and drives the Step 3 phase-verify directive branch.
+2. **Plan** — `{TRACK_DIR}/plan.md` — find previous checkpoint SHA and phase scope. **Read the current phase's `## Phase N:` heading for a `<!-- verify: <modes> -->` directive** — it declares this phase's gate (`compile` → build-only; `test,start` → suite + boot; `anchor` → frozen subset; absent → full gate) and drives the Step 3 phase-verify directive branch.
 3. **Global Docs** — resolve via `conductor/index.md`:
    - `conductor/product/product.md`
    - `conductor/product/product-guidelines.md`
@@ -77,7 +77,16 @@ When the directive's modes include **`compile`** (a compile-only phase):
 
 When the directive's modes include **`start`** (in addition to `compile` or `test`): after the build/suite gate is satisfied, run the app's run command from `conductor/workflow/dev-commands/<lang>.md` **once** as a boot smoke check (start it, confirm it reaches "ready"/no startup stack trace, then stop it). Record `START: passed` or `START: failed (<one-line symptom>)`. On failure → report **STATUS: FAILED** (do not checkpoint a phase whose app won't boot when `start` was requested). If the phase already carries a trailing `[Manual]` boot-verification task, treat `start` as a pre-flight that does not double-gate — record the outcome and let the `[Manual]` task remain the human confirmation.
 
-This branch takes precedence over the migration-phase branch below: a phase that declares `verify: compile` is gated on the build regardless of its task tags. A directive is absent on most phases → the full gate (and, for an all-`[Migrate]` phase, the migration-phase branch) applies unchanged.
+When the directive's modes include **`anchor`** (the Goodhart counter-anchor — runs the frozen test subset independently of the executor's self-reported coverage): after the compile/test/start gates above, run the frozen anchor via `track-state anchor-status {TRACK_DIR} --verify` **once**. This executes the pinned test subset and returns the measured `frozen_anchor_pass_rate` (real pass rate, not self-report), `frozen_anchor_drift_rate` (locators that no longer resolve), and `frozen_anchor_skip_rate` (pinned tests now skipped). The anchor is the antagonistic pair to `coverage_pct` — it is what `verify: anchor` makes load-bearing.
+
+- **Pass condition:** `frozen_anchor_pass_rate == 100.0` AND `frozen_anchor_drift_rate == 0.0`. Record `ANCHOR: passed (N/N frozen tests)`.
+- **No anchor frozen yet** (no `feature-list.json`): record `ANCHOR: skipped (no frozen anchor for this track)` and proceed — `verify: anchor` on an unfrozen track is a no-op, not a failure (the operator has not yet run `track-state freeze`). This is the deliberate degradation: the gate activates the moment an anchor exists.
+- **Anchor failing** (`pass_rate < 100.0`): report **STATUS: FAILED** with `FAILURE_REASON: frozen anchor regressed — frozen_anchor_pass_rate=<rate>% (M/N frozen tests passing). The pinned subset is the counter-anchor to coverage_pct; do not checkpoint a phase that broke a frozen test.` Do NOT checkpoint. This hands the phase back to the operator: the frozen test broke, so either fix the regression or (if the test itself is now wrong) govern the change via `track-state thaw {TRACK_DIR} --locator <loc> --reason <why>` — never by editing the pinned test directly (the write-guard denies that).
+- **Anchor drifted** (`drift_rate > 0.0`): report **STATUS: FAILED** with `FAILURE_REASON: frozen anchor drifted — frozen_anchor_drift_rate=<rate>% (N pinned locator(s) no longer resolve). A frozen test was deleted/renamed out from under the anchor. Restore the locator or re-freeze with --force after auditing the loss.` Do NOT checkpoint. Drift is the "measurement decay" failure mode the anchor exists to catch: a frozen test silently vanishing is exactly the regression the anchor must flag.
+
+This mode **composes** with the others: a phase declaring `verify: test,anchor` gates on both the full suite AND the frozen subset; `verify: anchor` alone gates on the subset and ignores the broader suite (useful for a refactoring phase where the suite is in flux but the frozen anchor must hold — the mirror image of `compile`, which ignores the suite because it's expected red; `anchor` ignores the suite because only the frozen subset is load-bearing).
+
+This branch takes precedence over the migration-phase branch below: a phase that declares `verify: compile` or `verify: anchor` is gated on that signal regardless of its task tags. A directive is absent on most phases → the full gate (and, for an all-`[Migrate]` phase, the migration-phase branch) applies unchanged.
 
 **Migration-phase branch (binding).** A migration phase is one where **every non-`[Manual]` task in the phase carries the `[Migrate]` tag** (read the phase's task tags from `plan.md`/`track-state`). For such a phase, the test suite is the **safety net, not a TDD target**: Red is the expected mid-migration state, Green is the goal, and the work is fixing real code (deprecated APIs, package renames), not authoring new tests. Therefore, when `L1_VERIFY_STATUS: failed` on a migration phase:
 
@@ -178,16 +187,18 @@ L1_VERIFY: <passed (fleet)|passed (after N fixes)|failed|error|skipped (compile-
 L2: <passed|failed (<symptom>)|skipped (<reason>)>
 BUILD: <passed|failed|skipped (no verify: compile directive)>
 START: <passed|failed (<symptom>)|skipped (no verify: start directive)>
+ANCHOR: <passed (N/N frozen tests)|skipped (no frozen anchor for this track)|skipped (no verify: anchor directive)>
 TESTS_PASSED: true
 USER_CONFIRMED: <true|skipped_continuous>
 AC_TRACE: <passed|warn (N ungrounded)|skipped (reason)>
 ---END RESULT---
 ```
 
-> `BUILD`/`START` are emitted **only** when the phase's `<!-- verify: -->`
-> directive requested that mode (`compile` → `BUILD`; `start` → `START`). On a
-> default-gate phase (no directive) both are `skipped (no verify: <mode>
-> directive)` and do not gate the checkpoint.
+> `BUILD`/`START`/`ANCHOR` are emitted **only** when the phase's `<!-- verify: -->`
+> directive requested that mode (`compile` → `BUILD`; `start` → `START`;
+> `anchor` → `ANCHOR`). On a default-gate phase (no directive) all three are
+> `skipped (no verify: <mode> directive)` and do not gate the checkpoint.
+> (`ANCHOR: skipped` has a second cause — no frozen anchor — see Step 3.)
 
 ### On Failure
 

@@ -69,6 +69,20 @@ class ExtractVerifyTests(TestCase):
         self.assertFalse(has)
         self.assertEqual(fails, [])
 
+    def test_anchor_mode(self):
+        # The Goodhart counter-anchor mode — the frozen-subset gate.
+        modes, has, fails = _extract_verify("Refactor <!-- verify: anchor -->")
+        self.assertEqual(modes, ["anchor"])
+        self.assertTrue(has)
+        self.assertEqual(fails, [])
+
+    def test_anchor_composes_with_test(self):
+        # ``test,anchor`` gates on suite AND frozen subset.
+        modes, has, fails = _extract_verify("Phase <!-- verify: test, anchor -->")
+        self.assertEqual(sorted(modes), ["anchor", "test"])
+        self.assertTrue(has)
+        self.assertEqual(fails, [])
+
     def test_no_directive(self):
         modes, has, fails = _extract_verify("Plain phase heading")
         self.assertEqual(modes, [])
@@ -151,6 +165,20 @@ class AgentDocTests(TestCase):
         self.assertIn("BUILD:", PHASE_CHECKER)
         self.assertIn("START:", PHASE_CHECKER)
 
+    def test_phase_checker_has_anchor_branch(self):
+        # The Goodhart counter-anchor gate: ``verify: anchor`` runs the frozen
+        # subset and gates on its measured pass/drift rate.
+        self.assertIn("verify: anchor", PHASE_CHECKER)
+        self.assertIn("anchor-status", PHASE_CHECKER)
+        # It must gate on the measured pass rate (the antagonistic pair to
+        # coverage_pct), not trust self-report.
+        self.assertIn("frozen_anchor_pass_rate", PHASE_CHECKER)
+        self.assertIn("frozen_anchor_drift_rate", PHASE_CHECKER)
+        # The report must carry an ANCHOR line (mirrors BUILD/START).
+        self.assertIn("ANCHOR:", PHASE_CHECKER)
+        # No frozen anchor = no-op, not a failure (graceful degradation).
+        self.assertIn("no frozen anchor", PHASE_CHECKER)
+
     def test_directive_precedence_documented(self):
         # The directive must take precedence over the migration-phase branch.
         self.assertIn("takes precedence over the migration-phase branch", PHASE_CHECKER)
@@ -166,7 +194,7 @@ class ContractDocTests(TestCase):
         self.assertIn("<!-- verify: compile -->", self.text)
 
     def test_contract_lists_closed_vocabulary(self):
-        for mode in ("compile", "test", "start"):
+        for mode in ("compile", "test", "start", "anchor"):
             self.assertIn(f"| `{mode}`", self.text)
 
 

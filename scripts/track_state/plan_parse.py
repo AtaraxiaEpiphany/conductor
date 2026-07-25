@@ -101,15 +101,18 @@ _DEPS_REF = re.compile(r"P(\d+)\.T(\d+)")
 # the ``## Phase N:`` heading line (plan-format-contract.md §"Phase Verify
 # Directives"). A phase whose goal is "compiles" (a mid-migration phase where
 # the test suite is expected red) declares ``verify: compile``; the final
-# integration phase may declare ``verify: test,start``. Absent = full gate (the
-# default, backward-compatible). Like ac_refs/deps_refs this is advisory
-# metadata parsed for validation surface and the phase-checker's direct read of
-# plan.md — NOT persisted into track-state.json (to_plan_structure drops it).
+# integration phase may declare ``verify: test,start``. A phase whose safety net
+# is the frozen anchor declares ``verify: anchor`` (or ``test,anchor``). Absent
+# = full gate (the default, backward-compatible). Like ac_refs/deps_refs this is
+# advisory metadata parsed for validation surface and the phase-checker's direct
+# read of plan.md — NOT persisted into track-state.json (to_plan_structure drops
+# it).
 _VERIFY_COMMENT = re.compile(r"^\s*verify\s*:", re.IGNORECASE)
 # Closed mode vocabulary. ``compile`` gates on a green build (not the suite);
 # ``test`` gates on the suite (the default); ``start`` adds a one-shot app-boot
-# smoke check. Comma-separated, order-independent.
-_VERIFY_MODES = ("compile", "test", "start")
+# smoke check; ``anchor`` additionally gates on the frozen test subset passing
+# (the Goodhart counter-anchor — see anchor.py). Comma-separated, order-free.
+_VERIFY_MODES = ("compile", "test", "start", "anchor")
 
 _VALID_MARKERS = set(MARKER_MAP.values())
 
@@ -192,7 +195,7 @@ def _extract_verify(rest):
 
     Returns ``(verify_modes, has_verify_comment, failures)``:
     - verify_modes: de-duped lowercased modes from the closed vocabulary
-      (``compile``/``test``/``start``), first-seen order.
+      (``compile``/``test``/``start``/``anchor``), first-seen order.
     - has_verify_comment: True iff a ``<!-- verify: ... -->`` comment was
       present, so a comment that yielded no valid mode (likely a typo) can be
       flagged.
