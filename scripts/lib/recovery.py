@@ -40,8 +40,16 @@ RESULT_FILE_AGENT_TYPES = frozenset({"task-executor", "explorer"})
 # class made that block invisible to extract_result_blocks — every test-runner
 # result was replaced with the generic no-result warning and the phase-checker
 # fan-out could not parse L1_VERIFY_STATUS. Keep digits in.
-RESULT_END_TAG = r"---END [A-Z0-9 ]+---"
-RESULT_BLOCK_PATTERN = rf"---[A-Z][A-Z0-9 ]+---.*?{RESULT_END_TAG}"
+#
+# The ``\s+``/``\s*`` after the dashes tolerates the model emitting stray
+# whitespace around the inner words — ``--- REVIEW RESULT ---`` or
+# ``---END  TASK RESULT---`` otherwise fail the strict ``--- [A-Z0-9 ]+ ---``
+# grammar, are treated as "no result block," and force a spurious recovery turn
+# (or, on the second stop, the generic no-dispatch-finalize warning). A real
+# ``---`` separator never carries inner whitespace, so this can't create a false
+# positive on ordinary prose.
+RESULT_END_TAG = r"---END\s+[A-Z0-9 ][A-Z0-9 ]*---"
+RESULT_BLOCK_PATTERN = rf"---\s*[A-Z][A-Z0-9 ]*---.*?{RESULT_END_TAG}"
 
 # Bounded recovery: how many SubagentStop recovery turns a result-file agent
 # gets before the hook stops forcing them and lets dispatch-finalize synthesize

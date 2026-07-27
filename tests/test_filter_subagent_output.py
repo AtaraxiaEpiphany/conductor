@@ -181,6 +181,22 @@ class MainEndToEndTests(TestCase):
         # it must NOT appear when the L1 block is correctly extracted.
         self.assertNotIn("without a structured result block", block)
 
+    def test_whitespace_padded_tags_still_extract_block(self):
+        """Regression: RESULT_BLOCK_PATTERN required the marker to be tightly
+        ``---WORD RESULT---``. A model emitting stray inner whitespace —
+        ``--- REVIEW RESULT ---`` or ``---END  REVIEW RESULT ---`` — failed the
+        strict grammar, so the block was treated as missing and replaced with the
+        generic no-result warning (the spec-reviewer fast-return symptom). The
+        grammar now tolerates ``\\s*``/``\\s+`` around the inner words."""
+        text = ("Summary of review.\n--- REVIEW RESULT ---\nSTATUS: APPROVED\n"
+                "---END  REVIEW RESULT ---")
+        result = self._run(_agent_payload(text, agent_type="spec-reviewer"))
+        updated = result["hookSpecificOutput"]["updatedToolOutput"]
+        block = updated["content"][0]["text"]
+        self.assertIn("STATUS: APPROVED", block)
+        # The generic no-result warning is the symptom of the missed block.
+        self.assertNotIn("without a structured result block", block)
+
 
 if __name__ == "__main__":
     main()

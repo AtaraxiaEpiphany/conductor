@@ -11,6 +11,7 @@ import io
 import json
 import os
 import shutil
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -198,6 +199,41 @@ class BriefCliWiringTests(TestCase):
         self.assertIn('cmd == "brief-init"', src)
         self.assertIn('cmd == "brief-finalize"', src)
         self.assertIn('cmd == "brief-resume"', src)
+
+    def test_brief_resume_runs_with_no_track_dir_arg(self):
+        """Regression: ``brief-resume`` takes NO positional argument, but it was
+        missing from ``_NO_TRACK_DIR_COMMANDS`` — so the universal arity guard
+        (``len(argv) < 3 and cmd not in _NO_TRACK_DIR_COMMANDS``) rejected it,
+        printing ``Usage: track-state <command> <track-dir> ...`` and exiting 1.
+        The skill's ``track-state brief-resume`` call surfaced as "just prints
+        help, got error," silently breaking brief resume. The command must run
+        with zero positionals and emit JSON."""
+        from scripts.track_state.cli import main
+        # brief-resume resolves a registry from CWD; run it in a temp project
+        # with no tracks so it returns action:none cleanly.
+        tmp = tempfile.mkdtemp(prefix="brief-arity-")
+        prev_cwd, prev_argv = os.getcwd(), sys.argv
+        try:
+            os.chdir(tmp)
+            (Path(tmp) / "conductor").mkdir()
+            (Path(tmp) / "conductor" / "tracks.md").write_text("# Tracks\n")
+            sys.argv = ["track-state", "brief-resume"]
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                main()
+        except SystemExit as e:
+            self.fail(f"brief-resume with no args must not exit, got SystemExit({e.code})")
+        finally:
+            os.chdir(prev_cwd)
+            sys.argv = prev_argv
+            shutil.rmtree(tmp, ignore_errors=True)
+        out = json.loads(buf.getvalue())
+        self.assertEqual(out["action"], "none")
+
+    def test_no_track_dir_commands_includes_brief_resume(self):
+        """Pin the arity allowlist so a future rename/drop can't re-break it."""
+        from scripts.track_state import cli
+        self.assertIn("brief-resume", cli._NO_TRACK_DIR_COMMANDS)
 
 
 if __name__ == "__main__":

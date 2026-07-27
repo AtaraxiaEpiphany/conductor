@@ -462,16 +462,23 @@ def cmd_help(command=None):
         print()
 
 
+# Commands that take no track-dir positional (their [optional] positional is
+# a query/shortname, not a path). They may legally run with len(argv) == 2.
+# Hoisted to module scope so the arity allowlist is a single, inspectable source
+# of truth — a new no-positional command (e.g. ``brief-resume``) must be added
+# here, or the guard in ``main()`` rejects it with a "missing <track-dir>" usage
+# error (the brief-resume bug: registered in 3 sites but absent from this set).
+_NO_TRACK_DIR_COMMANDS = frozenset({
+    "resolve-track", "check", "setup", "new-track-resume",
+    "log-path", "subagent-log", "brief-resume",
+})
+
+
 def main():
     if len(sys.argv) < 2 or sys.argv[1] in ("help", "--help", "-h"):
         target = sys.argv[2] if len(sys.argv) >= 3 and sys.argv[1] == "help" else None
         cmd_help(target)
         sys.exit(0)
-
-    # Commands that take no track-dir positional (their [optional] positional is
-    # a query/shortname, not a path). They may legally run with len(argv) == 2.
-    _NO_TRACK_DIR_COMMANDS = {"resolve-track", "check", "setup", "new-track-resume",
-                              "log-path", "subagent-log"}
 
     cmd = sys.argv[1]
     if len(sys.argv) < 3 and cmd not in _NO_TRACK_DIR_COMMANDS:

@@ -63,6 +63,14 @@ class HasResultBlockTests(TestCase):
         # Only an open tag (---TASK RESULT---) with no ---END ...--- must NOT count.
         self.assertFalse(_has_result_block("---TASK RESULT---\nSTATUS: SUCCESS"))
 
+    def test_whitespace_padded_close_tag_still_counts(self):
+        # Regression: a model emitting ``---END  REVIEW RESULT ---`` (stray inner
+        # spaces) failed the strict ``---END [A-Z0-9 ]+---`` grammar and was
+        # treated as "stopped without a result block," forcing a spurious recovery
+        # turn. The grammar now tolerates whitespace around the inner words.
+        self.assertTrue(_has_result_block("--- REVIEW RESULT ---\nSTATUS: APPROVED\n---END REVIEW RESULT ---"))
+        self.assertTrue(_has_result_block("done\n---END  TASK RESULT ---"))
+
     def test_empty_message(self):
         self.assertFalse(_has_result_block(""))
 
