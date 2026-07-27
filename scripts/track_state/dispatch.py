@@ -18,6 +18,7 @@ from .mutations import (_do_lock, _do_complete, _do_fail, _do_fail_parent,
 from .result import _advisory_gates
 from .sync import _do_sync_plan
 from lib import dispatch_inflight as _inflight
+from lib import dispatch_lock as _dispatch_lock
 from lib.git_utils import implementation_uncommitted_files
 from .git_ops import (
     _git_commit, _git_commit_ensured, _git_head_sha, _write_git_note,
@@ -646,10 +647,22 @@ def _dispatch_inflight_write(track_dir, pi, ti, si, start_sha, written_at_iso):
     Bumps the dispatch ``gen`` (read-modify-write): a re-dispatch of the same
     ``(phase, task, subtask)`` stamps a NEW generation, so the dedupe hook sees
     a fresh in-flight state rather than the stale one from the prior dispatch.
-    First write for a key → gen 1 (``read_gen`` returns 0 when no marker)."""
-    prev_gen = _inflight.read_gen(track_dir, pi, ti, si)
-    _inflight.write(track_dir, pi, ti, si, start_sha, written_at_iso,
-                    gen=prev_gen + 1)
+    First write for a key → gen 1 (``read_gen`` returns 0 when no marker).
+
+    Atomicity
+    ---------
+    The read-modify-write is wrapped in ``dispatch_lock.acquire`` (an exclusive
+    ``fcntl.flock`` on ``<track_dir>/.conductor/.dispatch.lock``). Under the
+    normal synchronous model the lock is uncontended and held for microseconds;
+    under background-mode concurrency it serializes the bump so two racing
+    ``prepare_dispatch`` calls cannot both read ``gen=N`` and stamp ``gen=N+1``
+    (which would collapse two fresh dispatches into one in the dedupe hook's
+    ``gen``-disambiguation). Fail-open: a lock error leaves this unguarded, and
+    the marker + git-HEAD predicate remains the safety net."""
+    with _dispatch_lock.acquire(track_dir):
+        prev_gen = _inflight.read_gen(track_dir, pi, ti, si)
+        _inflight.write(track_dir, pi, ti, si, start_sha, written_at_iso,
+                        gen=prev_gen + 1)
 
 
 def _dispatch_inflight_clear(track_dir, pi, ti, si):

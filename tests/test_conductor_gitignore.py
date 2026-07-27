@@ -157,6 +157,7 @@ class PerTrackConductorGitignoreTests(TestCase):
         # were NOT in the per-track gitignore list and showed as untracked.
         for rel in (
             "conductor/tracks/feat-x/.conductor/.dispatch-inflight-1-1.json",
+            "conductor/tracks/feat-x/.conductor/.dispatch.lock",
             "conductor/tracks/feat-x/.conductor/.tripwire-2-3.count",
             "conductor/tracks/feat-x/.conductor/.modified-guidance-1-1.md",
         ):

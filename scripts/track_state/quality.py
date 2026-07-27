@@ -114,6 +114,7 @@ parallel.json
 wave-agent.marker
 .wave-drain-processed
 .dispatch-inflight-*.json
+.dispatch.lock
 .tripwire-*.count
 .modified-guidance-*.md
 """
