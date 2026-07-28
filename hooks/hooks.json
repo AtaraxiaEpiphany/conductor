@@ -73,6 +73,26 @@
         ]
       },
       {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/on-brief-grill-tripwire.py\"",
+            "timeout": 3
+          }
+        ]
+      },
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/on-brief-grill-tripwire.py\"",
+            "timeout": 3
+          }
+        ]
+      },
+      {
         "matcher": "",
         "hooks": [
           {
