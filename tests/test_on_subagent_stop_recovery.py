@@ -194,6 +194,39 @@ class RecoveryGuardTests(TestCase):
             self.assertEqual(rc, 0)
             self.assertNotIn("decision", out)
 
+    def test_spec_reviewer_recovery_instruction_is_noninteractive(self):
+        """Regression: spec-reviewer was an interactive agent (AskUserQuestion
+        review loop, wrote review-result.json, emitted STATUS: CANCELLED). Run as
+        a fire-and-forget subagent it could never complete its human loop → it
+        stopped without a result block every time ("always returns non-standard
+        result"). It is now read-only/non-interactive: the recovery instruction
+        must NOT tell it to write review-result.json (it's read-only) or emit
+        CANCELLED (no interactive loop to cancel), and the agent file must declare
+        read-only tools with NO AskUserQuestion."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "on_subagent_stop_full", _scripts / "on-subagent-stop.py")
+        # Provide the lib package on the path the same way the script does at runtime.
+        sys.path.insert(0, str(_scripts))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        sys.path.pop(0)
+        instr = mod.STDOUT_BLOCK_AGENTS["spec-reviewer"]
+        # Stale interactive artifacts must be gone from the instruction.
+        self.assertNotIn("review-result.json", instr,
+                         "spec-reviewer is read-only — must not write review-result.json")
+        self.assertNotIn("CANCELLED", instr,
+                         "non-interactive agent has no loop to cancel — no CANCELLED status")
+        # New non-interactive contract is present.
+        self.assertIn("CHANGES_REQUESTED", instr)
+        self.assertIn("AskUserQuestion", instr)  # mentioned as a prohibition
+        # Agent file: read-only tools, no AskUserQuestion in frontmatter tools.
+        agent = (_scripts.parent / "agents" / "spec-reviewer.md").read_text()
+        fm_tools = agent.split("tools:", 1)[1].splitlines()[0]
+        self.assertNotIn("AskUserQuestion", fm_tools)
+        self.assertNotIn("Edit", fm_tools)
+        self.assertNotIn("Write", fm_tools)
+
     # --- Session-scoped bounding: STDOUT-block recovery must not loop forever ---
 
     def test_stdout_block_recovery_is_bounded_after_max_turns(self):

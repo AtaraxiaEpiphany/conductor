@@ -103,12 +103,13 @@ STDOUT_BLOCK_AGENTS = {
         "STATUS: FAILURE with a one-line SUMMARY if generation could not complete."
     ),
     "spec-reviewer": (
-        "IMMEDIATELY print the ---REVIEW RESULT--- block (Section 4.0) and write "
-        "{TRACK_DIR}/.conductor/review-result.json. Report STATUS: CANCELLED with a "
-        "one-line SUMMARY if the user abandoned, or STATUS: FAILURE with a one-line "
-        "REASON if the review could not complete. The ---REVIEW RESULT--- block is the "
-        "ONLY signal the parent parses for STATUS — without it the parent falls back to "
-        "reading spec.md/plan.md itself, so never stop without emitting it."
+        "IMMEDIATELY print the ---REVIEW RESULT--- block (Section 4.0). You are "
+        "read-only and non-interactive — do NOT call AskUserQuestion or edit files; "
+        "just emit the block with what you have: STATUS: APPROVED (clean), "
+        "STATUS: CHANGES_REQUESTED (+ FINDINGS), or STATUS: FAILURE with a one-line "
+        "REASON. The ---REVIEW RESULT--- block is the ONLY signal the parent parses "
+        "for STATUS — without it the parent cannot recover the verdict, so never stop "
+        "without emitting it."
     ),
     "apply-fixes": (
         "IMMEDIATELY print the ---FIX RESULT--- block (Section 5.0). Report "

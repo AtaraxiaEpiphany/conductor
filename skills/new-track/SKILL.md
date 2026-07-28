@@ -41,7 +41,7 @@ The marker is created in §2.1 (`new-track-init`) and deleted once the track is 
 
 **Subagents:**
 - `conductor:spec-planner` — generates spec.md and plan.md.
-- `conductor:spec-reviewer` — interactive review (keeps full files out of orchestrator context).
+- `conductor:spec-reviewer` — read-only auditor (EARS + tag + structure); returns a verdict + findings. Non-interactive — §2.4 owns the human review loop.
 
 CRITICAL: Validate every tool call. On failure → halt → announce.
 
@@ -186,17 +186,28 @@ Parse the `---REFUTATION RESULT---` block:
 
 ### 2.4 Dispatch Spec-Reviewer
 
+`spec-reviewer` is a **read-only auditor**: it reads `spec.md` + `plan.md`, runs the EARS-conformance + dispatch-tag + structure audits, and returns a verdict + findings. It is **non-interactive** — it does not call `AskUserQuestion` or edit files. **You (the orchestrator) own the human review loop**: surface its findings to the user and apply revisions.
+
 Dispatch `conductor:spec-reviewer`, prompt:
 
 ```
 TRACK_DIR={track_dir}
 ```
 
-Parse `---REVIEW RESULT---` block. If `STATUS: CANCELLED` → halt. If `STRUCTURE_CHANGED: true` → note for init.
+Parse the `---REVIEW RESULT---` block and switch on `STATUS`:
 
-**Carry forward the §2.3 `ac_integrity_gate` verdict.** It is `PASS` or `N/A`+`ac_integrity_reason:"spec_missing"` → nothing to surface (a legitimately spec-less track). If `WARN`, announce the advisory before the review: `"⚠️ AC-integrity WARN: <gate string> — these ACs are traced but not fully grounded; review with this in mind."` so the user + spec-reviewer assess the spec informed by AC traceability (the `ac_evidence` list from the §2.3 JSON shows each AC's measured/claimed/missing TCs). A `FAILED` gate, and an `N/A`+`"no_acs"` gate, cannot reach here — §2.3 loops until they pass or halts.
+- **`APPROVED`** → review clean → proceed to §2.5.
+- **`CHANGES_REQUESTED`** → the `FINDINGS` list is defects to surface. `AskUserQuestion`, presenting a compact summary of the findings (one line each: `location — issue → fix`). Options:
+  - **Apply all fixes & re-plan** → the findings touch requirements/structure (e.g. EARS rewrites, added/removed tasks) → re-dispatch `conductor:spec-planner` ONCE with the findings appended to a `PREVIOUS_ERRORS` line (`REGEN_FOCUS: address spec-reviewer findings — <bulleted list>`), then re-run §2.3 refuter + §2.4. Still `CHANGES_REQUESTED` after one regen → announce the sustained findings and proceed **non-blocking** (a human-judgment call, not a hard halt).
+  - **Apply minor fixes inline** → the findings are localized edits (a tag drop, a missing `<!-- AC-n -->`, a single EARS rewrite) you can apply yourself with Edit → apply them → re-dispatch §2.4 once to confirm clean.
+  - **Accept & proceed (with debt)** → announce the unaddressed findings as known debt → proceed to §2.5.
+- **`FAILURE`** → announce `REASON` → re-dispatch `conductor:spec-reviewer` ONCE. Still `FAILURE` → halt: `"spec-reviewer could not complete — inspect <track_dir>/spec.md and plan.md."`
 
-> Full file review happens in the subagent. The orchestrator only sees the compact result.
+`STRUCTURE_CHANGED: true` from a revision you applied → note for §2.6 `init-from-plan` (it re-derives structure from `plan.md` regardless, so this is informational).
+
+**Carry forward the §2.3 `ac_integrity_gate` verdict.** It is `PASS` or `N/A`+`ac_integrity_reason:"spec_missing"` → nothing to surface (a legitimately spec-less track). If `WARN`, announce the advisory before the review: `"⚠️ AC-integrity WARN: <gate string> — these ACs are traced but not fully grounded; review with this in mind."` so you + the user assess the spec informed by AC traceability (the `ac_evidence` list from the §2.3 JSON shows each AC's measured/claimed/missing TCs). A `FAILED` gate, and an `N/A`+`"no_acs"` gate, cannot reach here — §2.3 loops until they pass or halts.
+
+> The audit happens in the subagent; the human review loop happens here. You only see the compact verdict + findings.
 
 > **Resume:** `track-state new-track-step "<track_dir>" reviewed`
 
