@@ -29,6 +29,7 @@ crashed mid-decision could strand a task — far worse than a missing log line).
 """
 from pathlib import PurePath
 from typing import Optional
+import re
 
 from lib.env import get_data_dir
 from lib.logging import init_logging, log_entry
@@ -37,6 +38,18 @@ from lib.logging import init_logging, log_entry
 # from script_name; passing this constant makes every caller append to one
 # file so the lifecycle can be joined by grep. This is the join key.
 _LIFECYCLE_LOG_NAME = "dispatch-lifecycle"
+
+# Parser for the ``key=value`` suffix ``emit`` writes. The lifecycle schema is
+# space-delimited (values never contain spaces), so each value runs to the next
+# whitespace. Single source for the regex so a format change to ``emit`` needs
+# no mirror edit in the readers (logs_read.py, detect-concurrent-relapse.py).
+KV_RE = re.compile(r"(\w+)=(\S*)")
+
+
+def parse_kv(suffix: str) -> dict:
+    """Parse a ``key=value key=value`` run into a dict (last write wins)."""
+    return {k: v for k, v in KV_RE.findall(suffix)}
+
 
 
 def session_token(input_data: Optional[dict], fallback: str = "") -> str:

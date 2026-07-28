@@ -30,7 +30,8 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from lib.env import get_data_dir, get_logs_dir, get_plugin_root
+from lib.env import resolve_data_dir, get_logs_dir
+from lib.dispatch_lifecycle import parse_kv
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -38,22 +39,13 @@ from lib.env import get_data_dir, get_logs_dir, get_plugin_root
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _resolve_tier() -> tuple[Path, str]:
-    """Re-derive the resolution decision the same way ``get_data_dir`` does.
+    """The data dir + which tier fired. Delegates to ``lib.env.resolve_data_dir``.
 
-    Returns ``(data_dir, tier_label)``. Mirrors the tier order in
-    ``lib.env.get_data_dir`` so ``log-path`` reports the tier that ACTUALLY
-    fired, not a guess. Keep in sync with ``get_data_dir``'s docstring.
+    Returns ``(data_dir, tier_label)`` so ``log-path`` reports the tier that
+    ACTUALLY fired, not a guess. The tier ladder lives in one place
+    (``resolve_data_dir``); this is a thin alias for the call sites below.
     """
-    explicit = os.environ.get("CLAUDE_PLUGIN_DATA")
-    if explicit:
-        return Path(explicit), "CLAUDE_PLUGIN_DATA (explicit override)"
-    project_dir = os.environ.get("CLAUDE_PROJECT_DIR")
-    if project_dir:
-        return Path(project_dir) / ".conductor", "CLAUDE_PROJECT_DIR (project)"
-    cwd = Path.cwd()
-    if (cwd / "conductor" / "tracks").is_dir():
-        return cwd / ".conductor", "cwd heuristic (conductor/tracks/ present)"
-    return get_plugin_root() / ".data", "PLUGIN FALLBACK (shared — collides across projects!)"
+    return resolve_data_dir()
 
 
 # The logs worth surfacing. The lifecycle/recovery trio are the load-bearing
@@ -134,7 +126,6 @@ def _mtime_str(ts: float) -> str:
 # result-recovery.log lines look like:
 #   2026-07-22T04:05:02.357876+00:00 [INFO] session=... agent=task-executor outcome=recovered reason=no_fresh_result
 _TS_RE = re.compile(r"^(\S+) \[\w+\]\s+(.*)$")
-_KV_RE = re.compile(r"(\w+)=(\S*)")
 
 
 def _parse_kv_line(line: str) -> Optional[dict]:
@@ -148,7 +139,7 @@ def _parse_kv_line(line: str) -> Optional[dict]:
     body = m.group(2) if m else line
     if not body.startswith("dispatch_lifecycle") and "outcome=" not in body and "agent=" not in body:
         return None
-    kv = dict(_KV_RE.findall(body))
+    kv = parse_kv(body)
     if not kv:
         return None
     if m:

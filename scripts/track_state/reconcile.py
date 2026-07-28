@@ -29,7 +29,7 @@ from pathlib import Path
 from .constants import MARKER_MAP, SHA_MARKERS
 from .core import load, transaction
 from .helpers import (
-    out, now_iso, clean, extract_tags, strip_tags, _clean_trailing_markers,
+    out, now_iso, strip_tags, _clean_trailing_markers,
 )
 from .plan_parse import parse_plan
 from .sync import _do_sync_plan

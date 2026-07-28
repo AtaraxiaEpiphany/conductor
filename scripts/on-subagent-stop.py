@@ -259,6 +259,14 @@ def main():
     log_file = init_logging("on-subagent-stop")
     log_entry(log_file, f"session={session_id} agent={agent_type} event=subagent_stop")
 
+    # Resolve the locked task ONCE for the whole stop. The result-file branch
+    # below needs it again (line ~326 originally re-resolved) — nothing between
+    # mutates the lock (only telemetry emit + a stat()), so reuse this value.
+    try:
+        locked = _resolve_locked(cwd)
+    except Exception:
+        locked = None
+
     # Lifecycle telemetry: record that the subagent stopped, with the locked
     # task and whether a fresh result landed. The `stop` line is the other half
     # of the join with `start` (on-subagent-start) and `probe`
@@ -268,7 +276,6 @@ def main():
     # completion signal, so report `-` (unknown) rather than a misleading 0.
     # Best-effort; never raises into the recovery decision.
     try:
-        locked = _resolve_locked(cwd)
         if locked is not None:
             _td, p, t, s = locked
             track_dir = locked[0]
@@ -323,7 +330,8 @@ def main():
         # Resolve the locked track once — scope the result.json freshness check
         # to IT (avoids a fresh result in another track satisfying this probe)
         # and identify the task whose recovery counter is bounded below.
-        locked = _resolve_locked(cwd)
+        # NOTE: `locked` was already resolved at the top of main() for telemetry;
+        # reuse it — nothing between mutated the lock.
         track_dir = locked[0] if locked is not None else None
         if fresh_result_exists(cwd, track_dir=track_dir):
             _log_result_event(log_file, session_id, agent_type,

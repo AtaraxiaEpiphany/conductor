@@ -46,9 +46,52 @@ def get_plugin_root() -> Path:
     return file_root
 
 
+def resolve_data_dir() -> tuple[Path, str]:
+    """Resolve the runtime data dir AND report which tier fired.
+
+    Returns ``(data_dir, tier_label)``. The path follows the resolution
+    priority documented in ``get_data_dir`` (explicit override → project → cwd
+    heuristic → plugin fallback). ``tier_label`` is a short human-readable name
+    of the tier that fired, so callers that surface "where did logs land?"
+    (e.g. ``track-state log-path``) report the tier that *actually* fired
+    instead of re-deriving it and risking drift.
+
+    This is the single source for the tier ladder — ``get_data_dir`` and
+    ``track_state.logs_read._resolve_tier`` both delegate here so the order and
+    labels can't diverge.
+    """
+    explicit = os.environ.get("CLAUDE_PLUGIN_DATA")
+    if explicit:
+        return Path(explicit), "CLAUDE_PLUGIN_DATA (explicit override)"
+    project_dir = os.environ.get("CLAUDE_PROJECT_DIR")
+    if project_dir:
+        return Path(project_dir) / ".conductor", "CLAUDE_PROJECT_DIR (project)"
+    # cwd heuristic: Claude Code doesn't always inject ``CLAUDE_PROJECT_DIR``
+    # (seen empty even in live session shells), so without this tier the
+    # resolver would fall straight through to ``<plugin>/.data`` and land every
+    # log/failure event in the *plugin* tree instead of the project being run.
+    # The plugin only runs where a conductor track tree is present, so a
+    # ``conductor/tracks/`` dir in ``cwd`` is a reliable "we're in a real
+    # project" signal. The plugin repo itself has ``conductor/design/`` but no
+    # ``conductor/tracks/``, so this never false-positives on the plugin dir.
+    cwd = Path.cwd()
+    if (cwd / "conductor" / "tracks").is_dir():
+        return cwd / ".conductor", "cwd heuristic (conductor/tracks/ present)"
+    # Fail-safe: plugin-anchored (always writable, always exists). This is the
+    # LAST resort — logs written here COLLIDE across concurrent projects (a
+    # user running Conductor in two projects at once gets one merged,
+    # unreadable file). Emit a one-line stderr warning so the trap is visible
+    # and the user knows to set CLAUDE_PROJECT_DIR or run from the project root.
+    # One-shot per process: the warning is advisory; don't spam a long-lived
+    # caller that resolves repeatedly.
+    _warn_plugin_fallback_once()
+    return get_plugin_root() / ".data", "PLUGIN FALLBACK (shared — collides across projects!)"
+
+
 def get_data_dir() -> Path:
     """Get the runtime data directory for project-scoped telemetry.
 
+    Thin wrapper over ``resolve_data_dir`` (which owns the full tier ladder).
     Resolution priority (explicit override first, project next, plugin last):
 
       1. ``$CLAUDE_PLUGIN_DATA`` — explicit override (tests, sandboxes, custom
@@ -75,32 +118,7 @@ def get_data_dir() -> Path:
     Returns:
         Data directory path (not yet created; callers mkdir as needed).
     """
-    explicit = os.environ.get("CLAUDE_PLUGIN_DATA")
-    if explicit:
-        return Path(explicit)
-    project_dir = os.environ.get("CLAUDE_PROJECT_DIR")
-    if project_dir:
-        return Path(project_dir) / ".conductor"
-    # cwd heuristic: Claude Code doesn't always inject ``CLAUDE_PROJECT_DIR``
-    # (seen empty even in live session shells), so without this tier the
-    # resolver would fall straight through to ``<plugin>/.data`` and land every
-    # log/failure event in the *plugin* tree instead of the project being run.
-    # The plugin only runs where a conductor track tree is present, so a
-    # ``conductor/tracks/`` dir in ``cwd`` is a reliable "we're in a real
-    # project" signal. The plugin repo itself has ``conductor/design/`` but no
-    # ``conductor/tracks/``, so this never false-positives on the plugin dir.
-    cwd = Path.cwd()
-    if (cwd / "conductor" / "tracks").is_dir():
-        return cwd / ".conductor"
-    # Fail-safe: plugin-anchored (always writable, always exists). This is the
-    # LAST resort — logs written here COLLIDE across concurrent projects (a
-    # user running Conductor in two projects at once gets one merged,
-    # unreadable file). Emit a one-line stderr warning so the trap is visible
-    # and the user knows to set CLAUDE_PROJECT_DIR or run from the project root.
-    # One-shot per process: the warning is advisory; don't spam a long-lived
-    # caller that resolves repeatedly.
-    _warn_plugin_fallback_once()
-    return get_plugin_root() / ".data"
+    return resolve_data_dir()[0]
 
 
 # Process-local guard so the plugin-fallback warning fires at most once per

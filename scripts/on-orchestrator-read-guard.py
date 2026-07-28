@@ -145,6 +145,18 @@ def main():
     log_file = init_logging("on-orchestrator-read-guard")
     log_entry(log_file, f"event=read_probe path={file_path}")
 
+    # Cheap basename gate BEFORE the track-state glob. This hook fires on every
+    # Read (logs, scripts, source, anything); only spec.md/plan.md can ever be
+    # denied, so the overwhelming majority must skip resolve_locked_task's
+    # multi-file glob+JSON-parse entirely.
+    try:
+        name = Path(file_path).name
+    except TypeError:
+        name = ""
+    if name not in _DENY_BASENAMES:
+        write_hook_output(permission_decision="allow")
+        return
+
     # No locked in_progress task → orchestrator is between tasks → allow.
     try:
         locked = resolve_locked_task(cwd)
@@ -156,9 +168,8 @@ def main():
 
     track_dir, phase, task, subtask = locked
 
-    # Is this Read even targeting a denied file? Cheap check before the in-flight
-    # probe — most Reads are unrelated (logs, scripts, anything) and should allow
-    # without touching git.
+    # Confirm this Read targets THIS track's denied file (the basename already
+    # matched; now verify the path lands under the locked track_dir).
     if not _deny_target(file_path, cwd, track_dir):
         write_hook_output(permission_decision="allow")
         return

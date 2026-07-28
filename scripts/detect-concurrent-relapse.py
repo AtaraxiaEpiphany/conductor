@@ -47,24 +47,20 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent / "lib"))
 
 from lib.env import get_logs_dir  # noqa: E402
+from lib.dispatch_lifecycle import parse_kv  # noqa: E402
 
 _LOG_NAME = "dispatch-lifecycle.log"
 
 # Parse the leading ``[INFO] dispatch_lifecycle event=… key=val …`` suffix.
-# Captures the timestamp and the space-delimited key=value fields.
+# Captures the timestamp; the key=value suffix is parsed by the shared
+# ``lib.dispatch_lifecycle.parse_kv`` (same module that writes the lines).
 _LINE_RE = re.compile(
     r"^(?P<ts>\S+(?:\s+\S+)?)\s+\[[A-Z]+\]\s+dispatch_lifecycle\s+(?P<kv>.*)$"
 )
-_KV_RE = re.compile(r"(\w+)=(\S*)")
 
 # ``stop`` events for a result-file agent whose ``had_result`` was 0 are the
 # signature of "agent ended without producing a result" → orchestrator re-derives.
 _RE_DERIVE_GAP_SECONDS = 120.0  # a re-derive within this window after a bare stop
-
-
-def _parse_kv(kv):
-    """Parse ``key=value key=value`` into a dict (last write wins)."""
-    return {k: v for k, v in _KV_RE.findall(kv)}
 
 
 def _parse_line(line):
@@ -72,7 +68,7 @@ def _parse_line(line):
     m = _LINE_RE.match(line)
     if not m:
         return None
-    return m.group("ts"), _parse_kv(m.group("kv"))
+    return m.group("ts"), parse_kv(m.group("kv"))
 
 
 def _idx_key(f):

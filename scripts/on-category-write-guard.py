@@ -41,33 +41,8 @@ sys.path.insert(0, str(Path(__file__).parent / "lib"))
 
 from lib.hook_io import read_hook_input, write_hook_output  # noqa: E402
 from lib.logging import init_logging, log_entry  # noqa: E402
+from lib.hook_paths import resolve_rel_target  # noqa: E402
 from category_dirs import category_for  # noqa: E402
-
-
-def _resolve_rel(file_path: str, cwd: str) -> str | None:
-    """Reduce a Write target to a Conductor-root-relative path, or ``None``.
-
-    A Write target may be absolute or relative to the hook ``cwd`` (the agent's
-    working dir = repo root). We anchor it, normalise separators/redundant
-    ``./``, and try to express it relative to ``cwd`` — which is the project
-    root in normal operation. Returns ``None`` if it can't be made relative
-    (e.g. a path outside the project); the caller treats that as "not a category
-    path" and allows.
-    """
-    try:
-        fp = str(file_path).replace("\\", "/")
-    except TypeError:
-        return None
-    if not fp.startswith("/"):
-        fp = f"{str(cwd).rstrip('/')}/{fp}"
-    while "//" in fp:
-        fp = fp.replace("//", "/")
-    while "/./" in fp:
-        fp = fp.replace("/./", "/")
-    base = str(cwd).rstrip("/")
-    if fp == base or fp.startswith(base + "/"):
-        return fp[len(base) + 1:].lstrip("./")
-    return None
 
 
 def main():
@@ -90,7 +65,7 @@ def main():
     log_file = init_logging("on-category-write-guard")
     log_entry(log_file, f"event=write_probe tool={tool} path={file_path}")
 
-    rel = _resolve_rel(file_path, cwd)
+    rel = resolve_rel_target(file_path, cwd)
     if rel is None:
         write_hook_output(permission_decision="allow")
         return

@@ -76,6 +76,7 @@ sys.path.insert(0, str(Path(__file__).parent / "lib"))
 from lib.hook_io import read_hook_input, write_hook_output  # noqa: E402
 from lib.logging import init_logging, log_entry  # noqa: E402
 from lib.locked_task import resolve as resolve_locked_task  # noqa: E402
+from lib.hook_paths import resolve_rel_target  # noqa: E402
 
 # --- Anchor file name (sidecar sibling of parallel.json / review-seen.json) ---
 ANCHOR_FILENAME = "feature-list.json"
@@ -121,30 +122,6 @@ _ASSERT_LINE = re.compile(
     """,
     re.VERBOSE | re.MULTILINE,
 )
-
-
-def _resolve_rel(file_path: str, cwd: str) -> str | None:
-    """Reduce a write target to a cwd-relative path, or ``None``.
-
-    Same reduction as ``on-category-write-guard._resolve_rel``: anchor,
-    normalise separators/redundant ``./``, express relative to ``cwd``.
-    Returns ``None`` if it can't be made relative (outside the project); the
-    caller treats that as "not an anchor path" and allows.
-    """
-    try:
-        fp = str(file_path).replace("\\", "/")
-    except TypeError:
-        return None
-    if not fp.startswith("/"):
-        fp = f"{str(cwd).rstrip('/')}/{fp}"
-    while "//" in fp:
-        fp = fp.replace("//", "/")
-    while "/./" in fp:
-        fp = fp.replace("/./", "/")
-    base = str(cwd).rstrip("/")
-    if fp == base or fp.startswith(base + "/"):
-        return fp[len(base) + 1:].lstrip("./")
-    return None
 
 
 def _edit_pairs(tool_input: dict):
@@ -316,7 +293,7 @@ def main():
         write_hook_output(permission_decision="allow")
         return
 
-    rel = _resolve_rel(file_path, cwd)
+    rel = resolve_rel_target(file_path, cwd)
 
     # --- Protection #1: editing the anchor file itself is always denied. ---
     if anchor_path is not None:
