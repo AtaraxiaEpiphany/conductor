@@ -33,3 +33,32 @@ RECOVERY_SUCCESS_PATTERNS = [
 # Matches: type(scope): description — e.g. "feat(api): add user endpoint"
 VALID_COMMIT_TYPES = r"(feat|fix|docs|style|refactor|test|chore)"
 COMMIT_MSG_PATTERN = rf"^{VALID_COMMIT_TYPES}\([^)]+\):\s*.+"
+
+# --- Build-artifact paths that must never land in an implementation commit ---
+# task-executor's Step 8 ``git add -A`` sweeps the whole working tree; on a
+# brownfield project with no/weak ``.gitignore`` that pulls in node_modules/,
+# build outputs, caches, etc. These are also mirrored into the setup
+# ``.gitignore`` template (templates/conductor-gitignore.md) as the primary
+# architectural guardrail — this list is the hook backstop for projects whose
+# ``.gitignore`` predates conductor. Matched as repo-relative path prefixes OR
+# exact dir/file names anywhere in the path (e.g. ``src/__pycache__`` too).
+BUILD_ARTIFACT_NAMES = {
+    "node_modules", "dist", "build", "__pycache__", ".venv", "venv",
+    "coverage", ".cache", ".next", ".nuxt", ".turbo", "out", "target",
+}
+BUILD_ARTIFACT_EXACT = {
+    ".DS_Store", "Thumbs.db", "yarn-error.log", "npm-debug.log",
+}
+# A path is an artifact if any segment is in BUILD_ARTIFACT_NAMES, or its
+# basename is in BUILD_ARTIFACT_EXACT. Kept as functions (not a regex) so the
+# match is segment-aware (``dist`` matches ``dist/x`` and ``a/dist/x`` but not
+# ``distribute.py``).
+def is_build_artifact_path(path: str) -> bool:
+    """True if a repo-relative path is a build artifact / cache that must never
+    be committed by an implementation commit. Segment-aware."""
+    if not path:
+        return False
+    parts = path.replace("\\", "/").split("/")
+    if any(seg in BUILD_ARTIFACT_NAMES for seg in parts):
+        return True
+    return parts[-1] in BUILD_ARTIFACT_EXACT

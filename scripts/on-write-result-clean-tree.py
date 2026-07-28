@@ -71,7 +71,8 @@ sys.path.insert(0, str(Path(__file__).parent / "lib"))
 
 from lib.hook_io import read_hook_input, write_hook_output
 from lib.locked_task import resolve as resolve_locked_task
-from lib.git_utils import implementation_uncommitted_files
+from lib.git_utils import implementation_uncommitted_files, head_commit_files
+from lib.constants import is_build_artifact_path
 
 
 _TARGET_AGENT = "task-executor"
@@ -135,6 +136,58 @@ def main():
         return
 
     track_dir = locked[0]
+
+    # --- Artifact check: task-executor commits in Step 8 BEFORE write-result, ---
+    # so by now a ``git add -A`` may have swept node_modules/ etc. into HEAD.
+    # Inspect HEAD's file list for build artifacts and deny if any leaked in —
+    # a separate failure mode from "uncommitted files" (the commit happened, it
+    # just swept the wrong tree). Fail-open on any git/parse error.
+    try:
+        head_files = head_commit_files(track_dir)
+        artifacts = [p for p in head_files if is_build_artifact_path(p)]
+    except Exception:
+        artifacts = []
+    if artifacts:
+        shown = ", ".join(sorted(set(artifacts))[:_MAX_LISTED])
+        if len(artifacts) > _MAX_LISTED:
+            shown += f" (+{len(artifacts) - _MAX_LISTED} more)"
+        # The cure: undo the bad commit, stage ONLY real impl files, recommit.
+        # Pathspecs of the offending artifacts for `git rm --cached` are
+        # passed as a single quoted-when-spaces list the model can copy.
+        rm_list = " ".join(
+            f'"{p}"' if " " in p else p for p in sorted(set(artifacts))
+        )
+        reason = (
+            f"CONDUCTOR CLEAN-TREE: write-result --status success denied — "
+            f"the most recent commit swept {len(artifacts)} build-artifact "
+            f"path(s) into the repo: {shown}. `git add -A` stages the ENTIRE "
+            f"working tree; node_modules/, dist/, build/, __pycache__, etc. "
+            f"must never be committed. Fix it: amend the commit to drop the "
+            f"artifacts, then add them to .gitignore so this can't recur:\n"
+            f"    git reset --soft HEAD~1\n"
+            f"    git rm -r --cached --ignore-unmatch {rm_list}\n"
+            f"    # stage ONLY your real implementation files by path:\n"
+            f"    git add <your source files> && git commit -m "
+            f"\"<type>(<scope>): <description>\"\n"
+            f"Then add the artifacts to .gitignore "
+            f"(see ${{CLAUDE_PLUGIN_ROOT}}/templates/conductor-gitignore.md) "
+            f"and re-run write-result. Never `git add -A` build artifacts."
+        )
+        print(f"⚠️  CONDUCTOR CLEAN-TREE: denied task-executor success — "
+              f"HEAD commit contains {len(artifacts)} build-artifact path(s).",
+              file=sys.stderr)
+        write_hook_output(
+            permission_decision="deny",
+            permission_decision_reason=reason,
+            system_message=(
+                f"⚠️ CONDUCTOR CLEAN-TREE: denied write-result success — "
+                f"HEAD commit swept in {len(artifacts)} build-artifact path(s) "
+                f"(node_modules/dist/etc.). See the denied command's reason "
+                f"for the amend recipe."
+            ),
+        )
+        return
+
     stranded = implementation_uncommitted_files(track_dir)
     if not stranded:
         write_hook_output(permission_decision="allow")

@@ -16,9 +16,19 @@ Prose in the SKILL ("MUST — one question at a time") raises salience but can't
 ``on-category-write-guard.py`` close. This hook makes the invariant
 deterministic: while a brief's resume marker is ``committed:false`` (the grill
 is in progress), a ``Write``/``Edit`` to that track's ``brief.md`` is **denied**
-until the orchestrator has recorded at least ``MIN_GRILL_QUESTIONS``
-``AskUserQuestion`` turns. The grill's seven core decision-tree nodes set the
-floor; a thorough grill asks more, so the floor is a lower bound, not a target.
+until the orchestrator has EITHER signaled ``grill_complete`` on the marker
+(the real invariant — shared understanding reached) OR recorded at least
+``MIN_GRILL_QUESTIONS`` ``AskUserQuestion`` turns (the legacy lower bound).
+
+Why two signals, not just the count
+-----------------------------------
+The count alone is a **proxy** for "shared understanding reached," and a proxy
+that's wrong exactly when the skill is used *well*: §3 explicitly says many
+decisions are pre-resolved by reading docs / carried by ``$ARGUMENTS``, which
+legitimately produces *fewer* than ``MIN_GRILL_QUESTIONS`` turns. So the
+explicit ``grill_complete`` flag (set via ``track-state brief-grill-done``) is
+the primary gate, and the count floor is the backstop for a model that writes
+without signaling. Either satisfies the gate.
 
 How it fires (two matchers, one file)
 -------------------------------------
@@ -42,11 +52,11 @@ worse than none). The counter is best-effort; if it can't be read, the hook
 allows — it never blocks a legitimate write on a counter glitch.
 """
 import json
-import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent / "lib"))
+sys.path.insert(0, str(Path(__file__).parent))
 
 from hook_io import read_hook_input, write_hook_output  # noqa: E402
 from logging import init_logging, log_entry  # noqa: E402
@@ -142,6 +152,73 @@ def _marker_committed_false(track_dir):
         return False
 
 
+def _read_marker(track_dir):
+    """Tolerant marker reader: returns the marker dict or None on missing/corrupt."""
+    marker = Path(track_dir) / ".conductor" / _BRIEF_MARKER
+    if not marker.exists():
+        return None
+    try:
+        data = json.loads(marker.read_text())
+        return data if isinstance(data, dict) else None
+    except (ValueError, OSError):
+        return None
+
+
+def _marker_grill_complete(track_dir):
+    """True iff this track's brief marker carries ``grill_complete: true`` — the
+    orchestrator's explicit signal that shared understanding was reached (which
+    may be in FEWER than ``MIN_GRILL_QUESTIONS`` AskUserQuestion turns, because
+    decisions were pre-resolved by reading docs / carried by ``$ARGUMENTS``)."""
+    data = _read_marker(track_dir)
+    return bool(data and data.get("grill_complete") is True)
+
+
+def _resolve_registry(start):
+    """Locate ``conductor/tracks.md`` by walking up from ``start``. Mirrors
+    ``track_state.helpers._find_registry`` (both ``<cand>/conductor/tracks.md``
+    and ``<cand>/tracks.md`` at each ancestor) so the hook resolves the active
+    brief marker from a project-root cwd, not just a track-dir cwd. Returns the
+    registry ``Path`` or ``None``."""
+    try:
+        p = Path(start or Path.cwd()).resolve(strict=False)
+    except OSError:
+        return None
+    for cand in (p, *p.parents):
+        for cand_root in (cand / "conductor", cand):
+            f = cand_root / "tracks.md"
+            if f.is_file():
+                return f
+    return None
+
+
+def _resolve_active_brief_track(start):
+    """Resolve the single in-progress brief's track_dir from cwd, even when the
+    orchestrator's cwd is the PROJECT ROOT (not the track dir).
+
+    The original counter-key bug: ``_derive_track_id_from_cwd`` returns None when
+    cwd isn't under ``tracks/<id>/``, so ``_bump_counter`` skipped the write
+    (line 103–104) and the counter never landed — the Write gate then read 0 and
+    the deny reason said "0 of 6" even though a real grill happened. This scans
+    the registry's ``tracks/*/``  for a ``committed:false`` marker: if exactly
+    one exists, that's unambiguously the active brief. Returns the track_dir
+    (str) or None (zero or multiple in-progress briefs → ambiguous, can't pick)."""
+    registry = _resolve_registry(start)
+    if registry is None:
+        return None
+    tracks_dir = registry.parent / "tracks"
+    if not tracks_dir.is_dir():
+        return None
+    active = []
+    for marker in tracks_dir.glob("*/.conductor/" + _BRIEF_MARKER):
+        track_dir = marker.parent.parent
+        data = _read_marker(track_dir)
+        if data and data.get("committed") is False:
+            active.append(str(track_dir.resolve()))
+    if len(active) == 1:
+        return active[0]
+    return None
+
+
 def _resolve_brief_target(file_path, cwd):
     """If ``file_path`` resolves to a ``<track_dir>/brief.md``, return the
     track_dir; else None. Tolerates absolute and project-relative paths."""
@@ -166,7 +243,17 @@ def main():
 
     # --- AskUserQuestion: count the grill turn, always allow. ---
     if tool == "AskUserQuestion":
+        # Resolve the counter key robustly: cwd-derived id FIRST (cheap, exact
+        # when the orchestrator is cd'd into the track dir), then fall back to
+        # the active in-progress brief marker (handles the project-root-cwd case
+        # where ``_derive_track_id_from_cwd`` returned None and the bump was
+        # silently skipped — the "counter missing / 0 of 6" bug). Both resolve
+        # to the track_id the Write gate reads back, so the keys match.
         track_id = _derive_track_id_from_cwd(cwd)
+        if not track_id:
+            active_dir = _resolve_active_brief_track(cwd)
+            if active_dir:
+                track_id = Path(active_dir).name
         if track_id:
             count = _bump_counter(track_id)
             log_entry(log_file, f"event=grill_question track={track_id} count={count}")
@@ -190,8 +277,22 @@ def main():
         write_hook_output()
         return
 
-    # Grill in progress — check the AskUserQuestion floor.
+    # Grill in progress — check the gate. The gate is the union of two signals:
+    #   (a) ``grill_complete`` on the marker — the orchestrator's explicit
+    #       "shared understanding reached" signal, set via ``track-state
+    #       brief-grill-done``. This is the REAL invariant: a grill can be DONE
+    #       WELL in fewer than MIN questions (decisions pre-resolved by reading
+    #       docs / carried by $ARGUMENTS), so the question count is only a proxy.
+    #   (b) the AskUserQuestion floor — the legacy lower bound, the backstop for
+    #       a model that writes without signaling grill-done.
+    # Either satisfies the gate. See the module docstring for why count alone is
+    # a proxy that's wrong exactly when the skill is used well.
     track_id = _derive_track_id_from_cwd(cwd) or Path(track_dir).name
+    if _marker_grill_complete(track_dir):
+        log_entry(log_file,
+                  f"event=brief_write_allowed track={track_id} reason=grill_complete")
+        write_hook_output()
+        return
     data = _read_counters()
     count = (data.get(track_id) or 0)
     if count >= MIN_GRILL_QUESTIONS:
@@ -199,21 +300,30 @@ def main():
         write_hook_output()
         return
 
-    # Below the floor — the grill is incomplete. Deny and prescribe finishing it.
-    plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT", "${CLAUDE_PLUGIN_ROOT}")
+    # Below the floor and no grill-complete signal — the grill is incomplete.
+    # Deny and prescribe finishing it (or signaling grill-done if it genuinely is).
     reason = (
         f"{_BRIEF_GUARD} brief.md write blocked — the §3 grill is incomplete "
         f"(only {count} of {MIN_GRILL_QUESTIONS} required AskUserQuestion turns "
         f"recorded for track '{track_id}', whose brief-progress marker is "
-        f"committed:false). A brief written from guesses pollutes all downstream "
-        f"planning. Finish the §3 decision tree one question at a time via "
+        f"committed:false, and no grill-complete signal is set). A brief written "
+        f"from guesses pollutes all downstream planning. Either:\n"
+        f"  (a) finish the §3 decision tree one question at a time via "
         f"AskUserQuestion (Problem → Goals → Out-of-Scope → Constraints → "
         f"Stakeholders → References → Open Qs / ACs), reach shared understanding, "
-        f"THEN write brief.md in §4. If the grill genuinely is complete and the "
-        f"counter is stale, run `track-state brief-finalize \"<track_dir>\"` to "
-        f"clear the marker and retry."
+        f"THEN write brief.md in §4; OR\n"
+        f"  (b) if the grill genuinely is complete (you reached shared "
+        f"understanding in FEWER than {MIN_GRILL_QUESTIONS} turns because "
+        f"decisions were pre-resolved by reading docs / carried by $ARGUMENTS), "
+        f"emit the grill-done signal before writing:\n"
+        f"      track-state brief-grill-done \"{track_dir}\"\n"
+        f"    then write brief.md in §4.\n"
+        f"If the counter is stale (you ran from a project-root cwd), signal (b) "
+        f"is the correct path — it sets grill_complete directly."
     )
-    log_entry(log_file, f"event=brief_write_denied track={track_id} count={count}")
+    log_entry(log_file,
+              f"event=brief_write_denied track={track_id} count={count} "
+              f"grill_complete=false")
     write_hook_output(
         permission_decision="deny",
         permission_decision_reason=reason,

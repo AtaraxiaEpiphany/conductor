@@ -81,6 +81,10 @@ Before the §2.2 Q&A branch above, check for a **Track Brief** at `<track_dir>/b
    - **Skip the §2.2 interactive Q&A entirely** — the Brief already captured it.
    - Set `RELATED_DOCS` from the Brief's `## References` section (paths only; if empty, `N/A`).
    - Build a rich `USER_ANSWERS` block for spec-planner from the Brief's structured sections: Problem & Motivation, Goals, **Out of Scope (verbatim)**, Context & Constraints, Stakeholders, Open Questions, Suggested Acceptance Signals. Prefix it `USER_CONTEXT: brief`.
+   - **Seed `conductor/purpose.md` from this first Brief** (additive, intersection-only — the compounding-context the wiki pattern wants, so purpose.md has real content on day one instead of placeholders). For each of:
+     - `## Open Questions` → lift each question into purpose.md `## Key Questions` **only if not already present** (dedupe by gist).
+     - `## Out of Scope` → lift each exclusion into purpose.md `## Out of Scope` **only if not already present**, and only where it does not **widen** past what setup established (intersect, never contradict — mirror the Brief's own Out-of-Scope-vs-purpose.md rule). A Brief's Out-of-Scope is a *track-level* cut; only the project-persistent ones belong here.
+     Skip the append silently if purpose.md already has the content (idempotent) or if the Brief section is empty/`"None identified."`. This is a `## Key Questions`/`## Out of Scope` append only — never touch Goals, Thesis, or Active Decisions (those are owned by setup / wiki-synthesizer respectively). If `conductor/purpose.md` is absent, skip (setup owns creating it).
    - Pass `USER_ANSWERS` (with `USER_CONTEXT: brief`) and `RELATED_DOCS` to the §2.3 dispatch. spec-planner §3.0 reads the Brief itself first and honors `## Out of Scope` verbatim.
 3. **Not found** → proceed with §2.2 unchanged (scan → Q&A fallback). This is the default; no Brief means new-track behaves exactly as before.
 

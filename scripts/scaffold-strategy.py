@@ -31,6 +31,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent / "lib"))
 from env import get_plugin_root
+from json_utils import parse_tolerant_json as _parse_tolerant_json
 
 
 # Display name / alias → canonical marker key (the 8 supported languages that the
@@ -76,10 +77,11 @@ def resolve_root(analysis_path, override, *, raw=None):
         except OSError as e:
             sys.exit(f"HALT: analysis.json unreadable ({e}) -- pass --test-root")
     if raw is not None:
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError as e:
-            sys.exit(f"HALT: analysis.json unreadable ({e}) -- pass --test-root")
+        data = _parse_tolerant_json(raw)
+        if data is None:
+            sys.exit(
+                "HALT: analysis.json is not valid JSON even after tolerant repair "
+                "(fences/trailing-commas/smart-quotes) -- pass --test-root")
         test_dirs = (data.get("structure", {}) or {}).get("test_dirs") or []
         if test_dirs and test_dirs[0]:
             return str(test_dirs[0]).rstrip("/")
@@ -102,11 +104,10 @@ def detect_languages(analysis_path, *, raw=None):
             return None
         try:
             raw = analysis_path.read_text()
-        except (json.JSONDecodeError, OSError):
+        except OSError:
             return None
-    try:
-        data = json.loads(raw)
-    except (json.JSONDecodeError, OSError):
+    data = _parse_tolerant_json(raw)
+    if not isinstance(data, dict):
         return None
     names = (data.get("languages") or [])
     keys = set()

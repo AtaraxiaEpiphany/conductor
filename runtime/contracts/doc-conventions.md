@@ -62,6 +62,30 @@ The frontmatter `type` (above) tells checkers *what* a doc is; this table tells 
 
 Each category directory in the placement table above carries an `index.md` — the read-side entry point the `conductor/index.md` Scoped Docs table and `[[runtime/contracts/doc-routing]]` route into (e.g. `conductor/design/api-specs/index.md`).
 
+## Clickable Repo-Relative Path Links
+
+When a Conductor-emitted doc, scaffold, or announcement references a **repo file a
+human may click** (in a terminal, VS Code, GitHub, or any markdown renderer),
+emit a relative-path markdown link — not bare text:
+
+- **Syntax:** `[<name>](<repo-relative-path>)` — e.g. `[spec](conductor/tracks/<id>/spec.md)`,
+  `[brief](conductor/tracks/<id>/brief.md)`.
+- **Repo-relative, never absolute.** No leading `/` and no machine-specific
+  prefix — relative links survive worktrees, forks, and machine differences;
+  absolute paths break the moment the repo moves.
+- **Keep `.md`** in the link target (unlike `[[wikilinks]]`, which drop it) —
+  these are real filesystem paths for humans to open, not wiki-resolution keys.
+- **Plain text stays for non-files:** environment variables (`$CLAUDE_PLUGIN_ROOT`),
+  git SHAs (`4abcd99`), command names (`track-state`), and inline code stay as-is.
+  Link only genuine file paths a user would navigate to.
+
+**Applies to:** hand-off announcement lines (e.g. `skills/brief/SKILL.md §5`,
+`skills/new-track/SKILL.md`), scaffold References sections
+(`templates/brief-scaffold.md`, `templates/spec-scaffold.md`), and any doc a
+human reads in a renderer. **Does not require rewriting every path in every
+skill** — the convention carries forward; apply it to the highest-traffic
+clickable surfaces.
+
 ## See Also
 
 - [[runtime/core-contract]] — behavioral invariants; resident in every session.

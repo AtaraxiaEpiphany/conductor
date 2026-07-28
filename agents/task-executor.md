@@ -217,7 +217,7 @@ a FAILED report, not a fix-and-retry trigger — see phase-checker.md §3.0).
   ```bash
   git add -A && git diff --cached --quiet || git commit -m "<type>(<scope>): <description>"
   ```
-  `git add -A` stages new + modified + deleted; the `|| commit` guard is a no-op when nothing changed. **Git notes are written by `track-state dispatch-finalize` — you do NOT write git notes, modify plan markers, or append SHAs** (orchestrator-owned Steps 9-11). A clean tree is **enforced**: `write-result --status success` is denied while implementation files are uncommitted (the PreToolUse clean-tree hook). If the work is genuinely incomplete, report `--status failure` instead — never claim success with an uncommitted tree.
+  `git add -A` stages new + modified + deleted; the `|| commit` guard is a no-op when nothing changed. **Scope matters:** never commit build artifacts (`node_modules/`, `dist/`, `build/`, `__pycache__/`, etc.) — they belong in `.gitignore` (see `${CLAUDE_PLUGIN_ROOT}/templates/conductor-gitignore.md`). The clean-tree hook inspects your commit and **denies `write-result --status success`** if HEAD swept in any artifact path, prescribing an amend recipe. If your project's `.gitignore` is weak, stage only your real source files by path instead of `-A`. **Git notes are written by `track-state dispatch-finalize` — you do NOT write git notes, modify plan markers, or append SHAs** (orchestrator-owned Steps 9-11). A clean tree is **enforced**: `write-result --status success` is denied while implementation files are uncommitted (the PreToolUse clean-tree hook). If the work is genuinely incomplete, report `--status failure` instead — never claim success with an uncommitted tree.
 
 ---
 

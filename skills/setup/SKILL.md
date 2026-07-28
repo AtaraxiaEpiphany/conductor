@@ -43,7 +43,12 @@ CRITICAL: Validate every tool call. On failure → halt → announce.
    PROJECT_DIR={project root}
    ```
 
-   Parse `---ANALYSIS RESULT---` block. **Persist the full detection tree** to `conductor/.conductor/analysis.json` (create `.conductor/` if absent) — this is the durable record for later consumers (e.g. corpus-writer seeding, future `/conductor:wiki` queries about the stack), so the analyzer's one-pass detection is not lost. Subsequent steps (§2.3 Tech Stack pre-fill, §3.2 description) operate on the live fields (`languages`, `frameworks`) — recovered from `analysis.json` on resume, or from the result block on first run.
+   Parse `---ANALYSIS RESULT---` block and **persist the full detection tree to `conductor/.conductor/analysis.json` via the tolerant helper** (a weak model's block may carry trailing commas, code fences, or smart quotes that strict `json.loads` rejects — the helper repairs them so setup never crashes or persists garbage):
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/persist-analysis.py" \
+     --output conductor/.conductor/analysis.json --result "<paste the full project-analyzer output>"
+   ```
+   Exit 0 + `OK:` line → persisted; proceed. Exit 1 + `HALT:` → the block was unparseable even after tolerant repair: **re-dispatch `conductor:project-analyzer` ONCE** with the tightened prompt *"emit STRICT raw JSON only — no ``` fences, no trailing commas, ASCII double-quotes only"*, then retry the helper. If it still fails → halt → announce the unreadable output (do NOT persist garbage). This is the durable record for later consumers (e.g. corpus-writer seeding, future `/conductor:wiki` queries about the stack), so the analyzer's one-pass detection is not lost. Subsequent steps (§2.3 Tech Stack pre-fill, §3.2 description) operate on the live fields (`languages`, `frameworks`) — recovered from `analysis.json` on resume, or from the result block on first run.
 3. **Greenfield:** Ask "What do you want to build?"
 4. Init git if needed. Create `conductor/` directory.
 
@@ -133,7 +138,7 @@ Copy the workflow templates into `conductor/workflow/` with Bash (`cp`/`sed`) ra
    sed -i "s/{TIMESTAMP}/$ts/g" conductor/overview.md conductor/purpose.md conductor/log.md
    ```
 
-7. **Seed `conductor/purpose.md` Goals** — the one content edit in this phase: `Edit` `conductor/purpose.md` to replace the Goals placeholder with the goals gathered in §2.1. The other sections (Key Questions, Thesis, Decisions) start as placeholders and co-evolve via `/conductor:wiki purpose` and the wiki-synthesizer over time. This file is the wiki's directional intent — *why* the project exists, distinct from the structural overview.
+7. **Seed `conductor/purpose.md` Goals** — the one content edit in this phase: `Edit` `conductor/purpose.md` to replace the Goals placeholder with the goals gathered in §2.1. The other sections start as self-documenting placeholders (the template annotates who fills each and when): **Key Questions** and **Out of Scope** are seeded from the first track's Brief by `/conductor:new-track` §2.2b (additive, intersection-only); **Evolving Thesis** and **Active Decisions** are deliberately empty until wiki-synthesizer Phase 2 harvests them from completed tracks. This file is the wiki's directional intent — *why* the project exists, distinct from the structural overview.
 Save state: `2.4_workflow`.
 
 ### 2.5 Finalization

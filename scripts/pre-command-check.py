@@ -106,7 +106,7 @@ _SANCTIONED_TS_SUBCOMMANDS = {
     "resolve-track", "set-max-retries", "set-mode", "setup", "shas", "skip",
     "skip-analyst-verdict", "skip-refute-review", "set-contract", "spec-anchors", "spec-delta",
     "spec-integrity", "subagent-log", "log-path",
-    "brief-init", "brief-finalize", "brief-resume",
+    "brief-init", "brief-finalize", "brief-grill-done", "brief-resume",
     "split", "start", "step", "sync-handoff", "sync-plan", "thaw", "validate", "wave-abort",
     "wave-finalize", "wave-status", "wave-step", "write-result",
 }

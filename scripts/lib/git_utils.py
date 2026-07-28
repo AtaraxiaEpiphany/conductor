@@ -71,6 +71,23 @@ _CONDUCTOR_MANAGED_PREFIXES = (
 )
 
 
+def head_commit_files(track_dir):
+    """Repo-relative paths changed by the most recent commit (HEAD), or ``[]``.
+
+    Used by the clean-tree guard's artifact check: task-executor commits in
+    Step 8 *before* calling ``write-result --status success``, so by the time
+    the hook fires the index is clean and the offending ``node_modules`` /
+    build output is already in HEAD. Inspecting HEAD's file list is the only
+    way to catch it post-commit. Returns ``[]`` on any git error (fail-open).
+    """
+    result = run_git_command(
+        ["diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"],
+        cwd=track_dir)
+    if result.returncode != 0:
+        return []
+    return [ln.strip() for ln in result.stdout.splitlines() if ln.strip()]
+
+
 def implementation_uncommitted_files(track_dir):
     """Repo-relative implementation files that are uncommitted (unstaged,
     staged, or untracked), excluding conductor-managed artifacts.

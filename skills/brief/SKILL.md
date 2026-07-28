@@ -163,6 +163,23 @@ Consolidate the answers (and any carried-over description) into a single
 `USER_ANSWERS` block for §4, structured by the sections above, plus any
 `USER_REFERENCES` captured in node 6.
 
+**Signal grill-done before writing.** The moment shared understanding is reached,
+run:
+
+```
+track-state brief-grill-done "<track_dir>"
+```
+
+This sets `grill_complete: true` on the brief marker, which is the **real gate**
+the `on-brief-grill-tripwire` hook checks — NOT the raw `AskUserQuestion` count.
+The count is only a backstop, and it's a *proxy* that's wrong exactly when you
+do this well: many decisions are pre-resolved by reading docs / `$ARGUMENTS`
+(§3 step 2), so a grill done in **fewer than six** questions is legitimate.
+Signaling explicitly is how you tell the hook *"the grill is genuinely complete,
+the low count is skillful look-it-up-first, not a shortcut."* Without it, a
+well-done <6 grill is wrongly blocked. Always emit this signal after the last
+question, before the §4 Write.
+
 ## 4.0 WRITE brief.md INLINE
 
 The orchestrator writes `brief.md` directly — no writer subagent. The grill
@@ -218,8 +235,23 @@ You wrote it inline, so you fix it inline — there is no writer to re-dispatch.
    track-state brief-finalize "<track_dir>"
    ```
    Parse the JSON. If `brief_present: false` → warn: *"Marker finalized but brief.md is missing — re-run /conductor:brief <track_id>."` (finalize reports the check; it does not hard-fail so cleanup always succeeds).
-4. Print the hand-off:
-   > **Brief ready at `<track_dir>/brief.md`.**
+4. **Commit brief.md scoped** (never `git add -A`). `brief.md` is durable planning
+   input living in the committed `conductor/tracks/<id>/` tree; an uncommitted brief
+   is a resume hazard — a session clear or worktree switch would lose it. Stage
+   **only** the track dir's `brief.md` (plus the per-track `.conductor/` marker
+   change that `brief-finalize` just made, which IS tracked — unlike root
+   `/.conductor/`). Same scoped-staging discipline as `setup` §3.6; the
+   `git diff --cached --quiet ||` guard makes it a no-op only if already committed:
+   ```bash
+   git add "<track_dir>/brief.md" "<track_dir>/.conductor/" \
+     && git diff --cached --quiet \
+     || git commit -m "docs(<track_id>): brief — grilled shared understanding"
+   ```
+   If the `.conductor/` marker was the only change and it's already gone (finalize
+   deleted it), the `git add` of that path is a harmless no-op — brief.md alone
+   carries the commit.
+5. Print the hand-off:
+   > **Brief ready at [brief.md](<track_dir>/brief.md).**
    > When ready to plan, run: `/conductor:new-track <track_id>`
    > It will auto-detect this Brief and use it as authoritative planning input (skipping its own Q&A).
 

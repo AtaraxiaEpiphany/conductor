@@ -40,7 +40,7 @@ from .new_track import (
     cmd_new_track_init, cmd_new_track_step, cmd_new_track_set_mode,
     cmd_new_track_resume, cmd_new_track_finalize,
 )
-from .brief import cmd_brief_init, cmd_brief_finalize, cmd_brief_resume
+from .brief import cmd_brief_init, cmd_brief_finalize, cmd_brief_resume, cmd_brief_grill_done
 from .logs_read import cmd_log_path, cmd_subagent_log
 
 
@@ -66,7 +66,7 @@ _BOOL_FLAGS = {"--full", "--fix", "--check", "--force", "--verify"}
 _TD_NO_RESOLUTION_COMMANDS = {
     "init-from-plan", "new-track-init", "new-track-step",
     "new-track-set-mode", "new-track-finalize", "preflight", "derive-name",
-    "brief-init", "brief-finalize",
+    "brief-init", "brief-finalize", "brief-grill-done",
 }
 
 
@@ -402,6 +402,9 @@ COMMAND_HELP = {
                    "Write the /conductor:brief resume marker (idempotent — no-op if one exists)"),
     "brief-finalize": ("brief-finalize <track-dir>",
                        "Delete the brief resume marker once brief.md is written (idempotent)"),
+    "brief-grill-done": ("brief-grill-done <track-dir>",
+                         "Mark the brief grill complete (explicit shared-understanding signal; "
+                         "lets a <6-question grill through the tripwire write-gate)"),
     "brief-resume": ("brief-resume",
                      "Detect any interrupted /conductor:brief run (committed:false marker). "
                      "ALWAYS exits 0 — action:none|resume"),
@@ -425,7 +428,7 @@ _COMMAND_GROUPS = [
     ("Naming", ["derive-name", "resolve-track", "check"]),
     ("New-Track Resume", ["new-track-resume", "new-track-init", "new-track-step",
                           "new-track-set-mode", "new-track-finalize"]),
-    ("Brief", ["brief-resume", "brief-init", "brief-finalize"]),
+    ("Brief", ["brief-resume", "brief-init", "brief-finalize", "brief-grill-done"]),
     ("Diagnostics", ["validate", "gc", "shas", "post-loop-status", "checklist-verify",
                      "deferred-report", "phase-done", "add-checkpoint", "preflight",
                      "quality-snapshot", "spec-integrity", "spec-anchors", "spec-delta",
@@ -779,6 +782,8 @@ def main():
             cmd_brief_init(track_dir, flag(args, "--track-id") or "track")
         elif cmd == "brief-finalize":
             cmd_brief_finalize(track_dir)
+        elif cmd == "brief-grill-done":
+            cmd_brief_grill_done(track_dir)
         elif cmd == "brief-resume":
             cmd_brief_resume()
         elif cmd in ("resolve-track", "check", "setup"):

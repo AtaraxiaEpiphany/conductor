@@ -188,6 +188,68 @@ class WriteResultCleanTreeHookTests(TestCase):
         self.assertEqual(_decision(out), "allow")
 
 
+# --- artifact sweep: HEAD commit must not contain build artifacts (#1) ---------
+# task-executor commits in Step 8 BEFORE write-result, so by the time the hook
+# fires a `git add -A` may have swept node_modules/ etc. into HEAD. The hook
+# inspects HEAD's file list and denies — a separate failure mode from the
+# uncommitted-files path. Probes the post-commit state directly.
+class WriteResultArtifactSweepTests(TestCase):
+    def setUp(self):
+        self.repo = _git_repo()
+        _commit_plan(self.repo, "chore(conductor): Start task 'T1' [P1.T1]")
+        self.track_dir = _write_locked_track(self.repo)
+
+    def _commit_head(self, paths):
+        """Commit the given {relpath: content} map as the new HEAD."""
+        for rel, content in paths.items():
+            full = os.path.join(self.repo, rel)
+            os.makedirs(os.path.dirname(full), exist_ok=True)
+            Path(full).write_text(content)
+        subprocess.run(["git", "add", "-A"], cwd=self.repo, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "feat: impl"], cwd=self.repo,
+                       check=True)
+
+    def test_head_with_node_modules_is_denied(self):
+        self._commit_head({
+            "src/app.py": "x = 1\n",
+            "node_modules/leftpad/index.js": "module.exports = () => 0\n",
+        })
+        rc, out = _run_hook(self.repo, _WR_SUCCESS.format(td=self.track_dir))
+        spec = out.get("hookSpecificOutput", {})
+        self.assertEqual(spec.get("permissionDecision"), "deny")
+        reason = spec.get("permissionDecisionReason", "")
+        self.assertIn("build-artifact", reason)
+        self.assertIn("node_modules", reason)
+        self.assertIn("git rm -r --cached", reason)
+        self.assertIn(".gitignore", reason)
+
+    def test_head_with_pycache_and_dist_is_denied(self):
+        self._commit_head({
+            "lib/mod.py": "v = 1\n",
+            "lib/__pycache__/mod.cpython-312.pyc": "\x00\x00",
+            "dist/bundle.js": "console.log(1)\n",
+        })
+        rc, out = _run_hook(self.repo, _WR_SUCCESS.format(td=self.track_dir))
+        spec = out.get("hookSpecificOutput", {})
+        self.assertEqual(spec.get("permissionDecision"), "deny")
+        reason = spec.get("permissionDecisionReason", "")
+        self.assertIn("__pycache__", reason)
+        self.assertIn("dist", reason)
+
+    def test_head_with_only_real_impl_is_allowed(self):
+        # A clean impl commit (no artifacts) → artifact check passes; the
+        # stranded check is also clean → allow.
+        self._commit_head({"src/app.py": "x = 1\n", "tests/test_app.py": "y = 2\n"})
+        rc, out = _run_hook(self.repo, _WR_SUCCESS.format(td=self.track_dir))
+        self.assertEqual(_decision(out), "allow")
+
+    def test_artifact_name_segment_does_not_match_lookalike(self):
+        # "dist" must match as a path SEGMENT, not a substring of "distribute".
+        self._commit_head({"src/distribute.py": "x = 1\n"})
+        rc, out = _run_hook(self.repo, _WR_SUCCESS.format(td=self.track_dir))
+        self.assertEqual(_decision(out), "allow")
+
+
 # --- invariant regression: finalize still stages only conductor-managed files --
 # Pins the load-bearing invariant this fix deliberately does NOT touch: _git_commit
 # must never sweep implementation files into the conductor commit. Extends the

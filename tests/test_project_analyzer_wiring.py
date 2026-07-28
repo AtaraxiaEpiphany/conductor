@@ -75,8 +75,19 @@ class SetupPersistenceWiringTests(TestCase):
         # The high-value half of #14: the analyzer's one-pass detection is
         # persisted to conductor/.conductor/analysis.json so it is not lost —
         # later consumers (doc-syncer seeding, future wiki queries) read it back.
+        # The persist is code-owned via persist-analysis.py (tolerant parse) so a
+        # weak model's near-miss JSON doesn't crash setup or persist garbage.
         self.assertIn(".conductor/analysis.json", self.skill)
-        self.assertIn("Persist the full detection tree", self.skill)
+        self.assertIn("persist-analysis.py", self.skill)
+        self.assertIn("persist the full detection tree", self.skill)
+
+    def test_setup_tolerant_parse_and_bounded_redispatch(self):
+        # #7: the parse is tolerant (repairs fences/trailing-commas/smart-quotes)
+        # and a totally-unparseable block triggers ONE bounded re-dispatch rather
+        # than persisting garbage. Pinned so the deterministic enforcement can't
+        # be reverted to a fragile hand-rolled ``json.loads``.
+        self.assertIn("tolerant", self.skill)
+        self.assertIn("re-dispatch `conductor:project-analyzer` ONCE", self.skill)
 
     def test_setup_operates_on_live_fields_after_persist(self):
         # After persisting, setup's subsequent steps use the live fields

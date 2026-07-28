@@ -8,4 +8,26 @@
 # Root-anchored (leading /) so per-track scratch — conductor/tracks/*/.conductor/,
 # which is committed by track commits — is NOT ignored.
 /.conductor/
+
+# Common build artifacts / dependency caches — a safety net so task-executor's
+# `git add -A` (Step 8) cannot sweep these into an implementation commit. These
+# are sensible defaults for most stacks; review and adjust for your project
+# (e.g. remove `build/` if a committed `build/` dir is intentional).
+node_modules/
+dist/
+build/
+out/
+__pycache__/
+*.pyc
+.venv/
+venv/
+coverage/
+.cache/
+.next/
+.nuxt/
+.turbo/
+target/
+*.log
+.DS_Store
+Thumbs.db
 # conductor:gitignore end

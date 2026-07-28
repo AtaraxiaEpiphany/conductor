@@ -85,7 +85,7 @@ Scan for known indicators:
 
 ### On Success
 
-Return **exactly** this JSON block (raw JSON, no code fences):
+Return **exactly** this JSON block (STRICT raw JSON — no ``` code fences, no trailing commas before `}`/`]`, ASCII double-quotes only (`"`, never smart quotes `“”«»`), no prose before/after the block). A tolerant parser repairs common slips, but complying avoids a re-dispatch round-trip:
 
 ```
 ---ANALYSIS RESULT---

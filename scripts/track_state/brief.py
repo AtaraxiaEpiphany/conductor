@@ -62,6 +62,34 @@ def cmd_brief_init(track_dir, track_id):
     out(dict(ok=True, action="created", track_dir=str(track_dir), track_id=track_id))
 
 
+def cmd_brief_grill_done(track_dir):
+    """Mark the brief's grill as complete — the orchestrator's explicit signal
+    that shared understanding was reached (which may be in FEWER than
+    ``MIN_GRILL_QUESTIONS`` AskUserQuestion turns, because decisions were
+    pre-resolved by reading docs / carried by ``$ARGUMENTS``).
+
+    Writes ``grill_complete: true`` onto the marker (re-reading + merging so a
+    prior ``committed:false`` marker is preserved). Tolerant of a missing
+    marker: the grill-done signal is still recorded by creating the marker with
+    ``grill_complete: true`` + ``committed: false``, so the tripwire honors it
+    even if ``brief-init`` was skipped. Always CLI-invoked — the skill never
+    hand-edits the JSON.
+
+    This decouples the tripwire's write-gate from the raw AskUserQuestion count
+    (a proxy that's wrong exactly when the grill is done well): the gate becomes
+    ``grill_complete OR count >= MIN_GRILL_QUESTIONS``."""
+    data = _brief_read_marker(track_dir) or {}
+    data["grill_complete"] = True
+    # Preserve committed:false if it was set (a grill-done marker with no
+    # committed flag would read as finalized; default to False to stay in the
+    # grill-in-progress state until brief-finalize runs).
+    data.setdefault("committed", False)
+    data.setdefault("track_dir", str(track_dir))
+    _brief_write_marker(track_dir, data)
+    out(dict(ok=True, action="grill_done", grill_complete=True,
+             track_dir=str(track_dir)))
+
+
 def cmd_brief_finalize(track_dir):
     """Delete the marker once ``brief.md`` is written and the run is durable.
     Idempotent — a missing marker is a no-op success. Verifies brief.md exists:
