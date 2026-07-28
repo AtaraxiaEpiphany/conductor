@@ -61,3 +61,89 @@ RESULT_BLOCK_PATTERN = rf"---\s*[A-Z][A-Z0-9 ]*---.*?{RESULT_END_TAG}"
 # state-machine counter share one vocabulary.
 MAX_RECOVERY_TURNS = 2
 RECOVERY_TURN_FIELD = "recovery_turns"  # track-state.json key on the locked task
+
+
+# --- Session-scoped recovery counter (STDOUT-block agents) -------------------
+#
+# Result-file agents (task-executor, explorer) bound their recovery turns on the
+# LOCKED TASK (``track_state.mutations.increment_recovery_turns``) — they always
+# run under a (phase, task, subtask) cursor. STDOUT-block agents (spec-reviewer,
+# code-reviewer, phase-checker, ...) do NOT — they run pre-state (new-track §2.4)
+# or as review/verify leaves with no task cursor to key on. A session-scoped
+# sidecar gives them the same MAX_RECOVERY_TURNS escape hatch: each recovery turn
+# of the SAME subagent dispatch shares its ``session_id``, so the counter bounds
+# how many times the hook will force "emit your block" before letting the stop
+# land (→ the agent dies honestly instead of burning its whole maxTurns budget
+# on recovery turns that can never succeed — the spec-reviewer "always returns
+# non-standard result" failure mode).
+#
+# The file lives under ``get_data_dir()`` (project-scoped, gitignored) and is
+# keyed by session_id → {count, ts}. Stale entries (>SESSION_RECOVERY_TTL) are
+# reaped on write so an abandoned subagent's key can't pin the file forever.
+_SESSION_RECOVERY_FILE = "subagent-recovery-counters.json"
+SESSION_RECOVERY_TTL = 3600  # seconds; a single subagent dispatch is far shorter
+
+
+def increment_session_recovery(session_id: str) -> int:
+    """Bump the recovery counter for one subagent dispatch (by ``session_id``).
+
+    Returns the new count (≥1). Best-effort and fail-safe: any IO error returns
+    ``1`` so the caller still forces one recovery turn (the prior unbounded
+    behavior's floor) rather than silently allowing a no-result stop.
+
+    A None/empty ``session_id`` (payload lacked one) returns ``1`` — without a
+    stable key there is nothing to bound, so fall back to a single attempt.
+    """
+    if not session_id:
+        return 1
+    try:
+        import json
+        import time
+        from .env import get_data_dir
+
+        path = get_data_dir() / _SESSION_RECOVERY_FILE
+        data = {}
+        if path.exists():
+            try:
+                raw = json.loads(path.read_text())
+                if isinstance(raw, dict):
+                    data = raw
+            except (ValueError, OSError):
+                data = {}
+        # Reap stale entries on every write so the file can't grow unbounded.
+        now = time.time()
+        for sid in list(data):
+            entry = data.get(sid)
+            if isinstance(entry, dict) and isinstance(entry.get("ts"), (int, float)):
+                if now - entry["ts"] > SESSION_RECOVERY_TTL:
+                    del data[sid]
+            else:
+                del data[sid]
+        count = (data.get(session_id, {}).get("count", 0) or 0) + 1
+        data[session_id] = {"count": count, "ts": now}
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, ensure_ascii=False))
+        return count
+    except Exception:
+        return 1
+
+
+def clear_session_recovery(session_id: str) -> None:
+    """Drop the counter for a dispatch once it emitted its block (success) — so a
+    later dispatch that reuses a token (rare) starts at a fresh budget. Best-effort."""
+    if not session_id:
+        return
+    try:
+        import json
+        from .env import get_data_dir
+
+        path = get_data_dir() / _SESSION_RECOVERY_FILE
+        if not path.exists():
+            return
+        raw = json.loads(path.read_text())
+        if not isinstance(raw, dict) or session_id not in raw:
+            return
+        del raw[session_id]
+        path.write_text(json.dumps(raw, ensure_ascii=False))
+    except Exception:
+        pass

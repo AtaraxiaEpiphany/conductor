@@ -9,6 +9,7 @@ behavioral change from the old prose-based detect_failure, which force-blocked
 on any "status: FAILURE" / "Traceback" text.
 """
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -27,17 +28,21 @@ def _write_result(track_dir: Path, body: str):
 
 
 class RecoveryGuardTests(TestCase):
-    def _run(self, agent_type: str, cwd: str, last_message: str = "") -> tuple:
+    def _run(self, agent_type: str, cwd: str, last_message: str = "",
+             session_id: str = "test-sess", env: dict = None) -> tuple:
         hook_input = {
             "agent_type": agent_type,
-            "session_id": "test-sess",
+            "session_id": session_id,
             "cwd": cwd,
             "last_assistant_message": last_message,
         }
+        run_env = dict(os.environ)
+        if env:
+            run_env.update(env)
         proc = subprocess.run(
             [sys.executable, str(_HOOK)],
             input=json.dumps(hook_input),
-            capture_output=True, text=True,
+            capture_output=True, text=True, env=run_env,
         )
         out = json.loads(proc.stdout) if proc.stdout.strip() else {}
         return proc.returncode, out
@@ -188,6 +193,64 @@ class RecoveryGuardTests(TestCase):
             rc, out = self._run("spec-reviewer", d, last_message=msg)
             self.assertEqual(rc, 0)
             self.assertNotIn("decision", out)
+
+    # --- Session-scoped bounding: STDOUT-block recovery must not loop forever ---
+
+    def test_stdout_block_recovery_is_bounded_after_max_turns(self):
+        """Regression: STDOUT-block agents (spec-reviewer etc.) run with NO locked
+        task cursor, so their recovery was UNBOUNDED — every no-block stop forced
+        another recovery turn with no escape, burning the whole maxTurns budget
+        before exhausting with no block (the "always returns non-standard result"
+        failure mode). The counter is now session-scoped
+        (lib.recovery.increment_session_recovery): after MAX_RECOVERY_TURNS
+        forced turns, the hook stops blocking and lets the stop land so the agent
+        dies honestly instead of looping. Isolate CLAUDE_PLUGIN_DATA + use a
+        unique session_id so sibling tests' counters don't interfere."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "pcc_recovery", _scripts / "lib" / "recovery.py")
+        rec = importlib.util.module_from_spec(spec)
+        # Need scripts/ on the path so ``from .env import get_data_dir`` resolves.
+        sys.path.insert(0, str(_scripts))
+        spec.loader.exec_module(rec)
+        sys.path.pop(0)
+        with tempfile.TemporaryDirectory() as data_root, \
+                tempfile.TemporaryDirectory() as d:
+            env = {"CLAUDE_PLUGIN_DATA": data_root}
+            sid = "bound-sess-unique"
+            # First MAX_RECOVERY_TURNS no-block stops must block (force recovery).
+            for _ in range(rec.MAX_RECOVERY_TURNS):
+                rc, out = self._run("spec-reviewer", d, last_message="no block",
+                                    session_id=sid, env=env)
+                self.assertEqual(rc, 2, "should still force recovery within budget")
+                self.assertEqual(out["decision"], "block")
+            # The next no-block stop exceeds the budget → the hook must ALLOW the
+            # stop (rc 0, no decision) instead of looping forever.
+            rc, out = self._run("spec-reviewer", d, last_message="still no block",
+                                session_id=sid, env=env)
+            self.assertEqual(rc, 0)
+            self.assertNotIn("decision", out)
+
+    def test_stdout_block_recovery_clears_on_success(self):
+        """A dispatch that eventually emits its block has its counter cleared, so
+        a later dispatch reusing the token (rare) starts at a fresh budget — not
+        already at the cap from the prior stuck dispatch."""
+        with tempfile.TemporaryDirectory() as data_root, \
+                tempfile.TemporaryDirectory() as d:
+            env = {"CLAUDE_PLUGIN_DATA": data_root}
+            sid = "clear-sess-unique"
+            # Burn one recovery turn, then succeed (emit the block).
+            self._run("spec-reviewer", d, last_message="no block",
+                      session_id=sid, env=env)
+            msg = "done\n---REVIEW RESULT---\nSTATUS: APPROVED\n---END REVIEW RESULT---"
+            rc, _ = self._run("spec-reviewer", d, last_message=msg,
+                              session_id=sid, env=env)
+            self.assertEqual(rc, 0)
+            # Counter cleared → a fresh no-block stop is back to forcing recovery.
+            rc, out = self._run("spec-reviewer", d, last_message="no block",
+                                session_id=sid, env=env)
+            self.assertEqual(rc, 2)
+            self.assertEqual(out["decision"], "block")
 
     # --- async agents: still no recovery contract ---
 

@@ -39,7 +39,7 @@ from lib.logging import init_logging, log_entry
 from lib.result_probe import fresh_result_exists
 from lib.recovery import (
     RECOVERY_MARKER, RESULT_FILE_AGENT_TYPES, RESULT_END_TAG,
-    MAX_RECOVERY_TURNS,
+    MAX_RECOVERY_TURNS, increment_session_recovery, clear_session_recovery,
 )
 from lib.locked_task import resolve as resolve_locked_task
 from lib import dispatch_lifecycle as lifecycle
@@ -359,17 +359,36 @@ def main():
         )
         return
 
-    # stdout-block agents: must emit their close tag.
+    # stdout-block agents: must emit their close tag. Unlike result-file agents
+    # these run with NO locked task cursor (pre-state new-track §2.4, or review/
+    # verify leaves), so the counter is session-scoped, not task-scoped — see
+    # lib.recovery.increment_session_recovery. Bound it the same way: once a
+    # dispatch has been forced into MAX_RECOVERY_TURNS recovery turns without
+    # emitting its block, stop forcing and let the stop land. An interactive
+    # agent (spec-reviewer) that can't complete its human loop inside a
+    # fire-and-forget dispatch would otherwise burn its whole maxTurns budget on
+    # recovery turns that can never succeed — each one re-injecting "emit the
+    # block" — and exhaust with no block, surfacing as the generic "no
+    # dispatch-finalize recovery" warning. Bounded, it fails fast and clean.
     if agent_type in STDOUT_BLOCK_AGENTS:
-        if not _has_result_block(last_message):
-            _block_recovery(
-                agent_type,
-                f"{RECOVERY_MARKER} You stopped without producing a result block.",
-                STDOUT_BLOCK_AGENTS[agent_type],
-                log_file, session_id, "no_result_block_detected",
-            )
+        if _has_result_block(last_message):
+            clear_session_recovery(session_id)
+            write_hook_output()
             return
-        write_hook_output()
+        count = increment_session_recovery(session_id)
+        if count > MAX_RECOVERY_TURNS:
+            _log_result_event(log_file, session_id, agent_type,
+                              "exhausted", f"session_recovery_turns={count}")
+            write_hook_output()  # budget exhausted → allow the stop to land
+            return
+        _log_result_event(log_file, session_id, agent_type,
+                          "recovered", f"session_recovery_turns={count}")
+        _block_recovery(
+            agent_type,
+            f"{RECOVERY_MARKER} You stopped without producing a result block.",
+            STDOUT_BLOCK_AGENTS[agent_type],
+            log_file, session_id, "no_result_block_detected",
+        )
         return
 
     # All other agents (registered async in hooks.json): no recovery contract.
