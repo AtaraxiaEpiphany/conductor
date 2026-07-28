@@ -1,5 +1,5 @@
 <!--
-  brief.md scaffold — Read by agents/track-brief-writer.md (§4 Write).
+  brief.md scaffold — Filled by the /conductor:brief skill (§4 Write), inline.
   Substitute {Track Title}, {TRACK_ID}, {TRACK_TYPE}, and the date; fill every
   section. Italic / parenthetical HTML comments are generation guidance (what
   good content looks like), not literal output — replace them with real content.

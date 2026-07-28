@@ -1,11 +1,12 @@
 """Wiring tests for the /conductor:brief feature.
 
-The skill/agent prose can't be executed directly, but the *contract* it depends
-on is testable: the scaffold has the machine-anchor headings spec-planner keys
-on, the skill references the writer agent + the CLI + the hand-off to new-track,
-the writer agent fills the scaffold and emits the BRIEF RESULT block, new-track
-§2.2b detects the brief, and spec-planner §3.0 reads it first. These grep-style
-assertions catch drift the way the repo's other ``test_*_wiring.py`` files do.
+The skill prose can't be executed directly, but the *contract* it depends on is
+testable: the scaffold has the machine-anchor headings spec-planner keys on, the
+skill writes brief.md INLINE (no writer subagent — collapsed), references the CLI
++ the hand-off to new-track, the grill is one-question-at-a-time via
+AskUserQuestion, user references get a home, new-track §2.2b detects the brief,
+and spec-planner §3.0 reads it first. These grep-style assertions catch drift the
+way the repo's other ``test_*_wiring.py`` files do.
 """
 from pathlib import Path
 from unittest import TestCase, main
@@ -44,10 +45,19 @@ class BriefScaffoldTests(TestCase):
 
 
 class BriefSkillWiringTests(TestCase):
-    def test_skill_dispatches_writer_agent(self):
+    def test_skill_writes_brief_inline_no_writer_subagent(self):
+        """Regression: the brief used to dispatch a conductor:track-brief-writer
+        subagent. It now writes brief.md INLINE in §4 — the grill already read
+        every source doc (no context isolation to gain) and a brief is a
+        ~1-page scaffold fill (not a large generated surface). The writer agent,
+        its BRIEF RESULT contract, and its SubagentStart reminder are GONE. The
+        skill must not reference the writer or its result block."""
         txt = _read("skills/brief/SKILL.md")
-        self.assertIn("conductor:track-brief-writer", txt)
-        self.assertIn("BRIEF RESULT", txt)
+        self.assertNotIn("track-brief-writer", txt)
+        self.assertNotIn("BRIEF RESULT", txt)
+        # The inline write + scaffold fill is the new contract.
+        self.assertIn("brief-scaffold.md", txt)
+        self.assertIn("Write tool", txt)
 
     def test_skill_uses_derive_name_and_brief_cli(self):
         txt = _read("skills/brief/SKILL.md")
@@ -69,30 +79,39 @@ class BriefSkillWiringTests(TestCase):
         txt = _read("skills/brief/SKILL.md")
         self.assertIn("auto-detect", txt.lower())
 
+    def test_skill_grill_is_one_question_at_a_time_via_askuserquestion(self):
+        """The grill MUST pose one decision per AskUserQuestion call and wait for
+        the answer before the next — never batch, never free-text. Front-loaded
+        as a MUST imperative so the model can't miss it buried in loop prose."""
+        txt = _read("skills/brief/SKILL.md")
+        self.assertIn("MUST", txt)
+        self.assertIn("one question at a time", txt.lower())
+        self.assertIn("AskUserQuestion", txt)
 
-class BriefWriterAgentWiringTests(TestCase):
-    def test_agent_frontmatter_narrow_tools(self):
-        """The writer must NOT have AskUserQuestion or Agent (gathering is the
-        orchestrator's job) — the context-isolation invariant."""
-        txt = _read("agents/track-brief-writer.md")
-        # Frontmatter tools line must list only read/write/grep/glob.
-        self.assertIn("tools: Read, Write, Grep, Glob", txt)
-        self.assertNotIn("AskUserQuestion", txt)
+    def test_skill_has_user_references_decision(self):
+        """User-named files/URLs get a canonical home: a References decision in
+        the grill tree (USER_REFERENCES), unioned into ## References at write.
+        Don't drop them into Open Questions (they'd read as blockers)."""
+        txt = _read("skills/brief/SKILL.md")
+        self.assertIn("USER_REFERENCES", txt)
 
-    def test_agent_writes_one_file_and_emits_result_block(self):
-        txt = _read("agents/track-brief-writer.md")
-        self.assertIn("{TRACK_DIR}/brief.md", txt)
-        self.assertIn("templates/brief-scaffold.md", txt)
-        self.assertIn("---BRIEF RESULT---", txt)
-        self.assertIn("---END BRIEF RESULT---", txt)
-        self.assertIn("STATUS: SUCCESS", txt)
 
-    def test_agent_honors_out_of_scope_verbatim(self):
-        """The writer must carry the user's Out-of-Scope faithfully and not
-        contradict purpose.md — the load-bearing provenance contract."""
-        txt = _read("agents/track-brief-writer.md")
-        self.assertIn("Out of Scope", txt)
-        self.assertIn("purpose.md", txt)
+class BriefWriterAgentRemovedTests(TestCase):
+    """The writer agent was collapsed — its file, SubagentStart reminder, and
+    hooks.json matcher entry are all gone. Pin the removal so it can't creep
+    back (a stale matcher/reminder referencing a deleted agent is a footgun)."""
+
+    def test_writer_agent_file_deleted(self):
+        self.assertFalse((ROOT / "agents" / "track-brief-writer.md").exists())
+
+    def test_writer_subagentstart_reminder_removed(self):
+        txt = _read("scripts/on-subagent-start.py")
+        self.assertNotIn("track-brief-writer", txt)
+        self.assertNotIn("BRIEF RESULT", txt)
+
+    def test_writer_hooks_matcher_removed(self):
+        txt = _read("hooks/hooks.json")
+        self.assertNotIn("track-brief-writer", txt)
 
 
 class NewTrackConsumesBriefTests(TestCase):

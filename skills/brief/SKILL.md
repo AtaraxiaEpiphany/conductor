@@ -70,11 +70,20 @@ CRITICAL: Validate every tool call. On failure → halt → announce.
 
 ## 3.0 GRILL TO SHARED UNDERSTANDING
 
+> **MUST — one question at a time, via `AskUserQuestion`, no exceptions.**
+> Every decision below is posed as a **single** `AskUserQuestion` call, and you
+> **wait for the answer before posing the next one.** Never batch two decisions
+> into one prompt; never free-text a question as plain prose instead of calling
+> the tool. A `Write` to `brief.md` is denied by the `on-brief-grill-tripwire`
+> hook until every tree node is resolved (the marker is `committed:false`), so
+> skipping the grill cannot reach the write — but the grill's *quality* still
+> depends on you asking one at a time. Asking multiple questions at once is
+> bewildering; the user can't give each decision the thought it deserves.
+
 Goal: reach a **shared understanding** of the track before anything is written.
 Interview the user **relentlessly but one question at a time** — never batch.
-Asking multiple questions at once is bewildering; the user can't give each
-decision the thought it deserves. Walk the decision tree, resolving
-dependencies one-by-one so each answer informs the next question.
+Walk the decision tree, resolving dependencies one-by-one so each answer
+informs the next question.
 
 **The grill loop (one decision per iteration):**
 
@@ -98,7 +107,7 @@ continuing. This is non-negotiable.**
 
 ### The decision tree (resolve top-to-bottom — parents before children)
 
-The seven `## ` sections in `brief.md` form a tree, not a flat checklist:
+The `## ` sections in `brief.md` form a tree, not a flat checklist:
 
 1. **Problem & Motivation** *(root)* — why this track exists: the pain,
    opportunity, or trigger. Read `product.md` / `purpose.md` first to ground the
@@ -119,11 +128,19 @@ The seven `## ` sections in `brief.md` form a tree, not a flat checklist:
    belong here too.
 5. **Stakeholders / Reviewers** — who cares, who signs off. Look up team/owner
    from docs where possible; only ask what you can't find.
-6. **Open Questions** *(depends on all above)* — honest unknowns to resolve
+6. **References** *(depends on #2, #3)* — files, designs, or external links the
+   user wants this brief to cite. §2 already discovered *docs* as
+   `CONTEXT_PATHS`; this node is for **anything extra the user names** — a source
+   file (`src/auth/session.py`), an external design (Figma), a ticket, a vendor
+   doc. Ask *"Any files, designs, or links this brief should reference beyond
+   what I found?"* Capture raw paths verbatim into `USER_REFERENCES` (paths
+   only — the writer doesn't need contents); the §4 write unions them into
+   `## References`. "Just the ones you found" is a valid answer.
+7. **Open Questions** *(depends on all above)* — honest unknowns to resolve
    *during planning* (not blockers). Many emerge from earlier answers — an
    ambiguous Goal or an unconfirmed constraint becomes an Open Question rather
    than a guessed answer. "None identified." is a valid, honest result.
-7. **Suggested Acceptance Signals** *(depends on #2)* — coarse, user-facing
+8. **Suggested Acceptance Signals** *(depends on #2)* — coarse, user-facing
    pass/fail conditions, roughly one per Goal. Recommend a draft signal per goal.
 
 ### Cadence & escape hatches
@@ -143,31 +160,52 @@ The seven `## ` sections in `brief.md` form a tree, not a flat checklist:
   proceed to §4. A brief written from guesses is worse than no brief.
 
 Consolidate the answers (and any carried-over description) into a single
-`USER_ANSWERS` block for §4, structured by the seven sections above.
+`USER_ANSWERS` block for §4, structured by the sections above, plus any
+`USER_REFERENCES` captured in node 6.
 
-## 4.0 DISPATCH TRACK-BRIEF-WRITER
+## 4.0 WRITE brief.md INLINE
 
-Dispatch `conductor:track-brief-writer`, prompt:
+The orchestrator writes `brief.md` directly — no writer subagent. The grill
+(§3) already read every source doc to ground its recommended answers
+(`product.md`, `purpose.md`, `tech-stack.md`, the discovered `CONTEXT_PATHS`),
+so there is no context isolation to gain from a subagent, and a brief is a
+~1-page scaffold fill — mechanical, not a large generated surface. Writing
+inline removes a dispatch round-trip + a result-block parse + the
+stop-without-a-result-block failure mode that seam carried.
 
-```
-TRACK_DIR={track_dir}
-TRACK_ID={track_id}
-TRACK_DESCRIPTION={desc}
-TRACK_TYPE={type}
-CONTEXT_PATHS={paths or N/A}
-USER_ANSWERS={consolidated answers or N/A}
-```
-
-Parse the `---BRIEF RESULT---` block. Confirm `STATUS: SUCCESS` (halt on FAILURE and announce `SUMMARY`). `brief.md` is now on disk.
+1. Read `${CLAUDE_PLUGIN_ROOT}/templates/brief-scaffold.md`. You fill THIS
+   skeleton; do not invent your own structure. The `## Section` headings are
+   machine anchors (consumed verbatim by spec-planner) — keep them ASCII; fill
+   only the body, in any language.
+2. **Intersect Out-of-Scope with `purpose.md`** before writing. Read
+   `conductor/purpose.md` if present; its Out-of-Scope boundaries are settled
+   project exclusions — this Brief's Out-of-Scope must not contradict them
+   (narrow this Brief's exclusions to fit, never widen past purpose.md).
+3. Fill the scaffold from the §3 `USER_ANSWERS` (the primary truth), with
+   project context as supporting/confirming material — never override what the
+   user explicitly stated. Substitute `{Track Title}`, `{TRACK_ID}`,
+   `{TRACK_TYPE}`, and today's date into frontmatter + H1; replace every
+   section's guidance comment with real content.
+   - **Do not fabricate.** An honest `"None identified."` under Open Questions
+     or Stakeholders is correct; an invented stakeholder or constraint is a
+     violation.
+   - **References** = the union of (a) §2 discovered `CONTEXT_PATHS`,
+     (b) any user-named files/URLs captured as `USER_REFERENCES` during §3,
+     (c) the scaffold's default project links. List paths only.
+4. Use the **Write tool** to write `{track_dir}/brief.md`.
 
 ## 4.1 VALIDATE
 
-Re-read `<track_dir>/brief.md` exists and has the load-bearing structure spec-planner depends on:
+Re-read `{track_dir}/brief.md` and confirm it has the load-bearing structure
+spec-planner depends on:
 
 1. Frontmatter contains `track_id:` and `provenance:`.
 2. The `## Out of Scope` heading is present (the one section that must be explicit, not inferred).
 
-If either is missing → re-dispatch `conductor:track-brief-writer` ONCE with the defect appended to a `PREVIOUS_ERRORS` line (`REGEN_FOCUS: the brief is missing <frontmatter|## Out of Scope>; re-read ${CLAUDE_PLUGIN_ROOT}/templates/brief-scaffold.md and regenerate a conforming brief.md`). Re-parse the result. Still failing → **halt**: `"Brief-writer produced a brief.md that still fails validation — inspect <track_dir>/brief.md."`
+If either is missing → **halt**: `"brief.md failed validation (missing
+<frontmatter|## Out of Scope>) — re-read ${CLAUDE_PLUGIN_ROOT}/templates/brief-scaffold.md
+and rewrite {track_dir}/brief.md conforming to the scaffold, then re-validate."`
+You wrote it inline, so you fix it inline — there is no writer to re-dispatch.
 
 ## 5.0 CONFIRM + HAND-OFF
 
