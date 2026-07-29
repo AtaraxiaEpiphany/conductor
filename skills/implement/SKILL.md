@@ -93,7 +93,7 @@ Returns `action` enum — switch on it:
 
 The phase checkpoint is a **fan-out-and-synthesize**: two read-only verifier tiers run in parallel, then `conductor:phase-checker` consumes their verdicts and owns the L1 fix-and-retry + L2 + L4 + commit.
 
-**Step 1 — Fan out BOTH verifiers in ONE message:** `conductor:ac-tracer` (`TRACK_DIR={td} TRACK_ID={id}`) and `conductor:test-runner` (`TRACK_DIR={td} TRACK_ID={id} PHASE_INDEX={phase}`).
+**Step 1 — Fan out BOTH verifiers in ONE message:** `conductor:ac-tracer` and `conductor:test-runner`, pasting each member's **pre-assembled `prompt` field verbatim** from the action's `wave` array (built by `build_dispatch_prompt` — the single source both rails share; do NOT hand-interpolate `TRACK_DIR`/`TRACK_ID`/`PHASE_INDEX`).
 
 **Step 2 — Parse the result blocks.** From `ac-tracer`'s `---AC TRACE RESULT---`: `VERDICT` (passed/warn/skipped/FAILED/ERROR), `GATE` (when FAILED), `N_UNGROUNDED` (when warn). From `test-runner`'s `---L1 VERIFY RESULT---`: `STATUS` (passed/failed/error), `COMMAND`.
 
@@ -119,15 +119,7 @@ After return → **Section 3.6** (Phase Boundary).
 track-state dispatch-prepare "<track_dir>"   # makes the "Start task" commit internally (skipped on resume)
 ```
 
-Dispatch `conductor:explorer`, prompt:
-
-```
-TRACK_DIR={td}
-PHASE={p}
-TASK={t}
-SUBTASK={s}
-NAME={name}
-```
+Dispatch `conductor:explorer`, pasting the envelope's **pre-assembled `prompt` field verbatim** (built by `build_dispatch_prompt` — the single source both rails share; do NOT hand-interpolate the `KEY=value` lines). The `agent` field tells you which agent (`explorer` for explore-classified tasks).
 
 After return → `track-state dispatch-finalize "<track_dir>"` → **Section 3.7**. The explorer records findings via `track-state append-handoff` and writes gitignored `.conductor/result.json` — both conductor-managed, so `dispatch-finalize`'s internal commit stages them. **No separate `docs(explore)` commit, no `git add -A` sweep, no `--override commit_sha`** — ship `commit_sha: ""`.
 
@@ -137,17 +129,7 @@ After return → `track-state dispatch-finalize "<track_dir>"` → **Section 3.7
 track-state dispatch-prepare "<track_dir>"   # makes the "Start task" commit internally (skipped on resume)
 ```
 
-Dispatch `conductor:task-executor` (canonical dispatch — §2.2 / §3.6 retry re-dispatches reuse this with incremented `ATTEMPT`; retry status self-detected from the handoff, not a flag):
-
-```
-TRACK_DIR={td}
-PHASE={p}
-TASK={t}
-SUBTASK={s}
-NAME={name}
-ATTEMPT={n}
-MAX_RETRIES={m}
-```
+Dispatch `conductor:task-executor` (canonical dispatch — §2.2 / §3.6 retry re-dispatches reuse this with incremented `ATTEMPT`; retry status self-detected from the handoff, not a flag), pasting the envelope's **pre-assembled `prompt` field verbatim** (built by `build_dispatch_prompt` — the single source both rails share; `ATTEMPT`/`MAX_RETRIES` are already resolved from the task's real retry_count, do NOT hand-interpolate the `KEY=value` lines). The `agent` field tells you which agent.
 
 After return → **Section 3.6**.
 

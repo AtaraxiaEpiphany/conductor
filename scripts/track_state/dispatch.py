@@ -65,6 +65,25 @@ def _active_wave(track_dir):
     return ledger if _is_active(ledger) else None
 
 
+def _task_dict(state, pi, ti, si=None):
+    """Tolerant accessor for a task (or subtask) dict by 1-indexed coords.
+
+    Returns ``None`` on any out-of-range/missing path so callers can ``.get()``
+    without guarding — mirrors the inline ``state["phases"][pi-1]["tasks"][ti-1]``
+    pattern repeated throughout this module, now centralized.
+    """
+    try:
+        task = state["phases"][pi - 1]["tasks"][ti - 1]
+    except (IndexError, KeyError, TypeError):
+        return None
+    if si is None:
+        return task
+    try:
+        return task["subtasks"][si - 1]
+    except (IndexError, KeyError, TypeError):
+        return None
+
+
 def _find_next_task(state):
     """Find the next task to execute. Returns result dict or None."""
     result = None
@@ -175,8 +194,28 @@ def cmd_dispatch_next(track_dir, compact=True):
         # Check if any phase needs a checkpoint before doing anything else
         cp = _any_phase_needs_checkpoint(track_dir, state)
         if cp is not None:
+            # Rail A/B unification: attach the SAME pre-assembled verifier
+            # fan-out the `step` spine emits (dispatch_batch), so
+            # skills/implement/SKILL.md §3.2 Step 1 pastes the member `prompt`
+            # fields verbatim instead of hand-interpolating TRACK_DIR/TRACK_ID/
+            # PHASE_INDEX. One source (build_dispatch_prompt) feeds both rails.
+            # The synth (phase-checker) prompt stays §3.2 Step 3 prose because it
+            # consumes the just-collected verifier verdicts from ephemeral
+            # context (not yet on disk) — `_build_phase_checker` rebuilds that
+            # exact field set; the `step` spine pre-assembles the synth too.
+            wave = [
+                {"agent": "ac-tracer", "name": "ac-tracer",
+                 "prompt": build_dispatch_prompt("dispatch_batch", track_dir,
+                                                state=state, phase=cp,
+                                                agent="ac-tracer")[1]},
+                {"agent": "test-runner", "name": "test-runner",
+                 "prompt": build_dispatch_prompt("dispatch_batch", track_dir,
+                                                state=state, phase=cp,
+                                                agent="test-runner")[1]},
+            ]
             emit(dict(action="dispatch_phase_checker", phase=cp,
-                      execution_mode=execution_mode), "dispatch-next", compact)
+                      execution_mode=execution_mode, wave=wave),
+                 "dispatch-next", compact)
             return
 
         # Find next task
@@ -257,6 +296,28 @@ def cmd_dispatch_next(track_dir, compact=True):
 
         result["action"] = action
         result["execution_mode"] = execution_mode
+        # Rail A/B unification: attach the SAME pre-assembled (agent, prompt)
+        # envelope the `step` spine builds, so skills/implement/SKILL.md §3.3/§3.4
+        # paste `prompt` verbatim instead of re-deriving the KEY=value lines in
+        # prose. One source (build_dispatch_prompt) feeds both rails. Only the
+        # executor/explorer dispatch branches carry a prompt — the others (manual,
+        # defer) are decided in-spine and need no subagent dispatch. The attempt
+        # is resolved from the task's real retry_count (1 for a fresh dispatch,
+        # retry_count+1 on a resume), making the prompt authoritative instead of
+        # leaving ATTEMPT for the orchestrator to hand-interpolate.
+        if action in ("dispatch_explorer", "dispatch_executor"):
+            tgt = _task_dict(state, result["phase"], result["task"], result.get("subtask"))
+            retry_count = tgt.get("retry_count", 0) if tgt else 0
+            attempt = retry_count + 1
+            pre = dict(phase=result["phase"], task=result["task"],
+                       subtask=result.get("subtask"), name=result.get("name", "?"),
+                       tags=result.get("tags", []))
+            agent, prompt = build_dispatch_prompt(
+                "dispatch_executor", track_dir, pre=pre, attempt=attempt)
+            result["agent"] = agent
+            result["prompt"] = prompt
+            result["attempt"] = attempt
+            result["max_retries"] = task_max_retries(tgt) if tgt else MAX_RETRIES
         emit(result, "dispatch-next", compact)
         return
 
@@ -1171,13 +1232,31 @@ def cmd_dispatch_finalize(track_dir, compact=True):
 # ---------------------------------------------------------------------------
 
 
-def _step_assemble_prompt(track_dir, pre, attempt):
-    """Build the ready-to-paste subagent prompt for explorer/task-executor.
+# --------------------------------------------------------------------------- #
+# Single source for subagent dispatch prompts (Rail A/B unification).
+#
+# ``build_dispatch_prompt`` is the ONE pure function that turns a dispatch action
+# + shared state into the ``(agent, prompt)`` envelope every subagent receives.
+# Both rails resolve to it: Rail B (``step``/``wave`` JSON's pre-assembled
+# ``prompt`` field) calls it directly; Rail A (``skills/implement/SKILL.md``
+# §3.2/§3.3/§3.4) fetches the same envelope by reading that JSON ``prompt``
+# field rather than re-deriving the ``KEY=value`` lines in prose. Keeping it a
+# deterministic pure function of (action, state) is what makes a locked step
+# replay/resume byte-identical — the dynamic-workflow requirement that breaks
+# the moment prompt-building is split across two mechanisms.
+#
+# The per-action builders below (``_build_executor``, ``_build_verifier``,
+# ``_build_phase_checker``) are the bodies the legacy ``_step_assemble_*``
+# wrappers delegate to. Adding a dispatch action = one ``elif`` arm + one
+# ``_build_*`` body here; both rails pick it up.
+# --------------------------------------------------------------------------- #
 
-    Pre-assembled in code (not by the model) so a weak orchestrator can't
-    fumble field interpolation — the step envelope's ``prompt`` is pasted
-    verbatim into the Agent dispatch. Mirrors skills/implement/SKILL.md §3.3/§3.4.
-    ``SUBTASK`` is emitted only when present (flat tasks omit the line).
+
+def _build_executor(track_dir, pre, attempt):
+    """``dispatch_executor`` / ``dispatch_explorer`` envelope body.
+
+    ``SUBTASK`` is emitted only when present (flat tasks omit the line); the
+    agent is ``explorer`` for an explore-classified task, else ``task-executor``.
     """
     td = str(track_dir)
     lines = [f"TRACK_DIR={td}", f"PHASE={pre['phase']}", f"TASK={pre['task']}"]
@@ -1192,25 +1271,109 @@ def _step_assemble_prompt(track_dir, pre, attempt):
     return "task-executor", "\n".join(lines)
 
 
-def _step_assemble_verifier_prompt(track_dir, state, phase, agent):
-    """Build the ready-to-paste prompt for a read-only phase verifier
+def _build_verifier(track_dir, state, phase, agent):
+    """``dispatch_batch`` member envelope body for a read-only phase verifier
     (``ac-tracer`` / ``test-runner``).
 
-    Pre-assembled in code so a weak orchestrator can't fumble the §3.2 fan-out
-    field interpolation — the verifier prompts are pasted verbatim into the
-    parallel Agent dispatches. Mirrors ``_step_assemble_prompt`` (serial
-    dispatch) and ``_wave_assemble_member_prompt`` (wave spine). Read-only
-    verifiers run on the main checkout (no worktree pinning, unlike wave
-    members). Field set is each agent's own §2.0 ASSIGNMENT: ac-tracer takes
+    Read-only verifiers run on the main checkout (no worktree pinning, unlike
+    wave members). Field set is each agent's own §2.0 ASSIGNMENT: ac-tracer takes
     TRACK_DIR/TRACK_ID; test-runner adds PHASE_INDEX, dropped straight from
     ``phase`` (reporting-only — never a state index — per agents/test-runner.md
-    §2.0, so this mirrors skills/implement/SKILL.md §3.2 byte-for-byte).
+    §2.0).
     """
     td = str(track_dir)
     lines = [f"TRACK_DIR={td}", f"TRACK_ID={state.get('track_id', '')}"]
     if agent == "test-runner":
         lines.append(f"PHASE_INDEX={phase}")
     return "\n".join(lines)
+
+
+def _build_phase_checker(track_dir, state, phase, marker):
+    """``dispatch_phase_checker`` envelope body (the synthesizer) from the fanned
+    verifier verdicts stored in the marker.
+
+    Emits ``AC_TRACE_GATE`` only when the ac-tracer FAILED, and
+    ``AC_TRACE_N_UNGROUNDED`` only on warn (byte-for-byte the prose §3.2 Step-3
+    it retires). Verdicts come from the marker (transcribed by the teleoperator
+    from the two RESULT blocks), not re-derived — the read-only verifiers
+    already ran.
+    """
+    td = str(track_dir)
+    ac = marker.get("ac_verdict", "")
+    lines = [
+        f"TRACK_DIR={td}",
+        f"TRACK_ID={state.get('track_id', '')}",
+        f"PHASE_INDEX={phase}",
+        f"EXECUTION_MODE={state.get('execution_mode', 'interactive')}",
+        f"AC_TRACE_VERDICT={ac}",
+    ]
+    if ac == "FAILED" and marker.get("ac_gate"):
+        lines.append(f"AC_TRACE_GATE={marker['ac_gate']}")
+    if ac == "warn" and marker.get("ac_n_ungrounded") is not None:
+        lines.append(f"AC_TRACE_N_UNGROUNDED={marker['ac_n_ungrounded']}")
+    lines.append(f"L1_VERIFY_STATUS={marker.get('l1_status', '')}")
+    if marker.get("l1_command"):
+        lines.append(f"L1_VERIFY_COMMAND={marker['l1_command']}")
+    return "\n".join(lines)
+
+
+def build_dispatch_prompt(action, track_dir, *, pre=None, state=None, phase=None,
+                          agent=None, attempt=0, marker=None):
+    """The single pure entrypoint: ``(action, shared state) -> (agent, prompt)``.
+
+    Resolves a dispatch action token to its pre-assembled ``(agent, prompt)``
+    envelope. Every subagent prompt — explorer/task-executor serial dispatch,
+    the ac-tracer/test-runner verifier fan-out, and the phase-checker synth —
+    is built here, so both Rail A (prose) and Rail B (``step``/``wave`` JSON)
+    resolve to one source. Keyword-only state args keep each action's required
+    inputs explicit at the call site (``dispatch_executor`` needs ``pre``;
+    ``dispatch_phase_checker`` needs ``marker``); missing inputs raise below.
+
+    Returns ``(agent, prompt)`` for executor actions (the agent varies between
+    explorer/task-executor) and ``(agent, prompt)`` for the rest where the agent
+    is fixed by the action. Wrapping every return as a pair means the caller
+    never has to special-case which actions know their agent up front.
+    """
+    if action in ("dispatch_executor", "dispatch_explorer"):
+        if pre is None:
+            raise ValueError("build_dispatch_prompt: 'pre' is required for "
+                             f"action {action!r}")
+        return _build_executor(track_dir, pre, attempt)
+    if action == "dispatch_batch":
+        if agent not in ("ac-tracer", "test-runner"):
+            raise ValueError("build_dispatch_prompt: 'agent' must be "
+                             "'ac-tracer' or 'test-runner' for dispatch_batch")
+        return agent, _build_verifier(track_dir, state, phase, agent)
+    if action == "dispatch_phase_checker":
+        if marker is None:
+            raise ValueError("build_dispatch_prompt: 'marker' is required for "
+                             "dispatch_phase_checker")
+        return "phase-checker", _build_phase_checker(track_dir, state, phase, marker)
+    raise ValueError(f"build_dispatch_prompt: unknown dispatch action {action!r}")
+
+
+def _step_assemble_prompt(track_dir, pre, attempt):
+    """Build the ready-to-paste subagent prompt for explorer/task-executor.
+
+    Thin wrapper over :func:`build_dispatch_prompt` — kept so the serial-spine
+    call sites and their tests stay byte-for-byte. Pre-assembled in code (not by
+    the model) so a weak orchestrator can't fumble field interpolation — the
+    step envelope's ``prompt`` is pasted verbatim into the Agent dispatch.
+    """
+    return build_dispatch_prompt("dispatch_executor", track_dir, pre=pre, attempt=attempt)
+
+
+def _step_assemble_verifier_prompt(track_dir, state, phase, agent):
+    """Build the ready-to-paste prompt for a read-only phase verifier
+    (``ac-tracer`` / ``test-runner``).
+
+    Thin wrapper over :func:`build_dispatch_prompt` (``dispatch_batch`` member).
+    Read-only verifiers run on the main checkout (no worktree pinning, unlike
+    wave members). Mirrors ``_wave_assemble_member_prompt`` (wave spine).
+    """
+    _, prompt = build_dispatch_prompt("dispatch_batch", track_dir, state=state,
+                                     phase=phase, agent=agent)
+    return prompt
 
 
 # --------------------------------------------------------------------------- #
@@ -1292,31 +1455,35 @@ def _step_assemble_phase_checker_prompt(track_dir, state, phase, marker):
     """Build the ready-to-paste prompt for ``conductor:phase-checker`` (the
     synthesizer) from the fanned verifier verdicts stored in the marker.
 
-    Pre-assembled in code so a weak orchestrator can't fumble the §3.2 Step-3
-    field interpolation — the prompt is pasted verbatim into the Agent dispatch.
-    Adjacent to ``_step_assemble_verifier_prompt`` (the fan-out prompts). Emits
-    the exact §3.2 Step-3 field set: ``AC_TRACE_GATE`` only when the ac-tracer
-    FAILED, ``AC_TRACE_N_UNGROUNDED`` only on warn (byte-for-byte the prose it
-    retires). Verdicts come from the marker (transcribed by the teleoperator from
-    the two RESULT blocks), not re-derived — the read-only verifiers already ran.
+    Thin wrapper over :func:`build_dispatch_prompt` (``dispatch_phase_checker``).
+    Adjacent to ``_step_assemble_verifier_prompt`` (the fan-out prompts). Verdicts
+    come from the marker (transcribed by the teleoperator from the two RESULT
+    blocks), not re-derived — the read-only verifiers already ran.
     """
-    td = str(track_dir)
-    ac = marker.get("ac_verdict", "")
-    lines = [
-        f"TRACK_DIR={td}",
-        f"TRACK_ID={state.get('track_id', '')}",
-        f"PHASE_INDEX={phase}",
-        f"EXECUTION_MODE={state.get('execution_mode', 'interactive')}",
-        f"AC_TRACE_VERDICT={ac}",
-    ]
-    if ac == "FAILED" and marker.get("ac_gate"):
-        lines.append(f"AC_TRACE_GATE={marker['ac_gate']}")
-    if ac == "warn" and marker.get("ac_n_ungrounded") is not None:
-        lines.append(f"AC_TRACE_N_UNGROUNDED={marker['ac_n_ungrounded']}")
-    lines.append(f"L1_VERIFY_STATUS={marker.get('l1_status', '')}")
-    if marker.get("l1_command"):
-        lines.append(f"L1_VERIFY_COMMAND={marker['l1_command']}")
-    return "\n".join(lines)
+    _, prompt = build_dispatch_prompt("dispatch_phase_checker", track_dir,
+                                     state=state, phase=phase, marker=marker)
+    return prompt
+
+
+def shape_allows(track_dir, agent, state=None):
+    """Resolve the active workflow-shape and decide if ``agent`` is in its nodes.
+
+    The third axis made load-bearing: a track's ``workflow_shape`` (from
+    ``track-state.json``, default ``"default"``) declares which dispatch agents
+    its topology runs. This returns ``(allowed, shape_name)`` so the caller can
+    emit a ``shape_violation`` disclosure when an agent is outside the shape —
+    load-bearing AND visible without hard-blocking the existing rich flow
+    (failure-analyst / refuter / skip-analyst are recovery leaves, not shape
+    nodes, so callers gate the constraint on the core dispatch actions only).
+
+    ``state`` is passed through (avoiding a re-load when the caller already has
+    it); when ``None`` the track-state is loaded here.
+    """
+    from .workflow_shapes import resolve_shape, nodes_for
+    if state is None:
+        state = load(track_dir)
+    shape = resolve_shape(state.get("workflow_shape"))
+    return agent in nodes_for(shape), shape
 
 
 # --------------------------------------------------------------------------- #
@@ -1560,13 +1727,25 @@ def _step_emit_dispatch(track_dir, compact):
         return _step_emit_next_leaf(track_dir, load(track_dir), compact)
     attempt = pre.get("retry_count", 0) + 1
     agent, prompt = _step_assemble_prompt(track_dir, pre, attempt)
-    emit(dict(action="dispatch", agent=agent, prompt=prompt,
+    envelope = dict(action="dispatch", agent=agent, prompt=prompt,
               phase=pre["phase"], task=pre["task"], subtask=pre.get("subtask"),
               name=pre.get("name", "?"), attempt=attempt,
               max_retries=pre.get("max_retries", MAX_RETRIES),
               is_resume=pre.get("is_resume", False),
-              execution_mode=pre.get("execution_mode", "interactive")),
-         "step", compact)
+              execution_mode=pre.get("execution_mode", "interactive"))
+    # Third-axis constraint (workflow-shapes): if the resolved shape's topology
+    # does not include this dispatch agent, surface a shape_violation disclosure
+    # (no-silent-caps) rather than silently dispatching off-topology. Advisory
+    # today — the dispatch still proceeds so a shape misconfiguration never
+    # deadlocks a track — but the violation is visible for the operator to act on.
+    allowed, shape = shape_allows(track_dir, agent)
+    if not allowed:
+        envelope["shape_violation"] = (
+            f"agent '{agent}' is not in workflow_shape '{shape}' nodes; "
+            f"dispatching anyway (advisory) — fix track-state workflow_shape "
+            f"or the shape's nodes if this is wrong")
+        envelope["workflow_shape"] = shape
+    emit(envelope, "step", compact)
 
 
 def _step_route_skip_analysis(track_dir, marker, compact):

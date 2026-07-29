@@ -122,7 +122,15 @@ COMPACT_FIELDS = {
                 "retry_count", "max_retries", "phase_checkpoint_pending",
                 "execution_mode", "fixes_applied", "decision"),
     "dispatch-next": ("action", "phase", "task", "subtask", "name",
-                      "execution_mode"),
+                      "execution_mode",
+                      # Rail A/B unification: the pre-assembled dispatch envelope
+                      # (agent + prompt + attempt/max_retries for executor/explorer
+                      # dispatch; wave for the phase-checker verifier fan-out) so
+                      # skills/implement/SKILL.md §3.2/§3.3/§3.4 paste `prompt`
+                      # verbatim instead of re-deriving KEY=value lines. Mirrors
+                      # the `step` allowlist (Rail B), one source for both rails.
+                      "agent", "prompt", "attempt", "max_retries",
+                      "wave", "retry_count"),
     "dispatch-prepare": ("action", "phase", "task", "subtask", "name",
                          "sha", "is_resume", "retry_count",
                          "max_retries", "execution_mode"),
@@ -140,6 +148,9 @@ COMPACT_FIELDS = {
     "step": ("action", "phase", "task", "subtask", "name", "execution_mode",
              "agent", "prompt", "attempt", "max_retries", "is_resume",
              "decision", "sha", "wave",
+             # Third-axis (workflow-shapes) disclosure: surfaced when a dispatch
+             # agent is outside the resolved shape's topology (no-silent-caps).
+             "shape_violation", "workflow_shape",
              "reason", "recommendation", "reasoning", "impact", "evidence",
              # failure-analyst halt (B): surfaces category + modification (the
              # proposed AC correction / task split / different approach) + what
