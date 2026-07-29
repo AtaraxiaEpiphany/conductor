@@ -62,6 +62,9 @@ COMMAND: <the test command you ran>
 EXIT_CODE: <exit code, or N/A on error>
 OUTPUT_TAIL: <final ~15 lines or the test runner's summary line — verbatim, not paraphrased>
 SUMMARY: <one line, including the resolved command>
+```json
+{"status": "passed|failed|error", "report_field": "L1_VERIFY", "command": "<the test command you ran>"}
+```
 ---END RESULT---
 ```
 
@@ -75,6 +78,9 @@ SUMMARY: <one line, including the resolved command>
 ---L1 VERIFY RESULT---
 STATUS: error
 REASON: <one-line description of what failed (e.g. command not resolvable, Bash error)>
+```json
+{"status": "error", "report_field": "L1_VERIFY", "failure_reason": "<one-line>"}
+```
 ---END RESULT---
 ```
 

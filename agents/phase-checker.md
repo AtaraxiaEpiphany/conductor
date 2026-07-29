@@ -185,6 +185,9 @@ ANCHOR: <passed (N/N frozen tests)|skipped (no frozen anchor for this track)|ski
 TESTS_PASSED: true
 USER_CONFIRMED: <true|skipped_continuous>
 AC_TRACE: <passed|warn (N ungrounded)|skipped (reason)>
+```json
+{"status": "PASSED", "checkpoint_sha": "<7-char-short-hash>", "report": {"L1_VERIFY": "<value>", "BUILD": "<value>", "START": "<value>", "ANCHOR": "<value>"}}
+```
 ---END RESULT---
 ```
 
@@ -203,6 +206,9 @@ CHECKPOINT_SHA: N/A
 MISSING_TESTS_CREATED: <count or 0>
 TESTS_PASSED: <true|false>
 FAILURE_REASON: <one-line description of what failed>
+```json
+{"status": "FAILED", "failure_reason": "<one-line description of what failed>"}
+```
 ---END RESULT---
 ```
 

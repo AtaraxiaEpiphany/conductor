@@ -77,6 +77,9 @@ N_ACS: <total AC count, or 0 if skipped>
 N_UNGROUNDED: <count of claimed/missing TCs, or 0>
 REASON: <only when skipped: no spec/ACs>
 SUMMARY: <one line>
+```json
+{"status": "passed|warn|skipped", "report_field": "AC_TRACE", "n_ungrounded": <count>}
+```
 ---END RESULT---
 ```
 
@@ -88,6 +91,9 @@ VERDICT: FAILED
 GATE: <ac_integrity_gate string, VERBATIM — phase-checker pastes this as FAILURE_REASON>
 N_ACS: <total AC count>
 SUMMARY: AC authoring defect — fix spec.md/plan.md, then re-run the phase
+```json
+{"status": "FAILED", "report_field": "AC_TRACE", "failure_reason": "<ac_integrity_gate string, verbatim>"}
+```
 ---END RESULT---
 ```
 
@@ -97,6 +103,9 @@ SUMMARY: AC authoring defect — fix spec.md/plan.md, then re-run the phase
 ---AC TRACE RESULT---
 VERDICT: ERROR
 REASON: <one-line description of what failed>
+```json
+{"status": "ERROR", "report_field": "AC_TRACE", "failure_reason": "<one-line>"}
+```
 ---END RESULT---
 ```
 

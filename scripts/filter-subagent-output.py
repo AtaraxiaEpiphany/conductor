@@ -22,6 +22,7 @@ from lib.constants import RECOVERY_SUCCESS_PATTERNS
 from lib.result_probe import fresh_result_exists
 from lib.recovery import (
     RECOVERY_MARKER, RESULT_FILE_AGENT_TYPES, RESULT_BLOCK_PATTERN,
+    parse_result_block,
 )
 
 # The result-block grammar (open + close) and the result-file agent set are
@@ -184,6 +185,23 @@ def main():
     # failure status already travels deterministically via the result block above
     # and result.json. Mining agent prose for "failure"/"error" is unreliable.
     extra_context = detect_recovery_context(response)
+
+    # Structured verdict (Phase 2 control-flow backbone): when the result block
+    # carries a fenced ```json verdict object, surface its status deterministically
+    # so the orchestrator's loop-back edge branches on ``status`` instead of
+    # regex-mining ``STATUS:`` prose. Only emitted on a non-passing status — a
+    # passing verdict needs no routing nudge. Additive: absent/missing JSON falls
+    # through to the existing result-file / recovery advisories below (no cliff).
+    verdict = parse_result_block(response)
+    if verdict:
+        status = str(verdict.get("status", "")).upper()
+        if status and status not in ("PASSED", "PASSED.", "OK", "SUCCESS", "DONE"):
+            reason = verdict.get("failure_reason") or verdict.get("reason") or ""
+            extra_context = (
+                f"[Conductor] Structured verdict: status={status}"
+                + (f" — {reason}" if reason else "")
+                + ". Branch on this status for routing (re-dispatch / halt / advance)."
+            )
 
     # If no structured result block AND no recovery advisory, check for result file.
     # The result.json freshness probe only applies to dispatch-finalize agents

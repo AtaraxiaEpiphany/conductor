@@ -300,6 +300,9 @@ FILES_CHANGED: <list>
 SUMMARY: <one-line>
 TC_COVERAGE: <IDs>
 SPEC_DEVIATION: NONE
+```json
+{"status": "SUCCESS", "commit_sha": "<hash>", "summary": "<one-line>"}
+```
 ---END RESULT---
 ```
 
@@ -309,6 +312,9 @@ SPEC_DEVIATION: NONE
 STATUS: FAILURE
 SUMMARY: <one-line>
 SUGGESTED_NEXT: <recommendation>
+```json
+{"status": "FAILED", "failure_reason": "<one-line>", "fix_directives": "<SUGGESTED_NEXT recommendation>"}
+```
 ---END RESULT---
 ```
 

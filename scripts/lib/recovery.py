@@ -51,6 +51,56 @@ RESULT_FILE_AGENT_TYPES = frozenset({"task-executor", "explorer"})
 RESULT_END_TAG = r"---END\s+[A-Z0-9 ][A-Z0-9 ]*---"
 RESULT_BLOCK_PATTERN = rf"---\s*[A-Z][A-Z0-9 ]*---.*?{RESULT_END_TAG}"
 
+# Structured verdict: agents may emit a fenced ```json block INSIDE their
+# ---RESULT--- block carrying a machine-branchable verdict object
+# (``{"status": "FAILED", "failure_reason": "..."}``). This is the control-flow
+# backbone upgrade — routing (the loop-back edge, the recovery branch) branches
+# on ``verdict["status"]`` instead of regex-mining ``STATUS:`` prose. The fenced
+# fence is tolerant of ``json``/``JSON`` and surrounding whitespace. ``.*?`` +
+# non-greedy + DOTALL grabs the smallest fenced object after a result open tag.
+_JSON_FENCE_PATTERN = re.compile(
+    r"```(?:json|JSON)?\s*(\{.*?\})\s*```", re.DOTALL)
+
+
+def parse_result_block(text):
+    """Extract a structured verdict object from a result block, if present.
+
+    Looks for a fenced ```` ```json ```` object emitted INSIDE a
+    ``---...RESULT---`` block and returns it as a dict; returns ``None`` when
+    there is no JSON object (the caller falls back to the existing regex-mined
+    prose extraction). Additive and fail-open: a malformed/missing object never
+    breaks extraction — the regex ``RESULT_BLOCK_PATTERN`` path still works, so
+    this lands with no migration cliff (agents emit JSON when they can; prose
+    when they can't; both parse).
+
+    The contract on the returned dict is intentionally loose — only ``status``
+    is assumed by routing (``passed``/``FAILED``/``error``/``warn``/…). Every
+    other field (``failure_reason``, ``fix_directives``, the verify-mode
+    ``report_field`` values ``BUILD``/``L1_VERIFY``/``START``/``ANCHOR``) is
+    pass-through and read defensively with ``.get()``. An object missing
+    ``status`` is treated as "no structured verdict" → ``None`` so a malformed
+    block falls back to prose rather than routing on a missing key.
+    """
+    if not text:
+        return None
+    # Restrict the fence search to text inside a result block so a stray JSON
+    # fence elsewhere in the agent's output can't be mistaken for a verdict.
+    blocks = re.findall(RESULT_BLOCK_PATTERN, text, re.DOTALL)
+    if not blocks:
+        return None
+    import json
+    for block in blocks:
+        m = _JSON_FENCE_PATTERN.search(block)
+        if not m:
+            continue
+        try:
+            obj = json.loads(m.group(1))
+        except ValueError:
+            continue
+        if isinstance(obj, dict) and "status" in obj:
+            return obj
+    return None
+
 # Bounded recovery: how many SubagentStop recovery turns a result-file agent
 # gets before the hook stops forcing them and lets dispatch-finalize synthesize
 # a result (→ ``_do_fail`` retry queue). Caps a crash-looping agent at this many
