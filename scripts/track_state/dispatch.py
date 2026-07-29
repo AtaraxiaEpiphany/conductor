@@ -39,15 +39,13 @@ def _classify_task(tags):
     Single source of truth for the Manual/Explore/default routing decision
     shared by ``cmd_dispatch_next`` and ``cmd_dispatch_prepare`` — which had
     near-identical tag-routing with two different action vocabularies. Add a
-    new routed tag type here once; each caller maps the category to its own
-    action enum. Returns ``"executor"`` (the default task-executor path) when
-    no routing tag is present.
+    new routed tag type by adding a row to the registry
+    (templates/workflow/task-type-profiles.json) once; each caller maps the
+    category to its own action enum. Returns ``"executor"`` (the default
+    task-executor path) when no routing tag is present.
     """
-    if "Manual" in tags:
-        return "manual"
-    if "Explore" in tags:
-        return "explore"
-    return "executor"
+    from .task_profiles import route_for
+    return route_for(tags)
 
 
 def _active_wave(track_dir):

@@ -38,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).parent / "lib"))
 
 from lib.hook_io import read_hook_input, write_hook_output
 from track_state.plan_parse import _extract_refs
+from track_state.task_profiles import TAG_VOCAB
 
 # Valid plan.md checkbox marker chars (constants.MARKER_MAP values), copied from
 # check-plan-checkboxes.py.
@@ -50,8 +51,12 @@ _TOP_TASK = re.compile(rf"^-\s+\[{_VALID_MARKER_CLASS}\]")
 
 # Dispatch tag that exempts a task from the annotation requirement (non-
 # implementation work). Boundary-anchored like helpers.extract_tags, so the
-# orchestrator's tag-based TDD gating and this hook agree on what's exempt.
-_EXEMPT_TAG = re.compile(r"(?<!\S)\[(?:Explore|Docs|Config|Chore|Manual|Migrate)\](?!\S)")
+# orchestrator's tag-based TDD gating and this hook agree on what's exempt. The
+# tag alternation is derived from the registry (task_profiles.TAG_VOCAB) so
+# adding a tag doesn't require editing this regex too.
+_EXEMPT_TAG = re.compile(
+    r"(?<!\S)\[(?:" + "|".join(TAG_VOCAB()) + r")\](?!\S)"
+)
 
 
 def _comment_refs(line: str):

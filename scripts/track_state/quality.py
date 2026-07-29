@@ -14,6 +14,7 @@ from .constants import EXECUTION_MODES
 from .handoff import _ensure_handoff_index
 from .validate import _parse_plan_structure
 from .plan_parse import parse_plan, to_plan_structure
+from .task_profiles import derive_task_type
 
 
 def _checklist_status(track_dir):
@@ -195,10 +196,25 @@ def _init_core(track_dir, plan, track_id, track_type, description, execution_mod
     for phase in plan.get("phases", []):
         tasks = []
         for task in phase.get("tasks", []):
-            entry = {"name": task["name"], "status": "pending"}
+            entry = {
+                "name": task["name"],
+                "status": "pending",
+                # task_type is a typed mirror of the name's tag, derived once at
+                # construction. The name stays authoritative (reconcile/sync key
+                # on it); this field is a cache the spine reads instead of
+                # re-parsing extract_tags at every dispatch.
+                "task_type": derive_task_type(task["name"]),
+            }
             if "subtasks" in task:
                 entry["subtasks"] = [
-                    {"name": st["name"] if isinstance(st, dict) else st, "status": "pending"}
+                    {
+                        "name": st["name"] if isinstance(st, dict) else st,
+                        "status": "pending",
+                        # Subtasks inherit the parent's tag (contract rule:
+                        # never tag subtasks individually), so derive from the
+                        # parent name — a subtask name carries no tag of its own.
+                        "task_type": derive_task_type(task["name"]),
+                    }
                     for st in task["subtasks"]
                 ]
             tasks.append(entry)

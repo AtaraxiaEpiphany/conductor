@@ -24,6 +24,7 @@ from scripts.track_state.helpers import (
     _tag_exempt_from_tdd,
 )
 from scripts.track_state.dispatch import _classify_task
+from scripts.track_state import task_profiles
 
 ROOT = Path(__file__).resolve().parent.parent
 CONTRACT = ROOT / "runtime" / "contracts" / "plan-format-contract.md"
@@ -120,6 +121,37 @@ class AgentDocTests(TestCase):
             TASK_EXECUTOR,
             r"Exempted:.*\[Docs\].*\[Config\].*\[Chore\].*\[Migrate\]",
         )
+
+
+class RegistryParityTests(TestCase):
+    """The registry (task-type-profiles.json) is now the source of truth for
+    exemption + routing. These pin that the registry-driven lookups reproduce
+    the pre-registry hardcoded behavior exactly — the refactor must be
+    behavior-preserving, and these guard against a future registry edit silently
+    changing [Migrate]'s semantics."""
+
+    def test_registry_reproduces_exemption_sets(self):
+        # Pre-registry: coverage-exempt = {Docs,Config,Chore,Manual,Migrate};
+        # tdd-exempt = {Explore,Docs,Config,Chore,Manual,Migrate}. Explore is
+        # tdd-exempt but NOT coverage-exempt — the one asymmetry that must hold.
+        for cov_exempt in ("Docs", "Config", "Chore", "Manual", "Migrate"):
+            self.assertTrue(task_profiles.is_coverage_exempt([cov_exempt]),
+                            f"[{cov_exempt}] should be coverage-exempt")
+        self.assertFalse(task_profiles.is_coverage_exempt(["Explore"]),
+                         "[Explore] must NOT be coverage-exempt")
+        for tdd_exempt in ("Explore", "Docs", "Config", "Chore", "Manual", "Migrate"):
+            self.assertTrue(task_profiles.is_tdd_exempt([tdd_exempt]),
+                            f"[{tdd_exempt}] should be tdd-exempt")
+
+    def test_registry_reproduces_routing(self):
+        self.assertEqual(task_profiles.route_for(["Manual"]), "manual")
+        self.assertEqual(task_profiles.route_for(["Explore"]), "explore")
+        self.assertEqual(task_profiles.route_for(["Migrate"]), "executor")
+        self.assertEqual(task_profiles.route_for([]), "executor")
+
+    def test_migrate_in_registry(self):
+        # [Migrate] is a registered tag (not silently dropped).
+        self.assertIn("Migrate", task_profiles.TAG_VOCAB())
 
 
 if __name__ == "__main__":

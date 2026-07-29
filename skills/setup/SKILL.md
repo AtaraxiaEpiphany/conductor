@@ -125,7 +125,7 @@ Copy the workflow templates into `conductor/workflow/` with Bash (`cp`/`sed`) ra
    ```
    The agent inspects the live project, asks the user questions interactively, writes `conductor/workflow/testing/strategy.md`, and self-verifies via `scripts/verify-strategy.py` (the deterministic invariant backstop for the generated doc). Parse the `---STRATEGY RESULT---` block; on `STATUS: FAILURE` → halt → announce.
 
-4. **Workflow index:** generate `conductor/workflow/index.md` listing the created files (per-project content — not a template copy).
+4. **Workflow index:** generate `conductor/workflow/index.md` listing the created files (per-project content — not a template copy). Include one line documenting the **task-type override hook**: a project MAY drop `conductor/workflow/task-type-profiles.json` here to add project-specific task-type tags or override a built-in tag's semantics — it merges over the plugin baseline (project wins conflicts; absent = plugin defaults). Do **not** auto-create the file — it is opt-in by presence; a project creates it only when it actually wants an override (auto-creating a full-baseline copy would shadow future plugin-shipped tags).
 
 5. **Verify** every referenced file exists before continuing.
 

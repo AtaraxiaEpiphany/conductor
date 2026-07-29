@@ -13,12 +13,14 @@ from .constants import (
     LOCKED_AT_FIELD,
 )
 
-# Closed vocabulary of dispatch tags (TDD/routing exemptions). Single source of
-# truth for the ``[Tag]`` brackets that may prefix/suffix a task name; both
-# ``extract_tags`` and ``strip_tags`` build their regexes from this so adding a
-# tag is a one-line change here, not a scattered grep-and-patch. Keep in sync
-# with the tag table in runtime/contracts/plan-format-contract.md.
-DISPATCH_TAGS = ("Explore", "Docs", "Config", "Chore", "Manual", "Migrate")
+# Closed vocabulary of dispatch tags (TDD/routing exemptions). This is now a
+# *mirror* of the registry at templates/workflow/task-type-profiles.json, loaded
+# via :mod:`track_state.task_profiles` — adding a tag is a registry row, not an
+# edit here. Both ``extract_tags`` and ``strip_tags`` build their regexes from
+# the live :func:`_tag_vocab` call so the registry IS the vocab — including any
+# project overlay. Keep the tag table in runtime/contracts/plan-format-contract.md
+# in sync (a wiring test guards drift).
+from .task_profiles import TAG_VOCAB as _tag_vocab
 
 
 def _resolve_conductor_root(track_dir):
@@ -282,8 +284,10 @@ def extract_tags(name):
     # whole — without it a newline inside the comment leaves tag-like text
     # (e.g. [Config]) sitting in the name to false-positive below.
     clean_name = re.sub(r'<!--.*?-->', '', name, flags=re.DOTALL)
-    # Use lookahead/lookbehind to avoid consuming whitespace between consecutive tags
-    pattern = r'(?<!\S)\[(' + '|'.join(DISPATCH_TAGS) + r')\](?!\S)'
+    # Use lookahead/lookbehind to avoid consuming whitespace between consecutive tags.
+    # Build the alternation from the LIVE registry vocab so a tag registered by a
+    # project overlay is recognized (DISPATCH_TAGS is a frozen import-time mirror).
+    pattern = r'(?<!\S)\[(' + '|'.join(_tag_vocab()) + r')\](?!\S)'
     matches = re.findall(pattern, clean_name)
     # Extract tag names and preserve order while removing duplicates
     seen = set()
@@ -299,12 +303,12 @@ def strip_tags(name):
     """Remove all dispatch tags ([Docs], [Config], …) from a name.
 
     The tag-stripping counterpart of ``extract_tags``, built from the same
-    ``DISPATCH_TAGS`` vocabulary so callers that need a tag-insensitive identity
+    live registry vocab so callers that need a tag-insensitive identity
     key (e.g. ``reconcile``) don't re-declare the regex.
     """
     if not name:
         return ""
-    pattern = r'(?<!\S)\[(?:' + '|'.join(DISPATCH_TAGS) + r')\](?!\S)'
+    pattern = r'(?<!\S)\[(?:' + '|'.join(_tag_vocab()) + r')\](?!\S)'
     return re.sub(pattern, '', re.sub(r'<!--.*?-->', '', name, flags=re.DOTALL)).strip()
 
 
@@ -403,13 +407,15 @@ def _extract_tags_for_task(state, phase_str, task_str):
 
 def _tag_exempt_from_coverage(tags):
     """Tags that don't require coverage gate enforcement."""
-    return bool(set(tags) & {"Docs", "Config", "Chore", "Manual", "Migrate"})
+    from .task_profiles import is_coverage_exempt
+    return is_coverage_exempt(tags)
 
 
 
 def _tag_exempt_from_tdd(tags):
     """Tags that don't require TDD gate enforcement."""
-    return bool(set(tags) & {"Explore", "Docs", "Config", "Chore", "Manual", "Migrate"})
+    from .task_profiles import is_tdd_exempt
+    return is_tdd_exempt(tags)
 
 
 

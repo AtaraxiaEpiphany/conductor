@@ -1,0 +1,21 @@
+{
+  "_comment": "Single source of truth for task-type SEMANTICS. The tag NAME still lives in plan.md task names ([Migrate] X); this file holds what the tag MEANS (routing + gate exemptions). Code reads this via track_state.task_profiles, not hardcoded Python sets. Adding a task type = one row here (plus, if it needs special executor behavior, an agent-prose branch — see runtime/contracts/plan-format-contract.md).",
+  "_fields": {
+    "route": "which dispatch category drives _classify_task: manual | explore | executor",
+    "tdd_exempt": "true => task is exempt from the TDD (red/green/refactor) gate",
+    "coverage_exempt": "true => task is exempt from the coverage (F2/F3) gate. Explore is tdd_exempt but NOT coverage_exempt: it produces no code, yet must not skip coverage accounting on adjacent changes."
+  },
+  "default": {
+    "route": "executor",
+    "tdd_exempt": false,
+    "coverage_exempt": false
+  },
+  "tags": {
+    "Explore": { "route": "explore", "tdd_exempt": true, "coverage_exempt": false },
+    "Docs":    { "route": "executor", "tdd_exempt": true, "coverage_exempt": true },
+    "Config":  { "route": "executor", "tdd_exempt": true, "coverage_exempt": true },
+    "Chore":   { "route": "executor", "tdd_exempt": true, "coverage_exempt": true },
+    "Manual":  { "route": "manual",   "tdd_exempt": true, "coverage_exempt": true },
+    "Migrate": { "route": "executor", "tdd_exempt": true, "coverage_exempt": true }
+  }
+}

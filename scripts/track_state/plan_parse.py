@@ -68,12 +68,27 @@ _BRACKET_TOKEN = re.compile(r"^(\s*)-\s+(\[[^\]]*\])")
 # dash-bullet: dispatch tags ([Manual], [Explore], ...) and the trailing status
 # markers ([N/A], [verified], [sha]). These route through _MISSING_CHECKBOX_LINE
 # (tag-but-no-checkbox) or are prose — they must NOT be flagged as malformed, so
-# the malformed guard below skips them. Dispatch tags mirror plan-format-
-# contract.md §"Task Type Tags"; trailing markers mirror _RE_TRAILING_MARKER.
+# the malformed guard below skips them. Dispatch tags mirror the registry at
+# templates/workflow/task-type-profiles.json (the single source of truth,
+# surfaced via task_profiles.TAG_VOCAB); trailing markers mirror
+# _RE_TRAILING_MARKER.
+from .task_profiles import TAG_VOCAB as _tag_vocab
 _KNOWN_BRACKET_TOKEN = re.compile(
-    r"^\[(?:Manual|Explore|Docs|Config|Chore|Migrate|N/A|verified|[0-9a-fA-F]{7,})\]$",
+    r"^\[(?:" + "|".join(_tag_vocab()) + r"|N/A|verified|[0-9a-fA-F]{7,})\]$",
     re.IGNORECASE,
 )
+
+# An unrecognized tag-shaped bracket token in a task NAME — e.g. ``[Migration]``
+# (typo for ``[Migrate]``), ``[Springboot3]`` (an unregistered tag), or
+# ``[K8sRollout]``. These are the silent-drift defect: ``extract_tags`` drops
+# them and the task silently falls back to default TDD, with wrong executor
+# behavior and no error. This matches any bracket whose content has ≥2 chars and
+# starts with a letter — so it catches alphanumeric invented tags too. Pure-hex
+# SHAs (``[abcdef1]``), ``[N/A]``, and ``[verified]`` are excluded in
+# :func:`_find_unknown_tags` (they are legitimate trailing markers, not tags —
+# and ``_clean_name`` has already stripped most of them anyway). Registered tags
+# are also excluded there by case-insensitive comparison against the vocab.
+_UNKNOWN_TAG = re.compile(r"\[([A-Za-z][^\[\]]{1,})\]")
 
 # Trailing checkpoint marker on a phase heading: [checkpoint:abcdef1]
 _CHECKPOINT = re.compile(r"\[checkpoint:\s*[0-9a-f]+\]", re.IGNORECASE)
@@ -128,6 +143,40 @@ def _clean_name(rest):
     rest = re.sub(r"<!--.*?-->", "", rest, flags=re.DOTALL).strip()
     rest = _clean_trailing_markers(rest)
     return rest.strip()
+
+
+def _find_unknown_tags(name):
+    """Return unknown tag-shaped tokens in a cleaned task name (de-duped, in order).
+
+    A token is "tag-shaped" if it is a bracket group of ≥2 letters, e.g.
+    ``[Migration]`` or ``[Springboot3]``'s alpha part. It is "unknown" if it is
+    not a registered dispatch tag (case-insensitive comparison against the
+    registry vocab). Trailing SHAs, ``[N/A]``, and ``[verified]`` are not
+    alphabetic-bracket tokens, so they never match. ``_clean_name`` has already
+    stripped HTML comments and trailing status markers, so any match here is
+    almost certainly an intended-but-unregistered tag — the silent-drift defect
+    this catches. Returns the raw bracket text (e.g. ``[Migration]``) so the
+    error message reads naturally.
+    """
+    known = {t.lower() for t in _tag_vocab()}
+    # Trailing status markers that are NOT tags: [N/A], [verified], and a bare
+    # hex SHA [0-9a-f]{7,}. (_clean_name strips most of these already, but a
+    # SHA-looking token could survive mid-name, so guard defensively.)
+    sha_re = re.compile(r"^[0-9a-fA-F]{7,}$")
+    status_words = {"n/a", "verified"}
+    seen, out = set(), []
+    for m in _UNKNOWN_TAG.finditer(name):
+        inner = m.group(1)
+        low = inner.lower()
+        if low in known or low in status_words:
+            continue
+        if sha_re.match(inner):
+            continue
+        token = m.group(0)
+        if token not in seen:
+            seen.add(token)
+            out.append(token)
+    return out
 
 
 def _extract_refs(rest):
@@ -293,6 +342,23 @@ def parse_plan(plan_path):
             name = _clean_name(rest)
             if not name:
                 errors.append(f"line {lineno}: empty task/subtask name")
+                continue
+            # Unknown-tag guard (silent-drift fix): a bracket token that looks
+            # like an intended dispatch tag but isn't registered (a typo like
+            # [Migration], or a brand-new tag nobody added to the registry).
+            # extract_tags silently drops these → wrong executor behavior with no
+            # error, so this is a hard error naming the unrecognized token. The
+            # contract documents the registry as the closed vocab; the fix is to
+            # correct the typo or add a row to task-type-profiles.json.
+            unknown = _find_unknown_tags(name)
+            if unknown:
+                kind = "subtask" if is_subtask else "task"
+                errors.append(
+                    f"line {lineno}: {kind} '{name}' carries unrecognized tag(s) "
+                    f"{', '.join(unknown)} — not in the registry "
+                    f"(templates/workflow/task-type-profiles.json). Fix the typo "
+                    f"or register the tag. Known tags: "
+                    f"{', '.join(_tag_vocab())}.")
                 continue
             if is_subtask:
                 if current_task is None:

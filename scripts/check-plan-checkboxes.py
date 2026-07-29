@@ -26,6 +26,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent / "lib"))
 
 from lib.hook_io import read_hook_input, write_hook_output
+from track_state.task_profiles import TAG_VOCAB
 
 # Valid plan.md checkbox marker chars (constants.MARKER_MAP values).
 _VALID_MARKER_CLASS = r"[ x~!>#\-d]"
@@ -70,9 +71,11 @@ _BRACKET_TOKEN = re.compile(r"^(\s*)-\s+(\[[^\]]*\])")
 # Bracket tokens that are NOT checkboxes but are legitimate first tokens of a
 # dash-bullet (dispatch tags + trailing status markers). These route through the
 # _MISSING_CHECKBOX path (tag-but-no-checkbox) below for a more accurate message
-# rather than being flagged as malformed. Mirrors plan_parse._KNOWN_BRACKET_TOKEN.
+# rather than being flagged as malformed. Mirrors plan_parse._KNOWN_BRACKET_TOKEN;
+# the tag alternation is derived from the registry (task_profiles.TAG_VOCAB) so
+# adding a tag doesn't require editing this regex too.
 _KNOWN_BRACKET_TOKEN = re.compile(
-    r"^\[(?:Manual|Explore|Docs|Config|Chore|Migrate|N/A|verified|[0-9a-fA-F]{7,})\]$",
+    r"^\[(?:" + "|".join(TAG_VOCAB()) + r"|N/A|verified|[0-9a-fA-F]{7,})\]$",
     re.IGNORECASE,
 )
 
