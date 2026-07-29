@@ -293,7 +293,13 @@ def _tag_summary_rows():
 
 
 def _mode_summary_lines():
-    """One summary line per registered verify-mode: ``mode: runs -> report_field``."""
+    """One summary line per registered verify-mode: ``mode: runs -> report_field``.
+
+    Surfaces the ``max_fix_attempts`` cap alongside ``fix-and-retry`` so the cap
+    is visible at dispatch (no-silent-caps: a stop-on-budget or retry cap is
+    disclosed, never silently applied — mirrors the wave scheduler's
+    ``ineligible`` disclosure pattern).
+    """
     from track_state import verify_mode_profiles as vmp
     lines = []
     for mode in vmp.MODE_VOCAB():
@@ -302,7 +308,9 @@ def _mode_summary_lines():
         field = prof.get("report_field", "")
         fix = prof.get("fix_policy", "")
         fieldstr = f" -> {field}" if field else ""
-        fixstr = f" ({fix})" if fix else ""
+        cap = prof.get("max_fix_attempts")
+        fixstr = f" ({fix}" + (f", cap={cap}" if fix == "fix-and-retry" and cap else "") + ")" \
+            if fix else ""
         lines.append(f"  - {mode}: {runs}{fieldstr}{fixstr}")
     return lines
 

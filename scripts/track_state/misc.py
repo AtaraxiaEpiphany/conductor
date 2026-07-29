@@ -1222,21 +1222,22 @@ def cmd_registry_add(track_dir, tracks_md_path=None):
              line=line, registry=str(reg)))
 
 
-def cmd_registry_doc(tag=None, mode=None):
-    """Render the RESOLVED task-type + verify-mode registries (baseline ⊕ overlay).
+def cmd_registry_doc(tag=None, mode=None, shape=None):
+    """Render the RESOLVED task-type + verify-mode + workflow-shape registries
+    (baseline ⊕ overlay).
 
     This is the **live-data view** that complements the grammar-only contract
     (``runtime/contracts/plan-format-contract.md`` holds the plan.md grammar +
-    invariants; the tag/mode vocabulary + semantics live HERE in the resolved
-    registry, never hand-duplicated in the contract). It exists so humans and
-    tooling can ask "what does the resolved registry actually contain right
-    now?" — including a project overlay's tags/modes — without a committed
-    generated artifact and without reading JSON by eye.
+    invariants; the tag/mode/shape vocabulary + semantics live HERE in the
+    resolved registry, never hand-duplicated in the contract). It exists so
+    humans and tooling can ask "what does the resolved registry actually contain
+    right now?" — including a project overlay's tags/modes/shapes — without a
+    committed generated artifact and without reading JSON by eye.
 
-    Two modes of operation, by argument:
+    Three filter modes of operation, by argument:
 
-    - **No filter** (``tag is None and mode is None``): render the full tag table
-      + mode table (the human/CI overview). Unchanged behavior.
+    - **No filter** (``tag is None and mode is None and shape is None``): render
+      the full tag table + mode table + shape table (the human/CI overview).
     - **``--tag <Name>``**: render ONE tag's profile row **plus its ``workflow``
       prose verbatim** when present — the on-demand payload ``task-executor``
       fetches at dispatch (the workflow prose is large + conditional, so it is
@@ -1244,23 +1245,24 @@ def cmd_registry_doc(tag=None, mode=None):
       unknown tag renders the row from the ``default`` profile + a note; never
       raises (fail-open, like the no-filter path).
     - **``--mode <name>``**: the symmetric payload for a verify-mode — one mode's
-      row **plus its ``protocol`` prose verbatim**. Future-proofs the same
-      on-demand pattern for ``phase-checker`` if ever needed. Unknown mode →
-      ``default`` profile + note; never raises.
+      row **plus its ``protocol`` prose verbatim**.
+    - **``--shape <name>``**: the symmetric payload for a workflow-shape — one
+      shape's row **plus its ``instruction`` prose verbatim** when present.
 
     Strictly **read-only**: no ``track_dir`` argument, no ``track-state.json``
-    mutation, no writes anywhere — ``--tag``/``--mode`` are *filters*, not
-    mutations, so the sanctioned-set safety contract is unchanged (a read-only
-    render can never be the catastrophic op the broad rm/mv scan guards
-    against). Fail-open: a missing/malformed registry is already handled inside
-    the profile modules (``_FALLBACK``); this function renders whatever
-    ``TAG_VOCAB``/``MODE_VOCAB`` resolve to and never raises.
+    mutation, no writes anywhere — ``--tag``/``--mode``/``--shape`` are
+    *filters*, not mutations, so the sanctioned-set safety contract is unchanged
+    (a read-only render can never be the catastrophic op the broad rm/mv scan
+    guards against). Fail-open: a missing/malformed registry is already handled
+    inside the profile modules (``_FALLBACK``); this function renders whatever
+    ``TAG_VOCAB``/``MODE_VOCAB``/``SHAPES_VOCAB`` resolve to and never raises.
     """
     # Local import: these modules are read by the phase-checker/dispatch paths and
     # resolve the overlay via the project root; importing here (not at module top)
     # keeps the render self-contained and avoids any import-order coupling.
     from . import task_profiles as tp
     from . import verify_mode_profiles as vmp
+    from . import workflow_shapes as ws
 
     def _yesno(b):
         return "yes" if b else "no"
@@ -1281,6 +1283,13 @@ def cmd_registry_doc(tag=None, mode=None):
         fix = vmp.fix_policy_for(mode)
         when = vmp.when_to_use_for(mode).strip().replace("\n", " ")
         return f"| `{mode}` | {runs} | `{fix}` | {when} |"
+
+    def _shape_row(shape):
+        """One registry-derived table row for a workflow-shape (reused by full + filtered)."""
+        nodes = " → ".join(ws.nodes_for(shape))
+        policy = ws.verify_policy_for(shape)
+        stop = ws.stop_condition_for(shape)
+        return f"| `{shape}` | {nodes} | `{policy}` | `{stop}` |"
 
     # --- filtered payloads ---------------------------------------------------
     # The on-demand path: one entity's row + its prompt-shaping prose verbatim.
@@ -1337,6 +1346,31 @@ def cmd_registry_doc(tag=None, mode=None):
                   f"`conductor/workflow/verify-mode-profiles.json` to add it.")
         return
 
+    if shape is not None:
+        if shape in ws.SHAPES_VOCAB():
+            print(f"# Workflow Shape `{shape}` "
+                  f"(resolved: plugin baseline ⊕ project overlay)")
+            print()
+            print("| Shape | Nodes | Verify policy | Stop condition |")
+            print("|---|---|---|---|")
+            print(_shape_row(shape))
+            print()
+            instr = ws.instruction_for(shape)
+            if instr:
+                print(f"## `instruction` for `{shape}` (the orchestrator's shape prose)")
+                print()
+                print(instr)
+            else:
+                print(f"_(no `instruction` for `{shape}` → the default §3.0 dispatch loop)_")
+        else:
+            print(f"# Workflow Shape `{shape}` — UNKNOWN to the resolved registry")
+            print()
+            print(f"`{shape}` is not in the resolved shape vocabulary "
+                  f"({', '.join(ws.SHAPES_VOCAB())}). A track-state.json carrying "
+                  f"it resolves to `default` (fail-open); register it in "
+                  f"`conductor/workflow/workflow-shapes.json` to add it.")
+        return
+
     # --- full overview (no filter) -------------------------------------------
     print("# Conductor Registry (resolved: plugin baseline ⊕ project overlay)")
     print()
@@ -1371,6 +1405,23 @@ def cmd_registry_doc(tag=None, mode=None):
     print("`(no directive)` = the default full gate (suite → L2 → L4 manual).")
     print("`anchor` is a no-op on an unfrozen track (run `track-state freeze` to ")
     print("activate).")
+    print()
+
+    # --- Workflow shapes (third axis: the node sequence) ---------------------
+    shapes = ws.SHAPES_VOCAB()
+    print(f"## Workflow Shapes ({len(shapes)})")
+    print()
+    print("| Shape | Nodes | Verify policy | Stop condition |")
+    print("|---|---|---|---|")
+    for shape in shapes:
+        print(_shape_row(shape))
+    print()
+    print("The third axis: what each node *says* lives in Task Types above; what "
+          "each gate *means* lives in Verify Modes above; the **node sequence** "
+          "lives here. A track-state.json `workflow_shape` selects the topology; "
+          "an off-topology dispatch surfaces a `shape_violation` (advisory, "
+          "no-silent-caps). `default` is the loop the conductor has always run, "
+          "now declared rather than hardcoded.")
 
 
 def cmd_record_summary(track_dir):
