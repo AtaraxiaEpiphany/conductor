@@ -28,6 +28,7 @@ from scripts.track_state.plan_parse import (
     parse_plan,
     to_plan_structure,
 )
+from scripts.track_state.verify_mode_profiles import MODE_VOCAB, protocol_for
 
 ROOT = Path(__file__).resolve().parent.parent
 CONTRACT = ROOT / "runtime" / "contracts" / "plan-format-contract.md"
@@ -152,36 +153,71 @@ class NonPersistenceTests(TestCase):
 
 
 class AgentDocTests(TestCase):
-    def test_phase_checker_has_compile_branch(self):
-        # The load-bearing gate change: a compile-only phase runs the BUILD
-        # command and IGNORES the test-runner verdict.
+    def test_phase_checker_has_directive_loop_referencing_registry(self):
+        # The per-mode behavior moved OUT of the agent into the registry. The
+        # agent must carry the mode-agnostic directive loop and point at the
+        # registry as the single source — NOT inline compile/start/anchor prose.
         self.assertIn("phase-verify directive branch", PHASE_CHECKER.lower())
-        self.assertIn("verify: compile", PHASE_CHECKER)
-        self.assertIn("dev-commands", PHASE_CHECKER)
-        # It must explicitly tell the agent to disregard the red suite.
-        self.assertIn("Ignore the `L1_VERIFY_STATUS`", PHASE_CHECKER)
+        self.assertIn("Phase-verify directive loop", PHASE_CHECKER)
+        self.assertIn("verify-mode-profiles.json", PHASE_CHECKER)
+        self.assertIn("verify_mode_profiles.py", PHASE_CHECKER)
 
     def test_phase_checker_report_carries_build_start(self):
+        # The report-field lines (BUILD:/START:/ANCHOR:) survive in the §8.0
+        # result block + the loop's report_field mapping.
         self.assertIn("BUILD:", PHASE_CHECKER)
         self.assertIn("START:", PHASE_CHECKER)
-
-    def test_phase_checker_has_anchor_branch(self):
-        # The Goodhart counter-anchor gate: ``verify: anchor`` runs the frozen
-        # subset and gates on its measured pass/drift rate.
-        self.assertIn("verify: anchor", PHASE_CHECKER)
-        self.assertIn("anchor-status", PHASE_CHECKER)
-        # It must gate on the measured pass rate (the antagonistic pair to
-        # coverage_pct), not trust self-report.
-        self.assertIn("frozen_anchor_pass_rate", PHASE_CHECKER)
-        self.assertIn("frozen_anchor_drift_rate", PHASE_CHECKER)
-        # The report must carry an ANCHOR line (mirrors BUILD/START).
         self.assertIn("ANCHOR:", PHASE_CHECKER)
+
+    def test_compile_protocol_lives_in_registry_not_agent(self):
+        # The load-bearing gate change: a compile-only phase runs the BUILD
+        # command and IGNORES the test-runner verdict. That prose is now in the
+        # registry, not inline in the agent.
+        p = protocol_for("compile")
+        self.assertIn("Ignore the `L1_VERIFY_STATUS`", p)
+        self.assertIn("BUILD: passed", p)
+        self.assertIn("dev-commands", p)
+        # The # compile header-drift fix: the protocol must describe the build
+        # command as the trailing `# compile` comment (NOT a heading).
+        self.assertIn("trailing `# compile` comment", p)
+
+    def test_start_protocol_lives_in_registry(self):
+        p = protocol_for("start")
+        self.assertIn("boot smoke", p)
+        self.assertIn("START: passed", p)
+
+    def test_anchor_protocol_lives_in_registry_not_agent(self):
+        # The Goodhart counter-anchor gate: verify: anchor runs the frozen
+        # subset and gates on its measured pass/drift rate. That prose is now in
+        # the registry, not inline in the agent.
+        p = protocol_for("anchor")
+        self.assertIn("anchor-status", p)
+        # Gates on the measured pass rate (the antagonistic pair to
+        # coverage_pct), not self-report.
+        self.assertIn("frozen_anchor_pass_rate", p)
+        self.assertIn("frozen_anchor_drift_rate", p)
+        self.assertIn("ANCHOR: passed", p)
         # No frozen anchor = no-op, not a failure (graceful degradation).
-        self.assertIn("no frozen anchor", PHASE_CHECKER)
+        self.assertIn("no frozen anchor", p)
 
     def test_directive_precedence_documented(self):
         # The directive must take precedence over the migration-phase branch.
         self.assertIn("takes precedence over the migration-phase branch", PHASE_CHECKER)
+
+    def test_agent_has_no_inline_per_mode_prose(self):
+        # The dedup invariant: the per-mode protocol prose must NOT live inline
+        # in the agent — it lives in the registry. If any of these appear in
+        # phase-checker.md, the lift was incomplete and we've reintroduced drift.
+        for moved in (
+            "Ignore the `L1_VERIFY_STATUS`",
+            "frozen_anchor_pass_rate",
+            "anchor-status",
+            "boot smoke check",
+        ):
+            self.assertNotIn(
+                moved, PHASE_CHECKER,
+                f"{moved!r} should live in the registry, not phase-checker.md",
+            )
 
 
 class ContractDocTests(TestCase):
@@ -194,7 +230,9 @@ class ContractDocTests(TestCase):
         self.assertIn("<!-- verify: compile -->", self.text)
 
     def test_contract_lists_closed_vocabulary(self):
-        for mode in ("compile", "test", "start", "anchor"):
+        # The closed vocabulary is now sourced from the registry — read it from
+        # MODE_VOCAB() so a project overlay that adds a mode is reflected here.
+        for mode in MODE_VOCAB():
             self.assertIn(f"| `{mode}`", self.text)
 
 

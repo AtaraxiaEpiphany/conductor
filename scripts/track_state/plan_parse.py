@@ -123,11 +123,16 @@ _DEPS_REF = re.compile(r"P(\d+)\.T(\d+)")
 # read of plan.md — NOT persisted into track-state.json (to_plan_structure drops
 # it).
 _VERIFY_COMMENT = re.compile(r"^\s*verify\s*:", re.IGNORECASE)
-# Closed mode vocabulary. ``compile`` gates on a green build (not the suite);
-# ``test`` gates on the suite (the default); ``start`` adds a one-shot app-boot
-# smoke check; ``anchor`` additionally gates on the frozen test subset passing
-# (the Goodhart counter-anchor — see anchor.py). Comma-separated, order-free.
-_VERIFY_MODES = ("compile", "test", "start", "anchor")
+# Closed mode vocabulary — now sourced from the registry at
+# templates/workflow/verify-mode-profiles.json (the single source of truth,
+# surfaced via verify_mode_profiles.MODE_VOCAB), exactly as the dispatch-tag
+# vocabulary above is sourced from task_profiles.TAG_VOCAB. ``compile`` gates on
+# a green build (not the suite); ``test`` gates on the suite (the default);
+# ``start`` adds a one-shot app-boot smoke check; ``anchor`` additionally gates
+# on the frozen test subset passing (the Goodhart counter-anchor — see
+# anchor.py). Comma-separated, order-free.
+from .verify_mode_profiles import MODE_VOCAB as _mode_vocab
+_VERIFY_MODES = _mode_vocab()
 
 _VALID_MARKERS = set(MARKER_MAP.values())
 

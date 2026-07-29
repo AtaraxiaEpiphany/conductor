@@ -1,0 +1,47 @@
+{
+  "_comment": "Single source of truth for phase-verify SEMANTICS + per-mode protocol. The mode NAME still lives in plan.md phase headings (## Phase N: X <!-- verify: compile -->); this file holds what the mode MEANS (which gate steps it runs, its fix policy, AND the prompt-shaping protocol prose the phase-checker emits for it). Code/agents read this via track_state.verify_mode_profiles — the phase-checker's Step-3 directive is a MODE-AGNOSTIC LOOP over the phase's declared modes, each emitting its protocol from here (NOT an if/elif ladder of per-mode branches). Adding a verify-mode = one row here, zero Python edits, zero agent-prose edits. A project may overlay conductor/workflow/verify-mode-profiles.json (opt-in by file presence) to add or override modes with zero plugin edits.",
+  "_fields": {
+    "runs": "gate-step tokens this mode performs, in order: build | test-suite | boot-smoke | frozen-subset",
+    "fix_policy": "what to do on a failure: none (report verdict, no fix) | fix-and-retry (propose a fix up to max_fix_attempts) | fail-fast (single failure is terminal)",
+    "ignore": "verdicts to disregard even though the always-on fan-out ran them (e.g. compile ignores test-suite because the suite is expected red mid-migration)",
+    "report_field": "the result-block line this mode emits in the CHECKPOINT RESULT (BUILD / START / ANCHOR / ...)",
+    "max_fix_attempts": "when fix_policy=fix-and-retry, the cap on proposed fixes (default 2)",
+    "pass_condition": "for modes with a structured pass gate (anchor), the exact condition",
+    "protocol": "the prompt-shaping prose the phase-checker loop emits when executing this mode. THIS is what used to live inline as a branch in agents/phase-checker.md Step 3 — lifted here so the checker is mode-agnostic."
+  },
+  "default": {
+    "runs": ["test-suite"],
+    "fix_policy": "fix-and-retry",
+    "max_fix_attempts": 2,
+    "report_field": "L1_VERIFY"
+  },
+  "modes": {
+    "compile": {
+      "runs": ["build"],
+      "fix_policy": "none",
+      "ignore": ["test-suite"],
+      "report_field": "BUILD",
+      "protocol": "When the directive's modes include compile (a compile-only phase): Resolve the BUILD command — NOT the test command — from conductor/workflow/dev-commands/<lang>.md (the line ending in a trailing `# compile` comment under `### Daily Development`: `mvn -q compile` / `./gradlew compileJava` / `dotnet build` / `npx tsc --noEmit` / `cmake --build build` …). Announce it, then run it once. Do NOT run fix-and-retry. Do NOT write or modify any test files. Ignore the `L1_VERIFY_STATUS` from test-runner — the suite is expected red mid-migration and is not the gate here (test-runner still ran because it is hardcoded into the fan-out; its red verdict is irrelevant on a compile phase). Green build → record `BUILD: passed` and `L1_VERIFY: skipped (compile-only phase)`, then proceed to Step 3.5. Build failure → report STATUS: FAILED with FAILURE_REASON: naming the compile errors (paste the top failures verbatim, e.g. `compile-only phase failed to build — <first 3 compiler errors>`). Do NOT checkpoint. This hands the phase back to the operator: continue the migration until it compiles, then re-run the checkpoint."
+    },
+    "test": {
+      "runs": ["test-suite"],
+      "fix_policy": "fix-and-retry",
+      "max_fix_attempts": 2,
+      "report_field": "L1_VERIFY",
+      "protocol": "When the directive's modes include test: the full automated test suite is the gate. test-runner already resolved the command and ran it once (returning L1_VERIFY_STATUS in your assignment). On passed → L1 is satisfied, record `L1_VERIFY: passed (fleet)`, do NOT re-run. On failed → you own the fix-and-retry pass: re-run L1_VERIFY_COMMAND yourself (you need fresh failure output to iterate on fixes), write/fix the missing or broken tests (the template's Step 3 missing-test creation + the retry live here), then re-run. Attempt a fix a maximum of two times; still failing after the second attempt → report FAILURE with details. Record the final state as `L1_VERIFY: passed (after N fixes)` or `L1_VERIFY: failed`. On error → the command could not run at all; decide per the template whether this is non-blocking or a FAILURE (record `L1_VERIFY: error`)."
+    },
+    "start": {
+      "runs": ["boot-smoke"],
+      "fix_policy": "fail-fast",
+      "report_field": "START",
+      "protocol": "When the directive's modes include start (in addition to compile or test): after the build/suite gate is satisfied, run the app's run command from conductor/workflow/dev-commands/<lang>.md once as a boot smoke check (start it, confirm it reaches ready/no startup stack trace, then stop it). Record `START: passed` or `START: failed (<one-line symptom>)`. On failure → report STATUS: FAILED (do not checkpoint a phase whose app won't boot when start was requested). If the phase already carries a trailing [Manual] boot-verification task, treat start as a pre-flight that does not double-gate — record the outcome and let the [Manual] task remain the human confirmation."
+    },
+    "anchor": {
+      "runs": ["frozen-subset"],
+      "fix_policy": "none",
+      "report_field": "ANCHOR",
+      "pass_condition": "frozen_anchor_pass_rate == 100.0 AND frozen_anchor_drift_rate == 0.0",
+      "protocol": "When the directive's modes include anchor (the Goodhart counter-anchor — runs the frozen test subset independently of the executor's self-reported coverage): after the compile/test/start gates above, run the frozen anchor via `track-state anchor-status {TRACK_DIR} --verify` once. This executes the pinned test subset and returns the measured frozen_anchor_pass_rate (real pass rate, not self-report), frozen_anchor_drift_rate (locators that no longer resolve), and frozen_anchor_skip_rate (pinned tests now skipped). The anchor is the antagonistic pair to coverage_pct — it is what verify: anchor makes load-bearing. Pass condition: frozen_anchor_pass_rate == 100.0 AND frozen_anchor_drift_rate == 0.0. Record `ANCHOR: passed (N/N frozen tests)`. No anchor frozen yet (no feature-list.json): record `ANCHOR: skipped (no frozen anchor for this track)` and proceed — verify: anchor on an unfrozen track is a no-op, not a failure (the operator has not yet run track-state freeze). This is the deliberate degradation: the gate activates the moment an anchor exists. Anchor failing (pass_rate < 100.0): report STATUS: FAILED with `FAILURE_REASON: frozen anchor regressed — frozen_anchor_pass_rate=<rate>% (M/N frozen tests passing). The pinned subset is the counter-anchor to coverage_pct; do not checkpoint a phase that broke a frozen test.` Do NOT checkpoint. This hands the phase back to the operator: the frozen test broke, so either fix the regression or (if the test itself is now wrong) govern the change via `track-state thaw {TRACK_DIR} --locator <loc> --reason <why>` — never by editing the pinned test directly (the write-guard denies that). Anchor drifted (drift_rate > 0.0): report STATUS: FAILED with `FAILURE_REASON: frozen anchor drifted — frozen_anchor_drift_rate=<rate>% (N pinned locator(s) no longer resolve). A frozen test was deleted/renamed out from under the anchor. Restore the locator or re-freeze with --force after auditing the loss.` Do NOT checkpoint. Drift is the measurement-decay failure mode the anchor exists to catch: a frozen test silently vanishing is exactly the regression the anchor must flag. This mode composes with the others: a phase declaring verify: test,anchor gates on both the full suite AND the frozen subset; verify: anchor alone gates on the subset and ignores the broader suite (useful for a refactoring phase where the suite is in flux but the frozen anchor must hold — the mirror image of compile, which ignores the suite because it's expected red; anchor ignores the suite because only the frozen subset is load-bearing)."
+    }
+  }
+}
