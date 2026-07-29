@@ -229,11 +229,23 @@ class ContractDocTests(TestCase):
         self.assertIn("Phase Verify Directives", self.text)
         self.assertIn("<!-- verify: compile -->", self.text)
 
-    def test_contract_lists_closed_vocabulary(self):
-        # The closed vocabulary is now sourced from the registry — read it from
-        # MODE_VOCAB() so a project overlay that adds a mode is reflected here.
+    def test_contract_does_not_enumerate_modes_as_table(self):
+        # The collapse: the mode vocabulary lives in the resolved registry
+        # (rendered by `track-state registry-doc`), NOT a hand-maintained table
+        # in the contract (the drift liability `check-contract-registry-sync`
+        # polices). A mode may appear as a grammar/directive example (e.g.
+        # `<!-- verify: compile -->`), but never as a table row's first cell.
+        self.assertIn("track-state registry-doc", self.text)
         for mode in MODE_VOCAB():
-            self.assertIn(f"| `{mode}`", self.text)
+            for ln in self.text.splitlines():
+                stripped = ln.strip()
+                if stripped.startswith("|"):
+                    first_cell = stripped[1:].split("|", 1)[0].strip().strip("`*")
+                    self.assertNotEqual(
+                        first_cell, mode,
+                        f"mode {mode!r} must not appear as a contract table row "
+                        f"(registry-sourced, not hand-maintained)",
+                    )
 
 
 class PlannerDocTests(TestCase):

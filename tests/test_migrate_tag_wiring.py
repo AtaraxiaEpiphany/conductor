@@ -94,15 +94,19 @@ class ContractDocTests(TestCase):
         # The distinguishing semantics — suite is the safety net, not a TDD target.
         self.assertIn("suite", self.text.lower())
 
-    def test_contract_migrate_row_says_tdd_no(self):
-        # The [Migrate] row sits in the tag table; its TDD column is NO.
-        # Find the row line and assert it carries **NO** (TDD not required).
-        migrate_line = next(
-            (ln for ln in self.text.splitlines() if "[Migrate]" in ln),
-            "",
-        )
-        self.assertIn("[Migrate]", migrate_line, "[Migrate] row missing from tag table")
-        self.assertIn("**NO**", migrate_line, "[Migrate] row must mark TDD as NO")
+    def test_contract_does_not_carry_migrate_table_row(self):
+        # The collapse: the contract must NOT carry a hand-maintained tag table
+        # (the drift liability `check-contract-registry-sync` polices). [Migrate]
+        # appears only as a grammar example, never as a table row's first cell.
+        for ln in self.text.splitlines():
+            stripped = ln.strip()
+            if stripped.startswith("|"):
+                first_cell = stripped[1:].split("|", 1)[0].strip().strip("`*")
+                self.assertNotEqual(
+                    first_cell, "[Migrate]",
+                    "[Migrate] must not appear as a table row (registry-sourced, not "
+                    "hand-maintained in the contract)",
+                )
 
 
 class AgentDocTests(TestCase):
@@ -116,8 +120,10 @@ class AgentDocTests(TestCase):
     def test_task_executor_has_migrate_workflow(self):
         # The per-tag executor workflow no longer lives inline in task-executor
         # (the §4.0 tag-table + §4.M restatement were the drift liability). It
-        # lives in the registry's `workflow` field, injected into task-executor
-        # at dispatch. Assert the registry carries the [Migrate] semantics...
+        # lives in the registry's `workflow` field, FETCHED on demand by
+        # task-executor at dispatch (a pointer is injected; the prose is fetched
+        # via `registry-doc --tag Migrate`). Assert the registry carries the
+        # [Migrate] semantics...
         wf = task_profiles.workflow_for("Migrate")
         self.assertTrue(wf, "[Migrate] must carry a `workflow` in the registry")
         # ...with the load-bearing suite-as-safety-net / inverted-TDD semantics.
@@ -126,11 +132,12 @@ class AgentDocTests(TestCase):
         self.assertIn("green", low)          # success = green
         self.assertIn("step 3", low)         # no Step 3 (Red)
         self.assertIn("step 6", low)         # no Step 6 (coverage gate)
-        # And task-executor's §4.0/§4.M now branch on the injected profile /
-        # workflow rather than restating the tag table inline — it points at the
-        # injected registry block as the workflow source.
+        # And task-executor's §4.0/§4.M branch on the injected profile pointer
+        # and fetch the workflow prose on demand (registry-doc --tag <Tag>)
+        # rather than restating the tag table inline.
         self.assertIn("[Migrate]", TASK_EXECUTOR)
         self.assertIn("[Conductor Registry]", TASK_EXECUTOR)
+        self.assertIn("registry-doc --tag", TASK_EXECUTOR)
 
 
 class RegistryParityTests(TestCase):

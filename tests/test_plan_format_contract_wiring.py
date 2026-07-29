@@ -3,7 +3,12 @@
 spec-planner's inline <rules> / <task-type-tags> / <subtask-rules> blocks were
 relocated to runtime/contracts/plan-format-contract.md — a plugin-internal
 behavioral contract spec-planner reads via ${CLAUDE_PLUGIN_ROOT} (sibling of
-core-contract.md / subagent-firewall.md, never copied into a project). These
+core-contract.md / subagent-firewall.md, never copied into a project). The
+contract holds the **grammar and invariants** only (status-marker rules,
+subtask rules, deps rules, the ``<!-- verify: -->`` form); the tag/mode
+**vocabulary + semantics** live in the resolved registries, rendered by
+``track-state registry-doc`` — the contract carries NO hand-maintained tag/mode
+table (the drift liability ``check-contract-registry-sync`` polices). These
 tests guard:
 - the contract doc exists at its runtime/contracts/ home;
 - it carries compliant provenance frontmatter naming spec-planner as a source
@@ -11,7 +16,9 @@ tests guard:
   corpus-frontmatter GC, which scopes the project's conductor/{design,resource}
   corpus dirs, so the frontmatter here is documentation guarded by test, not
   hook enforcement);
-- the relocated content (status-marker rules, the tag table, subtask rules) lives there;
+- the relocated grammar (status-marker rules, subtask rules, deps rules) lives
+  there, AND the contract points at ``registry-doc`` for the vocab rather than
+  duplicating it;
 - spec-planner points at it via ${CLAUDE_PLUGIN_ROOT} and no longer carries the
   inline blocks (dedup happened).
 """
@@ -27,15 +34,6 @@ CONTRACT = ROOT / "runtime" / "contracts" / "plan-format-contract.md"
 REGISTRY = ROOT / "templates" / "workflow" / "task-type-profiles.json"
 VERIFY_REGISTRY = ROOT / "templates" / "workflow" / "verify-mode-profiles.json"
 SPEC_PLANNER = (ROOT / "agents" / "spec-planner.md").read_text(encoding="utf-8")
-
-# The six tags the contract table documents (the human-readable view of the
-# registry). Drift between this list, the contract table, and the registry is
-# what the RegistryDriftTests class guards.
-CONTRACT_TAGS = ("Explore", "Docs", "Config", "Chore", "Manual", "Migrate")
-
-# The four verify modes the contract table documents (mirrors CONTRACT_TAGS for
-# the phase-verify axis). ``(no directive)`` is the implicit default, not a mode.
-CONTRACT_MODES = ("compile", "test", "start", "anchor")
 
 
 class ContractDocTests(TestCase):
@@ -59,11 +57,16 @@ class ContractDocTests(TestCase):
         self.assertIn("Status Markers", self.text)
         self.assertIn("AC Traceability", self.text)
 
-    def test_task_type_tag_table_relocated(self):
-        # All six dispatch tags + the TDD-required column.
-        for tag in ("[Explore]", "[Docs]", "[Config]", "[Chore]", "[Manual]", "[Migrate]"):
-            self.assertIn(tag, self.text)
-        self.assertIn("TDD Required", self.text)
+    def test_vocab_is_registry_sourced_not_table(self):
+        # The collapse: the contract must NOT hand-maintain a tag/mode
+        # enumeration table. It points at `track-state registry-doc` for the
+        # vocabulary, and carries the meta-rule that no such table belongs here.
+        self.assertIn("track-state registry-doc", self.text)
+        self.assertIn("grammar and invariants", self.text)
+        # The drift-killer lint is named as the enforcement of "no table."
+        self.assertIn("check-contract-registry-sync", self.text)
+        # The contract must NOT carry the old table's "TDD Required" header.
+        self.assertNotIn("TDD Required", self.text)
 
     def test_subtask_rules_relocated(self):
         self.assertIn("minimum 2, recommended maximum 5", self.text)
@@ -92,19 +95,15 @@ class ContractDocTests(TestCase):
 
 
 class RegistryDriftTests(TestCase):
-    """Guard drift between the registry (source of truth), the contract table
-    (human-readable view), and the in-code vocab. Adding a tag is meant to be a
-    one-row registry change; these tests ensure the other surfaces don't lag."""
+    """Guard the registry↔in-code-vocab dedup contract (one source of truth).
+
+    The contract no longer documents the vocab in a table, so the drift surface
+    is now the registry keys vs the live ``TAG_VOCAB``/``MODE_VOCAB`` (and the
+    registry's per-row semantics). Adding a tag/mode must remain a one-row
+    registry change with no lagging surface."""
 
     def setUp(self):
         self.assertTrue(REGISTRY.exists(), "task-type-profiles.json registry must exist")
-
-    def test_registry_keys_superset_of_contract_tags(self):
-        # Every tag the contract table documents must be registered — otherwise
-        # init-from-plan would reject a plan.md using a documented tag.
-        vocab = set(TAG_VOCAB())
-        for tag in CONTRACT_TAGS:
-            self.assertIn(tag, vocab, f"contract tag [{tag}] missing from registry")
 
     def test_registry_has_semantics_for_every_tag(self):
         # Each registered tag must declare route + both exemption flags (the
@@ -129,17 +128,12 @@ class RegistryDriftTests(TestCase):
 
     def test_verify_mode_vocab_matches_registry(self):
         # Mirror of test_vocab_matches_registry_keys for the verify-mode axis:
-        # (a) every mode the contract documents is registered, and (b) the
-        # in-code MODE_VOCAB() matches the registry keys exactly. Without this,
-        # a mode documented in the contract (or added to the registry) could lag
-        # the other surface — and init-from-plan --check would warn on a
-        # documented-but-unregistered mode, or silently accept an unregistered one.
+        # the in-code MODE_VOCAB() matches the registry keys exactly. Without
+        # this, a mode added to the registry could lag the live vocab (or vice
+        # versa), and init-from-plan --check would warn on a mismatched mode.
         import json
         self.assertTrue(VERIFY_REGISTRY.exists(), "verify-mode-profiles.json registry must exist")
         data = json.loads(VERIFY_REGISTRY.read_text(encoding="utf-8"))
-        vocab = set(MODE_VOCAB())
-        for mode in CONTRACT_MODES:
-            self.assertIn(mode, vocab, f"contract mode {mode!r} missing from registry")
         self.assertEqual(set(MODE_VOCAB()), set(data["modes"].keys()))
 
     def test_registry_has_when_to_use_for_every_tag(self):
