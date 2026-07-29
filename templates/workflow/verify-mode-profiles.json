@@ -7,7 +7,8 @@
     "report_field": "the result-block line this mode emits in the CHECKPOINT RESULT (BUILD / START / ANCHOR / ...)",
     "max_fix_attempts": "when fix_policy=fix-and-retry, the cap on proposed fixes (default 2)",
     "pass_condition": "for modes with a structured pass gate (anchor), the exact condition",
-    "protocol": "the prompt-shaping prose the phase-checker loop emits when executing this mode. THIS is what used to live inline as a branch in agents/phase-checker.md Step 3 — lifted here so the checker is mode-agnostic."
+    "protocol": "the prompt-shaping prose the phase-checker loop emits when executing this mode. THIS is what used to live inline as a branch in agents/phase-checker.md Step 3 — lifted here so the checker is mode-agnostic.",
+    "when_to_use": "one-line 'when to use this mode' hint sourced from plan-format-contract.md's 'When to use' column. Read by derive_verify_modes(phase_goal) to ADVISORILY classify a tagless phase goal (free text -> modes); mirrors the task-type registry's `signals`/`when_to_use` pair. Absent => derive_verify_modes falls back to tokens lifted from `protocol` (weaker matching). Advisory and fail-open to [] (= default full gate) on ambiguity."
   },
   "default": {
     "runs": ["test-suite"],
@@ -18,6 +19,7 @@
   "modes": {
     "compile": {
       "runs": ["build"],
+      "when_to_use": "A mid-migration phase whose goal is \"it compiles\" — the test suite is expected red, the build is the gate. Canonical use: the intermediate phases of a staged framework/version migration.",
       "fix_policy": "none",
       "ignore": ["test-suite"],
       "report_field": "BUILD",
@@ -25,6 +27,7 @@
     },
     "test": {
       "runs": ["test-suite"],
+      "when_to_use": "Explicitly opt back into the suite gate, e.g. as part of test,start. Alone, equivalent to omitting the directive (the full Step-3 suite gate).",
       "fix_policy": "fix-and-retry",
       "max_fix_attempts": 2,
       "report_field": "L1_VERIFY",
@@ -32,12 +35,14 @@
     },
     "start": {
       "runs": ["boot-smoke"],
+      "when_to_use": "A phase whose deliverable includes \"the app boots.\" Typically combined with test on the final integration phase, or with compile on the phase that first achieves a bootable build. Advisory pre-flight when the phase already has a trailing [Manual] boot task.",
       "fix_policy": "fail-fast",
       "report_field": "START",
       "protocol": "When the directive's modes include start (in addition to compile or test): after the build/suite gate is satisfied, run the app's run command from conductor/workflow/dev-commands/<lang>.md once as a boot smoke check (start it, confirm it reaches ready/no startup stack trace, then stop it). Record `START: passed` or `START: failed (<one-line symptom>)`. On failure → report STATUS: FAILED (do not checkpoint a phase whose app won't boot when start was requested). If the phase already carries a trailing [Manual] boot-verification task, treat start as a pre-flight that does not double-gate — record the outcome and let the [Manual] task remain the human confirmation."
     },
     "anchor": {
       "runs": ["frozen-subset"],
+      "when_to_use": "A phase whose safety net is the frozen subset, not the full suite. anchor alone: a refactoring phase where the broader suite is in flux but the pinned anchor must hold (the mirror image of compile). test,anchor: both the suite AND the frozen subset must pass. No-op on an unfrozen track (degrades gracefully until track-state freeze is run).",
       "fix_policy": "none",
       "report_field": "ANCHOR",
       "pass_condition": "frozen_anchor_pass_rate == 100.0 AND frozen_anchor_drift_rate == 0.0",

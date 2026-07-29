@@ -23,6 +23,7 @@ from .quality import cmd_init_from_plan, cmd_start, cmd_set_mode, cmd_finalize, 
 from .misc import (
     cmd_reset, cmd_indices, cmd_shas, cmd_add_checkpoint,
     cmd_deferred_report, cmd_phase_done, cmd_registry_update, cmd_registry_add,
+    cmd_registry_doc,
     cmd_record_summary, cmd_preflight, cmd_quality_snapshot,
     cmd_spec_integrity, cmd_derive_name, cmd_post_loop_status,
     cmd_resolve_track, cmd_check, _resolve_track_dir_or_halt,
@@ -254,6 +255,8 @@ COMMAND_HELP = {
                         "Update track entry in Tracks Registry (tracks.md)"),
     "registry-add": ("registry-add <track-dir> [<tracks-md-path>]",
                      "Append the canonical entry for a track to tracks.md (idempotent; auto-locates registry)"),
+    "registry-doc": ("registry-doc",
+                     "Render the resolved task-type + verify-mode registries (baseline ⊕ overlay) as tables. Read-only — no track-dir, no writes."),
     "write-result": ("write-result <track-dir> --status success|failure --commit-sha <sha>\n"
                      "                                --summary <text> --coverage-pct <n> ...\n"
                      "                  <track-dir> [--data '<json>']   (or pipe JSON on stdin)",
@@ -415,7 +418,8 @@ _COMMAND_GROUPS = [
     ("Navigation", ["next", "dispatch-next", "recover", "indices"]),
     ("State Mutations", ["lock", "complete", "fail", "skip", "defer", "block", "reset",
                          "set-max-retries", "split"]),
-    ("Sync & Registry", ["sync-plan", "reconcile-plan", "sync-handoff", "registry-update", "registry-add"]),
+    ("Sync & Registry", ["sync-plan", "reconcile-plan", "sync-handoff",
+                         "registry-update", "registry-add", "registry-doc"]),
     ("Handoff", ["get-handoff", "append-handoff", "harvest-candidates",
                  "compile-track-findings"]),
     ("Result Processing", ["write-result", "process-result"]),
@@ -474,6 +478,7 @@ def cmd_help(command=None):
 _NO_TRACK_DIR_COMMANDS = frozenset({
     "resolve-track", "check", "setup", "new-track-resume",
     "log-path", "subagent-log", "brief-resume",
+    "registry-doc",
 })
 
 
@@ -606,6 +611,10 @@ def main():
             # registry (walk-up, then alongside the track) when omitted, so the
             # new-track skill never hand-computes the path.
             cmd_registry_add(track_dir, pos[0] if pos else None)
+        elif cmd == "registry-doc":
+            # Read-only render of the resolved task-type + verify-mode registries
+            # (baseline ⊕ overlay). No track-dir, no writes.
+            cmd_registry_doc()
         elif cmd == "start":
             cmd_start(track_dir)
         elif cmd == "set-mode":

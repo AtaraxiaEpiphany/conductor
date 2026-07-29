@@ -54,17 +54,23 @@ _FALLBACK = {
     "default": {"route": "executor", "tdd_exempt": False, "coverage_exempt": False},
     "tags": {
         "Explore": {"route": "explore", "tdd_exempt": True, "coverage_exempt": False,
-                    "when_to_use": "Investigation/analysis that produces NO code or file change."},
+                    "when_to_use": "Investigation/analysis that produces NO code or file change.",
+                    "signals": ["explore", "investigate", "map", "survey", "architecture", "analyze", "spike"]},
         "Docs":    {"route": "executor", "tdd_exempt": True, "coverage_exempt": True,
-                    "when_to_use": "Markdown/docs ONLY — no code touched at all."},
+                    "when_to_use": "Markdown/docs ONLY — no code touched at all.",
+                    "signals": ["docs", "documentation", "readme", "markdown", ".md", "changelog", "guide", "tutorial", "design doc", "write the doc", "draft the doc", "spec doc"]},
         "Config":  {"route": "executor", "tdd_exempt": True, "coverage_exempt": True,
-                    "when_to_use": "Edits .env/.yaml/.json config with NO business logic."},
+                    "when_to_use": "Edits .env/.yaml/.json config with NO business logic.",
+                    "signals": ["config", "configuration", ".env", ".yaml", ".yml", ".json", "settings", "feature flag"]},
         "Chore":   {"route": "executor", "tdd_exempt": True, "coverage_exempt": True,
-                    "when_to_use": "Dependencies, tooling, CI/CD, build scripts with NO feature code."},
+                    "when_to_use": "Dependencies, tooling, CI/CD, build scripts with NO feature code.",
+                    "signals": ["dependency", "dependencies", "tooling", "ci", "cicd", "build script", "lint", "format", "renovate"]},
         "Manual":  {"route": "manual",   "tdd_exempt": True, "coverage_exempt": True,
-                    "when_to_use": "Requires a HUMAN — UI walkthrough, cross-browser check, staging deploy."},
+                    "when_to_use": "Requires a HUMAN — UI walkthrough, cross-browser check, staging deploy.",
+                    "signals": ["human", "manual", "walkthrough", "cross-browser", "staging deploy", "accessibility", "by hand", "visual check"]},
         "Migrate": {"route": "executor", "tdd_exempt": True, "coverage_exempt": True,
                     "when_to_use": "Framework/version migration, package rename, or major-dep bump where an EXISTING test suite is the safety net.",
+                    "signals": ["migration", "migrate", "upgrade", "bump", "rename", "javax", "jakarta", "framework version", "major dependency", "spring boot"],
                     "workflow": "The existing suite's red state is the START, green is the GOAL. No Step 3 (Red); Step 4 (Green) is the whole task; commit fix(migrate): …; no Step 6 coverage gate."},
     },
 }
@@ -335,3 +341,113 @@ def when_to_use_for(tag: str) -> str:
     "outside the closed set." Absent = ``""`` (no hint injected for that tag).
     """
     return _profile(tag).get("when_to_use", "")
+
+
+def _signals_for(tag: str) -> list[str]:
+    """The keyword set :func:`derive_task_tag` matches a description against.
+
+    Taken from the registry row's optional ``signals`` array (the overlay-aware
+    source a project tag flows through with zero code edits). When a row omits
+    ``signals``, a minimal set is derived by lowering :func:`when_to_use_for`
+    and keeping its alphabetic tokens of length >= 4 — weaker matching, but the
+    mechanism never *depends* on ``signals`` being present (a registry without
+    it still classifies, just less precisely). Always lowercased for matching.
+    """
+    prof = _profile(tag)
+    raw = prof.get("signals")
+    if isinstance(raw, list) and raw:
+        return [str(s).lower() for s in raw]
+    hint = when_to_use_for(tag).lower()
+    # Minimal fallback: alphabetic tokens of length >= 4 from the when_to_use
+    # hint (filters out stopwords like "the/with/that"). This is deliberately
+    # coarse — `signals` is the quality path; this is just "better than nothing."
+    return [t for t in (
+        "".join(ch for ch in w if ch.isalpha()) for w in hint.split()
+    ) if len(t) >= 4]
+
+
+# Words that mark a task as genuine business-logic work — the over-tagging guard.
+# If ANY appears and no exemption tag clears the plurality bar, the task stays
+# untagged (default TDD), even if it incidentally touches a config file or a
+# dependency. "Feature work that happens to edit a config" is the classic trap
+# this blocks: over-tagging silently skips TDD and the coverage gate.
+#
+# Phrases marked "(not: ...)" are exempted from the guard when followed by the
+# listed continuation — e.g. "feature" is a feature marker, but "feature flag"
+# is a config concern, so "feature flag" is subtracted before the marker scan.
+_FEATURE_MARKER_PHRASES = (
+    "feature", "implement", "add ", "build a", "create a", "fix ",
+    "bug", "logic", "endpoint", "api", "service", "component", "screen",
+    "page", "function", "method", "class", "model",
+)
+# Substrings that, when present, neutralize a "feature" marker (config/infra
+# work that happens to contain the word "feature" is NOT feature work).
+_FEATURE_MARKER_EXCEPTIONS = ("feature flag", "feature toggle", "feature gate")
+
+
+def derive_task_tag(description: str) -> str | None:
+    """Advisory leading tag for a task DESCRIPTION, or ``None`` (default TDD).
+
+    The inverse of :func:`derive_task_type` (which reads a tag *already on* a
+    name string): this classifies **free text that has no tag yet**, by
+    signal-matching each registered tag's ``signals`` set. It is the
+    registry-driven selection engine for dynamic plan generation — a project
+    overlay tag with a ``signals`` field becomes selectable with zero code edits.
+
+    **Safe-failure-mode bias.** ``None`` means "no exemption, full TDD" — the
+    correct outcome for the majority of tasks and the safe failure mode: a
+    wrongly-untagged ``[Config]`` task costs one extra Red cycle, but a
+    wrongly-tagged feature task silently skips TDD and the coverage gate
+    (F2/F3 exempt). So the matcher is deliberately conservative:
+
+    - returns a tag only when it wins a **strict plurality** of distinct signal
+      hits AND clears a minimum-hit bar (>= 2 distinct hits);
+    - feature work (descriptions carrying a :data:`_FEATURE_MARKERS` term with no
+      stronger exemption signal) returns ``None`` even if it incidentally
+      matches an exemption tag's signals;
+    - ``[Migrate]`` requires a migration signal (``migration``/``bump``/
+      ``upgrade``/``rename``) — a plain "refactor" returns ``None``;
+    - ``[Manual]`` requires a human-action signal.
+
+    This is **advisory only** — :func:`track_state.init_from_plan` still
+    hard-validates the final tag against the resolved registry, so an
+    over-confident return is caught at plan-init. Fail-open: any exception
+    returns ``None`` (never raises into a caller).
+    """
+    try:
+        if not description or not description.strip():
+            return None
+        text = description.lower()
+
+        scores: dict[str, int] = {}
+        for tag in TAG_VOCAB():
+            hits = sum(1 for sig in _signals_for(tag) if sig and sig in text)
+            if hits:
+                scores[tag] = hits
+
+        if not scores:
+            return None
+
+        # Strict plurality: a unique winner with more hits than every other.
+        ranked = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
+        winner, top = ranked[0]
+        if len(ranked) > 1 and ranked[1][1] >= top:
+            return None  # tied — ambiguous, refuse to guess into an exemption
+
+        # Over-tagging guard. Feature work that merely *touches* an exemption
+        # surface stays untagged. Neutralize "feature flag"/"feature toggle"
+        # first (config/infra that contains the word "feature" is NOT feature
+        # work), then if a remaining feature marker is present AND the winning
+        # tag did not clear a comfortable plurality (top >= 2 distinct signals,
+        # i.e. the exemption signal is strong, not incidental), refuse to tag.
+        guard_text = text
+        for ex in _FEATURE_MARKER_EXCEPTIONS:
+            guard_text = guard_text.replace(ex, "")
+        if winner in ("Docs", "Config", "Chore") and top < 2 and any(
+            m in guard_text for m in _FEATURE_MARKER_PHRASES
+        ):
+            return None
+
+        return winner
+    except Exception:
+        return None

@@ -1222,6 +1222,76 @@ def cmd_registry_add(track_dir, tracks_md_path=None):
              line=line, registry=str(reg)))
 
 
+def cmd_registry_doc():
+    """Render the RESOLVED task-type + verify-mode registries (baseline ⊕ overlay)
+    as human-readable tables on stdout.
+
+    This is the **live-data view** that complements the hand-maintained teaching
+    tables in ``runtime/contracts/plan-format-contract.md`` (the contract prose is
+    richer than a registry string can hold; this render is always-current). It
+    exists so humans and tooling can ask "what does the resolved registry actually
+    contain right now?" — including a project overlay's tags/modes — without a
+    committed generated artifact and without reading JSON by eye.
+
+    Strictly **read-only**: no ``track_dir`` argument, no ``track-state.json``
+    mutation, no writes anywhere. This is load-bearing for the sanctioned-set
+    safety contract (a read-only render can never be the catastrophic op the
+    broad rm/mv scan guards against). Fail-open: a missing/malformed registry is
+    already handled inside the profile modules (``_FALLBACK``); this function
+    renders whatever ``TAG_VOCAB``/``MODE_VOCAB`` resolve to and never raises.
+    """
+    # Local import: these modules are read by the phase-checker/dispatch paths and
+    # resolve the overlay via the project root; importing here (not at module top)
+    # keeps the render self-contained and avoids any import-order coupling.
+    from . import task_profiles as tp
+    from . import verify_mode_profiles as vmp
+
+    def _yesno(b):
+        return "yes" if b else "no"
+
+    print("# Conductor Registry (resolved: plugin baseline ⊕ project overlay)")
+    print()
+    print("Source: conductor/workflow/{task-type,verify-mode}-profiles.json "
+          "(project overlay) over the plugin baseline.")
+    print()
+
+    # --- Task types -----------------------------------------------------------
+    tags = tp.TAG_VOCAB()
+    print(f"## Task Types ({len(tags)})")
+    print()
+    print("| Tag | Route | TDD-exempt | Coverage-exempt | When to use |")
+    print("|---|---|---|---|---|")
+    for tag in tags:
+        route = tp.route_for([tag])
+        tdd = _yesno(tp.is_tdd_exempt([tag]))
+        cov = _yesno(tp.is_coverage_exempt([tag]))
+        when = tp.when_to_use_for(tag).strip().replace("\n", " ")
+        wf = tp.workflow_for(tag)
+        marker = " *(workflow)*" if wf else ""
+        print(f"| `{tag}` | `{route}` | {tdd} | {cov} | {when}{marker} |")
+    print()
+    print("`workflow` rows carry a bespoke executor workflow (rendered inline at ")
+    print("dispatch); the rest use default TDD (Steps 3-8). `[Explore]` routes to ")
+    print("explorer; task-executor REFUSES it.")
+    print()
+
+    # --- Verify modes ---------------------------------------------------------
+    modes = vmp.MODE_VOCAB()
+    print(f"## Verify Modes ({len(modes)})")
+    print()
+    print("| Mode | Runs | Fix policy | When to use |")
+    print("|---|---|---|---|")
+    for mode in modes:
+        runs = ", ".join(vmp.runs_for(mode))
+        fix = vmp.fix_policy_for(mode)
+        when = vmp.when_to_use_for(mode).strip().replace("\n", " ")
+        print(f"| `{mode}` | {runs} | `{fix}` | {when} |")
+    print()
+    print("`(no directive)` = the default full gate (suite → L2 → L4 manual).")
+    print("`anchor` is a no-op on an unfrozen track (run `track-state freeze` to ")
+    print("activate).")
+
+
 def cmd_record_summary(track_dir):
     """Record a compact task summary for context recovery after compaction."""
     summaries_path = conductor_dir(track_dir) / "task-summaries.json"

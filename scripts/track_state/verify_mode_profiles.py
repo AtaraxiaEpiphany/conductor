@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from functools import lru_cache
 from pathlib import Path
@@ -56,22 +57,26 @@ _FALLBACK = {
     "modes": {
         "compile": {
             "runs": ["build"],
+            "when_to_use": "A mid-migration phase whose goal is \"it compiles\" — the test suite is expected red, the build is the gate.",
             "fix_policy": "none",
             "ignore": ["test-suite"],
             "report_field": "BUILD",
         },
         "test": {
             "runs": ["test-suite"],
+            "when_to_use": "Explicitly opt back into the suite gate, e.g. as part of test,start. Alone, equivalent to omitting the directive.",
             "fix_policy": "fix-and-retry",
             "report_field": "L1_VERIFY",
         },
         "start": {
             "runs": ["boot-smoke"],
+            "when_to_use": "A phase whose deliverable includes \"the app boots.\" Typically combined with test on the final integration phase, or with compile on the phase that first achieves a bootable build.",
             "fix_policy": "fail-fast",
             "report_field": "START",
         },
         "anchor": {
             "runs": ["frozen-subset"],
+            "when_to_use": "A phase whose safety net is the frozen subset, not the full suite. A refactoring phase where the broader suite is in flux but the pinned anchor must hold.",
             "fix_policy": "none",
             "report_field": "ANCHOR",
         },
@@ -289,3 +294,138 @@ def protocol_for(mode: str) -> str:
     An unknown mode inherits the ``default`` protocol (the full-gate prose).
     """
     return _profile(mode).get("protocol", "")
+
+
+def when_to_use_for(mode: str) -> str:
+    """The one-line ``when_to_use`` hint for a mode, or ``""``.
+
+    Sourced from the registry row (mirrors :func:`task_profiles.when_to_use_for`
+    for tags). This is the signal surface :func:`derive_verify_modes` matches a
+    phase goal against to ADVISORILY classify it into modes. Absent on a row
+    => the derivation falls back to tokens lifted from :func:`protocol_for`
+    (weaker matching), so the mechanism never *depends* on the field being
+    present.
+    """
+    return _profile(mode).get("when_to_use", "")
+
+
+def _mode_signals(mode: str) -> list[str]:
+    """Lowercased keyword signals for a mode, derived from its ``when_to_use``.
+
+    There is no explicit ``signals`` array on verify-mode rows (unlike task-type
+    rows) — modes are a small fixed set whose ``when_to_use`` is already a dense
+    keyword surface, so we tokenize it directly. ≥4-char alphabetic tokens are
+    kept; stop-words and short tokens are dropped. This is the weaker-but-
+    adequate path; the quality path is a richer ``when_to_use`` string, which the
+    contract table already provides.
+    """
+    text = when_to_use_for(mode).lower()
+    if not text:
+        # protocol_for is the floor — better than nothing when when_to_use is absent.
+        text = protocol_for(mode).lower()
+    tokens = []
+    for tok in text.split():
+        cleaned = "".join(ch for ch in tok if ch.isalpha())
+        if len(cleaned) >= 4:
+            tokens.append(cleaned)
+    return tokens
+
+
+def _any_in(text: str, signals: tuple[str, ...]) -> bool:
+    """True if any signal string is a substring of ``text`` (both lowered).
+
+    A tiny helper so the precedence branches read as signal sets, not
+    ``any(... for ... in ...)`` noise. Kept as plain substring matching for the
+    multi-word phrases (e.g. ``"start the app"``) where word boundaries would
+    over-split; the lone substring-prone token (``boot``) is handled with a
+    regex lookbehind at its call site, not here.
+    """
+    return any(s in text for s in signals)
+
+
+def derive_verify_modes(phase_goal: str) -> list[str]:
+    """Advisory verify-mode directive for a phase GOAL, or ``[]`` (default gate).
+
+    The verify-mode analog of :func:`task_profiles.derive_task_tag`. Given a
+    phase's goal/description as free text, propose the modes a
+    ``<!-- verify: <modes> -->`` directive SHOULD carry. Empty = emit no
+    directive = the default full gate (the correct outcome for feature work).
+
+    This is advisory-only: ``init-from-plan --check`` still **warns** (not
+    blocks) on the final directive, and the phase-checker no-ops ``anchor`` on an
+    unfrozen track — so a wrong proposal is self-correcting at the gate, never
+    fatal. The realistic ceiling is "generator proposes, ``--check`` disposes";
+    do not over-tune the keyword sets chasing precision.
+
+    Resolution rules (the real decision logic, encoded explicitly):
+
+    * **Migration intermediate** ("compiles"/"compile"/"build" without a
+      boot/suite-green signal) → ``["compile"]``. The suite is expected red;
+      the build is the gate.
+    * **Final integration** ("boots"/"starts"/"ready" — the app must run) →
+      ``["test", "start"]``. Suite green AND boot smoke.
+    * **Refactor with frozen anchor** ("refactor"/"tech debt" AND "frozen"/
+      "anchor"/"pinned") → ``["anchor"]`` (advisory; no-ops on an unfrozen
+      track — the existing graceful degradation).
+    * **Plain feature work** (none of the above) → ``[]`` (default full gate).
+
+    Fail-open: any ambiguity or exception → ``[]``. Never invents a mode not in
+    :func:`MODE_VOCAB`; never raises into a caller.
+    """
+    try:
+        if not phase_goal or not phase_goal.strip():
+            return []
+        text = phase_goal.lower()
+
+        # Final integration: the app must boot — the strongest signal (start is
+        # only ever meaningful combined with a green gate, so test,start together).
+        # In a *phase goal* description these tokens overwhelmingly mean "the app
+        # runs"; false positives (bootstrap/bootloader code) don't appear in goals.
+        # ``boot`` is matched with a negative lookbehind so it does NOT false-fire
+        # inside "spring-boot" (the classic substring trap — a migration goal
+        # mentioning the Spring Boot framework is a *compile* goal, not a
+        # boot-smoke goal). The lookbehind excludes word chars AND hyphen.
+        if re.search(r"(?<![-\w])boot", text) or _any_in(text, (
+            "boots", "starts up", "app starts", "the app starts",
+            "start the app", "starts the app", "run the app",
+            "boot smoke", "startup stack trace",
+        )):
+            return ["test", "start"]
+
+        # Refactor with a frozen anchor: the suite is in flux, the pinned
+        # subset is the safety net. Requires BOTH a refactor intent and an
+        # anchor signal — a plain "refactor for readability" is just default
+        # TDD work, not an anchor phase.
+        refactor_signals = ("refactor", "tech debt", "tech-debt", "restructure",
+                            "consolidate", "cleanup", "clean up", "tidy")
+        anchor_signals = ("anchor", "frozen", "pinned", "subset", "regression set",
+                          "counter-anchor", "goodhart")
+        if (_any_in(text, refactor_signals) and _any_in(text, anchor_signals)):
+            return ["anchor"]
+
+        # Migration intermediate: it compiles. The suite is expected red, so the
+        # build — NOT the suite — is the gate. "compile"/"build" without a boot
+        # signal (handled above) lands here.
+        compile_signals = ("compile", "compiles", "compilation", "build",
+                           "it builds", "type-check", "typecheck")
+        migration_signals = ("migrat", "upgrade", "bump", "rename", "javax",
+                             "jakarta", "framework version", "deprecation",
+                             "major dependency", "spring boot")
+        if _any_in(text, compile_signals):
+            return ["compile"]
+        # A migration goal WITHOUT an explicit compile/boot word: the safest
+        # intermediate-phase proposal is still compile (the suite is red), but
+        # only if the goal reads as an *intermediate* migration step, not the
+        # final "tests pass" step. We require a migration signal AND that the
+        # goal does NOT promise a green suite ("tests pass"/"green"/"suite").
+        suite_green_signals = ("tests pass", "test suite passes", "green",
+                               "suite green", "all tests")
+        if (_any_in(text, migration_signals)
+                and not _any_in(text, suite_green_signals)):
+            return ["compile"]
+
+        # Default: feature work, or a migration's final "tests pass" phase → the
+        # full gate. Emitting [] (no directive) is the correct, safe outcome.
+        return []
+    except Exception:
+        return []

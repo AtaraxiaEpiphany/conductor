@@ -20,16 +20,22 @@ from unittest import TestCase, main
 
 from scripts.lib.frontmatter import missing_required_fields
 from scripts.track_state.task_profiles import TAG_VOCAB
+from scripts.track_state.verify_mode_profiles import MODE_VOCAB
 
 ROOT = Path(__file__).resolve().parent.parent
 CONTRACT = ROOT / "runtime" / "contracts" / "plan-format-contract.md"
 REGISTRY = ROOT / "templates" / "workflow" / "task-type-profiles.json"
+VERIFY_REGISTRY = ROOT / "templates" / "workflow" / "verify-mode-profiles.json"
 SPEC_PLANNER = (ROOT / "agents" / "spec-planner.md").read_text(encoding="utf-8")
 
 # The six tags the contract table documents (the human-readable view of the
 # registry). Drift between this list, the contract table, and the registry is
 # what the RegistryDriftTests class guards.
 CONTRACT_TAGS = ("Explore", "Docs", "Config", "Chore", "Manual", "Migrate")
+
+# The four verify modes the contract table documents (mirrors CONTRACT_TAGS for
+# the phase-verify axis). ``(no directive)`` is the implicit default, not a mode.
+CONTRACT_MODES = ("compile", "test", "start", "anchor")
 
 
 class ContractDocTests(TestCase):
@@ -120,6 +126,37 @@ class RegistryDriftTests(TestCase):
         import json
         data = json.loads(REGISTRY.read_text(encoding="utf-8"))
         self.assertEqual(set(TAG_VOCAB()), set(data["tags"].keys()))
+
+    def test_verify_mode_vocab_matches_registry(self):
+        # Mirror of test_vocab_matches_registry_keys for the verify-mode axis:
+        # (a) every mode the contract documents is registered, and (b) the
+        # in-code MODE_VOCAB() matches the registry keys exactly. Without this,
+        # a mode documented in the contract (or added to the registry) could lag
+        # the other surface — and init-from-plan --check would warn on a
+        # documented-but-unregistered mode, or silently accept an unregistered one.
+        import json
+        self.assertTrue(VERIFY_REGISTRY.exists(), "verify-mode-profiles.json registry must exist")
+        data = json.loads(VERIFY_REGISTRY.read_text(encoding="utf-8"))
+        vocab = set(MODE_VOCAB())
+        for mode in CONTRACT_MODES:
+            self.assertIn(mode, vocab, f"contract mode {mode!r} missing from registry")
+        self.assertEqual(set(MODE_VOCAB()), set(data["modes"].keys()))
+
+    def test_registry_has_when_to_use_for_every_tag(self):
+        # ``when_to_use`` is now load-bearing for derivation (derive_task_tag
+        # signal-matches it as the fallback when a tag has no explicit
+        # ``signals`` array), not just a hint injected into spec-planner. Assert
+        # it is present on EVERY tag row so a future tag added without it does
+        # not silently degrade to the weaker when_to_use-tokenization path.
+        import json
+        data = json.loads(REGISTRY.read_text(encoding="utf-8"))
+        for tag, prof in data["tags"].items():
+            wt = prof.get("when_to_use", "").strip()
+            self.assertTrue(
+                wt,
+                f"registry tag [{tag}] missing a non-empty 'when_to_use' — now "
+                f"required (derive_task_tag falls back to tokenizing it)",
+            )
 
 
 class SpecPlannerPointerTests(TestCase):
