@@ -2,10 +2,14 @@
 
 The tag *name* still lives in plan.md task names (e.g. ``[Migrate] Add X``) and
 is re-extracted at every read via :func:`helpers.extract_tags`. This module holds
-what the tag *means*: which dispatch category it routes to and whether it is
-exempt from the TDD / coverage gates. It replaces the hardcoded exemption sets
-that used to live in ``helpers.py`` (``_tag_exempt_from_tdd`` /
-``_tag_exempt_from_coverage``) and the branch table in ``dispatch._classify_task``.
+what the tag *means*: which dispatch category it routes to, whether it is exempt
+from the TDD / coverage gates, a one-line ``when_to_use`` hint (injected into
+spec-planner so its tag-decision guidance is data-driven), and — for tags whose
+executor behavior diverges from default TDD — a ``workflow`` field (the
+generalization of ``[Migrate]`` §4.M; injected into task-executor). It replaces
+the hardcoded exemption sets that used to live in ``helpers.py``
+(``_tag_exempt_from_tdd`` / ``_tag_exempt_from_coverage``) and the branch table in
+``dispatch._classify_task``.
 
 The registry resolves as **plugin baseline ⊕ project overlay**. The baseline is
 the JSON data file shipped at ``templates/workflow/task-type-profiles.json``. A
@@ -25,8 +29,11 @@ see exactly what the registry is supposed to contain.
 Adding a task type after this module exists is a one-line registry row: it is
 automatically (a) recognized by ``extract_tags``/``strip_tags`` (they build
 their regex from :data:`TAG_VOCAB`), (b) routed correctly by
-:func:`route_for`, and (c) given the right exemptions by
-:func:`is_tdd_exempt`/:func:`is_coverage_exempt` — with **zero** Python edits.
+:func:`route_for`, (c) given the right exemptions by
+:func:`is_tdd_exempt`/:func:`is_coverage_exempt`, (d) surfaced to spec-planner
+with its ``when_to_use`` hint via :func:`when_to_use_for`, and — if it carries
+a ``workflow`` — (e) injected into task-executor via :func:`workflow_for`; all
+with **zero** Python edits.
 """
 
 from __future__ import annotations
@@ -46,12 +53,19 @@ from pathlib import Path
 _FALLBACK = {
     "default": {"route": "executor", "tdd_exempt": False, "coverage_exempt": False},
     "tags": {
-        "Explore": {"route": "explore", "tdd_exempt": True, "coverage_exempt": False},
-        "Docs":    {"route": "executor", "tdd_exempt": True, "coverage_exempt": True},
-        "Config":  {"route": "executor", "tdd_exempt": True, "coverage_exempt": True},
-        "Chore":   {"route": "executor", "tdd_exempt": True, "coverage_exempt": True},
-        "Manual":  {"route": "manual",   "tdd_exempt": True, "coverage_exempt": True},
-        "Migrate": {"route": "executor", "tdd_exempt": True, "coverage_exempt": True},
+        "Explore": {"route": "explore", "tdd_exempt": True, "coverage_exempt": False,
+                    "when_to_use": "Investigation/analysis that produces NO code or file change."},
+        "Docs":    {"route": "executor", "tdd_exempt": True, "coverage_exempt": True,
+                    "when_to_use": "Markdown/docs ONLY — no code touched at all."},
+        "Config":  {"route": "executor", "tdd_exempt": True, "coverage_exempt": True,
+                    "when_to_use": "Edits .env/.yaml/.json config with NO business logic."},
+        "Chore":   {"route": "executor", "tdd_exempt": True, "coverage_exempt": True,
+                    "when_to_use": "Dependencies, tooling, CI/CD, build scripts with NO feature code."},
+        "Manual":  {"route": "manual",   "tdd_exempt": True, "coverage_exempt": True,
+                    "when_to_use": "Requires a HUMAN — UI walkthrough, cross-browser check, staging deploy."},
+        "Migrate": {"route": "executor", "tdd_exempt": True, "coverage_exempt": True,
+                    "when_to_use": "Framework/version migration, package rename, or major-dep bump where an EXISTING test suite is the safety net.",
+                    "workflow": "The existing suite's red state is the START, green is the GOAL. No Step 3 (Red); Step 4 (Green) is the whole task; commit fix(migrate): …; no Step 6 coverage gate."},
     },
 }
 
@@ -293,3 +307,31 @@ def derive_task_type(name: str) -> str:
 
     tags = extract_tags(name)
     return tags[0].lower() if tags else "default"
+
+
+def workflow_for(tag: str) -> str:
+    """The prompt-shaping ``workflow`` prose injected into task-executor for a tag.
+
+    This is the mirror of verify-mode :func:`verify_mode_profiles.protocol_for`:
+    prose that *used* to live inline as a branch in ``agents/task-executor.md``
+    (``[Migrate]`` §4.M) is lifted into the registry so the executor's §4.0 tag
+    branch can be tag-agnostic — it follows the ``workflow`` of its leading tag
+    rather than knowing each tag's behavior. Absent (the common case) = ``""`` =
+    default TDD; the executor runs the full Steps 3-8 cycle.
+
+    A project overlay may add a ``workflow`` for a project-specific tag (e.g.
+    ``[K8sRollout]`` with bespoke rollout prose) and it flows to task-executor
+    at dispatch with zero plugin edits — the ``[Migrate]`` generalization.
+    """
+    return _profile(tag).get("workflow", "")
+
+
+def when_to_use_for(tag: str) -> str:
+    """The one-line ``when to use this tag`` hint, injected into spec-planner.
+
+    Lets spec-planner's tag-decision guidance be data-driven: the closed tag
+    vocabulary AND the per-tag "when" hint both come from the registry, so a
+    project overlay's tags are surfaced to the planner rather than refused as
+    "outside the closed set." Absent = ``""`` (no hint injected for that tag).
+    """
+    return _profile(tag).get("when_to_use", "")

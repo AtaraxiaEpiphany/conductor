@@ -94,6 +94,22 @@ AGENT_REMINDERS = {
 # dispatch would mislead. Add here if another agent gains retry semantics.
 _RETRY_AGENTS = {"task-executor"}
 
+# Agents that receive the resolved registry-vocab block (task-type + verify-mode).
+# This is how a project overlay's tags/modes flow end-to-end to the agent-prose
+# layer: spec-planner and task-executor are data-driven by injection here (the
+# same registry phase-checker already reads directly). phase-checker is included
+# belt-and-suspenders so a project-added mode is visible even before its loop
+# reads it. Add here if another agent should see the resolved vocab at dispatch.
+_REGISTRY_AGENTS = {"spec-planner", "task-executor", "phase-checker"}
+
+_REGISTRY_LEAD = (
+    "[Conductor Registry] The closed task-type tag set and verify-mode "
+    "vocabulary below are resolved at dispatch (plugin baseline ⊕ project "
+    "overlay). This is authoritative: emit/use any tag or mode listed here, and "
+    "refuse none that are registered — including project-overlay tags. The "
+    "closed set is what the registry resolved to, not a hardcoded list."
+)
+
 _RETRY_LEAD = (
     "[Conductor Retry] A prior attempt at this task failed — its handoff record "
     "is below. Do NOT repeat the same approach; heed Failure Reason and "
@@ -208,7 +224,212 @@ def _retry_context(cwd, agent_type):
         return None
 
 
+def _resolve_locked_task_type(cwd):
+    """The leading task-type tag (registry-cased) for the locked task, or ``None``.
+
+    ``locked_task.resolve`` returns ``(track_dir, p, t, s)`` — no tag. To branch
+    task-executor's registry block on *this* task's leading tag, read the locked
+    task's ``task_type`` field straight out of ``track-state.json`` at the locked
+    1-based coordinates (it's a typed mirror of the name's tag, derived once at
+    construction by :func:`task_profiles.derive_task_type`). That field is
+    **lowercased** (``derive_task_type`` lowercases), but the registry keys are
+    Title-case (``Migrate``), so the resolved value is matched case-insensitively
+    against :func:`TAG_VOCAB` and the registry-cased form is returned — so the
+    downstream profile/workflow lookup hits the right row. Best-effort: any
+    resolution/read/shape error → ``None`` (the block falls back to the generic
+    vocab summary). Subtask tasks inherit the parent tag, so the parent task's
+    ``task_type`` is read whether or not a subtask is locked.
+    """
+    from track_state import task_profiles as tp
+    locked = resolve_locked_task(cwd)
+    if locked is None:
+        return None
+    track_dir, p, t, _s = locked
+    state_path = Path(track_dir) / "track-state.json"
+    if not state_path.exists():
+        return None
+    import json
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    phases = state.get("phases") or []
+    if not (1 <= p <= len(phases)):
+        return None
+    tasks = phases[p - 1].get("tasks") or []
+    if not (1 <= t <= len(tasks)):
+        return None
+    tt = tasks[t - 1].get("task_type")
+    if not tt or tt == "default":
+        return None
+    # task_type is lowercased; the registry keys are Title-case. Match
+    # case-insensitively so the profile/workflow lookup resolves the right row.
+    for cand in tp.TAG_VOCAB():
+        if cand.lower() == tt:
+            return cand
+    return None
+
+
+def _tag_summary_rows():
+    """One summary line per registered tag: ``[Tag] route tdd/coverage hint``.
+
+    Reads the resolved registry (so project-overlay tags appear) and renders a
+    compact row per tag. Lazy import: this module is imported transitively by
+    the standalone hook scripts; resolving the registry can raise, and the
+    fail-open boundary must stay tight (the floor/reminder contract is primary).
+    """
+    from track_state import task_profiles as tp
+    rows = []
+    for tag in tp.TAG_VOCAB():
+        prof = tp._profile(tag)  # noqa: SLF001 — registry-internal profile lookup
+        route = prof.get("route", "executor")
+        flags = []
+        if prof.get("tdd_exempt"):
+            flags.append("tdd-exempt")
+        if prof.get("coverage_exempt"):
+            flags.append("coverage-exempt")
+        hint = tp.when_to_use_for(tag)
+        flagstr = f" [{', '.join(flags)}]" if flags else ""
+        hintstr = f" — {hint}" if hint else ""
+        rows.append(f"[{tag}] route={route}{flagstr}{hintstr}")
+    return rows
+
+
+def _mode_summary_lines():
+    """One summary line per registered verify-mode: ``mode: runs -> report_field``."""
+    from track_state import verify_mode_profiles as vmp
+    lines = []
+    for mode in vmp.MODE_VOCAB():
+        prof = vmp._profile(mode)  # noqa: SLF001
+        runs = "+".join(prof.get("runs", []))
+        field = prof.get("report_field", "")
+        fix = prof.get("fix_policy", "")
+        fieldstr = f" -> {field}" if field else ""
+        fixstr = f" ({fix})" if fix else ""
+        lines.append(f"  - {mode}: {runs}{fieldstr}{fixstr}")
+    return lines
+
+
+def _registry_context(agent_type, cwd):
+    """The resolved registry-vocab block for an agent, or ``None``.
+
+    This is the injection that data-drives the agent-prose layer the way the CLI
+    layer already is: spec-planner and task-executor read the closed tag/mode
+    vocabulary from here rather than from hardcoded prose, so a project overlay
+    flows end-to-end with zero plugin edits. phase-checker already reads the
+    registry directly (its loop is mode-agnostic); its block here is a lightweight
+    belt-and-suspenders so a project-added mode is visible at dispatch too.
+
+    Fail-safe: any error → ``None``. This block is advisory and must NEVER break
+    the floor/reminder/retry injection that is the hook's primary contract — a
+    registry block that risks the safety floor is worse than none. Mirrors
+    :func:`_retry_context`'s fail-open posture.
+
+    Returns ``None`` for agents outside :data:`_REGISTRY_AGENTS`.
+    """
+    if agent_type not in _REGISTRY_AGENTS:
+        return None
+    try:
+        if agent_type == "spec-planner":
+            return _registry_for_planner()
+        if agent_type == "phase-checker":
+            return _registry_for_phase_checker()
+        if agent_type == "task-executor":
+            return _registry_for_executor(cwd)
+    except Exception:
+        return None
+    return None
+
+
+def _registry_for_planner():
+    """spec-planner: the full tag vocab (with when-to-use hints) + mode vocab.
+
+    The planner authors plan.md — it must emit any registered tag/mode and refuse
+    none. The injected vocab IS the closed set it validates against (the registry
+    resolves baseline ⊕ overlay), so it no longer hardcodes the 7-tag decision
+    rule: it matches a task to a registered tag by the injected when-to-use hints.
+    """
+    lines = [f"{_REGISTRY_LEAD}", "", "RESOLVED TASK-TYPE TAG VOCAB (emit any; refuse none):"]
+    lines.extend(f"  - {r}" for r in _tag_summary_rows())
+    lines.append("")
+    lines.append("RESOLVED VERIFY-MODE VOCAB (phase headings; emit any; refuse none):")
+    lines.extend(_mode_summary_lines())
+    return "\n".join(lines)
+
+
+def _registry_for_phase_checker():
+    """phase-checker: the resolved mode vocab (it already reads the registry).
+
+    phase-checker's Step-3 directive loop reads each mode's profile directly from
+    the registry; this block is a lightweight view of the resolved vocab so a
+    project-added mode is visible at dispatch even before the loop reads it.
+    """
+    lines = [f"{_REGISTRY_LEAD}", "", "RESOLVED VERIFY-MODE VOCAB:"]
+    lines.extend(_mode_summary_lines())
+    return "\n".join(lines)
+
+
+def _registry_for_executor(cwd):
+    """task-executor: this task's leading-tag profile + workflow (if any).
+
+    Resolves the locked task's leading tag and surfaces its resolved profile
+    (route/tdd_exempt/coverage_exempt) plus, if the tag carries a ``workflow``
+    (e.g. ``[Migrate]``), that prose verbatim — the executor follows it instead
+    of default TDD. This is the ``[Migrate]`` generalization: a project overlay
+    tag with a bespoke ``workflow`` flows to the executor here. If no task/type
+    resolves, emits the resolved exemption summary derived from TAG_VOCAB (so the
+    executor still sees the closed set rather than a hardcoded enumeration).
+    """
+    from track_state import task_profiles as tp
+    lines = [f"{_REGISTRY_LEAD}"]
+    tag = _resolve_locked_task_type(cwd)
+    if tag is not None:
+        prof = tp._profile(tag)  # noqa: SLF001
+        lines.append("")
+        lines.append(f"RESOLVED PROFILE for this task's leading tag [{tag}]:")
+        lines.append(f"  - route: {prof.get('route', 'executor')}")
+        lines.append(f"  - tdd_exempt: {prof.get('tdd_exempt', False)}")
+        lines.append(f"  - coverage_exempt: {prof.get('coverage_exempt', False)}")
+        workflow = tp.workflow_for(tag)
+        if workflow:
+            lines.append("")
+            lines.append(f"WORKFLOW (follow this prose for [{tag}] instead of default TDD):")
+            lines.append(workflow)
+        else:
+            lines.append("  - workflow: (absent → default TDD, Steps 3-8)")
+    # Always surface the resolved exemption set so §5.0 is registry-driven too —
+    # a project overlay tag's exemptions are visible even when no task resolves.
+    lines.append("")
+    lines.append("RESOLVED EXEMPTION SETS (F2/F3 gating reads these from the registry):")
+    exempt = [t for t in tp.TAG_VOCAB() if tp._profile(t).get("coverage_exempt")]  # noqa: SLF001
+    lines.append(f"  - coverage(F2/F3)-exempt tags: {', '.join(f'[{t}]' for t in exempt) or '(none)'}")
+    tdd_exempt = [t for t in tp.TAG_VOCAB() if tp._profile(t).get("tdd_exempt")]  # noqa: SLF001
+    lines.append(f"  - tdd(F2)-exempt tags: {', '.join(f'[{t}]' for t in tdd_exempt) or '(none)'}")
+    return "\n".join(lines)
+
+
 def _reset_tripwire_counter(cwd, agent_type):
+    """Reset the PreToolUse tripwire round-counter for a fresh task-executor dispatch.
+
+    ``on-pre-tool-tripwire.py`` counts task-executor's rounds against the locked
+    task; SubagentStart fires once per dispatch, so this is the natural reset
+    point. A retry therefore starts the count at 0. Best-effort and scoped to
+    task-executor — any failure is non-fatal (the counter just starts stale,
+    which biases toward tripping slightly early: safe).
+    """
+    if agent_type != "task-executor":
+        return
+    try:
+        locked = resolve_locked_task(cwd)
+        if locked is None:
+            return
+        track_dir, phase, task, subtask = locked
+        sub = f"-{subtask}" if subtask is not None else ""
+        path = Path(track_dir) / ".conductor" / f".tripwire-{phase}-{task}{sub}.count"
+        if path.exists():
+            path.unlink()
+    except Exception:
+        pass
+
+
+
     """Reset the PreToolUse tripwire round-counter for a fresh task-executor dispatch.
 
     ``on-pre-tool-tripwire.py`` counts task-executor's rounds against the locked
@@ -279,12 +500,15 @@ def main():
         write_simple_output()
         return
 
-    # Safety floor first, then the result-format reminder, then any retry-context
-    # nudge (advisory; None for fresh tasks and non-retry agents). Order matters:
-    # the floor must lead and the reminder must precede any appended retry block.
+    # Safety floor first, then the result-format reminder, then the resolved
+    # registry-vocab block (the data-driven agent-prose layer), then any retry-
+    # context nudge (advisory; None for fresh tasks and non-retry agents). Order
+    # matters: the floor must lead; the reminder precedes the registry block,
+    # which precedes any appended retry block (floor < reminder < registry < retry).
     floor = _load_safety_floor()
+    registry = _registry_context(agent_type, cwd)
     retry = _retry_context(cwd, agent_type)
-    parts = [p for p in (floor, reminder, retry) if p]
+    parts = [p for p in (floor, reminder, registry, retry) if p]
     write_simple_output(additional_context="\n\n".join(parts))
 
 

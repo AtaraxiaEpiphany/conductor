@@ -107,23 +107,18 @@ Read `{TRACK_DIR}/plan.md`. Find your task at `## Phase {PHASE}`, locate task `{
 Extract from task line:
 - Task description and annotations (`<!-- AC-n, TC-n.n -->`)
 - AC/TC references (record IDs for Layer 2)
-- Task tag (`[Docs]`/`[Config]`/`[Chore]`/…) — drives the Layer 1.5 fast path
+- Task tag (from the leading bracket, e.g. `[Config]`/`[Migrate]` — resolved to its registry profile by Layer 1.5) — drives the Layer 1.5 fast path
 
 ### Layer 1.5: Task-Type Fast Path (TDD-exempt tags)
 
-If the Layer-1 task tag is `[Docs]`, `[Config]`, or `[Chore]` → **TDD-exempt**
-(§4.0 → Step 8 only; §5.0 exempts F2/F3). For these tags:
+Check the injected `[Conductor Registry]` block for this task's leading-tag profile. If its `tdd_exempt` is **true** AND it carries **no `workflow`** → the config/docs/chore-style fast path (§4.0 → Step 8 only; §5.0 exempts F2/F3). For such a tag:
 
 - **Skip Layer 2** — no AC/TC annotations, so spec.md AC extraction doesn't apply.  (If the task description or Layer 0 notes name an out-of-scope boundary, honor it directly.)
 - **In Layer 3, skip `testing/strategy.md` and the styleguide** — read only `task-workflow.md` Step 8 (commit-message format).
 
 Then go **straight to §4.0 Step 8**. For any other tag → continue to Layer 2.
 
-**`[Migrate]` is NOT this fast path.** A migration task loads Layers 1-3 normally
-(reads spec.md ACs, the styleguide, and `task-workflow.md`) — it needs AC context
-for the checkpoint's `ac-tracer` trace and it commits real code. It diverges only
-at §4.0, where it takes the `[Migrate]` branch (suite-green, no Red, no coverage
-gate) instead of full TDD. Continue to Layer 2 when the tag is `[Migrate]`.
+**A tag that carries a `workflow` is NOT this fast path** (e.g. `[Migrate]`). Such a task loads Layers 1-3 normally (reads spec.md ACs, the styleguide, and `task-workflow.md`) — it needs AC context for the checkpoint's `ac-tracer` trace and it commits real code. It diverges only at §4.0, where it follows the injected `workflow` instead of full TDD. Continue to Layer 2 when the profile carries a `workflow`.
 
 ### Layer 2: Acceptance Criteria (READ BEFORE Step 3)
 
@@ -162,23 +157,22 @@ Do NOT repeat the same approach; focus on "Suggested Next Step". The handoff is 
 
 ## 4.0 TDD WORKFLOW
 
-Check task tag to determine workflow:
+Branch on **this task's leading tag**, resolved from the registry (the `[Conductor Registry]` block injected at your dispatch carries the resolved profile: `route`, `tdd_exempt`, `coverage_exempt`, and — when the tag carries one — a `workflow`):
 
-| Tag | Workflow |
-|-----|----------|
-| `[Docs]`, `[Config]`, `[Chore]` | TDD Gate exempt → Step 8 only |
-| `[Migrate]` | Migration workflow — §4.M below (suite-green required; no Red, no coverage gate) |
-| Default | Full TDD (Steps 3-8) |
-| `[Explore]` | **ERROR** → report FAILURE |
+- **`tdd_exempt: true` (and no `workflow`)** — the config/docs/chore-style exemption path → go **straight to Step 8** (commit-message format only; skip Steps 3-7). The injected profile names which tags are exempt.
+- **A `workflow` present** — this tag carries bespoke executor prose (e.g. `[Migrate]`). **Follow the injected `workflow` verbatim** instead of default TDD; it tells you exactly which steps to run, skip, and how to commit. This is the `[Migrate]` generalization: a project overlay tag with a `workflow` is followed the same way, with zero edits here.
+- **`route: explore`** (`[Explore]`) → **ERROR**: report **FAILURE**. Exploration routes to the `explorer` agent, not you — you produce no findings, only code.
+- **Default (no tag / untagged)** → **Full TDD (Steps 3-8)** below. This is the path for the majority of tasks.
 
-### §4.M Migration workflow (`[Migrate]` tag)
+### §4.M Tag-workflow path (when the injected profile carries a `workflow`)
 
-A `[Migrate]` task inverts TDD: the existing suite's red state is the start, green is the goal. **Full semantics (no Step 3/6, suite-as-safety-net, stop conditions) live in `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/plan-format-contract.md` §"`[Migrate]` workflow" — read it; this section carries only your agent-specific bindings.**
+A tag whose leading behavior diverges from default TDD carries a `workflow` in the registry (today: `[Migrate]`). **The canonical `workflow` prose is injected into your `[Conductor Registry]` block at dispatch — follow it verbatim.** This section carries only your agent-specific bindings on top of that prose:
 
-- **Step 4 (Green)** is the whole task: run the suite via the digester (§4.5, `PURPOSE=coverage` read as "run the suite once"), fix the breaks until green, commit each fix `fix(migrate): …` (a behavior-preserving mass change may commit `refactor(migrate): …`). Both are **F2-exempt** — do not stage a contrived test to satisfy F2; the existing suite covers the behavior.
+- **Step 4 (Green) via the digester** — run the suite (§4.5, `PURPOSE=coverage` read as "run the suite once"), fix the breaks until green, commit each fix as the `workflow` prescribes (`fix(migrate): …` for `[Migrate]`; a behavior-preserving mass change may commit `refactor(migrate): …`). Both are **F2-exempt** — do not stage a contrived test to satisfy F2; the existing suite covers the behavior.
 - **Step 5 (Refactor) stays** — bounded, diff-scoped, behavior-preserving, under green; skip near the §7.0 tripwire.
-- **Step 7/8** apply normally (update `tech-stack.md` if the migration diverges from the recorded stack).
-- **Stop:** suite green → `--status success` (the suite is your evidence); still red after exhausting the failure list → `--status failure` with the remaining failing tests in `--failure-reason` (the phase-checker treats an all-migration phase's red exit as a FAILED report, not fix-and-retry — see phase-checker.md §3.0).
+- **Step 7/8** apply normally (update `tech-stack.md` if the work diverges from the recorded stack).
+
+The full per-step semantics (no Step 3 Red, no Step 6 coverage gate, stop conditions) live in the injected `workflow` and in `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/plan-format-contract.md` §"`[Migrate]` workflow" — read the injected block first.
 
 **Canonical TDD cycle (Steps 3-8):** `conductor/workflow/task-workflow.md` is authoritative — read its **Steps 3-8 section only** (skip Steps 1-2, 9-11, orchestrator-owned). Agent-specific bindings below override/extend the template.
 
@@ -235,7 +229,7 @@ PURPOSE=coverage
 ## 5.0 FIREWALL
 
 Mandatory gates: F2 (TDD), F3 (Coverage), F6 (Context Guard).
-Exempted: `[Docs]`, `[Config]`, `[Chore]`, `[Migrate]` (F2/F3; `[Migrate]` keeps the suite-green obligation from §4.M — exempt from the *TDD discipline* and the *coverage bar*, not from "the suite must end green").
+Exempted tags are resolved from the registry profile, not enumerated here — see the `[Conductor Registry]` block injected at your dispatch for the resolved `coverage_exempt`/`tdd_exempt` sets. A tag whose `workflow` carries a suite-green obligation (e.g. `[Migrate]`) keeps that obligation: it is exempt from the *TDD discipline* and the *coverage bar*, not from "the suite must end green."
 
 Prohibited: V1 (code before test), V3 (skip coverage), V8 (modify state).
 SHA handling: orchestrator appends SHAs — you do NOT modify plan markers.

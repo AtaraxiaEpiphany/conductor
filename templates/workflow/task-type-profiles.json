@@ -1,9 +1,11 @@
 {
-  "_comment": "Single source of truth for task-type SEMANTICS. The tag NAME still lives in plan.md task names ([Migrate] X); this file holds what the tag MEANS (routing + gate exemptions). Code reads this via track_state.task_profiles, not hardcoded Python sets. Adding a task type = one row here (plus, if it needs special executor behavior, an agent-prose branch — see runtime/contracts/plan-format-contract.md).",
+  "_comment": "Single source of truth for task-type SEMANTICS. The tag NAME still lives in plan.md task names ([Migrate] X); this file holds what the tag MEANS (routing + gate exemptions + when-to-use hint + optional executor workflow). Code reads this via track_state.task_profiles, not hardcoded Python sets. The SubagentStart hook injects TAG_VOCAB + each tag's when_to_use into spec-planner, and the leading-tag profile (+ workflow) into task-executor — so a project overlay flows end-to-end with zero plugin edits (mirrors verify-mode-profiles.json). Adding a task type = one row here; if it needs special executor behavior, also set `workflow` (the generalization of [Migrate] §4.M).",
   "_fields": {
     "route": "which dispatch category drives _classify_task: manual | explore | executor",
     "tdd_exempt": "true => task is exempt from the TDD (red/green/refactor) gate",
-    "coverage_exempt": "true => task is exempt from the coverage (F2/F3) gate. Explore is tdd_exempt but NOT coverage_exempt: it produces no code, yet must not skip coverage accounting on adjacent changes."
+    "coverage_exempt": "true => task is exempt from the coverage (F2/F3) gate. Explore is tdd_exempt but NOT coverage_exempt: it produces no code, yet must not skip coverage accounting on adjacent changes.",
+    "when_to_use": "one-line 'when to use this tag' hint injected into spec-planner at dispatch (the closed-set guidance, data-driven so a project overlay's tags get a hint too). Absent => no hint injected.",
+    "workflow": "prompt-shaping prose the executor follows when this tag is the leading tag — mirrors verify-mode `protocol`. Absent => default TDD (Steps 3-8). Only [Migrate] carries one today; a project overlay may add a bespoke workflow for a project tag (the [Migrate] generalization)."
   },
   "default": {
     "route": "executor",
@@ -11,11 +13,11 @@
     "coverage_exempt": false
   },
   "tags": {
-    "Explore": { "route": "explore", "tdd_exempt": true, "coverage_exempt": false },
-    "Docs":    { "route": "executor", "tdd_exempt": true, "coverage_exempt": true },
-    "Config":  { "route": "executor", "tdd_exempt": true, "coverage_exempt": true },
-    "Chore":   { "route": "executor", "tdd_exempt": true, "coverage_exempt": true },
-    "Manual":  { "route": "manual",   "tdd_exempt": true, "coverage_exempt": true },
-    "Migrate": { "route": "executor", "tdd_exempt": true, "coverage_exempt": true }
+    "Explore": { "route": "explore", "tdd_exempt": true, "coverage_exempt": false, "when_to_use": "Investigation/analysis that produces NO code or file change — architecture mapping, dependency survey, codebase understanding before implementation. task-executor REFUSES it (reports FAILURE): route to explorer instead." },
+    "Docs":    { "route": "executor", "tdd_exempt": true, "coverage_exempt": true, "when_to_use": "Markdown/docs ONLY — no code touched at all. Edits .md, never source." },
+    "Config":  { "route": "executor", "tdd_exempt": true, "coverage_exempt": true, "when_to_use": "Edits .env/.yaml/.json config with NO business logic — keys/values, not behavior." },
+    "Chore":   { "route": "executor", "tdd_exempt": true, "coverage_exempt": true, "when_to_use": "Dependencies, tooling, CI/CD, build scripts with NO feature code." },
+    "Manual":  { "route": "manual",   "tdd_exempt": true, "coverage_exempt": true, "when_to_use": "Requires a HUMAN — UI walkthrough, cross-browser check, staging deploy, accessibility audit, email-delivery confirmation. Auto-deferred in continuous mode." },
+    "Migrate": { "route": "executor", "tdd_exempt": true, "coverage_exempt": true, "when_to_use": "Framework/version migration, package rename, or major-dep bump where an EXISTING test suite is the safety net — the suite starts red, success is making it green, not writing a new failing test first.", "workflow": "A `[Migrate]` task inverts TDD: the existing suite's red state is the START, green is the GOAL. You are not writing a new failing test first; you are making the existing suite pass again. Routes to executor (wave-eligible when flat + deps-declared); loads ACs normally (the checkpoint's ac-tracer needs the trace; you commit real code).\n\n- **No Step 3 (Red).** The suite's current failures ARE the red state — do not author a new failing test for the migration.\n- **Step 4 (Green) is the whole task.** Run the suite via the digester (§4.5, `PURPOSE=coverage` read as \"run the suite once\"), fix the compile/runtime breaks (deprecated APIs, `javax→jakarta` renames, removed methods, renamed config keys) until green. Commit each fix `fix(migrate): …`; a behavior-preserving mass change may commit `refactor(migrate): …`. Both are **F2-exempt** — do not stage a contrived test to satisfy F2; the existing suite covers the behavior.\n- **Step 5 (Refactor) stays.** A bounded, diff-scoped, behavior-preserving pass under green (e.g. consolidating the rename); skip near the §7.0 tripwire.\n- **No Step 6 coverage gate.** Coverage is suspended for `[Migrate]` (behavior is preserved, not added) — do not invent tests to hit 80%.\n- **Step 7/8 apply normally.** If the migration diverges from the recorded tech stack (new framework version), update `tech-stack.md` in Step 7.\n- **Stop conditions:** suite green → `--status success` (the existing suite is your evidence); suite still red after exhausting the failure list → `--status failure` with the remaining failing tests in `--failure-reason` (the phase-checker treats an all-migration phase's red exit as a FAILED report, not a fix-and-retry trigger)." }
   }
 }

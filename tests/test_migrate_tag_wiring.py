@@ -114,13 +114,23 @@ class AgentDocTests(TestCase):
         self.assertIn("safety net", PHASE_CHECKER)
 
     def test_task_executor_has_migrate_workflow(self):
+        # The per-tag executor workflow no longer lives inline in task-executor
+        # (the §4.0 tag-table + §4.M restatement were the drift liability). It
+        # lives in the registry's `workflow` field, injected into task-executor
+        # at dispatch. Assert the registry carries the [Migrate] semantics...
+        wf = task_profiles.workflow_for("Migrate")
+        self.assertTrue(wf, "[Migrate] must carry a `workflow` in the registry")
+        # ...with the load-bearing suite-as-safety-net / inverted-TDD semantics.
+        low = wf.lower()
+        self.assertIn("red", low)            # suite starts red
+        self.assertIn("green", low)          # success = green
+        self.assertIn("step 3", low)         # no Step 3 (Red)
+        self.assertIn("step 6", low)         # no Step 6 (coverage gate)
+        # And task-executor's §4.0/§4.M now branch on the injected profile /
+        # workflow rather than restating the tag table inline — it points at the
+        # injected registry block as the workflow source.
         self.assertIn("[Migrate]", TASK_EXECUTOR)
-        self.assertIn("§4.M", TASK_EXECUTOR)
-        # §5.0 exempts Migrate from F2/F3 (alongside Docs/Config/Chore).
-        self.assertRegex(
-            TASK_EXECUTOR,
-            r"Exempted:.*\[Docs\].*\[Config\].*\[Chore\].*\[Migrate\]",
-        )
+        self.assertIn("[Conductor Registry]", TASK_EXECUTOR)
 
 
 class RegistryParityTests(TestCase):
