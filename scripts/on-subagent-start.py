@@ -429,30 +429,6 @@ def _reset_tripwire_counter(cwd, agent_type):
         pass
 
 
-
-    """Reset the PreToolUse tripwire round-counter for a fresh task-executor dispatch.
-
-    ``on-pre-tool-tripwire.py`` counts task-executor's rounds against the locked
-    task; SubagentStart fires once per dispatch, so this is the natural reset
-    point. A retry therefore starts the count at 0. Best-effort and scoped to
-    task-executor — any failure is non-fatal (the counter just starts stale,
-    which biases toward tripping slightly early: safe).
-    """
-    if agent_type != "task-executor":
-        return
-    try:
-        locked = resolve_locked_task(cwd)
-        if locked is None:
-            return
-        track_dir, phase, task, subtask = locked
-        sub = f"-{subtask}" if subtask is not None else ""
-        path = Path(track_dir) / ".conductor" / f".tripwire-{phase}-{task}{sub}.count"
-        if path.exists():
-            path.unlink()
-    except Exception:
-        pass
-
-
 def main():
     """Main hook function"""
     # Read hook input
