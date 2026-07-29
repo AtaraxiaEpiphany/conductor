@@ -72,6 +72,20 @@ Prepend the tag BEFORE the task description. Tag determines whether TDD is requi
 
 **Important**: Subtasks inherit the parent's task type tag. Do NOT tag subtasks individually.
 
+### `[Migrate]` workflow (canonical)
+
+`[Migrate]` is the one tag whose executor behavior diverges enough to warrant a named workflow. This subsection is the **single source** for that behavior; `task-executor` §4.M and the `phase-checker` migration-phase branch point here and carry only their agent-specific bindings.
+
+A `[Migrate]` task is code-changing work where an **existing** test suite is the safety net and the TDD red-green model is inverted: **Red is the starting state** (the version bump / package rename / API removal already broke the suite), **Green is the goal.** You are not writing a new failing test first; you are making the existing suite pass again. Routes to `executor` (wave-eligible when flat + deps-declared); loads ACs normally.
+
+- **No Step 3 (Red).** The suite's current failures ARE the red state — do not author a new failing test for the migration.
+- **Step 4 is the whole task (Green).** Run the existing suite, fix the compile/runtime breaks (deprecated APIs, `javax→jakarta` renames, removed methods, renamed config keys) until green. Commit each fix as `fix(migrate): …`; a behavior-preserving mass change may commit as `refactor(migrate): …`. Both commit types are **F2-exempt** (the F2 gate keys on `feat`/`fix`, and `fix` carries a test only when one applies — during a migration the existing suite already covers the behavior).
+- **Step 5 (Refactor) stays.** A bounded, diff-scoped, behavior-preserving pass under green is still appropriate (e.g. consolidating the rename).
+- **No Step 6 coverage gate.** Coverage is suspended for `[Migrate]` (behavior is preserved, not added) — do not invent tests to hit 80%.
+- **Step 7 (Deviations) and Step 8 (Commit) apply normally.** If the migration diverges from the recorded tech stack (e.g. new framework version), update `tech-stack.md` in Step 7.
+
+**Stop conditions:** suite green → success (the existing suite is the evidence); suite still red after exhausting the failure list → failure with the remaining failing tests (the phase-checker treats an all-migration phase's red exit as a FAILED report, not a fix-and-retry trigger — see the migration-phase branch).
+
 ## Phase Verify Directives
 
 A `## Phase N:` heading MAY carry a `<!-- verify: <modes> -->` HTML comment declaring what **"done" looks like for the phase** — the gate `phase-checker` runs at the checkpoint. This is a **phase-level** concern, distinct from the task-level tags above (a tag gates *per-task TDD behavior*; the directive gates *per-phase verification*). It exists so a phase whose goal is "compiles" is not forced through the full test-suite gate.

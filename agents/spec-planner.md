@@ -1,7 +1,7 @@
 ---
 name: spec-planner
 description: Generates spec.md and plan.md from user requirements and project context. Writes files directly, returns compact summary to minimize parent context pressure. Dispatched by conductor:setup and conductor:newTrack.
-tools: Read, Write, Grep, Glob
+tools: Read, Write, Grep, Glob, Edit
 model: sonnet
 effort: medium
 maxTurns: 60
@@ -148,7 +148,7 @@ For a **staged migration**, add the phase-verify directive to each heading:
 6. Requires a **human** (UI walkthrough, cross-browser check, staging deploy, accessibility audit, email-delivery confirmation)? → `[Manual]`.
 7. None of the above — it writes new or changed **business logic**? → **no tag** (default TDD). This is the expected outcome for the majority of tasks.
 
-**When unsure between an exemption tag and no-tag, leave it UNTAGGED.** The default TDD path is the safe failure mode: a wrongly-untagged `[Config]` task costs one extra Red cycle, but a wrongly-tagged feature task silently skips TDD and the coverage gate (F2/F3 exempt). Defaulting to no-tag biases toward correctness. Never invent a tag outside the closed set (e.g. `[Feature]`, `[Bugfix]`, `[Test]`, `[TDD]`) — the closed set is data-driven from `conductor/workflow/task-type-profiles.json`, and `init-from-plan` now **rejects** an unrecognized tag as a hard error (it no longer silently ignores it), so an invented tag blocks the track from starting. Use only the registered tags. The registry resolves as **plugin baseline ⊕ project overlay**: a project MAY register project-specific tags (e.g. `[K8sRollout]`, `[Lint]`, an internal compliance tag) by dropping `conductor/workflow/task-type-profiles.json` — when choosing tags, consult the project's registry alongside the built-in set so you don't refuse a legitimate project tag. The built-in set is what you use when no project overlay exists.
+**When unsure between an exemption tag and no-tag, leave it UNTAGGED.** The default TDD path is the safe failure mode: a wrongly-untagged `[Config]` task costs one extra Red cycle, but a wrongly-tagged feature task silently skips TDD and the coverage gate (F2/F3 exempt). Defaulting to no-tag biases toward correctness. Never invent a tag outside the closed set (e.g. `[Feature]`, `[Bugfix]`, `[Test]`, `[TDD]`) — `init-from-plan` **rejects** an unrecognized tag as a hard error, so an invented tag blocks the track from starting. The closed set is data-driven from `conductor/workflow/task-type-profiles.json` (baseline ⊕ project overlay — see the contract); consult the project's overlay there for project-specific tags (e.g. `[K8sRollout]`, `[Lint]`) so you don't refuse a legitimate project tag.
 
 **Phase-verify directive (migration tracks).** A `## Phase N:` heading MAY carry a `<!-- verify: <modes> -->` comment declaring that phase's checkpoint gate (plan-format-contract.md §"Phase Verify Directives"). Use it for **staged migrations**: the intermediate phases — where the test suite is expected red and the goal is only "it compiles" — each get `<!-- verify: compile -->`, so `phase-checker` gates them on the build instead of forcing the (red) suite green. The **final** integration phase — whose goal is "starts + tests green" — gets `<!-- verify: test,start -->`. Emit the directive on every migration phase; emit nothing on non-migration phases (the default full gate is correct for feature work). This is the lever that lets a migration span multiple phases without every intermediate phase failing its checkpoint on a red suite.
 

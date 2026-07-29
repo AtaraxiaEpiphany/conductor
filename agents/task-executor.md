@@ -173,37 +173,12 @@ Check task tag to determine workflow:
 
 ### §4.M Migration workflow (`[Migrate]` tag)
 
-A `[Migrate]` task is code-changing work where an **existing** test suite is the
-safety net and the TDD red-green model is inverted: **Red is the starting state**
-(the version bump / package rename / API removal already broke the suite),
-**Green is the goal.** You are not writing a new failing test first; you are
-making the existing suite pass again.
+A `[Migrate]` task inverts TDD: the existing suite's red state is the start, green is the goal. **Full semantics (no Step 3/6, suite-as-safety-net, stop conditions) live in `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/plan-format-contract.md` §"`[Migrate]` workflow" — read it; this section carries only your agent-specific bindings.**
 
-- **No Step 3 (Red).** Do not author a new failing test for the migration. The
-  suite's current failures ARE the red state.
-- **Step 4 is the whole task (Green).** Run the existing suite, read the failures
-  from the digester (§4.5, `PURPOSE=coverage` — read as "run the suite once"),
-  fix the compile/runtime breaks (deprecated APIs, `javax→jakarta` renames,
-  removed methods, renamed config keys) until the suite is green. Commit each
-  fix as `fix(migrate): …`; a behavior-preserving mass change may commit as
-  `refactor(migrate): …`. **Both commit types are F2-exempt** (the F2 gate keys
-  on commit type `feat`/`fix`, and `fix` carries a test only when one applies —
-  during a migration the existing suite already covers the behavior).
-- **Step 5 (Refactor) stays.** A bounded, diff-scoped, behavior-preserving pass
-  under green is still appropriate (e.g. consolidating the rename). Skip if it'd
-  trip the §7.0 tripwire.
-- **No Step 6 coverage gate.** Coverage is suspended for `[Migrate]`
-  (`_tag_exempt_from_coverage`); you are preserving behavior, not adding it. Do
-  not invent tests to hit 80%.
-- **Step 7 (Deviations) and Step 8 (Commit) apply normally.** If the migration
-  diverges from the recorded tech stack (e.g. new framework version), update
-  `tech-stack.md` in Step 7.
-
-**Stop conditions:** suite green → success (`--status success`, the existing
-suite is your evidence); suite still red after exhausting the failure list and
-your turns → `--status failure` with the remaining failing tests in
-`--failure-reason` (the phase-checker treats an all-migration phase's red exit as
-a FAILED report, not a fix-and-retry trigger — see phase-checker.md §3.0).
+- **Step 4 (Green)** is the whole task: run the suite via the digester (§4.5, `PURPOSE=coverage` read as "run the suite once"), fix the breaks until green, commit each fix `fix(migrate): …` (a behavior-preserving mass change may commit `refactor(migrate): …`). Both are **F2-exempt** — do not stage a contrived test to satisfy F2; the existing suite covers the behavior.
+- **Step 5 (Refactor) stays** — bounded, diff-scoped, behavior-preserving, under green; skip near the §7.0 tripwire.
+- **Step 7/8** apply normally (update `tech-stack.md` if the migration diverges from the recorded stack).
+- **Stop:** suite green → `--status success` (the suite is your evidence); still red after exhausting the failure list → `--status failure` with the remaining failing tests in `--failure-reason` (the phase-checker treats an all-migration phase's red exit as a FAILED report, not fix-and-retry — see phase-checker.md §3.0).
 
 **Canonical TDD cycle (Steps 3-8):** `conductor/workflow/task-workflow.md` is authoritative — read its **Steps 3-8 section only** (skip Steps 1-2, 9-11, orchestrator-owned). Agent-specific bindings below override/extend the template.
 
