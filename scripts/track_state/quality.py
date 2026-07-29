@@ -227,6 +227,13 @@ def _init_core(track_dir, plan, track_id, track_type, description, execution_mod
         "description": description,
         "current_phase_index": 1,
         "current_task_index": 1,
+        # Third-axis (workflow-shapes): the declared topology this track runs.
+        # v1 always writes "default" (the planner→executor→checker loop). A
+        # future init-from-plan may infer a shape from track-type; the dispatch
+        # spine reads this via workflow_shapes.resolve_shape (absent/unknown →
+        # "default", fail-open). Advisory load-bearing: a shape_violation is
+        # surfaced when a dispatch agent is off-topology (no-silent-caps).
+        "workflow_shape": "default",
         "updated_at": now_iso(),
         "phases": phases,
     }

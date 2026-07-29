@@ -24,6 +24,10 @@
       "enum": ["interactive", "continuous"],
       "description": "Execution mode for implement skill. Interactive pauses at checkpoints; continuous auto-proceeds."
     },
+    "workflow_shape": {
+      "type": "string",
+      "description": "The declared workflow topology this track runs (third-axis registry). 'default' = planner→executor→checker. Resolved via workflow_shapes.resolve_shape; absent/unknown → 'default' (fail-open). A shape_violation is surfaced when a dispatch agent is off-topology."
+    },
     "archived_at": {
       "type": "string",
       "format": "date-time",

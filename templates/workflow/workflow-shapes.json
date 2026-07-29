@@ -1,0 +1,30 @@
+{
+  "_comment": "Single source of truth for workflow SHAPE (the third axis). The task-type registry says what each node SAYS (routing + workflow prose); the verify-mode registry says what each phase gate MEANS; THIS registry says the node SEQUENCE — which agents a workflow runs, in what order, its verify policy, and its stop condition. The fixed state machine's topology (planner -> executor -> checker) becomes DECLARED here, so a project ships a custom shape (e.g. research-first) with zero plugin edits. dispatch.py reads this via track_state.workflow_shapes — an action outside the resolved shape's `nodes` is refused (the lightest touch that makes the shape load-bearing without rewriting the action-driven spine). Adding a shape = one row here, zero Python edits. A project may overlay conductor/workflow/workflow-shapes.json (opt-in by file presence) to add or override shapes with zero plugin edits.",
+  "_fields": {
+    "nodes": "the ordered list of dispatch agents this shape runs (the topology). Action tokens: spec-planner | explorer | task-executor | phase-checker | test-runner | ac-tracer. dispatch.py refuses an action whose agent is not in this list when the shape is resolved.",
+    "requires": "optional prerequisites the shape demands of track-state before it can run (advisory; future hook). Absent => no prerequisites.",
+    "verify_policy": "how this shape gates progress: checkpoint (the default — phase-checker stamps a checkpoint gate) | none (no checkpoint gate — research/exploration shapes that produce no committable artifact).",
+    "stop_condition": "what makes the shape DONE: all_nodes_done (every node in `nodes` has run) | a structured pass_condition. The fixed spine's default is all_nodes_done.",
+    "instruction": "optional prompt-shaping prose for the orchestrator when this shape is active (mirrors the task-type `workflow` + verify-mode `protocol` fields). Absent => the orchestrator follows the default §3.0 dispatch loop."
+  },
+  "default": {
+    "nodes": ["spec-planner", "task-executor", "phase-checker"],
+    "verify_policy": "checkpoint",
+    "stop_condition": "all_nodes_done"
+  },
+  "shapes": {
+    "default": {
+      "nodes": ["spec-planner", "task-executor", "phase-checker"],
+      "verify_policy": "checkpoint",
+      "stop_condition": "all_nodes_done",
+      "instruction": "The standard implement loop: spec-planner decomposes the brief into a plan, task-executor implements each task under the TDD/coverage gates, phase-checker verifies each phase and stamps the checkpoint. This is the shape the conductor has always run — declared here so it is data-driven, not hardcoded."
+    },
+    "research-first": {
+      "nodes": ["explorer", "spec-planner", "task-executor"],
+      "verify_policy": "none",
+      "stop_condition": "all_nodes_done",
+      "when_to_use": "A track whose first need is understanding — map the codebase / survey a dependency / spike an approach BEFORE planning. Runs explorer first, feeds its findings into spec-planner, then implements. No checkpoint gate (exploration produces no committable artifact to verify).",
+      "instruction": "Research-first shape: dispatch explorer FIRST to map the relevant subsystem and record findings to the handoff. spec-planner then decomposes the brief WITH the exploration findings in hand (richer plan). task-executor implements. No phase-checker checkpoint — exploration is not a committable artifact, so verify_policy is none."
+    }
+  }
+}
