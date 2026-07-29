@@ -402,6 +402,40 @@ def cmd_set_mode(track_dir, mode):
     out(dict(ok=True, execution_mode=mode, previous=previous))
 
 
+def cmd_set_workflow_shape(track_dir, shape):
+    """Set ``workflow_shape`` on an existing track (the topology declaration).
+
+    Unlike ``task_type`` (re-derived from the name) and verify-mode (re-parsed
+    from the phase heading), ``workflow_shape`` is a *declaration* with no
+    upstream source — so it lives in state and is mutable via this command.
+    Mirrors :func:`cmd_set_mode`: validate against the resolved shape vocab,
+    then load/set/save, emitting the previous value so the change is visible
+    (no-silent-caps — dispatch reads this field as its node allowlist).
+
+    Hard-rejects an unknown shape. This is deliberate: ``resolve_shape`` fails
+    open to ``default`` on *reads* (a typo must never block dispatch), but a
+    deliberate *set* must not silently become a no-op — validate before mutate,
+    so the source of truth is never left holding an unrecognized name.
+    """
+    # Local import: workflow_shapes is read by the dispatch path and resolves
+    # the overlay via the project root; importing here (not at module top)
+    # keeps the fail-open boundary tight (a set must never crash over registry
+    # resolution — a missing shape vocab rejects cleanly below).
+    from .workflow_shapes import SHAPES_VOCAB
+    vocab = SHAPES_VOCAB()
+    if shape not in vocab:
+        out(dict(ok=False,
+                 error=f"unknown workflow_shape {shape!r}",
+                 hint=f"known shapes: {', '.join(vocab)}"))
+        return
+    state = load(track_dir)
+    previous = state.get("workflow_shape", "default")
+    state["workflow_shape"] = shape
+    state["updated_at"] = now_iso()
+    save(track_dir, state)
+    out(dict(ok=True, workflow_shape=shape, previous=previous))
+
+
 # Statuses that are acceptable end-states for a COMPLETED track (finalize).
 # failed/blocked are intentionally excluded — they flip the track to failed/blocked
 # via the earlier branches. pending/in_progress mean work remains and finalize

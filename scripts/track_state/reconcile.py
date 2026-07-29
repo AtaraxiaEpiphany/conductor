@@ -34,6 +34,7 @@ from .helpers import (
 from .plan_parse import parse_plan
 from .sync import _do_sync_plan
 from .git_ops import _git_commit_ensured
+from .task_profiles import derive_task_type
 
 
 # status char → status name (inverse of MARKER_MAP). Built once.
@@ -485,6 +486,12 @@ def _apply_reconciliation(track_dir, diff, drops, clear_dangling, state=None):
             node["status"] = item["new_status"]
             if item.get("new_name"):
                 node["name"] = item["new_name"]
+                # task_type is a typed mirror of the name's tag, so re-derive
+                # it whenever the name changes — otherwise the field drifts
+                # from the (renamed) name and the SubagentStart hook injects
+                # the wrong executor workflow prose. The name is the source of
+                # truth; this keeps its mirror in lockstep.
+                node["task_type"] = derive_task_type(item["new_name"])
             if not item["keep_sha"]:
                 # moving to a non-terminal status: SHA no longer applies.
                 node.pop("commit_sha", None)

@@ -198,6 +198,48 @@ class RenameKeepsSha(TestCase):
         self.assertEqual(task["name"], "New name")
         self.assertEqual(task["commit_sha"], "abc1234")  # SHA survived the rename
 
+    def test_rename_rederives_task_type_on_tag_change(self):
+        # task_type is a typed mirror of the name's tag. A rename that changes
+        # the tag MUST re-derive it — otherwise the field drifts from the name
+        # and the SubagentStart hook injects the wrong executor workflow prose.
+        # Start: a completed [Chore] task whose task_type mirror says "chore".
+        task = {"name": "[Chore] Old", "status": "completed",
+                "commit_sha": "abc1234", "completed_at": "2026-07-01T00:00:00+00:00",
+                "task_type": "chore"}
+        state = _make_state(phases=[{"name": "Phase 1", "status": "in_progress",
+                                     "tasks": [task]}])
+        plan = "# Plan\n\n## Phase 1: Build\n- [x] [Docs] New [abc1234]\n"
+        d = _git_track_dir(state, plan_content=plan)
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+
+        o = _run(cmd_reconcile_plan, d, apply=True,
+                 renames=["1:[Chore] Old=[Docs] New"])
+        self.assertTrue(o["ok"])
+        st = load(d)
+        renamed = st["phases"][0]["tasks"][0]
+        self.assertEqual(renamed["name"], "[Docs] New")
+        self.assertEqual(renamed["task_type"], "docs")  # re-derived from new tag
+        self.assertEqual(renamed["commit_sha"], "abc1234")  # SHA still survives
+
+    def test_rename_to_untagged_rederives_default_task_type(self):
+        # Renaming a tagged task to an untagged name yields task_type "default"
+        # (the mirror of an untagged name), not a stale leftover tag.
+        task = {"name": "[Migrate] Old", "status": "completed",
+                "commit_sha": "abc1234", "completed_at": "2026-07-01T00:00:00+00:00",
+                "task_type": "migrate"}
+        state = _make_state(phases=[{"name": "Phase 1", "status": "in_progress",
+                                     "tasks": [task]}])
+        plan = "# Plan\n\n## Phase 1: Build\n- [x] Plain New [abc1234]\n"
+        d = _git_track_dir(state, plan_content=plan)
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+
+        o = _run(cmd_reconcile_plan, d, apply=True,
+                 renames=["1:[Migrate] Old=Plain New"])
+        self.assertTrue(o["ok"])
+        renamed = load(d)["phases"][0]["tasks"][0]
+        self.assertEqual(renamed["name"], "Plain New")
+        self.assertEqual(renamed["task_type"], "default")
+
 
 class DanglingSha(TestCase):
     def _track(self, status, sha="deadbee", marker="d"):

@@ -19,7 +19,7 @@ from .dispatch import (
 )
 from .result import cmd_process_result, cmd_write_result
 from .validate import cmd_validate
-from .quality import cmd_init_from_plan, cmd_start, cmd_set_mode, cmd_finalize, cmd_archive, cmd_gc, cmd_checklist_verify
+from .quality import cmd_init_from_plan, cmd_start, cmd_set_mode, cmd_set_workflow_shape, cmd_finalize, cmd_archive, cmd_gc, cmd_checklist_verify
 from .misc import (
     cmd_reset, cmd_indices, cmd_shas, cmd_add_checkpoint,
     cmd_deferred_report, cmd_phase_done, cmd_registry_update, cmd_registry_add,
@@ -187,6 +187,12 @@ COMMAND_HELP = {
               "Transition track from 'new' to 'in_progress'"),
     "set-mode": (f"set-mode <track-dir> --mode <{_EXEC_MODE_CHOICES}>",
                  "Switch execution_mode on an existing track (no re-init)"),
+    "set-workflow-shape": ("set-workflow-shape <track-dir> --shape <name>",
+                           "Declare the track's workflow topology (the dispatch "
+                           "node allowlist: default | research-first | a project "
+                           "overlay shape). Unlike task_type (re-derived from the "
+                           "name), workflow_shape is a declaration with no "
+                           "upstream source, so it is mutable here."),
     "next": ("next <track-dir> [--full]",
              "Find the next task to execute (compact JSON by default; --full for complete envelope)"),
     "dispatch-next": ("dispatch-next <track-dir> [--full]",
@@ -414,7 +420,7 @@ COMMAND_HELP = {
 }
 
 _COMMAND_GROUPS = [
-    ("Lifecycle", ["init-from-plan", "start", "set-mode", "finalize", "archive"]),
+    ("Lifecycle", ["init-from-plan", "start", "set-mode", "set-workflow-shape", "finalize", "archive"]),
     ("Navigation", ["next", "dispatch-next", "recover", "indices"]),
     ("State Mutations", ["lock", "complete", "fail", "skip", "defer", "block", "reset",
                          "set-max-retries", "split"]),
@@ -628,6 +634,8 @@ def main():
             cmd_start(track_dir)
         elif cmd == "set-mode":
             cmd_set_mode(track_dir, flag(args, "--mode"))
+        elif cmd == "set-workflow-shape":
+            cmd_set_workflow_shape(track_dir, flag(args, "--shape"))
         elif cmd == "indices":
             cmd_indices(track_dir)
         elif cmd == "validate":

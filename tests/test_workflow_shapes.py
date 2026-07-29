@@ -238,5 +238,79 @@ class DispatchConstraintTests(TestCase):
         self.assertEqual(shape, "default")
 
 
+class SetWorkflowShapeTests(TestCase):
+    """``cmd_set_workflow_shape`` mutates the topology declaration on an existing
+    track. Unlike ``task_type`` (re-derived from the name) and verify-mode
+    (re-parsed from the heading), ``workflow_shape`` is a declaration with no
+    upstream source — so it MUST be mutable, and via a validating command (not a
+    free JSON edit). Mirrors ``cmd_set_mode``: validate-then-mutate, emit
+    ``previous`` so the change is visible.
+    """
+
+    def _mk_track(self, shape="default"):
+        """A minimal track dir with a track-state.json carrying ``shape``."""
+        d = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(d, ignore_errors=True))
+        Path(d, "track-state.json").write_text(json.dumps({
+            "track_id": "test_20260729", "type": "feature", "status": "in_progress",
+            "description": "set-workflow-shape test", "current_phase_index": 1,
+            "current_task_index": 1, "updated_at": "2026-07-29T00:00:00+00:00",
+            "workflow_shape": shape,
+            "phases": [{"name": "P1", "status": "in_progress",
+                        "tasks": [{"name": "t", "status": "pending"}]}],
+        }), encoding="utf-8")
+        return d
+
+    def _capture(self, fn, *a, **kw):
+        """Run a handler that calls ``out(...)`` and return the emitted dict."""
+        import scripts.track_state.quality as q
+        captured = {}
+        orig = q.out
+        q.out = lambda payload: captured.update(payload)
+        try:
+            fn(*a, **kw)
+        finally:
+            q.out = orig
+        return captured
+
+    def test_set_known_shape_writes_field_and_emits_previous(self):
+        from scripts.track_state.quality import cmd_set_workflow_shape, load
+        d = self._mk_track(shape="default")
+        emitted = self._capture(cmd_set_workflow_shape, d, "research-first")
+
+        self.assertTrue(emitted["ok"])
+        self.assertEqual(emitted["workflow_shape"], "research-first")
+        self.assertEqual(emitted["previous"], "default")
+        self.assertEqual(load(d)["workflow_shape"], "research-first")
+
+    def test_set_idempotent_default(self):
+        from scripts.track_state.quality import cmd_set_workflow_shape, load
+        d = self._mk_track(shape="default")
+        emitted = self._capture(cmd_set_workflow_shape, d, "default")
+        self.assertTrue(emitted["ok"])
+        self.assertEqual(load(d)["workflow_shape"], "default")
+
+    def test_set_then_resolve_round_trips(self):
+        # The set value is what dispatch reads via resolve_shape — no skew.
+        from scripts.track_state.quality import cmd_set_workflow_shape, load
+        d = self._mk_track(shape="default")
+        self._capture(cmd_set_workflow_shape, d, "research-first")
+        self.assertEqual(ws.resolve_shape(load(d).get("workflow_shape")),
+                         "research-first")
+
+    def test_set_unknown_shape_rejected_and_field_unchanged(self):
+        # Validate-before-mutate: a typo must hard-reject (NOT fail-open to
+        # default — that's for reads). The on-disk field must be untouched.
+        from scripts.track_state.quality import cmd_set_workflow_shape, load
+        d = self._mk_track(shape="default")
+        emitted = self._capture(cmd_set_workflow_shape, d, "nope")
+
+        self.assertFalse(emitted["ok"])
+        self.assertIn("unknown", emitted["error"])
+        self.assertIn("known shapes", emitted["hint"])
+        # Source of truth never left holding an unrecognized name.
+        self.assertEqual(load(d)["workflow_shape"], "default")
+
+
 if __name__ == "__main__":
     main()
