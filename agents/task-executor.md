@@ -157,22 +157,22 @@ Do NOT repeat the same approach; focus on "Suggested Next Step". The handoff is 
 
 ## 4.0 TDD WORKFLOW
 
-Branch on **this task's leading tag**, resolved from the registry (the `[Conductor Registry]` block injected at your dispatch carries the resolved profile: `route`, `tdd_exempt`, `coverage_exempt`, and — when the tag carries one — a `workflow`):
+Branch on **this task's leading tag**, resolved from the registry (the `[Conductor Registry]` block injected at your dispatch carries the resolved profile: `route`, `tdd_exempt`, `coverage_exempt`, and — when the tag carries one — a `workflow: present` pointer):
 
 - **`tdd_exempt: true` (and no `workflow`)** — the config/docs/chore-style exemption path → go **straight to Step 8** (commit-message format only; skip Steps 3-7). The injected profile names which tags are exempt.
-- **A `workflow` present** — this tag carries bespoke executor prose (e.g. `[Migrate]`). **Follow the injected `workflow` verbatim** instead of default TDD; it tells you exactly which steps to run, skip, and how to commit. This is the `[Migrate]` generalization: a project overlay tag with a `workflow` is followed the same way, with zero edits here.
+- **`workflow: present`** — this tag carries bespoke executor prose (e.g. `[Migrate]`). **Fetch the prose on demand with one Bash call — `track-state registry-doc --tag <Tag>` — and follow it verbatim** instead of default TDD; it tells you exactly which steps to run, skip, and how to commit. The prose is large + conditional (only this leading tag needs it), so it is fetched, not injected. This is the `[Migrate]` generalization: a project overlay tag with a `workflow` is fetched and followed the same way, with zero edits here.
 - **`route: explore`** (`[Explore]`) → **ERROR**: report **FAILURE**. Exploration routes to the `explorer` agent, not you — you produce no findings, only code.
 - **Default (no tag / untagged)** → **Full TDD (Steps 3-8)** below. This is the path for the majority of tasks.
 
-### §4.M Tag-workflow path (when the injected profile carries a `workflow`)
+### §4.M Tag-workflow path (when the injected profile carries a `workflow: present`)
 
-A tag whose leading behavior diverges from default TDD carries a `workflow` in the registry (today: `[Migrate]`). **The canonical `workflow` prose is injected into your `[Conductor Registry]` block at dispatch — follow it verbatim.** This section carries only your agent-specific bindings on top of that prose:
+A tag whose leading behavior diverges from default TDD carries a `workflow` in the registry (today: `[Migrate]`). **The canonical `workflow` prose is NOT injected — fetch it on demand with one Bash call, `track-state registry-doc --tag <Tag>`, and follow it verbatim.** This section carries only your agent-specific bindings on top of that prose:
 
 - **Step 4 (Green) via the digester** — run the suite (§4.5, `PURPOSE=coverage` read as "run the suite once"), fix the breaks until green, commit each fix as the `workflow` prescribes (`fix(migrate): …` for `[Migrate]`; a behavior-preserving mass change may commit `refactor(migrate): …`). Both are **F2-exempt** — do not stage a contrived test to satisfy F2; the existing suite covers the behavior.
 - **Step 5 (Refactor) stays** — bounded, diff-scoped, behavior-preserving, under green; skip near the §7.0 tripwire.
 - **Step 7/8** apply normally (update `tech-stack.md` if the work diverges from the recorded stack).
 
-The full per-step semantics (no Step 3 Red, no Step 6 coverage gate, stop conditions) live in the injected `workflow` and in `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/plan-format-contract.md` §"`[Migrate]` workflow" — read the injected block first.
+The full per-step semantics (no Step 3 Red, no Step 6 coverage gate, stop conditions) live in the fetched `workflow` prose (`track-state registry-doc --tag <Tag>`) — fetch it first and follow it verbatim.
 
 **Canonical TDD cycle (Steps 3-8):** `conductor/workflow/task-workflow.md` is authoritative — read its **Steps 3-8 section only** (skip Steps 1-2, 9-11, orchestrator-owned). Agent-specific bindings below override/extend the template.
 

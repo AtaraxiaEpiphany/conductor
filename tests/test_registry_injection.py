@@ -30,6 +30,16 @@ _scripts = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(_scripts))
 
 _HOOK = _scripts / "on-subagent-start.py"
+_CLI = _scripts / "track-state"
+
+
+def _run_cli(tag=None):
+    """Run ``track-state registry-doc [--tag <Name>]`` → (rc, stdout)."""
+    cmd = [sys.executable, "-B", str(_CLI), "registry-doc"]
+    if tag is not None:
+        cmd += ["--tag", tag]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    return proc.returncode, proc.stdout
 
 from track_state import task_profiles as tp  # noqa: E402
 from track_state import verify_mode_profiles as vmp  # noqa: E402
@@ -121,11 +131,14 @@ class ExecutorInjectionTests(TestCase):
         self.assertIn("RESOLVED PROFILE for this task's leading tag [Migrate]", ctx)
         self.assertIn("tdd_exempt: True", ctx)
         self.assertIn("coverage_exempt: True", ctx)
-        # The [Migrate] workflow prose flows from the registry into the executor.
-        self.assertIn("WORKFLOW", ctx)
+        # The [Migrate] workflow is large + conditional → read-on-demand, not
+        # inlined. The block carries the POINTER (the fetch command naming the
+        # tag), and the prose itself must NOT be injected.
+        self.assertIn("workflow: present", ctx)
+        self.assertIn("track-state registry-doc --tag Migrate", ctx)
         wf = tp.workflow_for("Migrate")
-        # The first sentence of the workflow is present in the injected block.
-        self.assertIn(wf.split(".")[0], ctx)
+        # The workflow prose is NOT inlined into the dispatch — it is fetched.
+        self.assertNotIn(wf.split(".")[0], ctx)
 
     def test_executor_default_task_gets_no_profile(self):
         # An untagged (default) task resolves no leading tag → only the
@@ -233,9 +246,10 @@ class OverlayEndToEndTests(TestCase):
         self.assertIn("[Lint]", ctx, "project-overlay tag did not reach task-executor")
 
     def test_overlay_workflow_flows_to_executor(self):
-        # A project tag WITH a bespoke workflow must inject that workflow into
-        # the executor when that tag is the locked task's leading tag — the
-        # [Migrate] generalization.
+        # A project tag WITH a bespoke workflow must surface as an on-demand
+        # POINTER in the executor when that tag is the locked task's leading tag
+        # — the [Migrate] generalization. The pointer names the overlay tag;
+        # the prose itself is fetched (NOT inlined).
         overlay = {
             "tags": {
                 "CustomProc": {
@@ -264,7 +278,41 @@ class OverlayEndToEndTests(TestCase):
                 "hookSpecificOutput", {}
             ).get("additionalContext", "")
         self.assertIn("[CustomProc]", ctx)
-        self.assertIn("PROJECT CUSTOM WORKFLOW: do the bespoke dance.", ctx)
+        # The POINTER names the overlay tag (registry-doc --tag CustomProc); the
+        # bespoke prose is NOT inlined — the executor fetches it on demand.
+        self.assertIn("workflow: present", ctx)
+        self.assertIn("track-state registry-doc --tag CustomProc", ctx)
+        self.assertNotIn("PROJECT CUSTOM WORKFLOW: do the bespoke dance.", ctx)
+
+
+class RegistryDocOnDemandTests(TestCase):
+    """The on-demand payload the executor pointer points at is actually fetchable.
+
+    The pointer injected into task-executor is only load-bearing if
+    ``registry-doc --tag <Tag>`` really emits that tag's workflow prose. This is
+    the bridge between tier B (pointer injected) and tier A (prose fetched).
+    """
+
+    def test_registry_doc_tag_filter_renders_workflow(self):
+        # The --tag Migrate filter must emit the workflow prose verbatim — this
+        # is the payload the executor fetches on demand instead of having it
+        # always injected into every dispatch.
+        rc, out = _run_cli(tag="Migrate")
+        self.assertEqual(rc, 0, f"registry-doc --tag Migrate failed:\n{out}")
+        self.assertIn("# Task Type `Migrate`", out)
+        wf = tp.workflow_for("Migrate")
+        # The full workflow prose (every sentence, not just the first) renders.
+        for sentence in wf.split("."):
+            stripped = sentence.strip()
+            if stripped:
+                self.assertIn(stripped, out)
+
+    def test_registry_doc_tag_filter_unknown_fail_open(self):
+        # An unknown tag must fail open (surface + exit 0), never raise —
+        # mirroring the renderer's posture and the validator's hard-error split.
+        rc, out = _run_cli(tag="Bogus")
+        self.assertEqual(rc, 0)
+        self.assertIn("UNKNOWN", out)
 
 
 if __name__ == "__main__":

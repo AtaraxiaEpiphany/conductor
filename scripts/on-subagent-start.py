@@ -367,15 +367,20 @@ def _registry_for_phase_checker():
 
 
 def _registry_for_executor(cwd):
-    """task-executor: this task's leading-tag profile + workflow (if any).
+    """task-executor: this task's leading-tag profile + an on-demand workflow pointer.
 
     Resolves the locked task's leading tag and surfaces its resolved profile
-    (route/tdd_exempt/coverage_exempt) plus, if the tag carries a ``workflow``
-    (e.g. ``[Migrate]``), that prose verbatim — the executor follows it instead
-    of default TDD. This is the ``[Migrate]`` generalization: a project overlay
-    tag with a bespoke ``workflow`` flows to the executor here. If no task/type
-    resolves, emits the resolved exemption summary derived from TAG_VOCAB (so the
-    executor still sees the closed set rather than a hardcoded enumeration).
+    (route/tdd_exempt/coverage_exempt). The ``workflow`` prose itself is NOT
+    injected — it is large + conditional (only the leading tag needs it), so it
+    is read on demand: when the profile carries a ``workflow``, emit a one-line
+    POINTER telling the executor to fetch it via
+    ``track-state registry-doc --tag <Tag>`` (tier B, not tier A — see the
+    three-tier context model). This is the ``[Migrate]`` generalization: a
+    project overlay tag with a bespoke ``workflow`` flows to the executor here
+    (the pointer names it; the prose is fetched, never inlined). If no
+    task/type resolves, emits the resolved exemption summary derived from
+    TAG_VOCAB (so the executor still sees the closed set rather than a
+    hardcoded enumeration).
     """
     from track_state import task_profiles as tp
     lines = [f"{_REGISTRY_LEAD}"]
@@ -389,9 +394,13 @@ def _registry_for_executor(cwd):
         lines.append(f"  - coverage_exempt: {prof.get('coverage_exempt', False)}")
         workflow = tp.workflow_for(tag)
         if workflow:
-            lines.append("")
-            lines.append(f"WORKFLOW (follow this prose for [{tag}] instead of default TDD):")
-            lines.append(workflow)
+            # Tier B: large + conditional payload → pointer, not inline prose.
+            # The executor fetches it with one Bash call and follows it verbatim.
+            lines.append(
+                f"  - workflow: present — run "
+                f"`track-state registry-doc --tag {tag}` and follow that prose "
+                f"verbatim instead of default TDD."
+            )
         else:
             lines.append("  - workflow: (absent → default TDD, Steps 3-8)")
     # Always surface the resolved exemption set so §5.0 is registry-driven too —

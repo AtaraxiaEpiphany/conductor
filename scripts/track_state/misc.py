@@ -1222,23 +1222,39 @@ def cmd_registry_add(track_dir, tracks_md_path=None):
              line=line, registry=str(reg)))
 
 
-def cmd_registry_doc():
-    """Render the RESOLVED task-type + verify-mode registries (baseline ⊕ overlay)
-    as human-readable tables on stdout.
+def cmd_registry_doc(tag=None, mode=None):
+    """Render the RESOLVED task-type + verify-mode registries (baseline ⊕ overlay).
 
-    This is the **live-data view** that complements the hand-maintained teaching
-    tables in ``runtime/contracts/plan-format-contract.md`` (the contract prose is
-    richer than a registry string can hold; this render is always-current). It
-    exists so humans and tooling can ask "what does the resolved registry actually
-    contain right now?" — including a project overlay's tags/modes — without a
-    committed generated artifact and without reading JSON by eye.
+    This is the **live-data view** that complements the grammar-only contract
+    (``runtime/contracts/plan-format-contract.md`` holds the plan.md grammar +
+    invariants; the tag/mode vocabulary + semantics live HERE in the resolved
+    registry, never hand-duplicated in the contract). It exists so humans and
+    tooling can ask "what does the resolved registry actually contain right
+    now?" — including a project overlay's tags/modes — without a committed
+    generated artifact and without reading JSON by eye.
+
+    Two modes of operation, by argument:
+
+    - **No filter** (``tag is None and mode is None``): render the full tag table
+      + mode table (the human/CI overview). Unchanged behavior.
+    - **``--tag <Name>``**: render ONE tag's profile row **plus its ``workflow``
+      prose verbatim** when present — the on-demand payload ``task-executor``
+      fetches at dispatch (the workflow prose is large + conditional, so it is
+      read on demand rather than injected into every executor dispatch). An
+      unknown tag renders the row from the ``default`` profile + a note; never
+      raises (fail-open, like the no-filter path).
+    - **``--mode <name>``**: the symmetric payload for a verify-mode — one mode's
+      row **plus its ``protocol`` prose verbatim**. Future-proofs the same
+      on-demand pattern for ``phase-checker`` if ever needed. Unknown mode →
+      ``default`` profile + note; never raises.
 
     Strictly **read-only**: no ``track_dir`` argument, no ``track-state.json``
-    mutation, no writes anywhere. This is load-bearing for the sanctioned-set
-    safety contract (a read-only render can never be the catastrophic op the
-    broad rm/mv scan guards against). Fail-open: a missing/malformed registry is
-    already handled inside the profile modules (``_FALLBACK``); this function
-    renders whatever ``TAG_VOCAB``/``MODE_VOCAB`` resolve to and never raises.
+    mutation, no writes anywhere — ``--tag``/``--mode`` are *filters*, not
+    mutations, so the sanctioned-set safety contract is unchanged (a read-only
+    render can never be the catastrophic op the broad rm/mv scan guards
+    against). Fail-open: a missing/malformed registry is already handled inside
+    the profile modules (``_FALLBACK``); this function renders whatever
+    ``TAG_VOCAB``/``MODE_VOCAB`` resolve to and never raises.
     """
     # Local import: these modules are read by the phase-checker/dispatch paths and
     # resolve the overlay via the project root; importing here (not at module top)
@@ -1249,6 +1265,79 @@ def cmd_registry_doc():
     def _yesno(b):
         return "yes" if b else "no"
 
+    def _tag_row(tag):
+        """One registry-derived table row for a tag (reused by full + filtered)."""
+        route = tp.route_for([tag])
+        tdd = _yesno(tp.is_tdd_exempt([tag]))
+        cov = _yesno(tp.is_coverage_exempt([tag]))
+        when = tp.when_to_use_for(tag).strip().replace("\n", " ")
+        wf = tp.workflow_for(tag)
+        marker = " *(workflow)*" if wf else ""
+        return f"| `{tag}` | `{route}` | {tdd} | {cov} | {when}{marker} |"
+
+    def _mode_row(mode):
+        """One registry-derived table row for a verify-mode (reused by full + filtered)."""
+        runs = ", ".join(vmp.runs_for(mode))
+        fix = vmp.fix_policy_for(mode)
+        when = vmp.when_to_use_for(mode).strip().replace("\n", " ")
+        return f"| `{mode}` | {runs} | `{fix}` | {when} |"
+
+    # --- filtered payloads ---------------------------------------------------
+    # The on-demand path: one entity's row + its prompt-shaping prose verbatim.
+    # This is the large-and-conditional payload the executor fetches instead of
+    # having it injected into every dispatch.
+    if tag is not None:
+        if tag in tp.TAG_VOCAB():
+            print(f"# Task Type `{tag}` (resolved: plugin baseline ⊕ project overlay)")
+            print()
+            print("| Tag | Route | TDD-exempt | Coverage-exempt | When to use |")
+            print("|---|---|---|---|---|")
+            print(_tag_row(tag))
+            print()
+            wf = tp.workflow_for(tag)
+            if wf:
+                print(f"## `workflow` for `{tag}` (follow this prose instead of default TDD)")
+                print()
+                print(wf)
+            else:
+                print(f"_(no `workflow` for `{tag}` → default TDD, Steps 3-8)_")
+        else:
+            # Fail-open, mirroring the no-filter posture: an unknown tag is
+            # surfaced, not raised (the *validator* hard-errors on unknown tags;
+            # the renderer never does).
+            print(f"# Task Type `{tag}` — UNKNOWN to the resolved registry")
+            print()
+            print(f"`{tag}` is not in the resolved tag vocabulary "
+                  f"({', '.join(tp.TAG_VOCAB())}). `init-from-plan` would reject "
+                  f"it as a hard error; register it in "
+                  f"`conductor/workflow/task-type-profiles.json` to add it.")
+        return
+
+    if mode is not None:
+        if mode in vmp.MODE_VOCAB():
+            print(f"# Verify Mode `{mode}` (resolved: plugin baseline ⊕ project overlay)")
+            print()
+            print("| Mode | Runs | Fix policy | When to use |")
+            print("|---|---|---|---|")
+            print(_mode_row(mode))
+            print()
+            proto = vmp.protocol_for(mode)
+            if proto:
+                print(f"## `protocol` for `{mode}` (the prose phase-checker emits)")
+                print()
+                print(proto)
+            else:
+                print(f"_(no `protocol` for `{mode}` → default Step-3 suite gate)_")
+        else:
+            print(f"# Verify Mode `{mode}` — UNKNOWN to the resolved registry")
+            print()
+            print(f"`{mode}` is not in the resolved mode vocabulary "
+                  f"({', '.join(vmp.MODE_VOCAB())}). `init-from-plan --check` "
+                  f"warns (advisory) on an unknown mode; register it in "
+                  f"`conductor/workflow/verify-mode-profiles.json` to add it.")
+        return
+
+    # --- full overview (no filter) -------------------------------------------
     print("# Conductor Registry (resolved: plugin baseline ⊕ project overlay)")
     print()
     print("Source: conductor/workflow/{task-type,verify-mode}-profiles.json "
@@ -1262,17 +1351,12 @@ def cmd_registry_doc():
     print("| Tag | Route | TDD-exempt | Coverage-exempt | When to use |")
     print("|---|---|---|---|---|")
     for tag in tags:
-        route = tp.route_for([tag])
-        tdd = _yesno(tp.is_tdd_exempt([tag]))
-        cov = _yesno(tp.is_coverage_exempt([tag]))
-        when = tp.when_to_use_for(tag).strip().replace("\n", " ")
-        wf = tp.workflow_for(tag)
-        marker = " *(workflow)*" if wf else ""
-        print(f"| `{tag}` | `{route}` | {tdd} | {cov} | {when}{marker} |")
+        print(_tag_row(tag))
     print()
-    print("`workflow` rows carry a bespoke executor workflow (rendered inline at ")
-    print("dispatch); the rest use default TDD (Steps 3-8). `[Explore]` routes to ")
-    print("explorer; task-executor REFUSES it.")
+    print("Rows carrying a `workflow` diverge from default TDD — the executor "
+          "fetches that prose on demand (`track-state registry-doc --tag <Name>`); "
+          "the rest use default TDD (Steps 3-8). `[Explore]` routes to explorer; "
+          "task-executor REFUSES it.")
     print()
 
     # --- Verify modes ---------------------------------------------------------
@@ -1282,10 +1366,7 @@ def cmd_registry_doc():
     print("| Mode | Runs | Fix policy | When to use |")
     print("|---|---|---|---|")
     for mode in modes:
-        runs = ", ".join(vmp.runs_for(mode))
-        fix = vmp.fix_policy_for(mode)
-        when = vmp.when_to_use_for(mode).strip().replace("\n", " ")
-        print(f"| `{mode}` | {runs} | `{fix}` | {when} |")
+        print(_mode_row(mode))
     print()
     print("`(no directive)` = the default full gate (suite → L2 → L4 manual).")
     print("`anchor` is a no-op on an unfrozen track (run `track-state freeze` to ")
