@@ -295,9 +295,12 @@ def extract_tags(name):
     # whole — without it a newline inside the comment leaves tag-like text
     # (e.g. [Config]) sitting in the name to false-positive below.
     clean_name = re.sub(r'<!--.*?-->', '', name, flags=re.DOTALL)
-    # Use lookahead/lookbehind to avoid consuming whitespace between consecutive tags.
-    # Build the alternation from the LIVE registry vocab so a tag registered by a
-    # project overlay is recognized (DISPATCH_TAGS is a frozen import-time mirror).
+    # Use lookahead/lookbehind to avoid consuming whitespace between consecutive
+    # tags. The alternation is built from the LIVE registry vocab (not a frozen
+    # import-time constant) so a tag a project overlay adds is recognized — the
+    # per-call rebuild is deliberate, since the vocab can grow with an overlay
+    # loaded after this module imported. (Caching the pattern here would miss
+    # overlay tags registered mid-process.)
     pattern = r'(?<!\S)\[(' + '|'.join(_tag_vocab()) + r')\](?!\S)'
     matches = re.findall(pattern, clean_name)
     # Extract tag names and preserve order while removing duplicates

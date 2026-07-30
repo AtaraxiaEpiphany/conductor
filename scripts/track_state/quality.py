@@ -196,14 +196,15 @@ def _init_core(track_dir, plan, track_id, track_type, description, execution_mod
     for phase in plan.get("phases", []):
         tasks = []
         for task in phase.get("tasks", []):
+            # task_type is a typed mirror of the name's tag, derived once at
+            # construction. The name stays authoritative (reconcile/sync key
+            # on it); this field is a cache the spine reads instead of
+            # re-parsing extract_tags at every dispatch.
+            parent_type = derive_task_type(task["name"])
             entry = {
                 "name": task["name"],
                 "status": "pending",
-                # task_type is a typed mirror of the name's tag, derived once at
-                # construction. The name stays authoritative (reconcile/sync key
-                # on it); this field is a cache the spine reads instead of
-                # re-parsing extract_tags at every dispatch.
-                "task_type": derive_task_type(task["name"]),
+                "task_type": parent_type,
             }
             if "subtasks" in task:
                 entry["subtasks"] = [
@@ -211,9 +212,10 @@ def _init_core(track_dir, plan, track_id, track_type, description, execution_mod
                         "name": st["name"] if isinstance(st, dict) else st,
                         "status": "pending",
                         # Subtasks inherit the parent's tag (contract rule:
-                        # never tag subtasks individually), so derive from the
-                        # parent name — a subtask name carries no tag of its own.
-                        "task_type": derive_task_type(task["name"]),
+                        # never tag subtasks individually), so they reuse the
+                        # already-derived parent task_type — a subtask name
+                        # carries no tag of its own.
+                        "task_type": parent_type,
                     }
                     for st in task["subtasks"]
                 ]
