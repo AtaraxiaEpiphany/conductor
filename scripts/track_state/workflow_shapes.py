@@ -20,23 +20,24 @@ we fall back to ``_FALLBACK`` (a verbatim copy of the pre-registry hardcoded
 topology) and log loudly to stderr; a malformed overlay falls back to the
 baseline alone — dispatch must never crash over a malformed registry.
 
-**Shape is advisory today.** The shape declares intended topology but does NOT
-reorder dispatch — the conductor runs the same action-driven planner→executor→
-checker spine regardless of the resolved shape. The single dispatch-path
-consumer is :func:`shape_allows` (``dispatch.py:1741``), and its result is
-**never** used to block or reroute: when a dispatched action's agent is outside
-the resolved shape's ``nodes``, the spine attaches an advisory ``shape_violation``
-disclosure to the emitted leaf envelope (no-silent-caps) and the dispatch still
-proceeds — a shape misconfiguration must never deadlock a track. The other
-accessors (:func:`nodes_for`, :func:`verify_policy_for`, :func:`stop_condition_for`,
-:func:`instruction_for`) are consumed **only** by ``registry-doc`` display, never
-by dispatch ordering, wave.py, handoff.py, or any SubagentStart injection.
-``instruction_for`` in particular is NOT injected into an orchestrator prompt
-(contrast the task-type ``workflow`` field, which IS injected). So setting
-``research-first`` surfaces ``shape_violation`` disclosures but does not run
-``explorer`` first. Making the shape genuinely load-bearing would require code at
-``_step_emit_dispatch`` / ``cmd_dispatch_next``; today it is a diagnostic, not a
-gate.
+**Shape is PARTIALLY load-bearing.** The ``verifiers`` field IS load-bearing:
+the dispatch checkpoint fan-out (``cmd_dispatch_next`` / ``_step_emit_dispatch_batch``)
+iterates :func:`verifiers_for` — the third and fourth axes joined at the checkpoint
+— so a shape controlling which verifiers run is one registry row, not code. The
+``nodes`` topology stays ADVISORY: the single ``nodes``-consumer is
+:func:`shape_allows`, and its result is **never** used to block or reroute — when
+a dispatched action's agent is outside the resolved shape's ``nodes``, the spine
+attaches an advisory ``shape_violation`` disclosure to the emitted leaf envelope
+(no-silent-caps) and the dispatch still proceeds. ``nodes`` is the SPINE
+topology; ``verifiers`` are its checkpoint CHILDREN (declared in the same row) —
+two distinct lists, never conflated. The other accessors (:func:`nodes_for`,
+:func:`verify_policy_for`, :func:`stop_condition_for`, :func:`instruction_for`)
+are consumed **only** by ``registry-doc`` display, never by dispatch ordering,
+wave.py, handoff.py, or any SubagentStart injection. ``instruction_for`` in
+particular is NOT injected into an orchestrator prompt (contrast the task-type
+``workflow`` field, which IS injected). So setting ``research-first`` surfaces
+``shape_violation`` disclosures but does not run ``explorer`` first — only the
+verifier set it declares actually drives dispatch.
 
 Adding a shape after this module exists is a one-row registry edit: it is
 automatically (a) resolvable via :func:`nodes_for`/:func:`verify_policy_for`,
@@ -63,12 +64,14 @@ from pathlib import Path
 _FALLBACK = {
     "default": {
         "nodes": ["spec-planner", "task-executor", "phase-checker"],
+        "verifiers": ["ac-tracer", "test-runner"],
         "verify_policy": "checkpoint",
         "stop_condition": "all_nodes_done",
     },
     "shapes": {
         "default": {
             "nodes": ["spec-planner", "task-executor", "phase-checker"],
+            "verifiers": ["ac-tracer", "test-runner"],
             "verify_policy": "checkpoint",
             "stop_condition": "all_nodes_done",
         },
@@ -249,14 +252,47 @@ def SHAPES_VOCAB() -> tuple[str, ...]:
 
 
 def nodes_for(shape: str) -> tuple[str, ...]:
-    """The ordered dispatch-agent node list a shape runs — the topology.
+    """The ordered SPINE dispatch-agent node list a shape runs — the topology.
 
-    This is the allowlist the dispatch spine consults: an action whose agent is
-    not in this list (for the resolved shape) is refused. Returns a tuple for
-    stable membership tests. Unknown shape → ``default`` shape's nodes (fail-
-    open: a typo never blocks dispatch, it falls back to the standard loop).
+    This is the allowlist the dispatch spine consults (advisory): an action
+    whose agent is not in this list surfaces a ``shape_violation`` disclosure
+    when the shape is resolved, but the dispatch still proceeds. Returns a tuple
+    for stable membership tests. Unknown shape → ``default`` shape's nodes
+    (fail-open: a typo never blocks dispatch, it falls back to the standard loop).
+
+    Note this is the SPINE topology only. Checkpoint verifiers (``ac-tracer`` /
+    ``test-runner``) are NOT spine nodes — they are checkpoint *children*
+    declared via :func:`verifiers_for`, and a ``phase-checker`` dispatching one
+    is on-topology regardless of ``nodes``. Do not conflate the two lists.
     """
     return tuple(_shape(shape).get("nodes", ()))
+
+
+def verifiers_for(shape: str) -> tuple[str, ...]:
+    """The ordered checkpoint-VERIFIER list a shape's checkpoint fans out.
+
+    This is the **load-bearing** seam where the workflow-shape axis meets the
+    verifier axis: the dispatch fan-out (``dispatch.cmd_dispatch_next`` /
+    ``dispatch._step_emit_dispatch_batch``) iterates this tuple and emits one
+    wave member per verifier (built by :func:`dispatch._build_verifier`, which
+    reads each verifier's ``field_set`` from :mod:`verifier_profiles`). So a
+    project shape omitting ``test-runner`` simply doesn't fan it out — the shape
+    controls WHICH verifiers its checkpoint runs.
+
+    Distinct from :func:`nodes_for` (the spine topology): verifiers are
+    checkpoint *children*, never spine nodes. Absent/empty/malformed → the
+    standard ``("ac-tracer", "test-runner")`` pair (fail-open to the pre-registry
+    behavior, mirroring :func:`nodes_for`'s fail-open to default). Unknown shape
+    → the default shape's verifiers. Returns a tuple for stable membership.
+    """
+    raw = _shape(shape).get("verifiers")
+    if not isinstance(raw, list) or not raw:
+        return tuple(_shape("default").get("verifiers") or
+                     ("ac-tracer", "test-runner"))
+    # Drop non-str / empty entries defensively (a malformed row never crashes
+    # the fan-out) — the verifier registry's vocab check happens at dispatch.
+    return tuple(str(v) for v in raw if isinstance(v, str) and v) or \
+        ("ac-tracer", "test-runner")
 
 
 def verify_policy_for(shape: str) -> str:

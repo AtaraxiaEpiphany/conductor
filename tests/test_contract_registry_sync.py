@@ -91,6 +91,24 @@ class ModeTableDriftTests(TestCase):
         self.assertIn("anchor", r.stderr)
 
 
+class VerifierTableDriftTests(TestCase):
+    def test_verifier_table_is_caught(self):
+        # A hand-maintained verifier enumeration table — every row whose first
+        # cell is a known verifier literal trips the gate (the fourth-axis
+        # drift the lint now polices).
+        with _ContractSandbox() as m:
+            m.append(
+                "\n| Verifier | Field set |\n|---|---|\n"
+                "| `ac-tracer` | TRACK_DIR, TRACK_ID |\n"
+                "| test-runner | + PHASE_INDEX |\n"
+            )
+            r = _run()
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("duplicates registry data", r.stderr)
+        self.assertIn("ac-tracer", r.stderr)
+        self.assertIn("test-runner", r.stderr)
+
+
 class ProseExemptionTests(TestCase):
     """Grammar/invariant text that MENTIONS a tag/mode is NOT a table → keep it.
 

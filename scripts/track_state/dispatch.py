@@ -204,16 +204,16 @@ def cmd_dispatch_next(track_dir, compact=True):
             # consumes the just-collected verifier verdicts from ephemeral
             # context (not yet on disk) — `_build_phase_checker` rebuilds that
             # exact field set; the `step` spine pre-assembles the synth too.
-            wave = [
-                {"agent": "ac-tracer", "name": "ac-tracer",
-                 "prompt": build_dispatch_prompt("dispatch_batch", track_dir,
-                                                state=state, phase=cp,
-                                                agent="ac-tracer")[1]},
-                {"agent": "test-runner", "name": "test-runner",
-                 "prompt": build_dispatch_prompt("dispatch_batch", track_dir,
-                                                state=state, phase=cp,
-                                                agent="test-runner")[1]},
-            ]
+            #
+            # resolve_phase_gate composes the gate plan once (verifier set +
+            # verify-mode directive + gate-group membership) — the single
+            # dispatch-side chokepoint for the three checkpoint-relevant axes.
+            # Threading verifiers through avoids a double-resolve in the wave
+            # builder; the modes/group are the #6 composition contract (read by
+            # phase-checker's binding branches via the heading, not this envelope).
+            gate_plan = resolve_phase_gate(track_dir, state, cp)
+            wave = _build_verifier_wave(track_dir, state, cp,
+                                        verifiers=gate_plan["verifiers"])
             emit(dict(action="dispatch_phase_checker", phase=cp,
                       execution_mode=execution_mode, wave=wave),
                  "dispatch-next", compact)
@@ -1272,20 +1272,149 @@ def _build_executor(track_dir, pre, attempt):
     return "task-executor", "\n".join(lines)
 
 
-def _build_verifier(track_dir, state, phase, agent):
-    """``dispatch_batch`` member envelope body for a read-only phase verifier
-    (``ac-tracer`` / ``test-runner``).
+def resolve_phase_gate(track_dir, state, phase):
+    """The single dispatch-side composition of a phase's checkpoint gate plan.
+
+    The checkpoint decision consults three otherwise-scattered sources — the
+    verifier set (#4, the workflow-shape axis joined to the verifier axis), the
+    phase-verify directive (``plan_parse._extract_verify``, the verify-mode
+    axis), and gate-group membership (``helpers._phase_gate_group_membership``,
+    the cross-phase gate-groups axis). This composes them into one return so the
+    dispatch checkpoint branch (and any future consumer) reads ONE chokepoint
+    instead of three lookups tied together by prose.
+
+    Returns a dict::
+
+        {
+          "verifiers":   ("ac-tracer", "test-runner", ...),  # the fan-out set
+          "verify_modes": ["compile", ...] | [],              # directive modes
+          "gate_group":   {"name": str|None, "is_terminal": bool},
+        }
+
+    Pure and fail-open: any lookup miss degrades to the safe default
+    (standard pair / no directive / no group) rather than raising — dispatch
+    must never deadlock over a malformed plan.md or registry. This is the
+    *code* that was previously implicit in the checkpoint branch + prose in
+    phase-checker.md; the agent's BINDING precedence prose (directive >
+    gate-group terminal > migration branch, which governs *verdict handling*)
+    is unchanged — this function governs *dispatch composition*, not verdicts.
+    """
+    from .workflow_shapes import resolve_shape, verifiers_for
+    from .helpers import _phase_gate_group_membership
+    from . import plan_parse
+
+    shape = resolve_shape(state.get("workflow_shape"))
+    verifiers = verifiers_for(shape)
+    # Re-derive the directive from the raw heading (the plan_parse contract —
+    # verify_modes is advisory metadata re-parsed at every read, NOT persisted).
+    verify_modes = []
+    try:
+        plan_text = (Path(track_dir) / "plan.md").read_text(encoding="utf-8")
+        m = re.search(rf"^##\s+Phase\s+{phase}\b.*$",
+                      plan_text, re.MULTILINE)
+        if m:
+            # _extract_verify expects the heading text AFTER the `## Phase N:`
+            # marker — pass the whole matched heading; it scans for the verify
+            # comment and ignores stray `verify` inside AC/TC comments.
+            verify_modes, _has, _fails = plan_parse._extract_verify(m.group(0))
+    except (OSError, UnicodeDecodeError):
+        pass
+    gname, is_terminal = _phase_gate_group_membership(track_dir, phase)
+    return {
+        "verifiers": verifiers,
+        "verify_modes": verify_modes,
+        "gate_group": {"name": gname, "is_terminal": is_terminal},
+    }
+
+
+def _build_verifier_wave(track_dir, state, phase, verifiers=None):
+    """The pre-assembled checkpoint verifier fan-out — one wave member per
+    verifier the resolved workflow-shape fans out.
+
+    The single source for both rails (``cmd_dispatch_next`` and
+    ``_step_emit_dispatch_batch``): the verifier set comes from
+    :func:`workflow_shapes.verifiers_for` (the third and fourth axes joined at
+    the checkpoint — a project shape omitting ``test-runner`` simply doesn't fan
+    it out), and each member's ``prompt`` is built by
+    :func:`build_dispatch_prompt` / :func:`_build_verifier` (registry-driven
+    field-set). Byte-identical to the pre-#4 hardcoded
+    ``[ac-tracer, test-runner]`` pair for both shipped shapes (they declare that
+    pair); a custom shape controls the set.
+
+    ``verifiers`` lets a caller that already resolved the gate plan via
+    :func:`resolve_phase_gate` pass the tuple through (avoids a double-resolve);
+    when ``None`` it is resolved here.
 
     Read-only verifiers run on the main checkout (no worktree pinning, unlike
-    wave members). Field set is each agent's own §2.0 ASSIGNMENT: ac-tracer takes
-    TRACK_DIR/TRACK_ID; test-runner adds PHASE_INDEX, dropped straight from
-    ``phase`` (reporting-only — never a state index — per agents/test-runner.md
-    §2.0).
+    wave members). ``name`` mirrors the wave member shape (a display label).
+    """
+    from .workflow_shapes import resolve_shape, verifiers_for
+    from .verifier_profiles import agent_for
+    if verifiers is None:
+        shape = resolve_shape(state.get("workflow_shape"))
+        verifiers = verifiers_for(shape)
+    members = []
+    for verifier in verifiers:
+        agent = agent_for(verifier)
+        members.append({
+            "agent": agent,
+            "name": verifier,
+            "prompt": build_dispatch_prompt(
+                "dispatch_batch", track_dir, state=state, phase=phase,
+                agent=agent)[1],
+        })
+    return members
+
+
+def _build_verifier(track_dir, state, phase, agent):
+    """``dispatch_batch`` member envelope body for a read-only phase verifier
+    (``ac-tracer`` / ``test-runner`` — or any verifier the resolved shape fans
+    out via :func:`workflow_shapes.verifiers_for`).
+
+    Registry-driven: the field-set each verifier needs is read from the
+    verifier registry (:func:`verifier_profiles.field_set_for`) — NOT a
+    hardcoded ``if agent == "test-runner"`` branch. Each token in the
+    verifier's ``field_set`` resolves to one ``KEY=value`` line: ``TRACK_DIR``
+    and ``TRACK_ID`` (the floor every registered verifier declares), and
+    ``PHASE_INDEX`` (the checkpoint phase number — reporting-only, never a state
+    index, per agents/test-runner.md §2.0). An unknown token is dropped
+    (fail-open). An unknown VERIFIER (empty ``field_set``) falls back to the
+    ``TRACK_DIR``+``TRACK_ID`` floor so dispatch never emits a bodyless envelope.
+    Read-only verifiers run on the main checkout (no worktree pinning, unlike
+    wave members).
     """
     td = str(track_dir)
-    lines = [f"TRACK_DIR={td}", f"TRACK_ID={state.get('track_id', '')}"]
-    if agent == "test-runner":
-        lines.append(f"PHASE_INDEX={phase}")
+    track_id = state.get("track_id", "")
+    # The floor every verifier gets; emitted as a fallback for an unknown
+    # verifier (empty field_set) and as the leading lines when the registry
+    # field_set omits them.
+    floor = [f"TRACK_DIR={td}", f"TRACK_ID={track_id}"]
+    # Lazy import: verifier_profiles imports nothing from dispatch at module
+    # load, but lazy keeps the boundary explicit and avoids any load-order
+    # surprise in the hook-script import fan-out.
+    from .verifier_profiles import field_set_for
+    field_set = field_set_for(agent)
+    if not field_set:
+        return "\n".join(floor)
+    lines, seen = [], set()
+    for token in field_set:
+        if token == "TRACK_DIR":
+            value = f"TRACK_DIR={td}"
+        elif token == "TRACK_ID":
+            value = f"TRACK_ID={track_id}"
+        elif token == "PHASE_INDEX":
+            value = f"PHASE_INDEX={phase}"
+        else:
+            continue  # unknown token dropped (fail-open)
+        if value not in seen:  # de-dup a registry row that lists a token twice
+            seen.add(value)
+            lines.append(value)
+    # Guarantee the TRACK_DIR/TRACK_ID floor even if the registry row omitted it
+    # (a verifier always needs to know where it runs).
+    if not any(ln.startswith("TRACK_DIR=") for ln in lines):
+        lines = [floor[0]] + lines
+    if not any(ln.startswith("TRACK_ID=") for ln in lines):
+        lines = [floor[1]] + lines
     return "\n".join(lines)
 
 
@@ -1341,9 +1470,15 @@ def build_dispatch_prompt(action, track_dir, *, pre=None, state=None, phase=None
                              f"action {action!r}")
         return _build_executor(track_dir, pre, attempt)
     if action == "dispatch_batch":
-        if agent not in ("ac-tracer", "test-runner"):
-            raise ValueError("build_dispatch_prompt: 'agent' must be "
-                             "'ac-tracer' or 'test-runner' for dispatch_batch")
+        # The agent must be a registered verifier. Widen to the resolved vocab
+        # (ac-tracer/test-runner + any project-overlay verifier); a name outside
+        # it is a programming error at the call site (a shape fanning out an
+        # undeclared verifier), so raise rather than silently emit garbage.
+        from .verifier_profiles import VERIFIER_VOCAB
+        if agent not in VERIFIER_VOCAB():
+            raise ValueError("build_dispatch_prompt: 'agent' must be a "
+                             "registered verifier "
+                             f"({', '.join(VERIFIER_VOCAB())}) for dispatch_batch")
         return agent, _build_verifier(track_dir, state, phase, agent)
     if action == "dispatch_phase_checker":
         if marker is None:
@@ -1479,6 +1614,12 @@ def shape_allows(track_dir, agent, state=None):
 
     ``state`` is passed through (avoiding a re-load when the caller already has
     it); when ``None`` the track-state is loaded here.
+
+    Note: this consults the shape's ``nodes`` (the SPINE topology) only, and is
+    called solely from the ``dispatch`` leaf (executor/explorer). Checkpoint
+    verifiers (``ac-tracer`` / ``test-runner``) never pass through here — they
+    are checkpoint *children* governed by :func:`verifiers_for`, not spine nodes,
+    so a phase-checker dispatching its verifiers never trips ``shape_violation``.
     """
     from .workflow_shapes import resolve_shape, nodes_for
     if state is None:
@@ -1674,12 +1815,7 @@ def _step_emit_dispatch_batch(track_dir, state, phase, execution_mode, compact):
     need no worktree/branch — the verifiers are read-only and run on the main
     checkout. ``name`` mirrors the wave member shape (a display label).
     """
-    wave = [
-        {"agent": "ac-tracer", "name": "ac-tracer",
-         "prompt": _step_assemble_verifier_prompt(track_dir, state, phase, "ac-tracer")},
-        {"agent": "test-runner", "name": "test-runner",
-         "prompt": _step_assemble_verifier_prompt(track_dir, state, phase, "test-runner")},
-    ]
+    wave = _build_verifier_wave(track_dir, state, phase)
     emit(dict(action="dispatch_batch", phase=phase, execution_mode=execution_mode,
               wave=wave),
          "step", compact)

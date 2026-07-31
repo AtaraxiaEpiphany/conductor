@@ -75,13 +75,32 @@ class RegistryDocRender(TestCase):
         for mode in vmp.MODE_VOCAB():
             self.assertIn(mode, out, f"registry-doc stdout missing mode {mode!r}")
 
+    def test_renders_every_verifier(self):
+        # The fourth axis: every baseline verifier appears in the render.
+        from scripts.track_state import verifier_profiles as vfp
+        env = {**os.environ}
+        env.pop("CLAUDE_PROJECT_DIR", None)
+        rc, out, _ = _run_cli(env=env)
+        for verifier in vfp.VERIFIER_VOCAB():
+            self.assertIn(verifier, out,
+                          f"registry-doc stdout missing verifier {verifier!r}")
+
     def test_renders_section_headings(self):
         env = {**os.environ}
         env.pop("CLAUDE_PROJECT_DIR", None)
         rc, out, _ = _run_cli(env=env)
         self.assertIn("## Task Types", out)
         self.assertIn("## Verify Modes", out)
+        self.assertIn("## Verifiers", out)  # the fourth-axis section
         self.assertIn("resolved", out.lower())  # the "(resolved: baseline ⊕ overlay)" banner
+
+    def test_shape_table_carries_verifiers_column(self):
+        # The Verifiers column is load-bearing (#4) — it must render in the
+        # shape table, naming which checkpoint verifiers a shape fans out.
+        env = {**os.environ}
+        env.pop("CLAUDE_PROJECT_DIR", None)
+        rc, out, _ = _run_cli(env=env)
+        self.assertIn("Verifiers", out)
 
 
 class RegistryDocReadOnly(TestCase):

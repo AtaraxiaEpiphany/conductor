@@ -1284,40 +1284,12 @@ def cmd_registry_add(track_dir, tracks_md_path=None):
              line=line, registry=str(reg)))
 
 
-def cmd_registry_doc(tag=None, mode=None, shape=None):
-    """Render the RESOLVED task-type + verify-mode + workflow-shape registries
-    (baseline ⊕ overlay).
-
-    This is the **live-data view** that complements the grammar-only contract
-    (``runtime/contracts/plan-format-contract.md`` holds the plan.md grammar +
-    invariants; the tag/mode/shape vocabulary + semantics live HERE in the
-    resolved registry, never hand-duplicated in the contract). It exists so
-    humans and tooling can ask "what does the resolved registry actually contain
-    right now?" — including a project overlay's tags/modes/shapes — without a
-    committed generated artifact and without reading JSON by eye.
-
-    Three filter modes of operation, by argument:
-
-    - **No filter** (``tag is None and mode is None and shape is None``): render
-      the full tag table + mode table + shape table (the human/CI overview).
-    - **``--tag <Name>``**: render ONE tag's profile row **plus its ``workflow``
-      prose verbatim** when present — the on-demand payload ``task-executor``
-      fetches at dispatch (the workflow prose is large + conditional, so it is
-      read on demand rather than injected into every executor dispatch). An
-      unknown tag renders the row from the ``default`` profile + a note; never
-      raises (fail-open, like the no-filter path).
-    - **``--mode <name>``**: the symmetric payload for a verify-mode — one mode's
-      row **plus its ``protocol`` prose verbatim**.
-    - **``--shape <name>``**: the symmetric payload for a workflow-shape — one
-      shape's row **plus its ``instruction`` prose verbatim** when present.
-
-    Strictly **read-only**: no ``track_dir`` argument, no ``track-state.json``
-    mutation, no writes anywhere — ``--tag``/``--mode``/``--shape`` are
-    *filters*, not mutations, so the sanctioned-set safety contract is unchanged
-    (a read-only render can never be the catastrophic op the broad rm/mv scan
-    guards against). Fail-open: a missing/malformed registry is already handled
-    inside the profile modules (``_FALLBACK``); this function renders whatever
-    ``TAG_VOCAB``/``MODE_VOCAB``/``SHAPES_VOCAB`` resolve to and never raises.
+def cmd_registry_doc(tag=None, mode=None, shape=None, verifier=None):
+    """Render the RESOLVED task-type + verify-mode + workflow-shape + verifier
+    registries (baseline ⊕ overlay) — the live-data view complementing the
+    grammar-only contract. Four on-demand filters: ``--tag`` / ``--mode`` /
+    ``--shape`` / ``--verifier`` render one entity's row plus its prompt-shaping
+    prose verbatim. Strictly read-only; fail-open everywhere.
     """
     # Local import: these modules are read by the phase-checker/dispatch paths and
     # resolve the overlay via the project root; importing here (not at module top)
@@ -1325,6 +1297,7 @@ def cmd_registry_doc(tag=None, mode=None, shape=None):
     from . import task_profiles as tp
     from . import verify_mode_profiles as vmp
     from . import workflow_shapes as ws
+    from . import verifier_profiles as vfp
 
     def _yesno(b):
         return "yes" if b else "no"
@@ -1353,9 +1326,17 @@ def cmd_registry_doc(tag=None, mode=None, shape=None):
     def _shape_row(shape):
         """One registry-derived table row for a workflow-shape (reused by full + filtered)."""
         nodes = " → ".join(ws.nodes_for(shape))
+        verifiers = ", ".join(ws.verifiers_for(shape))
         policy = ws.verify_policy_for(shape)
         stop = ws.stop_condition_for(shape)
-        return f"| `{shape}` | {nodes} | `{policy}` | `{stop}` |"
+        return f"| `{shape}` | {nodes} | {verifiers} | `{policy}` | `{stop}` |"
+
+    def _verifier_row(verifier):
+        """One registry-derived table row for a checkpoint verifier (reused by
+        full + filtered)."""
+        agent = vfp.agent_for(verifier)
+        field_set = ", ".join(vfp.field_set_for(verifier))
+        return f"| `{verifier}` | `{agent}` | {field_set} |"
 
     # --- filtered payloads ---------------------------------------------------
     # The on-demand path: one entity's row + its prompt-shaping prose verbatim.
@@ -1427,8 +1408,8 @@ def cmd_registry_doc(tag=None, mode=None, shape=None):
             print(f"# Workflow Shape `{shape}` "
                   f"(resolved: plugin baseline ⊕ project overlay)")
             print()
-            print("| Shape | Nodes | Verify policy | Stop condition |")
-            print("|---|---|---|---|")
+            print("| Shape | Nodes | Verifiers | Verify policy | Stop condition |")
+            print("|---|---|---|---|---|")
             print(_shape_row(shape))
             print()
             instr = ws.instruction_for(shape)
@@ -1447,11 +1428,36 @@ def cmd_registry_doc(tag=None, mode=None, shape=None):
                   f"`conductor/workflow/workflow-shapes.json` to add it.")
         return
 
+    if verifier is not None:
+        if verifier in vfp.VERIFIER_VOCAB():
+            print(f"# Verifier `{verifier}` "
+                  f"(resolved: plugin baseline ⊕ project overlay)")
+            print()
+            print("| Verifier | Agent | Field set |")
+            print("|---|---|---|")
+            print(_verifier_row(verifier))
+            print()
+            when = vfp.when_to_use_for(verifier)
+            if when:
+                print(f"## `when_to_use` for `{verifier}`")
+                print()
+                print(when)
+            else:
+                print(f"_(no `when_to_use` for `{verifier}`)_")
+        else:
+            print(f"# Verifier `{verifier}` — UNKNOWN to the resolved registry")
+            print()
+            print(f"`{verifier}` is not in the resolved verifier vocabulary "
+                  f"({', '.join(vfp.VERIFIER_VOCAB())}). A shape fanning it out "
+                  f"would drop it at the checkpoint (fail-open); register it in "
+                  f"`conductor/workflow/verifier-profiles.json` to add it.")
+        return
+
     # --- full overview (no filter) -------------------------------------------
     print("# Conductor Registry (resolved: plugin baseline ⊕ project overlay)")
     print()
-    print("Source: conductor/workflow/{task-type,verify-mode}-profiles.json "
-          "(project overlay) over the plugin baseline.")
+    print("Source: conductor/workflow/{task-type,verify-mode,workflow-shape,"
+          "verifier}-profiles.json (project overlay) over the plugin baseline.")
     print()
 
     # --- Task types -----------------------------------------------------------
@@ -1488,8 +1494,8 @@ def cmd_registry_doc(tag=None, mode=None, shape=None):
     shapes = ws.SHAPES_VOCAB()
     print(f"## Workflow Shapes ({len(shapes)})")
     print()
-    print("| Shape | Nodes | Verify policy | Stop condition |")
-    print("|---|---|---|---|")
+    print("| Shape | Nodes | Verifiers | Verify policy | Stop condition |")
+    print("|---|---|---|---|---|")
     for shape in shapes:
         print(_shape_row(shape))
     print()
@@ -1497,8 +1503,27 @@ def cmd_registry_doc(tag=None, mode=None, shape=None):
           "each gate *means* lives in Verify Modes above; the **node sequence** "
           "lives here. A track-state.json `workflow_shape` selects the topology; "
           "an off-topology dispatch surfaces a `shape_violation` (advisory, "
-          "no-silent-caps). `default` is the loop the conductor has always run, "
-          "now declared rather than hardcoded.")
+          "no-silent-caps). The **Verifiers** column is load-bearing — it names "
+          "which checkpoint verifiers a shape fans out (a project shape omitting "
+          "`test-runner` simply doesn't fan it out). `default` is the loop the "
+          "conductor has always run, now declared rather than hardcoded.")
+    print()
+
+    # --- Verifiers (fourth axis: the checkpoint fan-out set) ------------------
+    verifiers = vfp.VERIFIER_VOCAB()
+    print(f"## Verifiers ({len(verifiers)})")
+    print()
+    print("| Verifier | Agent | Field set |")
+    print("|---|---|---|")
+    for verifier in verifiers:
+        print(_verifier_row(verifier))
+    print()
+    print("The fourth axis: the read-only checkpoint verifiers a workflow fans "
+          "out (named by each shape's `Verifiers` column above). `_build_verifier` "
+          "reads each row's `field_set` to emit its assignment (registry-driven, "
+          "not a hardcoded per-agent branch). A project overlay may add a "
+          "verifier (e.g. `lint-runner`, `e2e-runner`) and name it in a shape's "
+          "`verifiers` list — zero plugin edits beyond the agent definition.")
 
 
 def cmd_record_summary(track_dir):

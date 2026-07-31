@@ -86,6 +86,45 @@ class RegistryShapeTests(TestCase):
         self.assertEqual(set(ws.SHAPES_VOCAB()), set(data["shapes"].keys()))
 
 
+class VerifiersForTests(TestCase):
+    """``verifiers_for(shape)`` is the LOAD-BEARING seam — the dispatch
+    checkpoint fan-out iterates it (the third and fourth axes joined at the
+    checkpoint). Distinct from ``nodes_for`` (the SPINE topology): verifiers are
+    checkpoint *children*, never spine nodes."""
+
+    def test_default_shape_fans_out_standard_pair(self):
+        # Byte-identical to the pre-#4 hardcoded [ac-tracer, test-runner] pair.
+        self.assertEqual(ws.verifiers_for("default"),
+                         ("ac-tracer", "test-runner"))
+
+    def test_research_first_also_fans_out_standard_pair(self):
+        # research-first swaps the SPINE (explorer-first) but fans out the SAME
+        # verifiers at its checkpoint.
+        self.assertEqual(ws.verifiers_for("research-first"),
+                         ("ac-tracer", "test-runner"))
+
+    def test_unknown_shape_fails_open_to_default_pair(self):
+        # A typo / unregistered shape must NOT block the fan-out — fall back to
+        # the default shape's verifiers (the standard pair).
+        self.assertEqual(ws.verifiers_for("typo-shape"),
+                         ("ac-tracer", "test-runner"))
+
+    def test_fields_documents_verifiers(self):
+        # The `verifiers` field is documented in the registry's _fields block
+        # (distinct from `nodes`) — the contract it makes with project overlays.
+        data = json.loads(REGISTRY.read_text(encoding="utf-8"))
+        self.assertIn("verifiers", data["_fields"])
+        self.assertIn("checkpoint CHILDREN", data["_fields"]["verifiers"])
+
+    def test_every_shape_carries_verifiers(self):
+        # Both shipped shapes declare `verifiers` explicitly (honest data, not
+        # implicit) — pin the topology rows carry the field.
+        data = json.loads(REGISTRY.read_text(encoding="utf-8"))
+        for shape, prof in data["shapes"].items():
+            self.assertIn("verifiers", prof,
+                          f"shape [{shape}] must declare its `verifiers`")
+
+
 class ResolveShapeTests(TestCase):
     """resolve_shape is the fail-open chokepoint the dispatch spine reads."""
 
@@ -150,6 +189,26 @@ class OverrideLayerTests(TestCase):
                          ("explorer", "task-executor"))
         self.assertEqual(ws.verify_policy_for("k8s-rollout"), "none")
         self.assertIn("kubectl", ws.instruction_for("k8s-rollout"))
+
+    def test_project_shape_omitting_a_verifier_controls_fanout(self):
+        # THE load-bearing #4 case: a project overlay declares a shape whose
+        # `verifiers` list omits test-runner. The fan-out reads verifiers_for,
+        # so this shape fans out ONLY ac-tracer — zero plugin edits. This is
+        # where the shape becomes load-bearing on the verifier axis.
+        proj = self._mk_project()
+        os.environ["CLAUDE_PROJECT_DIR"] = proj
+        self._write_overlay(proj, {"shapes": {"lint-only": {
+            "nodes": ["spec-planner", "task-executor", "phase-checker"],
+            "verifiers": ["ac-tracer"],  # omit test-runner
+            "verify_policy": "checkpoint",
+            "stop_condition": "all_nodes_done"}}})
+        ws._load.cache_clear()
+
+        self.assertIn("lint-only", ws.SHAPES_VOCAB())
+        self.assertEqual(ws.verifiers_for("lint-only"), ("ac-tracer",))
+        # The default shape is untouched (still the standard pair).
+        self.assertEqual(ws.verifiers_for("default"),
+                         ("ac-tracer", "test-runner"))
 
     def test_project_overlay_merges_keeps_builtins(self):
         # Overlay declares ONLY a new shape — built-ins must survive.

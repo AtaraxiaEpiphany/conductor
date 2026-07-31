@@ -261,8 +261,8 @@ COMMAND_HELP = {
                         "Update track entry in Tracks Registry (tracks.md)"),
     "registry-add": ("registry-add <track-dir> [<tracks-md-path>]",
                      "Append the canonical entry for a track to tracks.md (idempotent; auto-locates registry)"),
-    "registry-doc": ("registry-doc [--tag <Name>] [--mode <name>] [--shape <name>]",
-                     "Render the resolved task-type + verify-mode + workflow-shape registries (baseline ⊕ overlay) as tables. Read-only — no track-dir, no writes. --tag/--mode/--shape render ONE entity's row plus its workflow/protocol/instruction prose (the on-demand payload agents fetch)."),
+    "registry-doc": ("registry-doc [--tag <Name>] [--mode <name>] [--shape <name>] [--verifier <name>]",
+                     "Render the resolved task-type + verify-mode + workflow-shape + verifier registries (baseline ⊕ overlay) as tables. Read-only — no track-dir, no writes. --tag/--mode/--shape/--verifier render ONE entity's row plus its workflow/protocol/instruction/when-to-use prose (the on-demand payload agents fetch)."),
     "write-result": ("write-result <track-dir> --status success|failure --commit-sha <sha>\n"
                      "                                --summary <text> --coverage-pct <n> ...\n"
                      "                  <track-dir> [--data '<json>']   (or pipe JSON on stdin)",
@@ -618,18 +618,21 @@ def main():
             # new-track skill never hand-computes the path.
             cmd_registry_add(track_dir, pos[0] if pos else None)
         elif cmd == "registry-doc":
-            # Read-only render of the resolved task-type + verify-mode registries
-            # (baseline ⊕ overlay). No track-dir, no writes. Optional --tag/--mode
-            # filters render ONE entity's row plus its workflow/protocol prose
-            # verbatim — the on-demand payload agents fetch instead of having it
-            # always injected (e.g. the [Migrate] workflow).
+            # Read-only render of the resolved task-type + verify-mode +
+            # workflow-shape + verifier registries (baseline ⊕ overlay). No
+            # track-dir, no writes. Optional --tag/--mode/--shape/--verifier
+            # filters render ONE entity's row plus its workflow/protocol/
+            # instruction/when-to-use prose verbatim — the on-demand payload
+            # agents fetch instead of having it always injected (e.g. the
+            # [Migrate] workflow).
             #
             # registry-doc takes NO track-dir, so its flags start at argv[2] —
             # scan the full remainder, not the post-track-dir ``args`` slice
             # (which would eat the first flag as a phantom track-dir).
             rest = sys.argv[2:]
             cmd_registry_doc(tag=flag(rest, "--tag"), mode=flag(rest, "--mode"),
-                             shape=flag(rest, "--shape"))
+                             shape=flag(rest, "--shape"),
+                             verifier=flag(rest, "--verifier"))
         elif cmd == "start":
             cmd_start(track_dir)
         elif cmd == "set-mode":
