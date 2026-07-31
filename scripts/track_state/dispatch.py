@@ -10,6 +10,7 @@ from .helpers import (
     out, emit, now_iso, extract_tags, _inherit_tags,
     conductor_dir, _store_evidence, _last_subtask_sha, _any_phase_needs_checkpoint,
     flag, _normalize_sha, target, _extract_tags_for_task, _resolve_conductor_root,
+    _terminal_gate_group_members,
 )
 from .constants import (AUTO_COMPLETE_OK, MAX_RETRIES, task_max_retries,
                         MAX_ANALYSIS_ROUNDS)
@@ -2385,6 +2386,29 @@ def cmd_phase_checkpoint_review(track_dir, status, sha, reason):
             out(dict(error="PASSED requires a valid --sha (7 hex)",
                      track_dir=td, hint="CHECKPOINT_SHA from ---CHECKPOINT RESULT---"))
             return
+        # Gate-group terminal gate (plan-format-contract.md §"Phase Gate Groups"):
+        # if ``cp`` is the terminal member of a gate_group, its PASS resolves the
+        # whole group's accumulated diff — so every member phase gets the real
+        # SHA stamp (trading its ``[checkpoint: deferred <group>]`` marker for a
+        # real one). Non-terminal members would otherwise carry a deferred marker
+        # forever despite the group being green. ``cp`` can only be the terminal
+        # member here: non-terminal members defer in _phase_needs_checkpoint and
+        # never surface as the pending checkpoint.
+        stamped_phases = [cp]
+        group_members = _terminal_gate_group_members(track_dir, cp)
+        for member in group_members:
+            if member == cp:
+                continue  # cp stamped below as the authoritative result
+            mr = _stamp_checkpoint_in_plan(track_dir, member, sha)
+            if "error" in mr:
+                # Advisory — never block the terminal advance on a member stamp
+                # failure (the terminal stamp is the load-bearing one). The
+                # member keeps its deferred marker; operator can re-stamp.
+                sys.stderr.write(
+                    f"gate_group member Phase {member} stamp failed (advisory): "
+                    f"{mr['error']}\n")
+            else:
+                stamped_phases.append(member)
         result = _stamp_checkpoint_in_plan(track_dir, cp, sha)
         if "error" in result:
             out(dict(error=result["error"], track_dir=td))
@@ -2397,7 +2421,9 @@ def cmd_phase_checkpoint_review(track_dir, status, sha, reason):
             compile_track_findings(track_dir, current_phase=cp)
         except Exception as exc:  # noqa: BLE001 — advisory, never fatal
             sys.stderr.write(f"track-findings compile skipped (advisory): {exc}\n")
-        out(dict(ok=True, stamped=True, phase=cp, sha=sha, track_dir=td))
+        out(dict(ok=True, stamped=True, phase=cp, sha=sha, track_dir=td,
+                 gate_group_members=(sorted(stamped_phases)
+                                      if len(stamped_phases) > 1 else None)))
     elif verdict == "FAILED":
         _phase_cp_clear_marker(track_dir)
         out(dict(ok=True, stamped=False, phase=cp, track_dir=td,

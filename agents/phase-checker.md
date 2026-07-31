@@ -48,6 +48,7 @@ You are a **Conductor Phase Checkpoint Agent** — the **synthesizer** for the p
    - `conductor/product/product-guidelines.md`
 4. **Scoped Docs** (match to phase changes via git diff):
    - `git diff --name-only <prev_checkpoint> HEAD` → match changed files to scoped docs per `conductor/index.md` match strategies.
+   - **Gate-group terminal gate (binding).** Read the current phase's `## Phase N:` heading for a `<!-- gate_group: <name> -->` directive (plan-format-contract.md §"Phase Gate Groups"). If present, this phase is the **terminal** member of a cross-phase gate group — a sequence of phases that are intentionally red mid-flight and gate TOGETHER here, on the group's accumulated diff. The non-terminal members deferred their own checkpoint (`[checkpoint: deferred <group>]`, no verifier fan-out); you are the first verifier to run over their combined work. **Change the diff base**: instead of `<prev_checkpoint>` (the terminal phase's immediate predecessor), compute the base as the **checkpoint SHA immediately before the group's FIRST member** — i.e. `git log` to find the first member's predecessor checkpoint, then `git diff --name-only <that_sha> HEAD` covers the whole group (P1∪P2∪…∪Pterminal). If the first member is Phase 1, the base is the empty tree (`4b825dc642cb6eb9a060e54bf8d69288fbee4904`). Carry this accumulated-diff scope into Step 2.2's file filter and Step 3.6's AC-trace grounding check — an AC claimed by a deferred member phase is now your responsibility to confirm.
 
 ---
 
@@ -89,6 +90,13 @@ This branch takes precedence over the migration-phase branch below: a phase that
 - Do NOT checkpoint. This FAILED hands the phase back to the operator along either path above. The directive path (a) is usually the right one for a pure dependency-bump / mechanical-rename phase; the continue-migration path (b) for a phase whose goal genuinely is a green suite.
 
 This branch does **not** apply to a mixed phase (some `[Migrate]`, some default-tagged implementation tasks) — a default-tagged task in the phase means TDD applies, so the normal fix-and-retry pass governs.
+
+**Gate-group terminal-gate failure branch (binding).** When this phase is the terminal member of a `<!-- gate_group: <name> -->` group (§3.0), a FAILED verdict means the group's *accumulated* diff is not green — the debt was deferred across members and did not resolve at the terminal. Your `FAILURE_REASON` must name the **offending member** (which phase's changes left the debt), not just "the phase failed," so the operator knows whether to fix forward in a new phase or reset a specific member. Determine the offending member from the failure signal:
+- **Build/compiler failure** → `git diff <group_base_sha> HEAD` and locate which member phase introduced the uncompilable symbol (a `javax→jakarta` rename half-done in member P2, a removed API called from member P1's code). Name that phase: `gate_group '<name>' terminal gate FAILED — member Phase <N> '<name>' left <symbol/API> uncompilable across the accumulated diff (P<m..n>). Fix forward: add a [Migrate] task to Phase <N>'s successor, or edit the member and re-run.`
+- **Test-suite failure** → the failing test traces to a member phase's diff; name it: `gate_group '<name>' terminal gate FAILED — test <test> fails against the accumulated diff; the behavior it pins was changed by member Phase <N>. Resolve in that member or add a follow-up [Migrate] task, then re-run the terminal gate.`
+- **Cannot localize** → if the offending member is genuinely ambiguous (the failure spans several members), say so and list the candidates: `gate_group '<name>' terminal gate FAILED — <failure> spans members P<m..n>; cannot localize to a single member. Inspect each member's diff vs the group base <sha>.`
+
+Do NOT checkpoint. This FAILED hands the group back to the operator with an actionable, member-named reason (the no-silent-caps disclosure for deferred cross-phase debt). On a later PASSED re-run, `track-state phase-checkpoint-review` stamps every member with the real SHA (the deferred markers trade in automatically).
 
 ### Addendum — Step 3.5: L2 End-to-End Verification (INSERT between Step 3 and Step 4)
 

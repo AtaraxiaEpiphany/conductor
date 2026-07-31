@@ -134,6 +134,17 @@ _VERIFY_COMMENT = re.compile(r"^\s*verify\s*:", re.IGNORECASE)
 from .verify_mode_profiles import MODE_VOCAB as _mode_vocab
 _VERIFY_MODES = _mode_vocab()
 
+# Cross-phase gate group, inside a ``<!-- gate_group: spring3 -->`` comment on
+# the ``## Phase N:`` heading line (plan-format-contract.md §"Phase Gate
+# Groups"). Phases that share a group name defer their own checkpoint and gate
+# TOGETHER at the terminal (last contiguous) member — the cross-phase "red now,
+# fixed in a later phase" case (e.g. a migration where P1 bumps the dep, P2
+# does the rename, P3 wires it up). Same species as verify_modes: advisory
+# metadata re-parsed at every read, NOT persisted into track-state.json
+# (to_plan_structure drops it). Group names are free-form (like deps refs), not
+# a closed vocabulary — so this directive has no registry counterpart.
+_GATE_GROUP_COMMENT = re.compile(r"^\s*gate_group\s*:", re.IGNORECASE)
+
 _VALID_MARKERS = set(MARKER_MAP.values())
 
 
@@ -280,6 +291,48 @@ def _extract_verify(rest):
     return modes, has_verify_comment, failures
 
 
+def _extract_gate_group(rest):
+    """Pull the cross-phase gate group name from a ``<!-- gate_group: ... -->``.
+
+    Returns ``(gate_group, has_comment, failures)``:
+    - gate_group: the lowercased group name string (e.g. ``"spring3"``), or
+      ``None`` if no directive / the comment body was empty.
+    - has_comment: True iff a ``<!-- gate_group: ... -->`` comment was present,
+      so an empty body (``<!-- gate_group: -->``) can be flagged.
+    - failures: a garbage token (one that didn't parse as a clean name)
+      surfaced as a parse warning. Today the only failure case is an empty body
+      (the last non-whitespace token wins); a future grammar tightening could
+      reject name characters here without changing the call shape.
+
+    Group names are free-form identifiers (like deps refs), NOT a closed
+    vocabulary, so this is a string extraction rather than a vocab membership
+    check. Only a comment whose body starts with ``gate_group:`` is treated as
+    a gate-group directive.
+    """
+    gate_group = None
+    has_comment = False
+    failures = []
+    for m in _HTML_COMMENT.finditer(rest):
+        body = m.group(1)
+        if not _GATE_GROUP_COMMENT.match(body):
+            continue
+        has_comment = True
+        payload = _GATE_GROUP_COMMENT.sub("", body, count=1)
+        # Collapse whitespace, lowercase — group identity is case-insensitive
+        # (``spring3`` == ``Spring3``). Whitespace inside a name is not allowed;
+        # the last whitespace-free token wins so ``<!-- gate_group: a b -->``
+        # surfaces as a failure rather than silently picking ``b``.
+        tokens = [t for t in re.split(r"\s+", payload) if t]
+        if not tokens:
+            failures.append(payload.strip() or "<empty>")
+            continue
+        if len(tokens) > 1:
+            failures.append(" ".join(tokens))
+            continue
+        gate_group = tokens[0].lower()
+    return gate_group, has_comment, failures
+
+
 def parse_plan(plan_path):
     """Parse plan.md → {"phases": [...], "errors": [...], "warnings": [...]}.
 
@@ -310,10 +363,11 @@ def parse_plan(plan_path):
         if pm:
             num = int(pm.group(1))
             raw_name = pm.group(2) or ""
-            # Extract the verify directive from the RAW heading remainder
-            # (before _CHECKPOINT.sub / _clean_name strip the comment) — same
-            # capture-before-strip discipline as task ac_refs/tc_refs.
+            # Extract the verify + gate_group directives from the RAW heading
+            # remainder (before _CHECKPOINT.sub / _clean_name strip the comment)
+            # — same capture-before-strip discipline as task ac_refs/tc_refs.
             verify_modes, has_verify, verify_failures = _extract_verify(raw_name)
+            gate_group, has_gg, gg_failures = _extract_gate_group(raw_name)
             name = _CHECKPOINT.sub("", raw_name).strip()
             if num in seen_phase_numbers:
                 errors.append(f"line {lineno}: duplicate phase number {num}")
@@ -328,6 +382,9 @@ def parse_plan(plan_path):
                 "verify_modes": verify_modes,
                 "verify_has_comment": has_verify,
                 "verify_failures": verify_failures,
+                "gate_group": gate_group,
+                "gate_group_has_comment": has_gg,
+                "gate_group_failures": gg_failures,
             }
             phases.append(current_phase)
             current_task = None
@@ -487,6 +544,19 @@ def parse_plan(plan_path):
                 f"{label}: unrecognized verify mode '{tok}' "
                 f"(expected one or more of: {', '.join(_VERIFY_MODES)})")
 
+    # Cross-phase gate-group validation (plan-format-contract.md §"Phase Gate
+    # Groups"). Advisory — the directive is read directly from plan.md by the
+    # checkpoint gate (helpers._phase_needs_checkpoint / dispatch review), so a
+    # malformed group warns at init but does not block (same posture as
+    # verify_modes/deps). A bad group would otherwise silently no-op the
+    # deferral, leaving member phases on their normal per-phase gate (the safe
+    # fallback) — so the warning is the operator's only signal their group
+    # declaration didn't take the deferral effect.
+    for issue in validate_gate_groups({"phases": phases}):
+        warnings.append(
+            f"{issue['at']}: gate-group annotation issue ({issue['kind']}) "
+            f"— {issue['detail']}")
+
     return {"phases": phases, "errors": errors, "warnings": warnings}
 
 
@@ -623,6 +693,86 @@ def _detect_dep_cycles(edges):
     for node in list(edges):
         if color.get(node, WHITE) == WHITE:
             dfs(node, [node])
+    return issues
+
+
+def validate_gate_groups(parsed):
+    """Validate ``<!-- gate_group: ... -->`` declarations across the plan.
+
+    Returns a list of advisory issue dicts mirroring validate_deps' shape. Gate
+    groups are cross-phase declarations (plan-format-contract.md §"Phase Gate
+    Groups") — the terminal (last contiguous) member gates the group's
+    accumulated diff and on PASS stamps every member; non-terminal members
+    defer. So the validation rules are structural:
+
+    Issue kinds:
+    - ``single_member``: a group with only 1 member — pointless (a group needs
+      ≥2 phases to express "red now, fixed later"); the lone phase gates itself
+      already.
+    - ``non_contiguous``: a group's member phases are not a contiguous run of
+      phase numbers — the terminal is defined as ``members[-1]`` in declaration
+      order, but a gap means an unrelated phase sits *inside* the group's span
+      and would be skipped by the terminal-gate accumulated-diff range.
+    - ``empty``:     a ``<!-- gate_group: -->`` comment with no name.
+    - ``unparsed``:  a garbage token inside the comment (e.g. whitespace in the
+      name).
+
+    Each issue: ``{"kind": str, "at": "Phase {n}", "detail": str}``. Advisory —
+    the directive is read directly from plan.md at checkpoint time, so a bad
+    group warns at init but does not block (same posture as verify_modes/deps).
+    A malformed group would otherwise silently no-op the deferral, leaving the
+    member phases on their normal per-phase gate (the safe fallback).
+    """
+    issues = []
+    phases = parsed.get("phases", [])
+
+    # Map group name -> [phase numbers] in declaration order.
+    groups = {}
+    for ph in phases:
+        name = ph.get("gate_group")
+        if name:
+            groups.setdefault(name, []).append(ph["number"])
+
+    for gname, members in groups.items():
+        # Per-phase failures (empty / unparsed) are surfaced separately below;
+        # this loop only validates whole-group structure.
+        if len(members) < 2:
+            issues.append({
+                "kind": "single_member", "at": f"Phase {members[0]}",
+                "detail": f"gate_group '{gname}' has only 1 member "
+                          f"(needs ≥2 to defer — a lone phase gates itself)"})
+            continue
+        # Contiguity: members must be a run of consecutive phase numbers in
+        # declaration order. A gap is a non-contiguous group (an unrelated phase
+        # sits inside the terminal's accumulated-diff range).
+        nums = sorted(members)
+        contiguous = all(b == a + 1 for a, b in zip(nums, nums[1:]))
+        if not contiguous:
+            issues.append({
+                "kind": "non_contiguous", "at": f"Phase {members[-1]}",
+                "detail": f"gate_group '{gname}' members {sorted(members)} "
+                          f"are not contiguous (terminal gates the run's "
+                          f"accumulated diff — an intervening phase would be "
+                          f"skipped)"})
+
+    # Per-phase comment-body failures.
+    for ph in phases:
+        at = f"Phase {ph['number']}"
+        if ph.get("gate_group_has_comment") and not ph.get("gate_group"):
+            for tok in ph.get("gate_group_failures", []) or ["<empty>"]:
+                issues.append({
+                    "kind": "empty", "at": at,
+                    "detail": f"<!-- gate_group: --> comment body did not parse "
+                              f"('{tok}') — expected a single identifier"})
+                break  # one warning per phase is enough
+        for tok in ph.get("gate_group_failures", []) or []:
+            if ph.get("gate_group"):
+                # A parsed name coexists with a failure token only when the body
+                # had multiple tokens (whitespace in the name) — flag those.
+                issues.append({
+                    "kind": "unparsed", "at": at,
+                    "detail": f"unparsed gate_group token '{tok}' "
+                              f"(expected a single identifier)"})
     return issues
 
 

@@ -1029,8 +1029,12 @@ def _stamp_checkpoint_in_plan(track_dir, p, sha):
     for line in lines:
         stripped = line.rstrip("\n")
         if re.match(rf"^##\s+Phase\s+{phase_num}\b", stripped):
-            # Remove existing checkpoint if present, then add the new one.
-            base = re.sub(r"\s+\[checkpoint:\s*[0-9a-f]+\]$", "", stripped)
+            # Remove an existing checkpoint before re-stamping — either kind:
+            # a real SHA ``[checkpoint: <sha>]`` or a deferred marker
+            # ``[checkpoint: deferred <group>]`` (a gate_group member that was
+            # red-on-purpose and is now resolving into a real PASS).
+            base = re.sub(
+                r"\s+\[checkpoint:\s+(?:deferred\s+\S+|[0-9a-f]+)\]$", "", stripped)
             result.append(f"{base} [checkpoint: {sha}]")
             found = True
         else:
@@ -1043,6 +1047,64 @@ def _stamp_checkpoint_in_plan(track_dir, p, sha):
         if result and not result[-1].endswith("\n"):
             f.write("\n")
     return dict(ok=True, phase=p, sha=sha)
+
+
+def _stamp_deferred_checkpoint_in_plan(track_dir, p, group):
+    """Stamp ``[checkpoint: deferred <group>]`` on Phase <p>'s heading.
+
+    A non-terminal gate_group member whose tasks go terminal defers rather than
+    gates (it is intentionally red — a later phase closes the debt, per
+    plan-format-contract.md §"Phase Gate Groups"). This stamp is the visible
+    record of that deferral and makes ``_phase_needs_checkpoint`` idempotent on
+    re-read (its checkpoint-present regex matches both ``deferred <group>`` and
+    a real SHA). On terminal-gate PASS, ``cmd_phase_checkpoint_review`` trades
+    this marker for a real SHA on every member via ``_stamp_checkpoint_in_plan``.
+
+    Idempotent: a heading already carrying a deferred marker (or a real SHA) is
+    left untouched — the strip-before-stamp path is skipped entirely when no
+    trailing ``[checkpoint: ...]`` is absent. Returns ``ok`` (idempotent or
+    fresh), ``noop`` (already stamped/real-checkpoint present), or ``error``."""
+    plan_path = Path(track_dir) / "plan.md"
+    if not plan_path.exists():
+        return dict(error="plan.md not found")
+    if not group or not re.match(r"^[A-Za-z0-9_.-]+$", group):
+        return dict(error=f"Invalid group name: {group!r}")
+
+    with open(plan_path) as f:
+        lines = f.readlines()
+
+    phase_num = int(p)
+    group_lower = group.lower()
+    result = []
+    found = False
+    stamped = False
+    for line in lines:
+        stripped = line.rstrip("\n")
+        if re.match(rf"^##\s+Phase\s+{phase_num}\b", stripped):
+            found = True
+            # Already carrying a checkpoint (real SHA or a deferred marker)?
+            # Leave it — idempotent. A real SHA means the terminal gate already
+            # passed and stamped this member; never clobber it back to deferred.
+            if re.search(r"\[checkpoint:\s+(?:deferred\s+\S+|[0-9a-f]+)\]\s*$",
+                         stripped):
+                result.append(stripped)
+                continue
+            base = re.sub(r"\s+\[checkpoint:\s+(?:deferred\s+\S+|[0-9a-f]+)\]$",
+                          "", stripped)
+            result.append(f"{base} [checkpoint: deferred {group_lower}]")
+            stamped = True
+        else:
+            result.append(stripped)
+    if not found:
+        return dict(error=f"Phase {phase_num} heading not found in plan.md")
+
+    if stamped:
+        with open(plan_path, "w") as f:
+            f.write("\n".join(result))
+            if result and not result[-1].endswith("\n"):
+                f.write("\n")
+        return dict(ok=True, phase=p, group=group_lower, deferred=True)
+    return dict(ok=True, phase=p, group=group_lower, noop=True)
 
 
 def cmd_add_checkpoint(track_dir, p, sha):
