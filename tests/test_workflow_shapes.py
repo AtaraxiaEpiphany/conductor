@@ -71,10 +71,15 @@ class RegistryShapeTests(TestCase):
 
     def test_instruction_for_returns_registry_prose(self):
         # instruction_for is the mirror of task-type workflow_for / verify-mode
-        # protocol_for: prose the orchestrator follows when the shape is active.
-        self.assertIn("explorer FIRST", ws.instruction_for("research-first"))
-        self.assertIn("No phase-checker checkpoint",
-                      ws.instruction_for("research-first"))
+        # protocol_for: shape-level prose. ADVISORY TODAY — it is rendered by
+        # registry-doc --shape for reference but NOT injected into the orchestrator
+        # prompt, and dispatch does not reorder to honor it. Pin the honest
+        # literals: the intent (explorer before planner) + the advisory caveat.
+        instr = ws.instruction_for("research-first")
+        self.assertIn("explorer", instr)
+        self.assertIn("before spec-planner", instr)
+        self.assertIn("ADVISORY", instr)
+        self.assertIn("NOT injected", instr)
 
     def test_vocab_matches_registry_keys(self):
         data = json.loads(REGISTRY.read_text(encoding="utf-8"))
@@ -221,7 +226,9 @@ class DispatchConstraintTests(TestCase):
 
     def test_research_first_flags_phase_checker_off_topology(self):
         # research-first's topology has no phase-checker → dispatching one is a
-        # shape_violation (the load-bearing constraint).
+        # shape_violation. Advisory today: shape_allows returns (False, shape) but
+        # the dispatch emit site attaches that as a disclosure, not a block — the
+        # constraint is surfaced, not enforced (see workflow-shape-is-advisory-only).
         from scripts.track_state.dispatch import shape_allows
         state = {"workflow_shape": "research-first"}
         allowed, shape = shape_allows("/td", "phase-checker", state=state)

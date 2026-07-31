@@ -20,15 +20,30 @@ we fall back to ``_FALLBACK`` (a verbatim copy of the pre-registry hardcoded
 topology) and log loudly to stderr; a malformed overlay falls back to the
 baseline alone — dispatch must never crash over a malformed registry.
 
-The lightest touch that makes the shape load-bearing: :func:`nodes_for` is the
-allowlist :func:`dispatch.build_dispatch_prompt`-adjacent code consults — an
-action whose agent is not in the resolved shape's ``nodes`` is refused. The
-spine stays action-driven; the shape only adds a constraint, not a rewrite.
+**Shape is advisory today.** The shape declares intended topology but does NOT
+reorder dispatch — the conductor runs the same action-driven planner→executor→
+checker spine regardless of the resolved shape. The single dispatch-path
+consumer is :func:`shape_allows` (``dispatch.py:1741``), and its result is
+**never** used to block or reroute: when a dispatched action's agent is outside
+the resolved shape's ``nodes``, the spine attaches an advisory ``shape_violation``
+disclosure to the emitted leaf envelope (no-silent-caps) and the dispatch still
+proceeds — a shape misconfiguration must never deadlock a track. The other
+accessors (:func:`nodes_for`, :func:`verify_policy_for`, :func:`stop_condition_for`,
+:func:`instruction_for`) are consumed **only** by ``registry-doc`` display, never
+by dispatch ordering, wave.py, handoff.py, or any SubagentStart injection.
+``instruction_for`` in particular is NOT injected into an orchestrator prompt
+(contrast the task-type ``workflow`` field, which IS injected). So setting
+``research-first`` surfaces ``shape_violation`` disclosures but does not run
+``explorer`` first. Making the shape genuinely load-bearing would require code at
+``_step_emit_dispatch`` / ``cmd_dispatch_next``; today it is a diagnostic, not a
+gate.
 
 Adding a shape after this module exists is a one-row registry edit: it is
 automatically (a) resolvable via :func:`nodes_for`/:func:`verify_policy_for`,
-(b) rendered by ``registry-doc --shape <name>``, (c) available to dispatch as a
-constraint — all with **zero** Python edits.
+(b) rendered by ``registry-doc --shape <name>``, (c) surfaced as an advisory
+``shape_violation`` when dispatch drifts off-topology — all with **zero** Python
+edits. (To make the new shape *drive* dispatch rather than merely diagnose it,
+the change is code at the emit site, not a registry row.)
 """
 
 from __future__ import annotations
