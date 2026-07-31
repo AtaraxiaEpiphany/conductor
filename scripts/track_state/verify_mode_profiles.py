@@ -5,11 +5,13 @@ The mode *name* still lives in plan.md phase headings (e.g.
 :func:`plan_parse._extract_verify`. This module holds what the mode *means*: which
 gate steps it performs, its fix policy, and — crucially — the prompt-shaping
 ``protocol`` prose the phase-checker emits for it. It replaces the hardcoded
-``_VERIFY_MODES`` tuple in ``plan_parse.py`` (line ~130) AND the per-mode
-``if/elif`` branch ladder that lived as prose in ``agents/phase-checker.md``
-(Step-3 addendum). Adding a verify-mode is now one JSON row in the registry with
-zero Python edits and zero agent-prose edits — the phase-checker loop reads each
-mode's ``protocol`` from here.
+mode vocabulary that USED to live as a frozen ``_VERIFY_MODES`` tuple in
+``plan_parse.py`` AND the per-mode ``if/elif`` branch ladder that lived as prose
+in ``agents/phase-checker.md`` (Step-3 addendum). The parser now resolves the
+vocab live via :func:`MODE_VOCAB` (per call, not an import snapshot — see the
+note by ``_mode_vocab`` in ``plan_parse.py``). Adding a verify-mode is now one
+JSON row in the registry with zero Python edits and zero agent-prose edits —
+the phase-checker loop reads each mode's ``protocol`` from here.
 
 The registry resolves as **plugin baseline ⊕ project overlay**, identical in
 mechanics to :mod:`task_profiles`. The baseline is the JSON data file shipped at

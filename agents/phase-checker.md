@@ -82,7 +82,7 @@ The registry is the single source for the modes AND their protocol. If a declare
 
 This branch takes precedence over the migration-phase branch below: a phase that declares `verify: compile` or `verify: anchor` is gated on that signal regardless of its task tags. A directive is absent on most phases → the full gate (and, for an all-`[Migrate]` phase, the migration-phase branch) applies unchanged.
 
-**Migration-phase branch (binding).** A migration phase is one where **every non-`[Manual]` task in the phase carries the `[Migrate]` tag** (read the phase's task tags from `plan.md`/`track-state`). For such a phase, the test suite is the **safety net, not a TDD target**: Red is the expected mid-migration state, Green is the goal, and the work is fixing real code (deprecated APIs, package renames), not authoring new tests. Therefore, when `L1_VERIFY_STATUS: failed` on a migration phase:
+**Migration-phase branch (binding).** A migration phase is one where **every non-`[Manual]` task in the phase is migration-class** — i.e. its leading tag's registry profile is `tdd_exempt` AND carries a non-empty `default_verify` (today only `[Migrate]` qualifies; a project-overlay tag with the same profile, e.g. a `[MajorBump]`, joins this branch automatically). Read the phase's task tags from `plan.md`/`track-state` and resolve each via `scripts/track_state/task_profiles.is_tdd_exempt(tags)` + `default_verify_for(tag)` (or the injected `[Conductor Registry]` block / `track-state registry-doc --tag <Tag>`). For such a phase, the test suite is the **safety net, not a TDD target**: Red is the expected mid-migration state, Green is the goal, and the work is fixing real code (deprecated APIs, package renames), not authoring new tests. Therefore, when `L1_VERIFY_STATUS: failed` on a migration phase:
 
 - **Do NOT run the fix-and-retry pass. Do NOT write or modify any test files.** Auto-writing tests here is the defect this branch exists to prevent (it churns synthetic tests against a half-migrated codebase).
 - Report **STATUS: FAILED** with `L1_VERIFY: failed (migration phase non-green)` and a `FAILURE_REASON:` that **prescribes the directive, then lists the failing tests** — paste the top failures verbatim from the `test-runner` output. The operator has two equally valid ways to make this phase checkpoint-able, and the reason names both:
@@ -91,7 +91,7 @@ This branch takes precedence over the migration-phase branch below: a phase that
   - e.g. `migration phase ended with N failing test(s) — test_foo, test_bar, … . The suite is the migration safety net, not a TDD target. To checkpoint this phase, either add <!-- verify: compile --> to the phase heading (if its goal is "it compiles") or <!-- verify: test --> (if its goal is "tests pass") and re-run, or continue the [Migrate] tasks until the suite is green.`
 - Do NOT checkpoint. This FAILED hands the phase back to the operator along either path above. The directive path (a) is usually the right one for a pure dependency-bump / mechanical-rename phase; the continue-migration path (b) for a phase whose goal genuinely is a green suite.
 
-This branch does **not** apply to a mixed phase (some `[Migrate]`, some default-tagged implementation tasks) — a default-tagged task in the phase means TDD applies, so the normal fix-and-retry pass governs.
+This branch does **not** apply to a mixed phase (some migration-class tasks, some default-tagged implementation tasks) — a default-tagged task in the phase means TDD applies, so the normal fix-and-retry pass governs.
 
 **Gate-group terminal-gate failure branch (binding).** When this phase is the terminal member of a `<!-- gate_group: <name> -->` group (§3.0), a FAILED verdict means the group's *accumulated* diff is not green — the debt was deferred across members and did not resolve at the terminal. Your `FAILURE_REASON` must name the **offending member** (which phase's changes left the debt), not just "the phase failed," so the operator knows whether to fix forward in a new phase or reset a specific member. Determine the offending member from the failure signal:
 - **Build/compiler failure** → `git diff <group_base_sha> HEAD` and locate which member phase introduced the uncompilable symbol (a `javax→jakarta` rename half-done in member P2, a removed API called from member P1's code). Name that phase: `gate_group '<name>' terminal gate FAILED — member Phase <N> '<name>' left <symbol/API> uncompilable across the accumulated diff (P<m..n>). Fix forward: add a [Migrate] task to Phase <N>'s successor, or edit the member and re-run.`
@@ -182,6 +182,8 @@ Output **exactly** the following format after completing all steps (or on failur
 
 ### On Success
 
+The result block below is **report-field-driven, not mode-name-baked.** Each verify-mode declares a `report_field` in the registry (resolve via `scripts/track_state/verify_mode_profiles.report_field_for(mode)` or the injected `[Conductor Registry]` block). Today: `compile`→`BUILD`, `test`/default→`L1_VERIFY`, `start`→`START`, `adversarial`→`ADVERSARIAL`, `anchor`→`ANCHOR`, `none`→`NO_GATE`. Emit one result line per **declared** mode's `report_field` — the value grammar below (`<passed|failed|…>`) is what the result-block parser keys on; the *field name* is whatever the mode declared. A project-overlay mode with `report_field: LINT` flows through with zero prose edits here.
+
 ```
 ---CHECKPOINT RESULT---
 STATUS: PASSED
@@ -189,23 +191,25 @@ CHECKPOINT_SHA: <7-char-short-hash>
 MISSING_TESTS_CREATED: <count>
 L1_VERIFY: <passed (fleet)|passed (after N fixes)|failed|error|skipped (compile-only phase)>
 L2: <passed|failed (<symptom>)|skipped (<reason>)>
-BUILD: <passed|failed|skipped (no verify: compile directive)>
-START: <passed|failed (<symptom>)|skipped (no verify: start directive)>
-ANCHOR: <passed (N/N frozen tests)|skipped (no frozen anchor for this track)|skipped (no verify: anchor directive)>
+<<report_field for each verify-mode the phase declared, e.g. BUILD / START / ANCHOR / ADVERSARIAL / NO_GATE>>: <passed|failed|skipped (<reason>)>
 TESTS_PASSED: true
 USER_CONFIRMED: <true|skipped_continuous>
 AC_TRACE: <passed|warn (N ungrounded)|skipped (reason)>
 ```json
-{"status": "PASSED", "checkpoint_sha": "<7-char-short-hash>", "report": {"L1_VERIFY": "<value>", "BUILD": "<value>", "START": "<value>", "ANCHOR": "<value>"}}
+{"status": "PASSED", "checkpoint_sha": "<7-char-short-hash>", "report": {"<<report_field>>": "<value>", ...}}
 ```
 ---END RESULT---
 ```
 
-> `BUILD`/`START`/`ANCHOR` are emitted **only** when the phase's `<!-- verify: -->`
-> directive requested that mode (`compile` → `BUILD`; `start` → `START`;
-> `anchor` → `ANCHOR`). On a default-gate phase (no directive) all three are
-> `skipped (no verify: <mode> directive)` and do not gate the checkpoint.
-> (`ANCHOR: skipped` has a second cause — no frozen anchor — see Step 3.)
+> A result line for a mode's `report_field` is emitted **only** when the phase's
+> `<!-- verify: -->` directive requested that mode. On a default-gate phase (no
+> directive) the only verification line is `L1_VERIFY` (the default-gate field);
+> every other declared mode's `report_field` is
+> `skipped (no verify: <mode> directive)` and does not gate the checkpoint.
+> (`ANCHOR: skipped` has a second cause — no frozen anchor — see Step 3.) The
+> `report` JSON object's keys are the same `report_field` names; the prose names
+> nothing mode-specific — resolve each declared mode's `report_field` from the
+> registry and emit it.
 
 ### On Failure
 

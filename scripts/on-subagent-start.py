@@ -289,6 +289,17 @@ def _tag_summary_rows():
         flagstr = f" [{', '.join(flags)}]" if flags else ""
         hintstr = f" — {hint}" if hint else ""
         rows.append(f"[{tag}] route={route}{flagstr}{hintstr}")
+        # Surface the tag's explicit `signals` keywords so the planner can match a
+        # task description against them — the matcher DATA (tier-A), not the large
+        # `workflow` prose (tier-B on-demand via registry-doc --tag). Only emitted
+        # when the registry row EXPLICITLY declares `signals` (a list): tags like
+        # [Refactor] deliberately omit it (opt-in, not goal-detected), so we must
+        # not show the weaker tokens _signals_for would *derive* from when_to_use
+        # (those are for derive_task_tag's coarse fallback, not for human/planner
+        # signal-matching — showing them here would imply [Refactor] is matchable).
+        sig = prof.get("signals")
+        if isinstance(sig, list) and sig:
+            rows.append(f"  signals: {', '.join(str(s) for s in sig)}")
     return rows
 
 

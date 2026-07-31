@@ -131,8 +131,15 @@ _VERIFY_COMMENT = re.compile(r"^\s*verify\s*:", re.IGNORECASE)
 # ``start`` adds a one-shot app-boot smoke check; ``anchor`` additionally gates
 # on the frozen test subset passing (the Goodhart counter-anchor — see
 # anchor.py). Comma-separated, order-free.
+#
+# RESOLVED LIVE, not frozen at import. ``_extract_verify`` and the diagnostics
+# below call ``_mode_vocab()`` per use (a one-shot per phase, not a hot loop),
+# so a project-overlay mode registered post-import (e.g. a ``verify: lint`` row
+# added mid-session) is recognized immediately — mirroring the per-call rebuild
+# ``helpers.extract_tags`` does for the tag regex (a frozen snapshot here would
+# silently drop the overlay mode, the asymmetry the tag side was already fixed
+# to avoid). See memory: extract-tags-per-call-rebuild-is-intentional.
 from .verify_mode_profiles import MODE_VOCAB as _mode_vocab
-_VERIFY_MODES = _mode_vocab()
 
 # Cross-phase gate group, inside a ``<!-- gate_group: spring3 -->`` comment on
 # the ``## Phase N:`` heading line (plan-format-contract.md §"Phase Gate
@@ -270,6 +277,10 @@ def _extract_verify(rest):
     Only a comment whose body starts with ``verify:`` is treated as a verify
     directive — a stray ``verify`` inside an AC/TC comment cannot trigger this.
     """
+    # Resolve the live registry vocab per call (not a module-level snapshot) so
+    # a project-overlay mode added post-import is recognized — see the note by
+    # ``_mode_vocab`` above. One-shot per phase, so this is free.
+    modes_vocab = _mode_vocab()
     modes, seen = [], set()
     has_verify_comment = False
     failures = []
@@ -283,10 +294,10 @@ def _extract_verify(rest):
             if not tok:
                 continue
             low = tok.lower()
-            if low in _VERIFY_MODES and low not in seen:
+            if low in modes_vocab and low not in seen:
                 seen.add(low)
                 modes.append(low)
-            elif low not in _VERIFY_MODES:
+            elif low not in modes_vocab:
                 failures.append(tok)
     return modes, has_verify_comment, failures
 
@@ -533,16 +544,17 @@ def parse_plan(plan_path):
     # block (same posture as deps). A typo'd mode would otherwise be silently
     # ignored at checkpoint, leaving the phase on the (safe) full gate — so the
     # warning is the operator's only signal their directive didn't take.
+    modes_vocab = _mode_vocab()  # live (overlay-aware) for the diagnostic strings
     for ph in phases:
         label = f"Phase {ph['number']}" + (f" '{ph['name']}'" if ph["name"] else "")
         if ph.get("verify_has_comment") and not ph.get("verify_modes"):
             warnings.append(
                 f"{label}: <!-- verify: --> comment has no valid mode "
-                f"(expected one or more of: {', '.join(_VERIFY_MODES)})")
+                f"(expected one or more of: {', '.join(modes_vocab)})")
         for tok in ph.get("verify_failures", []) or []:
             warnings.append(
                 f"{label}: unrecognized verify mode '{tok}' "
-                f"(expected one or more of: {', '.join(_VERIFY_MODES)})")
+                f"(expected one or more of: {', '.join(modes_vocab)})")
 
     # Cross-phase gate-group validation (plan-format-contract.md §"Phase Gate
     # Groups"). Advisory — the directive is read directly from plan.md by the

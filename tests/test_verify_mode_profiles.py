@@ -209,6 +209,11 @@ class OverrideLayerTests(TestCase):
     def test_overlay_mode_accepted_by_parser(self):
         # End-to-end: a plan with verify: lint is accepted (no warning) once the
         # overlay registers the mode — mirroring the task-tag overlay E2E test.
+        # NOTE: no ``plan_parse`` internals are patched here. The parser resolves
+        # the vocab live via MODE_VOCAB() per call (mirrors helpers.extract_tags),
+        # so the overlay alone — via the cache_clear below — must suffice. (This
+        # test USED to monkeypatch ``pp._VERIFY_MODES`` to work around the
+        # import-time snapshot; that snapshot no longer exists.)
         from scripts.track_state.plan_parse import parse_plan
         proj = self._mk_project()
         os.environ["CLAUDE_PROJECT_DIR"] = proj
@@ -216,9 +221,32 @@ class OverrideLayerTests(TestCase):
             "runs": ["lint"], "fix_policy": "none", "report_field": "LINT",
             "protocol": "lint"}}})
         vmp._load.cache_clear()
-        # plan_parse takes its vocab snapshot at import; force re-resolve.
-        import scripts.track_state.plan_parse as pp
-        pp._VERIFY_MODES = vmp.MODE_VOCAB()
+
+        import tempfile as _tf
+        f = _tf.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8")
+        f.write("# Plan\n\n## Phase 1: Lint <!-- verify: lint -->\n\n"
+                "- [ ] [Chore] lint <!-- AC-1 -->\n- [ ] [Manual] verify\n")
+        f.flush()
+        result = parse_plan(f.name)
+        self.assertEqual(result["errors"], [])
+        self.assertEqual(result["phases"][0]["verify_modes"], ["lint"])
+        self.assertFalse(any("unrecognized verify mode" in w for w in result["warnings"]))
+
+    def test_verify_mode_overlay_recognized_without_snapshot(self):
+        # Regression guard for the import-time-freeze bug: an overlay mode added
+        # AFTER ``plan_parse`` is imported must be recognized with no monkeypatch
+        # of parser internals. Pre-fix this warned "unrecognized verify mode" and
+        # dropped the mode (the silent-drop asymmetry the tag side was already
+        # fixed to avoid). Mirrors the tag-side E2E shape (test_registry_add).
+        import scripts.track_state.plan_parse as pp  # noqa: F401  — import first
+        from scripts.track_state.plan_parse import parse_plan
+        proj = self._mk_project()
+        os.environ["CLAUDE_PROJECT_DIR"] = proj
+        self._write_overlay(proj, {"modes": {"lint": {
+            "runs": ["lint"], "fix_policy": "none", "report_field": "LINT",
+            "protocol": "Run the linter once."}}})
+        vmp._load.cache_clear()
+        self.assertIn("lint", vmp.MODE_VOCAB())  # overlay took
 
         import tempfile as _tf
         f = _tf.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8")

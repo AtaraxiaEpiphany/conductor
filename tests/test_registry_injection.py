@@ -109,6 +109,38 @@ class PlannerInjectionTests(TestCase):
         # The injected block carries each tag's when-to-use hint, data-driven.
         self.assertIn(tp.when_to_use_for("Migrate"), ctx)
 
+    def test_planner_sees_explicit_signals_keywords(self):
+        # The matcher DATA (tier-A): each tag that explicitly declares `signals`
+        # in the registry surfaces a `signals:` keyword line, so the planner
+        # matches a task description against the same inputs derive_task_tag
+        # uses — not a re-encoded ladder in agent prose. Pinned on a baseline
+        # tag with an explicit signals row (Config) so a regression (signals
+        # line dropped) is caught.
+        ctx = _run("spec-planner").get("hookSpecificOutput", {}).get("additionalContext", "")
+        self.assertIn("signals:", ctx)
+        # A keyword from Config's explicit signals list must appear.
+        cfg_signals = tp._profile("Config").get("signals")
+        self.assertIsInstance(cfg_signals, list)
+        self.assertTrue(cfg_signals, "Config must declare signals in the registry")
+        self.assertIn(str(cfg_signals[0]), ctx)
+
+    def test_planner_signals_line_omitted_for_refactor(self):
+        # [Refactor] deliberately carries NO explicit `signals` (opt-in, not
+        # goal-detected). Its row must NOT get a derived `signals:` line —
+        # showing tokens lifted from when_to_use would imply it's matchable,
+        # which breaks the "derive_task_tag must not auto-propose Refactor"
+        # invariant. Only EXPLICIT signals rows emit the line.
+        ctx = _run("spec-planner").get("hookSpecificOutput", {}).get("additionalContext", "")
+        lines = ctx.splitlines()
+        for i, line in enumerate(lines):
+            if "[Refactor] route=" in line:
+                after = lines[i + 1] if i + 1 < len(lines) else ""
+                self.assertNotIn("signals:", after,
+                                 "[Refactor] must not carry a signals: line")
+                break
+        else:
+            self.fail("[Refactor] row not found in planner injection")
+
     def test_planner_sees_every_mode(self):
         ctx = _run("spec-planner").get("hookSpecificOutput", {}).get("additionalContext", "")
         for mode in vmp.MODE_VOCAB():
