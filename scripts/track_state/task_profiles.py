@@ -69,6 +69,7 @@ _FALLBACK = {
                     "when_to_use": "Requires a HUMAN — UI walkthrough, cross-browser check, staging deploy.",
                     "signals": ["human", "manual", "walkthrough", "cross-browser", "staging deploy", "accessibility", "by hand", "visual check"]},
         "Migrate": {"route": "executor", "tdd_exempt": True, "coverage_exempt": True,
+                    "default_verify": ["compile"],
                     "when_to_use": "Framework/version migration, package rename, or major-dep bump where an EXISTING test suite is the safety net.",
                     "signals": ["migration", "migrate", "upgrade", "bump", "rename", "javax", "jakarta", "framework version", "major dependency", "spring boot"],
                     "workflow": "The existing suite's red state is the START, green is the GOAL. No Step 3 (Red); Step 4 (Green) is the whole task; commit fix(migrate): …; no Step 6 coverage gate."},
@@ -356,6 +357,38 @@ def when_to_use_for(tag: str) -> str:
     "outside the closed set." Absent = ``""`` (no hint injected for that tag).
     """
     return _profile(tag).get("when_to_use", "")
+
+
+def default_verify_for(tag: str) -> list[str]:
+    """The verify-modes a phase of this tag defaults to when no directive is set.
+
+    The tag-driven source of a phase-verify directive's authoring-time default
+    (the goal-driven source is
+    :func:`verify_mode_profiles.derive_verify_modes`). Today only ``[Migrate]``
+    carries one (``["compile"]`` — a migration phase's suite is expected red, so
+    the build is the gate); a project overlay may set ``default_verify`` on a
+    project-specific tag and it flows through
+    :func:`verify_mode_profiles.default_verify_for_phase` to spec-planner with
+    zero plugin edits (the ``[Migrate]`` generalization).
+
+    Returns a **copy** (registry lists are shared module state; callers must not
+    mutate the returned list — see :func:`runs_for` for the same discipline).
+    Entries not in the resolved :func:`verify_mode_profiles.MODE_VOCAB` are
+    **dropped** (treated as absent), not raised on: a typo in a
+    ``default_verify`` row never crashes the loader — mirror of the fail-open
+    posture every registry field already follows. Absent row = ``[]``.
+    """
+    raw = _profile(tag).get("default_verify")
+    if not isinstance(raw, list):
+        return []
+    # Filter to known modes at read time (fail-open: an unknown mode is dropped,
+    # not raised on — the loader stays crash-free over a malformed row). Lazy
+    # import avoids a module-load cycle (verify_mode_profiles imports nothing
+    # from this module, but the lazy form keeps the dependency direction
+    # unambiguous and matches derive_task_type's pattern).
+    from .verify_mode_profiles import MODE_VOCAB
+    known = set(MODE_VOCAB())
+    return [str(m) for m in raw if str(m) in known]
 
 
 def _signals_for(tag: str) -> list[str]:

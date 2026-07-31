@@ -254,5 +254,42 @@ class PlannerDocTests(TestCase):
         self.assertIn("verify: test,start", SPEC_PLANNER)
 
 
+class AuthoringResolutionTests(TestCase):
+    """The directive's authoring-time default is resolved by precedence
+    (explicit > tag-derived default_verify > goal-derived derive_verify_modes >
+    full gate). The planner is pure prose, so these pin the two REDUCER outputs
+    the procedure composes for the canonical migration plan — the procedure glues
+    them, and the contract documents the precedence."""
+
+    def test_tag_derived_default_for_migrate_phase(self):
+        # A phase of [Migrate] tasks → tag-derived default = compile (the
+        # intermediate migration phases of the canonical example).
+        from scripts.track_state.verify_mode_profiles import default_verify_for_phase
+        self.assertEqual(default_verify_for_phase(["Migrate"]), ["compile"])
+
+    def test_goal_derived_default_for_boot_phase(self):
+        # The terminal integration phase's goal "wire up and boot" → goal-derived
+        # default = test,start (derive_verify_modes already covers this; restated
+        # here as the OTHER half of the canonical example's resolution).
+        from scripts.track_state.verify_mode_profiles import derive_verify_modes
+        self.assertEqual(derive_verify_modes("Wire up and boot the app"),
+                         ["test", "start"])
+
+    def test_contract_documents_default_source_precedence(self):
+        # The contract must single-source the precedence the planner follows.
+        text = CONTRACT.read_text(encoding="utf-8")
+        self.assertIn("Default source", text)
+        self.assertIn("Tag-derived default", text)
+        self.assertIn("Goal-derived default", text)
+        self.assertIn("Generator proposes", text)
+
+    def test_planner_documents_resolution_procedure(self):
+        # The planner must carry the 4-step procedure, not just the old
+        # hand-authored "emit verify: compile on migrations" heuristic.
+        self.assertIn("resolve", SPEC_PLANNER.lower())
+        self.assertIn("Tag-derived default", SPEC_PLANNER)
+        self.assertIn("Goal-derived default", SPEC_PLANNER)
+
+
 if __name__ == "__main__":
     main()

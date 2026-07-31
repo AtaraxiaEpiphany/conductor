@@ -93,6 +93,15 @@ A `## Phase N:` heading MAY carry a `<!-- verify: <modes> -->` HTML comment decl
 
 **Authoring guidance (spec-planner):** for a staged migration, emit `verify: compile` on every intermediate phase whose goal is "compiles," and `verify: test,start` on the final phase whose goal is "starts + tests green." For non-migration tracks, emit nothing — the default full gate is correct for feature work.
 
+**Default source (authoring-time resolution).** The directive a phase carries is resolved **once, at plan generation**, by a fixed precedence — the planner proposes the directive and `init-from-plan --check` disposes (warns, never blocks). The resolution order:
+
+1. **Explicit wins.** A directive already on the heading (operator-authored, or carried over the `PREVIOUS_ERRORS` retry path) is kept unchanged. A proposal never overwrites an operator's directive.
+2. **Tag-derived default.** Else the union of the phase's top-level task tags' `default_verify` field (task-type registry; today only `[Migrate]` carries one — `compile`). If the tags agree on a non-empty set, that is the directive; if they conflict (different tags propose different modes), fall through — a mixed-type phase has no single gate.
+3. **Goal-derived default.** Else `verify_mode_profiles.derive_verify_modes(phase_goal)` classifies the phase's goal text ("it compiles" → `compile`; "the app boots" → `test,start`; refactor-with-anchor → `anchor`).
+4. **Full gate.** Else no directive — the default full gate, correct for feature work.
+
+This is **authoring-time**: the planner emits the resolved directive into `plan.md` once, and the rest of the system (phase-checker, `--check`) reads it exactly as it reads any hand-authored directive — there is no runtime resolver, no dispatch-path change, no new persisted field (the directive remains re-derived plan.md metadata, like `verify_modes`/`gate_group`). The two sources are independent signals the planner already has: `default_verify` is *what the phase's tasks ARE* (tag-driven); `derive_verify_modes` is *what the phase's goal SAYS* (goal-driven). "Generator proposes, `--check` disposes" is the realistic ceiling — a wrong proposal is self-correcting at the gate (`compile` ignores a red suite without harm; `anchor` no-ops on an unfrozen track), so the keyword sets are not over-tuned for precision.
+
 ## Phase Gate Groups
 
 A sequence of `## Phase N:` headings MAY each carry a `<!-- gate_group: <name> -->` HTML comment declaring that they **gate together** — a cross-phase declaration for the *intentionally-red-across-a-boundary* case. This is the graph-engineering layer: a group of phases that are each red on purpose (P1 bumps the dep and breaks the build; P2 does the `javax→jakarta` rename; P3 wires it up and the build goes green) defer their own checkpoint and gate as **one** at the terminal member.

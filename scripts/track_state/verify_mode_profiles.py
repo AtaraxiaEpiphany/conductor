@@ -429,3 +429,68 @@ def derive_verify_modes(phase_goal: str) -> list[str]:
         return []
     except Exception:
         return []
+
+
+def default_verify_for_phase(task_tags: list[str]) -> list[str]:
+    """Tag-driven default verify-modes for a phase, or ``[]`` (full gate).
+
+    The tag-driven analog of :func:`derive_verify_modes`: where that one reads a
+    phase's *goal text*, this one reads the phase's *task tags*. For each
+    top-level task tag it pulls that tag's ``default_verify``
+    (:func:`task_profiles.default_verify_for`) and reduces the set across the
+    phase. spec-planner composes the two at authoring time — see the precedence
+    in ``plan-format-contract.md`` §"Phase Verify Directives → Default source":
+    explicit directive > this tag-derived default > goal-derived
+    :func:`derive_verify_modes` > full gate.
+
+    Reduction rules:
+    * **No tag contributes** (every tag's ``default_verify`` is empty) → ``[]``.
+    * **Agreement** — every contributing tag proposes the SAME mode set → that
+      set (order taken from the first contributor; de-duped). Two ``[Migrate]``
+      tasks both proposing ``["compile"]`` is agreement, not a conflict.
+    * **Conflict** — two tags propose DIFFERENT non-empty sets → ``[]``. A
+      mixed-type phase has no single gate semantics, so the safe default (the
+      full gate) wins rather than the planner silently picking one tag's modes.
+
+    Pure, fail-open: any exception → ``[]`` (never raises into a caller). Empty
+    or non-list input → ``[]``.
+    """
+    try:
+        if not task_tags:
+            return []
+        # Lazy import: task_profiles.default_verify_for imports MODE_VOCAB from
+        # THIS module at call time (not load time), so the cycle is already
+        # broken in that direction; importing task_profiles here at call time
+        # keeps this function self-contained and the dependency direction
+        # explicit (the reducer's RESULT is a verify-mode directive).
+        from .task_profiles import default_verify_for
+
+        contributed: list[list[str]] = []
+        for tag in task_tags:
+            modes = default_verify_for(tag)
+            if modes:
+                contributed.append(modes)
+        if not contributed:
+            return []
+
+        # Agreement check: every non-empty contribution must equal the first.
+        # Sets, because order within one tag's list is not load-bearing for the
+        # conflict decision (a tag proposing ["compile"] vs ["test"] is a real
+        # conflict regardless of order); the returned list preserves the first
+        # contributor's order so the emitted directive is stable.
+        first = contributed[0]
+        first_set = set(first)
+        for modes in contributed[1:]:
+            if set(modes) != first_set:
+                return []  # conflict → full gate
+        # De-dup the first contributor's list preserving order.
+        seen: set[str] = set()
+        out: list[str] = []
+        for m in first:
+            if m not in seen:
+                seen.add(m)
+                out.append(m)
+        return out
+    except Exception:
+        return []
+
