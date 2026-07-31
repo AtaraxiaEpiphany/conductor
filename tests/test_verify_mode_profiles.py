@@ -31,7 +31,7 @@ REGISTRY = ROOT / "templates" / "workflow" / "verify-mode-profiles.json"
 
 # The baseline modes the registry ships. Drift between this list, the
 # contract table, and the registry is what RegistryDriftTests guards.
-BASELINE_MODES = ("compile", "test", "start", "adversarial", "anchor")
+BASELINE_MODES = ("compile", "test", "start", "adversarial", "anchor", "none")
 
 
 class RegistryShapeTests(TestCase):
@@ -66,6 +66,10 @@ class RegistryShapeTests(TestCase):
         self.assertIn("frozen_anchor_pass_rate", vmp.protocol_for("anchor"))
         self.assertIn("frozen_anchor_drift_rate", vmp.protocol_for("anchor"))
         self.assertIn("no frozen anchor", vmp.protocol_for("anchor"))
+        # The debt-carrying migration mode: gates on nothing, passes on intent.
+        self.assertIn("debt-carrying phase", vmp.protocol_for("none"))
+        self.assertIn("PASSES on the operator's declared intent",
+                      vmp.protocol_for("none"))
 
     def test_runs_and_fix_policy_flow(self):
         self.assertEqual(vmp.runs_for("compile"), ["build"])
@@ -73,6 +77,9 @@ class RegistryShapeTests(TestCase):
         self.assertEqual(vmp.runs_for("anchor"), ["frozen-subset"])
         self.assertEqual(vmp.fix_policy_for("start"), "fail-fast")
         self.assertEqual(vmp.fix_policy_for("test"), "fix-and-retry")
+        # The none mode gates on nothing: no runs, no fix-and-retry.
+        self.assertEqual(vmp.runs_for("none"), [])
+        self.assertEqual(vmp.fix_policy_for("none"), "none")
 
     def test_vocab_matches_registry_keys(self):
         # The in-code MODE_VOCAB() is derived from the registry keys — they must
