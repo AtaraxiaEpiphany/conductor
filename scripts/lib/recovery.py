@@ -76,7 +76,7 @@ def parse_result_block(text):
     The contract on the returned dict is intentionally loose — only ``status``
     is assumed by routing (``passed``/``FAILED``/``error``/``warn``/…). Every
     other field (``failure_reason``, ``fix_directives``, the verify-mode
-    ``report_field`` values ``BUILD``/``L1_VERIFY``/``START``/``ANCHOR``) is
+    ``report_field`` values ``BUILD``/``L1_VERIFY``/``START``/``ANCHOR``/``ADVERSARIAL``) is
     pass-through and read defensively with ``.get()``. An object missing
     ``status`` is treated as "no structured verdict" → ``None`` so a malformed
     block falls back to prose rather than routing on a missing key.

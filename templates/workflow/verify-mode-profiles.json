@@ -40,6 +40,14 @@
       "report_field": "START",
       "protocol": "When the directive's modes include start (in addition to compile or test): after the build/suite gate is satisfied, run the app's run command from conductor/workflow/dev-commands/<lang>.md once as a boot smoke check (start it, confirm it reaches ready/no startup stack trace, then stop it). Record `START: passed` or `START: failed (<one-line symptom>)`. On failure → report STATUS: FAILED (do not checkpoint a phase whose app won't boot when start was requested). If the phase already carries a trailing [Manual] boot-verification task, treat start as a pre-flight that does not double-gate — record the outcome and let the [Manual] task remain the human confirmation."
     },
+    "adversarial": {
+      "runs": ["test-suite"],
+      "when_to_use": "A phase whose gate is an adversarial pass — the checker is prompted to REFUTE the phase's green state, defaulting to FAILED on genuine uncertainty. Use for high-stakes phases (security, data integrity, public API, a correctness-critical refactor) where a skeptical pass is worth more than a confirming one. Composes with test/anchor: adversarial,test runs the suite AND the refutation; adversarial,anchor refutes AND runs the frozen subset.",
+      "fix_policy": "fix-and-retry",
+      "max_fix_attempts": 2,
+      "report_field": "ADVERSARIAL",
+      "protocol": "When the directive's modes include adversarial: adopt a REFUTING stance — your job is to find a way this phase is NOT actually done, not to confirm it. Re-run the suite yourself (L1_VERIFY_COMMAND) at least once looking for flakiness, order-dependence, or a passing-on-the-wrong-reason run the fleet's single pass missed; probe the AC-trace for an evidence claim that overstates what a test actually asserts; if the track has a frozen anchor, confirm it was not weakened or silenced. Default to FAILED on genuine uncertainty — a phase you cannot confidently refute is the ONLY one that passes (the asymmetric burden is the point: a skeptic's silence is not consent). Record `ADVERSARIAL: passed (refuted-and-survived — <one-line what you probed>)` or `ADVERSARIAL: failed (<one-line what broke under scrutiny>)`. This mode composes with the others: adversarial,test re-runs the suite as the substrate for the refutation; adversarial,anchor refutes on top of the frozen-subset gate. Do NOT let the adversarial pass relax any other mode's gate — it tightens, never loosens."
+    },
     "anchor": {
       "runs": ["frozen-subset"],
       "when_to_use": "A phase whose safety net is the frozen subset, not the full suite. anchor alone: a refactoring phase where the broader suite is in flux but the pinned anchor must hold (the mirror image of compile). test,anchor: both the suite AND the frozen subset must pass. No-op on an unfrozen track (degrades gracefully until track-state freeze is run).",

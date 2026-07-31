@@ -111,7 +111,7 @@ class VerifyModeWhenToUseField(TestCase):
     from the contract's "When to use" column), and the accessor returns it."""
 
     def test_every_baseline_mode_has_when_to_use(self):
-        for mode in ("compile", "test", "start", "anchor"):
+        for mode in ("compile", "test", "start", "adversarial", "anchor"):
             self.assertTrue(
                 vmp.when_to_use_for(mode).strip(),
                 f"mode {mode!r} must carry a non-empty when_to_use",

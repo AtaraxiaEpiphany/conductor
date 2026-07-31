@@ -29,9 +29,9 @@ from scripts.track_state import verify_mode_profiles as vmp
 ROOT = Path(__file__).resolve().parent.parent
 REGISTRY = ROOT / "templates" / "workflow" / "verify-mode-profiles.json"
 
-# The four baseline modes the registry ships. Drift between this list, the
+# The baseline modes the registry ships. Drift between this list, the
 # contract table, and the registry is what RegistryDriftTests guards.
-BASELINE_MODES = ("compile", "test", "start", "anchor")
+BASELINE_MODES = ("compile", "test", "start", "adversarial", "anchor")
 
 
 class RegistryShapeTests(TestCase):
