@@ -152,6 +152,69 @@ class NonPersistenceTests(TestCase):
         self.assertNotIn("verify_modes", phase)
 
 
+class PlanParseNoneClosureTests(TestCase):
+    """``validate_verify_none_closure`` (wired into ``parse_plan``): a
+    debt-carrying ``verify: none`` phase must be closed by a later
+    compile/test/start phase, or the debt it stages is never exercised.
+
+    Advisory (warnings, never errors) — same posture as gate-groups/deps. The
+    validator is directive-only: it cannot check the closing phase fixes the
+    *same* debt (operator responsibility); it only checks a closing gate exists."""
+
+    def _parse(self, *phase_headings):
+        body = "# Implementation Plan: m\n"
+        for h in phase_headings:
+            body += f"{h}\n- [ ] [Migrate] work <!-- AC-1 -->\n- [ ] [Manual] v\n"
+        return parse_plan(_write_plan(body))
+
+    def test_terminal_none_warns(self):
+        # A none phase as the last phase → none_unclosed_terminal.
+        parsed = self._parse("## Phase 1: Bump parent <!-- verify: none -->")
+        self.assertEqual(parsed["errors"], [])
+        joined = " ".join(parsed["warnings"])
+        self.assertIn("none_unclosed_terminal", joined)
+        self.assertIn("verify: none closure", joined)
+
+    def test_all_none_run_warns_each(self):
+        # A run of none phases, none closed → run warns (earlier) + terminal
+        # warns (last).
+        parsed = self._parse(
+            "## Phase 1: Bump parent <!-- verify: none -->",
+            "## Phase 2: Rename <!-- verify: none -->",
+        )
+        self.assertEqual(parsed["errors"], [])
+        joined = " ".join(parsed["warnings"])
+        self.assertIn("none_unclosed_run", joined)
+        self.assertIn("none_unclosed_terminal", joined)
+
+    def test_closed_by_compile_is_silent(self):
+        parsed = self._parse(
+            "## Phase 1: Bump parent <!-- verify: none -->",
+            "## Phase 2: Fix consumers <!-- verify: compile -->",
+        )
+        joined = " ".join(parsed["warnings"])
+        self.assertNotIn("verify: none closure", joined)
+
+    def test_closed_by_test_start_is_silent(self):
+        parsed = self._parse(
+            "## Phase 1: Bump parent <!-- verify: none -->",
+            "## Phase 2: Boot <!-- verify: test, start -->",
+        )
+        joined = " ".join(parsed["warnings"])
+        self.assertNotIn("verify: none closure", joined)
+
+    def test_closed_across_non_verify_gap_is_silent(self):
+        # The closing gate may sit beyond an intermediate non-verify (feature)
+        # phase — only that SOME later phase carries a closing mode matters.
+        parsed = self._parse(
+            "## Phase 1: Bump parent <!-- verify: none -->",
+            "## Phase 2: Unrelated feature",
+            "## Phase 3: Boot <!-- verify: start -->",
+        )
+        joined = " ".join(parsed["warnings"])
+        self.assertNotIn("verify: none closure", joined)
+
+
 class AgentDocTests(TestCase):
     def test_phase_checker_has_directive_loop_referencing_registry(self):
         # The per-mode behavior moved OUT of the agent into the registry. The
@@ -256,9 +319,16 @@ class PlannerDocTests(TestCase):
 
 class AuthoringResolutionTests(TestCase):
     """The directive's authoring-time default is resolved by precedence
-    (explicit > tag-derived default_verify > goal-derived derive_verify_modes >
-    full gate). The planner is pure prose, so these pin the two REDUCER outputs
-    the procedure composes for the canonical migration plan — the procedure glues
+    (explicit > goal-derived derive_verify_modes > tag-derived default_verify >
+    full gate). The goal text is checked BEFORE the tag union because the goal
+    is more discriminating — `[Migrate].default_verify = compile` collapses a
+    pure deps-bump (won't compile) and a final integration (boots) into one
+    value, while the goal can reach `none` (debt-carrying) and `test,start`
+    (final) respectively. The tag-derived `compile` survives as the fallback
+    only for a bare goal (e.g. "Migrate dependencies") that says nothing finer.
+
+    The planner is pure prose, so these pin the two REDUCER outputs the
+    procedure composes for the canonical migration plan — the procedure glues
     them, and the contract documents the precedence."""
 
     def test_tag_derived_default_for_migrate_phase(self):
@@ -275,13 +345,27 @@ class AuthoringResolutionTests(TestCase):
         self.assertEqual(derive_verify_modes("Wire up and boot the app"),
                          ["test", "start"])
 
+    def test_goal_derived_none_for_debt_carry_phase(self):
+        # The deps-bump phase's goal "bump the spring-boot parent" → goal-derived
+        # default = none (debt-carrying: the phase deliberately won't compile
+        # until a later phase fixes consumers). This is the case that the
+        # goal-before-tag precedence exists to reach — a tag-only resolution
+        # would wrongly give it compile.
+        from scripts.track_state.verify_mode_profiles import derive_verify_modes
+        self.assertEqual(derive_verify_modes("Bump the spring-boot parent"), ["none"])
+
     def test_contract_documents_default_source_precedence(self):
-        # The contract must single-source the precedence the planner follows.
+        # The contract must single-source the precedence the planner follows, in
+        # the goal-before-tag order.
         text = CONTRACT.read_text(encoding="utf-8")
         self.assertIn("Default source", text)
         self.assertIn("Tag-derived default", text)
         self.assertIn("Goal-derived default", text)
+        self.assertIn("Why goal before tag", text)
         self.assertIn("Generator proposes", text)
+        # The goal-derived step must list `none` as a reachable outcome.
+        goal_step = text.split("Goal-derived default", 1)[1]
+        self.assertIn("none", goal_step.lower())
 
     def test_planner_documents_resolution_procedure(self):
         # The planner must carry the 4-step procedure, not just the old
@@ -289,6 +373,15 @@ class AuthoringResolutionTests(TestCase):
         self.assertIn("resolve", SPEC_PLANNER.lower())
         self.assertIn("Tag-derived default", SPEC_PLANNER)
         self.assertIn("Goal-derived default", SPEC_PLANNER)
+        # The goal-derived step must list `none` as a reachable outcome.
+        goal_step = SPEC_PLANNER.split("Goal-derived default", 1)[1]
+        self.assertIn("none", goal_step.lower())
+
+    def test_planner_documents_none_must_be_closed(self):
+        # A verify: none phase is debt-carrying and must be followed by a closing
+        # compile/test/start phase — the planner must say so (and the contract
+        # must enforce it, see PlanParseNoneClosureTests).
+        self.assertIn("debt-carrying", SPEC_PLANNER.lower())
 
 
 if __name__ == "__main__":

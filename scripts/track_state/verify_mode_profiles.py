@@ -361,18 +361,28 @@ def derive_verify_modes(phase_goal: str) -> list[str]:
 
     Resolution rules (the real decision logic, encoded explicitly):
 
-    * **Migration intermediate** ("compiles"/"compile"/"build" without a
-      boot/suite-green signal) → ``["compile"]``. The suite is expected red;
-      the build is the gate.
     * **Final integration** ("boots"/"starts"/"ready" — the app must run) →
       ``["test", "start"]``. Suite green AND boot smoke.
     * **Refactor with frozen anchor** ("refactor"/"tech debt" AND "frozen"/
       "anchor"/"pinned") → ``["anchor"]`` (advisory; no-ops on an unfrozen
       track — the existing graceful degradation).
+    * **Debt-carrying intermediate** (a dependency/version mutation — "bump the
+      dependency", "update dependencies", "major version bump", "bump … parent"
+      — WITHOUT a compile word AND WITHOUT a suite-green word) → ``["none"]``.
+      This phase deliberately carries compile/test debt that a LATER phase
+      closes; it gates on nothing. Contrast the plain migration intermediate
+      below: a goal that names a build/typecheck intent is ``compile`` (the suite
+      is red, the build is the gate); a debt-carrying goal names only the
+      mutation, not a build, so neither the build nor the suite gates it.
+    * **Migration intermediate** ("compiles"/"compile"/"build" without a
+      boot/suite-green signal) → ``["compile"]``. The suite is expected red;
+      the build is the gate.
     * **Plain feature work** (none of the above) → ``[]`` (default full gate).
 
     Fail-open: any ambiguity or exception → ``[]``. Never invents a mode not in
-    :func:`MODE_VOCAB`; never raises into a caller.
+    :func:`MODE_VOCAB`; never raises into a caller. ``none`` is reachable only
+    via the debt-carrying rule above; every other migration-shaped goal falls
+    through to ``compile`` or the default full gate.
     """
     try:
         if not phase_goal or not phase_goal.strip():
@@ -405,11 +415,40 @@ def derive_verify_modes(phase_goal: str) -> list[str]:
         if (_any_in(text, refactor_signals) and _any_in(text, anchor_signals)):
             return ["anchor"]
 
+        # Debt-carrying intermediate: a pure dependency/version mutation that
+        # does NOT aim to compile or pass the suite this phase — it carries the
+        # compile/test debt to a LATER phase (e.g. bumping a dep whose consumers
+        # are fixed in the next phase). Distinguished from the compile
+        # intermediate by the ABSENCE of a build/typecheck word: "bump the
+        # spring-boot parent" (no build) → none; "bump spring-boot and make it
+        # build" → falls through to the compile branch below. Distinguished
+        # from the final integration by the ABSENCE of a suite-green promise:
+        # "bump deps and make tests pass" closes the debt itself → default gate.
+        # The signals require an explicit verb+object ("bump the …", "update
+        # dependencies", "major version"), so a bare "Migrate dependencies"
+        # does NOT match and still resolves to compile below (the safe
+        # intermediate default for an ambiguous migration goal).
+        debt_carry_signals = (
+            "bump the dependency", "bump the dependencies",
+            "bump … parent", "bump the spring-boot parent",
+            "bump the spring boot parent", "bump the parent",
+            "update dependency", "update dependencies",
+            "upgrade the dependency", "upgrade the dependencies",
+            "major version", "major version bump", "dependency bump",
+            "bump the version", "bump version",
+        )
+        compile_signals = ("compile", "compiles", "compilation", "build",
+                           "it builds", "type-check", "typecheck")
+        suite_green_signals = ("tests pass", "test suite passes", "green",
+                               "suite green", "all tests")
+        if (_any_in(text, debt_carry_signals)
+                and not _any_in(text, compile_signals)
+                and not _any_in(text, suite_green_signals)):
+            return ["none"]
+
         # Migration intermediate: it compiles. The suite is expected red, so the
         # build — NOT the suite — is the gate. "compile"/"build" without a boot
         # signal (handled above) lands here.
-        compile_signals = ("compile", "compiles", "compilation", "build",
-                           "it builds", "type-check", "typecheck")
         migration_signals = ("migrat", "upgrade", "bump", "rename", "javax",
                              "jakarta", "framework version", "deprecation",
                              "major dependency", "spring boot")
@@ -420,8 +459,6 @@ def derive_verify_modes(phase_goal: str) -> list[str]:
         # only if the goal reads as an *intermediate* migration step, not the
         # final "tests pass" step. We require a migration signal AND that the
         # goal does NOT promise a green suite ("tests pass"/"green"/"suite").
-        suite_green_signals = ("tests pass", "test suite passes", "green",
-                               "suite green", "all tests")
         if (_any_in(text, migration_signals)
                 and not _any_in(text, suite_green_signals)):
             return ["compile"]

@@ -569,6 +569,17 @@ def parse_plan(plan_path):
             f"{issue['at']}: gate-group annotation issue ({issue['kind']}) "
             f"— {issue['detail']}")
 
+    # verify: none closure validation (plan-format-contract.md §"Phase Verify
+    # Directives"). Advisory — a debt-carrying ``none`` phase must be closed by a
+    # later compile/test/start phase; otherwise the staged debt is never
+    # exercised at any gate. Same posture as gate-groups/verify_modes: warns at
+    # init, never blocks. Directive-only — it cannot verify the closing phase
+    # fixes the *same* debt (operator responsibility).
+    for issue in validate_verify_none_closure({"phases": phases}):
+        warnings.append(
+            f"{issue['at']}: verify: none closure issue ({issue['kind']}) "
+            f"— {issue['detail']}")
+
     return {"phases": phases, "errors": errors, "warnings": warnings}
 
 
@@ -785,6 +796,50 @@ def validate_gate_groups(parsed):
                     "kind": "unparsed", "at": at,
                     "detail": f"unparsed gate_group token '{tok}' "
                               f"(expected a single identifier)"})
+    return issues
+
+
+def validate_verify_none_closure(parsed):
+    """Validate that every ``<!-- verify: none -->`` phase is closed by a later
+    gating phase (plan-format-contract.md §"Phase Verify Directives").
+
+    A ``none`` phase is debt-carrying — it intentionally skips the build/test
+    gate because the work it stages will not compile or pass until a *later*
+    phase finishes the migration. The contract therefore requires a subsequent
+    phase whose gate actually exercises that debt (a mode in {compile, test,
+    start}) to close it. This validator surfaces the two failure shapes:
+
+    Issue kinds:
+    - ``none_unclosed_terminal``: a ``none`` phase is the plan's last phase — no
+      later phase can close the debt.
+    - ``none_unclosed_run``: a ``none`` phase is followed only by other ``none``
+      phases until the end of the plan — the run never re-enables the gate.
+
+    Each issue: ``{"kind": str, "at": "Phase {n}", "detail": str}``. Advisory
+    and directive-only — it cannot verify the closing phase actually fixes the
+    *same* debt (operator responsibility). Same posture as validate_gate_groups
+    / validate_deps: warns at init, never blocks.
+    """
+    issues = []
+    phases = parsed.get("phases", [])
+    CLOSING_MODES = {"compile", "test", "start"}
+
+    for i, ph in enumerate(phases):
+        if ph.get("verify_modes") != ["none"]:
+            continue
+        # Does any strictly-later phase carry a closing gate?
+        later_modes = [set(p.get("verify_modes") or []) for p in phases[i + 1:]]
+        if not any(CLOSING_MODES & modes for modes in later_modes):
+            kind = ("none_unclosed_terminal" if not later_modes
+                    else "none_unclosed_run")
+            hint = ("it is the last phase"
+                    if kind == "none_unclosed_terminal"
+                    else "every later phase is also verify: none")
+            issues.append({
+                "kind": kind, "at": f"Phase {ph['number']}",
+                "detail": f"verify: none phase is never closed by a later "
+                          f"compile/test/start phase ({hint}) — the debt it "
+                          f"stages would never be exercised at a gate"})
     return issues
 
 
