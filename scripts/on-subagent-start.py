@@ -411,6 +411,19 @@ def _registry_for_executor(cwd):
             )
         else:
             lines.append("  - workflow: (absent → default TDD, Steps 3-8)")
+        # The tactical-refactor flag (§3.6c): true => the orchestrator dispatches
+        # conductor:refactorer once after this task succeeds. The declarative form
+        # of the [Refactor] name marker / CONDUCTOR_TASK_REFACTOR=1 env — a project
+        # overlay tag with refactor: true surfaces here with zero plugin edits.
+        refactor = tp.refactor_for(tag)
+        if refactor:
+            lines.append(
+                "  - refactor: true — this task's leading tag opts into the "
+                "tactical refactorer (§3.6c fires on SUCCESS without a [Refactor] "
+                "name marker or CONDUCTOR_TASK_REFACTOR env)."
+            )
+        else:
+            lines.append("  - refactor: false (no tactical refactorer; Step 5 mechanical refactor still runs in-task)")
     # Always surface the resolved exemption set so §5.0 is registry-driven too —
     # a project overlay tag's exemptions are visible even when no task resolves.
     lines.append("")

@@ -69,9 +69,15 @@ class DeriveTaskTagBasics(TestCase):
         """A plain refactor without a migration safety-net signal → default TDD.
 
         ``[Migrate]`` requires the "existing suite as safety net" signal; a
-        readability refactor has none, so it stays untagged (NOT Migrate).
+        readability refactor has none, so it stays untagged (NOT Migrate). This
+        ALSO pins that ``[Refactor]`` (now a real tag with ``refactor: true``)
+        is NOT auto-proposed: it deliberately carries no ``signals``, so a
+        description containing "refactor" stays untagged rather than silently
+        opting into the tactical refactorer.
         """
         self.assertIsNone(tp.derive_task_tag("refactor the user service for readability"))
+        self.assertIsNone(tp.derive_task_tag("extract the duplication and simplify"))
+        self.assertIsNone(tp.derive_task_tag("clean up and deduplicate the helpers"))
 
 
 class DeriveTaskTagOverTaggingGuard(TestCase):

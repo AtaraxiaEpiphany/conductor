@@ -246,10 +246,11 @@ When opted in (after a SUCCESSFUL `dispatch-finalize`, before §3.7), run a **co
 ### 3.6c Tactical Refactor (opt-in — orchestrator-dispatched)
 
 **DEFAULT OFF.** Runs ONLY when the just-completed task opts in:
-- the task NAME contains the marker `[Refactor]` (per-task opt-in), OR
+- the task's leading-tag profile has `refactor: true` (declarative — e.g. a `[Refactor]` task; resolve via `track-state registry-doc --tag <Tag>` or the `[Conductor Registry]` block's `refactor:` line), OR
+- the task NAME contains the marker `[Refactor]` (per-task escape hatch — for a task whose leading tag is something else, e.g. `[Config] Refactor the env loader`), OR
 - env `CONDUCTOR_TASK_REFACTOR=1` (global opt-in for every task this session).
 
-`[Refactor]` is a **name marker, not a tag** — it does NOT enter the `[Docs]`/`[Config]`/… exemption logic, so a refactorable task still owes TDD (F2) and coverage (F3). (Tier rationale — mechanical Step 5 vs tactical refactorer — lives in `agents/refactorer.md` §1.0.)
+`[Refactor]` is now BOTH a real tag (declarative — `refactor: true` on the tag row) AND a name marker (per-task escape hatch). Either form opts into this seam; neither enters the `[Docs]`/`[Config]`/… TDD/coverage-exemption logic, so a refactorable task still owes TDD (F2) and coverage (F3). (Tier rationale — mechanical Step 5 vs tactical refactorer — lives in `agents/refactorer.md` §1.0.)
 
 When opted in, dispatch `conductor:refactorer`, prompt:
 

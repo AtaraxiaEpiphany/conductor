@@ -74,7 +74,7 @@ The conductor's routing vocabulary is **data, not code.** Three registries, each
 
 | Axis | What it declares | Source of the *name* | Mutable? |
 |------|------------------|----------------------|----------|
-| **Task-type** (`task-type-profiles.json`) | What a tag *means* — route, TDD/coverage exemption, when-to-use hint, optional executor `workflow` | Re-derived from the task name's leading tag | No (re-parsed at every read; `task_type` is a typed cache) |
+| **Task-type** (`task-type-profiles.json`) | What a tag *means* — route, TDD/coverage exemption, when-to-use hint, optional executor `workflow`, optional `refactor: true` (tactical-refactor opt-in) | Re-derived from the task name's leading tag | No (re-parsed at every read; `task_type` is a typed cache) |
 | **Phase-verify mode** (`verify-mode-profiles.json`) | What a gate *means* — which steps run, fix policy, the `protocol` prose `phase-checker` emits | Re-parsed from the phase heading's `<!-- verify: … -->` | No (advisory metadata, never persisted to state) |
 | **Workflow shape** (`workflow-shapes.json`) | The **topology** — which dispatch agents run, in what order, its stop condition | The `workflow_shape` field on `track-state.json` | **Yes** — the one declaration/knob axis (`set-workflow-shape`). Advisory today: declares intended topology and surfaces `shape_violation` drift, but does not reorder dispatch (both built-in shapes plan-first) |
 

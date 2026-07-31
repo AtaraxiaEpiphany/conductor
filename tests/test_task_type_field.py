@@ -74,7 +74,7 @@ class UnknownTagHelperTests(TestCase):
 
     def test_known_tags_pass(self):
         for tag in ("[Migrate]", "[Manual]", "[Chore]", "[Docs]", "[Config]",
-                    "[Explore]", "[migrate]"):  # case-insensitive
+                    "[Explore]", "[Refactor]", "[migrate]"):  # case-insensitive
             self.assertEqual(_find_unknown_tags(f"{tag} do work"), [], f"{tag} should be known")
 
     def test_trailing_markers_not_flagged(self):
@@ -270,7 +270,7 @@ class OverrideLayerTests(TestCase):
 
         # No crash, built-in vocab intact, baseline routing restored.
         self.assertEqual(set(self.tp.TAG_VOCAB()),
-                         {"Explore", "Docs", "Config", "Chore", "Manual", "Migrate"})
+                         {"Explore", "Docs", "Config", "Chore", "Manual", "Migrate", "Refactor"})
         self.assertEqual(self.tp.route_for(["Manual"]), "manual")
 
     def test_malformed_shape_overlay_falls_back_to_baseline(self):
@@ -281,7 +281,7 @@ class OverrideLayerTests(TestCase):
         self.tp._load.cache_clear()
 
         self.assertEqual(set(self.tp.TAG_VOCAB()),
-                         {"Explore", "Docs", "Config", "Chore", "Manual", "Migrate"})
+                         {"Explore", "Docs", "Config", "Chore", "Manual", "Migrate", "Refactor"})
 
     def test_no_override_file_no_change(self):
         # CLAUDE_PROJECT_DIR set to a project tree with NO overlay file → baseline.
@@ -290,7 +290,7 @@ class OverrideLayerTests(TestCase):
         self.tp._load.cache_clear()
 
         self.assertEqual(set(self.tp.TAG_VOCAB()),
-                         {"Explore", "Docs", "Config", "Chore", "Manual", "Migrate"})
+                         {"Explore", "Docs", "Config", "Chore", "Manual", "Migrate", "Refactor"})
 
     def test_unknown_project_tag_blocks_init_then_passes_when_registered(self):
         # End-to-end: a project tag the validator rejects until the overlay registers it.

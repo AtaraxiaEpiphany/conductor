@@ -140,6 +140,28 @@ class ExecutorInjectionTests(TestCase):
         # The workflow prose is NOT inlined into the dispatch — it is fetched.
         self.assertNotIn(wf.split(".")[0], ctx)
 
+    def test_executor_with_refactor_task_gets_refactor_flag(self):
+        # The [Refactor] tag's refactor: true surfaces in the injected block so
+        # §3.6c can fire on SUCCESS without a [Refactor] name marker or env.
+        # Mirrors how [Migrate]'s workflow pointer surfaces.
+        with _track(_flat_state(name="[Refactor] extract the helper",
+                                task_type="refactor")) as cwd:
+            ctx = _run("task-executor", cwd=cwd).get("hookSpecificOutput", {}).get("additionalContext", "")
+        self.assertIn("[Conductor Registry]", ctx)
+        self.assertIn("RESOLVED PROFILE for this task's leading tag [Refactor]", ctx)
+        # [Refactor] is NOT TDD/coverage-exempt — it still owes a working test.
+        self.assertIn("tdd_exempt: False", ctx)
+        self.assertIn("coverage_exempt: False", ctx)
+        # The load-bearing flag: refactor: true tells §3.6c to dispatch refactorer.
+        self.assertIn("refactor: true", ctx)
+
+    def test_executor_default_task_gets_refactor_false(self):
+        # A default (untagged) task resolves refactor: false — no refactorer.
+        with _track(_flat_state(name="[Config] tweak timeout",
+                                task_type="config")) as cwd:
+            ctx = _run("task-executor", cwd=cwd).get("hookSpecificOutput", {}).get("additionalContext", "")
+        self.assertIn("refactor: false", ctx)
+
     def test_executor_default_task_gets_no_profile(self):
         # An untagged (default) task resolves no leading tag → only the
         # exemption-set summary is injected (no RESOLVED PROFILE line).

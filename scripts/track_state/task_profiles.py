@@ -280,7 +280,8 @@ def is_tdd_exempt(tags: list[str]) -> bool:
 
     A task is exempt if ANY of its tags is tdd_exempt. An empty tag list uses the
     ``default`` profile (not exempt) — matching the pre-registry set
-    ``{Explore,Docs,Config,Chore,Manual,Migrate}``.
+    ``{Explore,Docs,Config,Chore,Manual,Migrate}`` (``[Refactor]`` is NOT exempt:
+    it still owes TDD/coverage, only the tactical-refactor flag is set).
     """
     if not tags:
         return bool(_load()["default"].get("tdd_exempt", False))
@@ -330,6 +331,20 @@ def workflow_for(tag: str) -> str:
     at dispatch with zero plugin edits — the ``[Migrate]`` generalization.
     """
     return _profile(tag).get("workflow", "")
+
+
+def refactor_for(tag: str) -> bool:
+    """True if the tactical refactorer should run after a task with this leading tag.
+
+    The declarative form of the ``[Refactor]`` name marker /
+    ``CONDUCTOR_TASK_REFACTOR=1`` env — a task-type row sets ``refactor: true`` to
+    opt a whole class of tasks into the §3.6c tactical-refactor seam with zero
+    plugin edits. Today only ``[Refactor]`` carries it; a project overlay may set
+    it on a project-specific tag the same way (the ``[Refactor]`` generalization).
+    Absent/False = no tactical refactor (the default; the inline mechanical Step 5
+    refactor still runs in-task — see :mod:`agents.task-executor` §4.0).
+    """
+    return bool(_profile(tag).get("refactor", False))
 
 
 def when_to_use_for(tag: str) -> str:
@@ -407,7 +422,11 @@ def derive_task_tag(description: str) -> str | None:
       matches an exemption tag's signals;
     - ``[Migrate]`` requires a migration signal (``migration``/``bump``/
       ``upgrade``/``rename``) — a plain "refactor" returns ``None``;
-    - ``[Manual]`` requires a human-action signal.
+    - ``[Manual]`` requires a human-action signal;
+    - an opt-in modifier tag (``refactor: true``, today ``[Refactor]``) is
+      **never** auto-derived — it is skipped entirely (a modifier augments a
+      primary task, it does not classify one; ``[Refactor]`` is a deliberate
+      opt-in via the leading tag or inline name marker, never a goal detection).
 
     This is **advisory only** — :func:`track_state.init_from_plan` still
     hard-validates the final tag against the resolved registry, so an
@@ -421,6 +440,14 @@ def derive_task_tag(description: str) -> str | None:
 
         scores: dict[str, int] = {}
         for tag in TAG_VOCAB():
+            # An opt-in modifier tag (refactor: true) is NEVER auto-derived as a
+            # leading tag — it augments whatever the primary task is, it does not
+            # classify it. Without this guard, [Refactor]'s when_to_use tokens
+            # ("refactor"/"extract"/"simplify") would auto-propose [Refactor] for
+            # any readability tweak, silently opting it into the tactical refactorer.
+            # [Refactor] is a deliberate opt-in (leading tag or inline marker), full stop.
+            if _profile(tag).get("refactor"):
+                continue
             hits = sum(1 for sig in _signals_for(tag) if sig and sig in text)
             if hits:
                 scores[tag] = hits

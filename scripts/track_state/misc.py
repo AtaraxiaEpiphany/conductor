@@ -1273,8 +1273,12 @@ def cmd_registry_doc(tag=None, mode=None, shape=None):
         tdd = _yesno(tp.is_tdd_exempt([tag]))
         cov = _yesno(tp.is_coverage_exempt([tag]))
         when = tp.when_to_use_for(tag).strip().replace("\n", " ")
-        wf = tp.workflow_for(tag)
-        marker = " *(workflow)*" if wf else ""
+        markers = []
+        if tp.workflow_for(tag):
+            markers.append("workflow")
+        if tp.refactor_for(tag):
+            markers.append("refactor")
+        marker = f" *({', '.join(markers)})*" if markers else ""
         return f"| `{tag}` | `{route}` | {tdd} | {cov} | {when}{marker} |"
 
     def _mode_row(mode):
@@ -1310,6 +1314,16 @@ def cmd_registry_doc(tag=None, mode=None, shape=None):
                 print(wf)
             else:
                 print(f"_(no `workflow` for `{tag}` → default TDD, Steps 3-8)_")
+            if tp.refactor_for(tag):
+                print()
+                print(f"## `refactor` for `{tag}`: **true**")
+                print()
+                print(f"A task with leading tag `[{tag}]` opts into the tactical refactorer "
+                      f"(§3.6c): the orchestrator dispatches `conductor:refactorer` once "
+                      f"after the task succeeds — no `[Refactor]` name marker or "
+                      f"`CONDUCTOR_TASK_REFACTOR=1` env required (those remain as escape "
+                      f"hatches). The `[Conductor Registry]` block the executor receives "
+                      f"carries this flag as `refactor: true`.")
         else:
             # Fail-open, mirroring the no-filter posture: an unknown tag is
             # surfaced, not raised (the *validator* hard-errors on unknown tags;
@@ -1389,8 +1403,9 @@ def cmd_registry_doc(tag=None, mode=None, shape=None):
     print()
     print("Rows carrying a `workflow` diverge from default TDD — the executor "
           "fetches that prose on demand (`track-state registry-doc --tag <Name>`); "
-          "the rest use default TDD (Steps 3-8). `[Explore]` routes to explorer; "
-          "task-executor REFUSES it.")
+          "the rest use default TDD (Steps 3-8). Rows carrying `refactor` opt into "
+          "the tactical refactorer at the §3.6c seam after success. `[Explore]` "
+          "routes to explorer; task-executor REFUSES it.")
     print()
 
     # --- Verify modes ---------------------------------------------------------
