@@ -311,6 +311,24 @@ def when_to_use_for(mode: str) -> str:
     return _profile(mode).get("when_to_use", "")
 
 
+def phase_workflow_for(mode: str) -> str:
+    """The optional phase-level prose a mode carries, or ``""`` (mirrors
+    :func:`protocol_for`).
+
+    This is the prompt-shaping prose the phase-checker READS when this mode is
+    the tag-derived gate of a DIRECTIVE-LESS phase — today, the all-``[Migrate]``
+    migration-phase safety net. It lifts the migration-phase branch's *behavior*
+    out of ``agents/phase-checker.md`` so the checker reads it (the same
+    mode-agnostic "reads it, doesn't know it" pattern the directive loop uses)
+    rather than re-deriving ``is_tdd_exempt`` + ``default_verify`` inline (the
+    drift liability). The branch's *gate logic* (the FAILED/retry decision and
+    the FAILURE_REASON shape) stays in the agent — this field is the prose, not
+    the verdict. Absent on a row => no phase-level prose; the mode's ``protocol``
+    alone governs (the common case — only ``compile`` carries one today).
+    """
+    return _profile(mode).get("phase_workflow", "")
+
+
 def _mode_signals(mode: str) -> list[str]:
     """Lowercased keyword signals for a mode, derived from its ``when_to_use``.
 

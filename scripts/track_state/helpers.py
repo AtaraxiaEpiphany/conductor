@@ -418,6 +418,26 @@ def _extract_tags_for_task(state, phase_str, task_str):
         return []
 
 
+def phase_task_tags(state, phase):
+    """All dispatch tags across a phase's top-level tasks (order-preserving, with dups).
+
+    The cheapest in-process tag source for ``resolve_phase_gate``'s tag-fallback: reads
+    ``state['phases'][phase-1]['tasks'][*]['name']`` via :func:`extract_tags` — no file
+    I/O. Duplicates are kept (``default_verify_for_phase``'s set-based agreement check
+    treats ``['Migrate','Migrate']`` as agreement, not conflict). Fail-open to ``[]`` on
+    any miss so a malformed/absent ``phases`` structure degrades to the full gate rather
+    than crashing dispatch.
+    """
+    try:
+        tasks = state["phases"][phase - 1]["tasks"]
+    except (IndexError, KeyError, TypeError):
+        return []
+    tags = []
+    for t in tasks:
+        tags.extend(extract_tags(t.get("name", "")))
+    return tags
+
+
 
 def _tag_exempt_from_coverage(tags):
     """Tags that don't require coverage gate enforcement."""

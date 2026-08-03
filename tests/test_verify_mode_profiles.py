@@ -85,6 +85,23 @@ class RegistryShapeTests(TestCase):
         self.assertEqual(vmp.runs_for("none"), [])
         self.assertEqual(vmp.fix_policy_for("none"), "none")
 
+    def test_phase_workflow_for_returns_migration_safety_net_prose(self):
+        # 1A.4: the migration-phase branch's BEHAVIOR prose is lifted into the
+        # registry (phase_workflow field) so phase-checker reads it rather than
+        # re-deriving is_tdd_exempt + default_verify inline. compile carries it
+        # (the canonical migration safety-net mode); other modes have none.
+        wf = vmp.phase_workflow_for("compile")
+        self.assertIn("MIGRATION-PHASE SAFETY NET", wf)
+        self.assertIn("safety net, not a TDD target", wf)
+        self.assertIn("verify: compile", wf)  # prescribes the directive
+        # Only compile carries it today — the other modes return "" (the mode's
+        # protocol alone governs).
+        self.assertEqual(vmp.phase_workflow_for("test"), "")
+        self.assertEqual(vmp.phase_workflow_for("none"), "")
+        self.assertEqual(vmp.phase_workflow_for("anchor"), "")
+        # Unknown mode → "" (fail-open, mirrors protocol_for's default).
+        self.assertEqual(vmp.phase_workflow_for("nope"), "")
+
     def test_vocab_matches_registry_keys(self):
         # The in-code MODE_VOCAB() is derived from the registry keys — they must
         # be identical (the dedup contract: one source of truth).

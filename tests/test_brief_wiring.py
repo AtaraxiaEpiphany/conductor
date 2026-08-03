@@ -96,6 +96,56 @@ class BriefSkillWiringTests(TestCase):
         self.assertIn("USER_REFERENCES", txt)
 
 
+class BriefFourQuadrantTests(TestCase):
+    """The four-quadrant stance (Part 2): §2.5 preamble + §3 premise-challenge
+    pass + Open Questions operationalization. Grep-assertions mirror the existing
+    wiring-test pattern — these pin the load-bearing prose so a regression
+    (deletion or drift) is caught. Additive: the grill's structure, one-question-
+    at-a-time rule, and grill-done gate are unchanged."""
+
+    def test_section_2_5_four_quadrant_preamble_present(self):
+        # The posture section framing the 2x2 (you x user x known x unknown),
+        # pointing each quadrant at the §3 mechanism that implements it.
+        txt = _read("skills/brief/SKILL.md")
+        self.assertIn("## 2.5 FOUR-QUADRANT STANCE", txt)
+        # All four quadrants named.
+        self.assertIn("SHARED-KNOWN", txt)
+        self.assertIn("YOUR-KNOWN / USER-UNKNOWN", txt)
+        self.assertIn("YOUR-UNKNOWN / USER-KNOWN", txt)
+        self.assertIn("SHARED-UNKNOWN", txt)
+
+    def test_premise_challenge_pass_present_and_bounded(self):
+        # §3's premise-challenge (Q3): pose at most ONE challenge before the
+        # convergent grill. Must be bounded (one challenge total) so the grill
+        # stays tight, and must name the Out-of-Scope verbatim propagation as
+        # the reason catching it early is high-leverage.
+        txt = _read("skills/brief/SKILL.md")
+        self.assertIn("Premise-challenge pass", txt)
+        self.assertIn("questionable", txt)  # the trigger condition
+        self.assertIn("at most one", txt.lower())  # bounded
+        self.assertIn("verbatim", txt)  # why early catch matters
+
+    def test_open_questions_operationalized(self):
+        # Q4: a shared-unknown decidable by experiment is operationalized
+        # (hypothesis / minimal experiment / single variable / success-fail
+        # signal) rather than merely confessed. "None identified." stays valid.
+        txt = _read("skills/brief/SKILL.md")
+        self.assertIn("operationalize", txt)
+        self.assertIn("hypothesis", txt.lower())
+        self.assertIn("single variable", txt.lower())
+        self.assertIn("success/fail signal", txt.lower())
+        self.assertIn("None identified.", txt)  # still a valid honest result
+
+    def test_grill_one_at_a_time_rule_preserved(self):
+        # Regression guard: the four-quadrant additions must NOT weaken the
+        # one-question-at-a-time rule or the grill-done gate. The premise-
+        # challenge is ONE AskUserQuestion (counts toward the budget like any
+        # other); grill_complete is still the real gate.
+        txt = _read("skills/brief/SKILL.md")
+        self.assertIn("brief-grill-done", txt)
+        self.assertIn("grill_complete", txt)
+
+
 class BriefWriterAgentRemovedTests(TestCase):
     """The writer agent was collapsed — its file, SubagentStart reminder, and
     hooks.json matcher entry are all gone. Pin the removal so it can't creep

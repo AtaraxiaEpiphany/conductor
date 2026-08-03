@@ -68,6 +68,41 @@ CRITICAL: Validate every tool call. On failure → halt → announce.
 
 > The orchestrator may Read the discovered docs itself during §3 to ground its recommended answers (look-it-up-first, see §3). The writer still loads full content itself.
 
+## 2.5 FOUR-QUADRANT STANCE (how to think, not what to ask)
+
+A brief is a two-party epistemic artifact — you and the user each know things the
+other doesn't, and each kind of gap closes differently. Before the §3 grill, hold
+this 2×2 (you × user × known × unknown) as your posture. Each quadrant points at
+the concrete §3 mechanism that already implements it (or that §3's premise-challenge
+pass adds):
+
+1. **SHARED-KNOWN** — goals/context/boundaries already in `$ARGUMENTS` + the §2
+   discovered docs + `product.md`/`purpose.md`/`tech-stack.md`. Do NOT re-ask. (The
+   §3 look-it-up-first rule: a fact you can read is yours to gather, never a
+   question. The decisions are the user's; the facts are yours.)
+2. **YOUR-KNOWN / USER-UNKNOWN** — context only in the user's head (the real
+   motivation, the unspoken deadline, the stakeholder who must sign off). Surface
+   at most ONE such question per grill node; if you can state a defensible
+   assumption instead, state it and ask the user to confirm. (One-question-at-a-time,
+   §3; recommendations-with-rationale, not bare interrogation.)
+3. **YOUR-UNKNOWN / USER-KNOWN** — knowledge, risks, or better paths the user may
+   NOT have considered, because you read the codebase and they didn't (yet). If a
+   stated goal, an out-of-scope, or a constraint looks **wrong** — solving the wrong
+   problem, over-constraining, or mistaking a symptom for a cause — say so directly
+   and propose the alternative with trade-offs. (The §3 premise-challenge pass. Your
+   asymmetric knowledge is wasted if you only capture what the user already knows.
+   `## Out of Scope` is copied verbatim into the spec, so a wrong premise propagates
+   unchanged — catching it at the brief is far cheaper than at spec-review.)
+4. **SHARED-UNKNOWN** — unknowns NEITHER party settles by reading (a behavior under
+   load, a third-party API's real limits, a migration's blast radius). Don't just
+   admit these under Open Questions — convert each into a testable hypothesis:
+   minimal experiment, single variable, success/fail signal, data to collect. (The
+   Open Questions node, §3; operationalized, not merely confessed.)
+
+Quadrants 1 and 2 are the brief's baseline competence (capture the known). Quadrants
+3 and 4 are where an expert collaborator earns its keep (challenge the wrong,
+operationalize the unknown). The grill below implements all four.
+
 ## 3.0 GRILL TO SHARED UNDERSTANDING
 
 > **MUST — one question at a time, via `AskUserQuestion`, no exceptions.**
@@ -84,6 +119,23 @@ Goal: reach a **shared understanding** of the track before anything is written.
 Interview the user **relentlessly but one question at a time** — never batch.
 Walk the decision tree, resolving dependencies one-by-one so each answer
 informs the next question.
+
+**Premise-challenge pass (Q3 — do this FIRST, once).** Before walking the decision
+tree, state your read of the brief's **central premise** in one sentence (the
+problem this track believes it's solving). Then ask yourself: is any premise
+**questionable** — a goal that may solve the wrong problem, an out-of-scope that
+may over-constrain (ruling out a cheaper path the user didn't see), a constraint
+that may be a *symptom* of a deeper cause rather than a real limit? If so, pose
+**at most one** challenge via `AskUserQuestion` (recommended option = your better
+alternative, with the trade-off named; "Other" lets the user defend the original).
+This is bounded to **one challenge total** so the grill stays tight — pick the
+single highest-leverage disagreement. If the premise holds, proceed straight to the
+convergent grill below. This is quadrant 3 of §2.5: your asymmetric knowledge
+(codebase, docs, prior tracks) is wasted if you only transcribe what the user
+already knows. `## Out of Scope` is copied **verbatim** into the spec, so a wrong
+premise propagates unchanged — a one-question catch here is cheaper than a spec
+re-plan later. (This one challenge counts toward the tripwire's `AskUserQuestion`
+budget like any other; the `grill_complete` signal is the real gate, unaffected.)
 
 **The grill loop (one decision per iteration):**
 
@@ -139,7 +191,23 @@ The `## ` sections in `brief.md` form a tree, not a flat checklist:
 7. **Open Questions** *(depends on all above)* — honest unknowns to resolve
    *during planning* (not blockers). Many emerge from earlier answers — an
    ambiguous Goal or an unconfirmed constraint becomes an Open Question rather
-   than a guessed answer. "None identified." is a valid, honest result.
+   than a guessed answer. "None identified." is a valid, honest result. **But
+   when an unknown is decidable by an experiment** (quadrant 4 of §2.5 — a
+   shared-unknown neither party settles by reading), operationalize it rather
+   than just naming it. For each such unknown, capture:
+   - **The hypothesis** — what specifically we'd need to learn (a falsifiable
+     claim, not an open-ended "figure out X").
+   - **The minimal experiment** — the smallest action that surfaces the answer
+     (a spike, a probe, a one-file repro), not a full implementation.
+   - **The single variable** — the one thing that differs between the options
+     (if you can't name one, the experiment isn't tight enough).
+   - **The success/fail signal** — the concrete data that settles it (a timing
+     number, an error gone, a count), so planning can act on the result.
+   A brief that names its falsifiable predictions can correct itself during
+   planning; a brief that only confesses "we don't know" hands the unknown
+   forward unchanged. Unknowns that are genuinely "ask the stakeholder" (not
+   experimentally decidable) stay as plain open questions — don't fabricate an
+   experiment where the real resolution is a human decision.
 8. **Suggested Acceptance Signals** *(depends on #2)* — coarse, user-facing
    pass/fail conditions, roughly one per Goal. Recommend a draft signal per goal.
 

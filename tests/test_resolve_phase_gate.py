@@ -178,5 +178,93 @@ class BuildVerifierWaveTests(TestCase):
                          ["ac-tracer", "test-runner"])
 
 
+class TagFallbackTests(TestCase):
+    """The dispatch-side tag fallback (1A): a phase with NO ``<!-- verify: -->``
+    directive but composed of all-[Migrate] tasks (or any agreeing default_verify
+    set) resolves to that mode set — activating ``default_verify_for_phase``,
+    previously dead code. Precedence: explicit directive > tag-derived default >
+    full gate."""
+
+    def setUp(self):
+        self._dirs = []
+
+    def tearDown(self):
+        import shutil
+        for td in self._dirs:
+            shutil.rmtree(td, ignore_errors=True)
+
+    def _track(self, plan_text, shape="default"):
+        td = _track(plan_text, shape)
+        self._dirs.append(td)
+        return td
+
+    def _state(self, phases, shape="default"):
+        # resolve_phase_gate's tag fallback reads state["phases"] (the in-process
+        # task list), NOT plan.md — so the new tests must populate it (existing
+        # tests never did). phase_task_tags reads phases[phase-1]["tasks"][*]["name"].
+        return {"track_id": "test_20260731", "workflow_shape": shape,
+                "phases": phases}
+
+    def test_no_directive_falls_back_to_tag_derived_compile(self):
+        # Two [Migrate] tasks, no directive → tag-derived ["compile"] → the
+        # build-gated substitution fans out compile-runner (not test-runner).
+        td = self._track("# Plan\n\n## Phase 1: Bump deps\n"
+                         "- [ ] [Migrate] bump a\n"
+                         "- [ ] [Migrate] bump b\n")
+        state = self._state([{"tasks": [{"name": "[Migrate] bump a"},
+                                        {"name": "[Migrate] bump b"}]}])
+        gp = d.resolve_phase_gate(td, state, 1)
+        self.assertEqual(gp["verify_modes"], ["compile"])
+        self.assertEqual(gp["verifiers"], ("ac-tracer", "compile-runner"))
+
+    def test_no_directive_non_contributing_tags_yields_full_gate(self):
+        # [Config]/[Docs] tasks carry no default_verify → no contribution → []
+        # → the standard pair (fail-open to the full gate).
+        td = self._track("# Plan\n\n## Phase 1: Configure\n"
+                         "- [ ] [Config] set foo\n"
+                         "- [ ] [Docs] write bar\n")
+        state = self._state([{"tasks": [{"name": "[Config] set foo"},
+                                        {"name": "[Docs] write bar"}]}])
+        gp = d.resolve_phase_gate(td, state, 1)
+        self.assertEqual(gp["verify_modes"], [])
+        self.assertEqual(gp["verifiers"], ("ac-tracer", "test-runner"))
+
+    def test_explicit_directive_wins_over_tag_default(self):
+        # [Migrate] tasks WITH an explicit <!-- verify: test --> directive →
+        # ["test"] (explicit > tag-derived). compile-runner is NOT substituted
+        # (test is suite-gated, not build-gated).
+        td = self._track("# Plan\n\n## Phase 1: Migrate <!-- verify: test -->\n"
+                         "- [ ] [Migrate] bump a\n")
+        state = self._state([{"tasks": [{"name": "[Migrate] bump a"}]}])
+        gp = d.resolve_phase_gate(td, state, 1)
+        self.assertEqual(gp["verify_modes"], ["test"])
+        self.assertEqual(gp["verifiers"], ("ac-tracer", "test-runner"))
+
+    def test_missing_phases_fails_open(self):
+        # No "phases" key in state (a track predating it / malformed state) and
+        # no directive → [] → standard pair. Must not raise.
+        td = self._track("# Plan\n\n## Phase 1: Build\n- [ ] T\n")
+        state = {"track_id": "test_20260731", "workflow_shape": "default"}
+        gp = d.resolve_phase_gate(td, state, 1)
+        self.assertEqual(gp["verify_modes"], [])
+        self.assertEqual(gp["verifiers"], ("ac-tracer", "test-runner"))
+
+    def test_tag_fallback_threads_through_none_branch_parity(self):
+        # The Rail-B step spine (_build_verifier_wave without verifiers=) must
+        # reach the SAME tag-derived compile-runner as the Rail-A path. Pinning
+        # byte-for-byte parity: both fan out compile-runner on an all-[Migrate]
+        # phase with no directive.
+        td = self._track("# Plan\n\n## Phase 1: Bump deps\n"
+                         "- [ ] [Migrate] bump a\n")
+        state = self._state([{"tasks": [{"name": "[Migrate] bump a"}]}])
+        gp = d.resolve_phase_gate(td, state, 1)
+        wave = d._build_verifier_wave(td, state, 1)
+        # Rail-A gate plan.
+        self.assertEqual(gp["verifiers"], ("ac-tracer", "compile-runner"))
+        # Rail-B wave names match exactly.
+        self.assertEqual([m["name"] for m in wave],
+                         ["ac-tracer", "compile-runner"])
+
+
 if __name__ == "__main__":
     main()

@@ -1325,12 +1325,25 @@ def resolve_phase_gate(track_dir, state, phase):
     is unchanged — this function governs *dispatch composition*, not verdicts.
     """
     from .workflow_shapes import resolve_shape, verifiers_for
-    from .helpers import _phase_gate_group_membership
+    from .helpers import _phase_gate_group_membership, phase_task_tags
+    from .verify_mode_profiles import default_verify_for_phase
 
     shape = resolve_shape(state.get("workflow_shape"))
     # Re-derive the directive from the raw heading (the plan_parse contract —
     # verify_modes is advisory metadata re-parsed at every read, NOT persisted).
     verify_modes = _resolve_phase_verify_modes(track_dir, phase)
+    # Tag-derived fallback (explicit directive wins): a phase heading with NO
+    # <!-- verify: --> directive but composed of all-[Migrate] tasks (or any tag
+    # set whose default_verify agrees) resolves to that mode set — so the fan-out
+    # gates on the build, not the expected-red suite. Activates
+    # default_verify_for_phase, previously dead code (no production callers).
+    # Precedence is now: explicit directive > tag-derived default > full gate
+    # (the goal-derived derive_verify_modes is authoring-time only). Fail-open:
+    # no contributing tag → [] → full gate. Passing verify_modes into
+    # verifiers_for means the build-gated substitution (test-runner →
+    # compile-runner) fires automatically for a tag-derived ["compile"].
+    if not verify_modes:
+        verify_modes = default_verify_for_phase(phase_task_tags(state, phase))
     # Resolve verifiers AFTER verify_modes so the per-phase substitution in
     # verifiers_for sees the directive (a build-gated compile/none phase swaps
     # test-runner for compile-runner). The order flip is load-bearing: resolving
@@ -1373,12 +1386,21 @@ def _build_verifier_wave(track_dir, state, phase, verifiers=None):
     """
     from .workflow_shapes import resolve_shape, verifiers_for
     from .verifier_profiles import agent_for
+    from .helpers import phase_task_tags
+    from .verify_mode_profiles import default_verify_for_phase
     if verifiers is None:
         shape = resolve_shape(state.get("workflow_shape"))
         # Phase-aware: a build-gated phase swaps test-runner for compile-runner.
         # Both rails resolve the same way; this None branch is the step-spine
         # path that did not pre-resolve via resolve_phase_gate.
         verify_modes = _resolve_phase_verify_modes(track_dir, phase)
+        # Parity mirror of resolve_phase_gate's tag-fallback: an all-[Migrate]
+        # phase with NO directive fans out compile-runner here too, not
+        # test-runner. The step-spine (Rail B) must reach the same gate plan as
+        # cmd_dispatch_next (Rail A) — byte-for-byte — pinned by
+        # test_none_branch_is_phase_aware_when_verifiers_omitted.
+        if not verify_modes:
+            verify_modes = default_verify_for_phase(phase_task_tags(state, phase))
         verifiers = verifiers_for(shape, verify_modes)
     members = []
     for verifier in verifiers:
