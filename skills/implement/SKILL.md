@@ -91,11 +91,11 @@ Returns `action` enum — switch on it:
 
 ### 3.2 Action: `dispatch_phase_checker`
 
-The phase checkpoint is a **fan-out-and-synthesize**: two read-only verifier tiers run in parallel, then `conductor:phase-checker` consumes their verdicts and owns the L1 fix-and-retry + L2 + L4 + commit.
+The phase checkpoint is a **fan-out-and-synthesize**: read-only verifier tiers run in parallel, then `conductor:phase-checker` consumes their verdicts and owns the L1 fix-and-retry + L2 + L4 + commit. The verifier set is **dynamic per phase**: `ac-tracer` always, plus either `test-runner` (suite-gated phase) or `compile-runner` (build-gated `compile`/`none` phase — the build verdict substitutes for the suite verdict).
 
-**Step 1 — Fan out BOTH verifiers in ONE message:** `conductor:ac-tracer` and `conductor:test-runner`, pasting each member's **pre-assembled `prompt` field verbatim** from the action's `wave` array (built by `build_dispatch_prompt` — the single source both rails share; do NOT hand-interpolate `TRACK_DIR`/`TRACK_ID`/`PHASE_INDEX`).
+**Step 1 — Fan out the verifiers in ONE message:** `conductor:ac-tracer` and the second verifier named in the action's `wave` array (`test-runner` or `compile-runner`), pasting each member's **pre-assembled `prompt` field verbatim** (built by `build_dispatch_prompt` — the single source both rails share; do NOT hand-interpolate `TRACK_DIR`/`TRACK_ID`/`PHASE_INDEX`).
 
-**Step 2 — Parse the result blocks.** From `ac-tracer`'s `---AC TRACE RESULT---`: `VERDICT` (passed/warn/skipped/FAILED/ERROR), `GATE` (when FAILED), `N_UNGROUNDED` (when warn). From `test-runner`'s `---L1 VERIFY RESULT---`: `STATUS` (passed/failed/error), `COMMAND`.
+**Step 2 — Parse the result blocks.** From `ac-tracer`'s `---AC TRACE RESULT---`: `VERDICT` (passed/warn/skipped/FAILED/ERROR), `GATE` (when FAILED), `N_UNGROUNDED` (when warn). From the second verifier — whichever ran: if `test-runner`, its `---L1 VERIFY RESULT---` gives `STATUS`/`COMMAND` (the suite verdict); if `compile-runner`, its `---BUILD VERIFY RESULT---` gives `STATUS`/`COMMAND` (the build verdict).
 
 **Step 3 — Dispatch `conductor:phase-checker`** (canonical dispatch — §2.1, §3.5b, §3.7 reuse this fan-out+synthesize; only the `PHASE` value source differs), passing the fleet's verdicts through:
 
@@ -107,11 +107,13 @@ EXECUTION_MODE={interactive|continuous}
 AC_TRACE_VERDICT=<ac-tracer VERDICT>
 AC_TRACE_GATE=<ac-tracer GATE — include only when VERDICT is FAILED>
 AC_TRACE_N_UNGROUNDED=<ac-tracer N_UNGROUNDED — include only when VERDICT is warn>
-L1_VERIFY_STATUS=<test-runner STATUS>
-L1_VERIFY_COMMAND=<test-runner COMMAND>
+L1_VERIFY_STATUS=<test-runner STATUS — only when test-runner ran>
+L1_VERIFY_COMMAND=<test-runner COMMAND — only when test-runner ran>
+BUILD_VERIFY_STATUS=<compile-runner STATUS — only when compile-runner ran>
+BUILD_VERIFY_COMMAND=<compile-runner COMMAND — only when compile-runner ran>
 ```
 
-After return → **Section 3.6** (Phase Boundary).
+Then transcribe to `track-state phase-verdict "<td>" --ac-verdict <V> [--ac-gate <G>] [--ac-n-ungrounded <N>] {--l1-status <S> --l1-command "<CMD>" | --build-status <S> --build-command "<CMD>"}` — exactly one second-verifier ran, so exactly one of the L1/build pairs. Then → **Section 3.6** (Phase Boundary).
 
 ### 3.3 Action: `dispatch_explorer`
 

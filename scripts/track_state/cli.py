@@ -287,10 +287,15 @@ COMMAND_HELP = {
                          "(--critical/--high, transcribed from the RESULT block) for audit. Owns the §7.0 "
                          "gate-advance in code, not teleoperator prose."),
     "phase-verdict": ("phase-verdict <track-dir> --ac-verdict <passed|warn|skipped|FAILED|ERROR> "
-                      "[--ac-gate <gate>] [--ac-n-ungrounded <N>] --l1-status <passed|failed|error> --l1-command <cmd>",
-                      "Transcribe the fanned ac-tracer + test-runner verdicts to the checkpoint marker "
+                      "[--ac-gate <gate>] [--ac-n-ungrounded <N>] "
+                      "[--l1-status <passed|failed|error> --l1-command <cmd>] "
+                      "[--build-status <passed|failed|error> --build-command <cmd>]",
+                      "Transcribe the fanned verifier verdicts to the checkpoint marker "
                       "(stage=synth_pending); the next `step` emits the phase-checker synth dispatch. "
-                      "Owns the §3.2 parse→assemble step in code, not teleoperator prose."),
+                      "Pass the L1 pair (--l1-*) when test-runner ran (a suite-gated phase) OR the "
+                      "build pair (--build-*) when compile-runner ran (a build-gated compile/none phase) "
+                      "— exactly one second-verifier ran, so exactly one pair is present. Owns the "
+                      "§3.2 parse→assemble step in code, not teleoperator prose."),
     "phase-checkpoint-review": ("phase-checkpoint-review <track-dir> --status <PASSED|FAILED> [--sha <7-hex>] [--reason <text>]",
                                 "Stamp the phase checkpoint from phase-checker's STATUS (PASSED stamps + clears; "
                                 "FAILED clears → halt). Owns the §3.7 stamp/halt step in code, not teleoperator prose."),
@@ -720,7 +725,9 @@ def main():
                 flag(args, "--ac-gate"),
                 flag(args, "--ac-n-ungrounded"),
                 flag(args, "--l1-status"),
-                flag(args, "--l1-command"))
+                flag(args, "--l1-command"),
+                build_status=flag(args, "--build-status"),
+                build_command=flag(args, "--build-command"))
         elif cmd == "phase-checkpoint-review":
             cmd_phase_checkpoint_review(
                 track_dir, flag(args, "--status"),

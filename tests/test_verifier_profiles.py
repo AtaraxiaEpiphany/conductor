@@ -3,17 +3,21 @@
 The verifier axis graduated to a data-driven registry
 (``verifier-profiles.json`` + ``verifier_profiles.py``, baseline ⊕ project
 overlay) — mirroring the task-type, verify-mode, and workflow-shape registries.
-The two checkpoint verifiers (``ac-tracer``, ``test-runner``) are now registry
-rows instead of hardcoded fan-out members: ``VERIFIER_VOCAB``/``field_set_for``/
-``agent_for``/``when_to_use_for`` all derive from it, dispatch's
-``_build_verifier`` reads each row's ``field_set`` (no hardcoded
-``if agent == "test-runner"``), and ``registry-doc --verifier`` renders it.
+The checkpoint verifiers (``ac-tracer``, ``test-runner``, ``compile-runner``)
+are now registry rows instead of hardcoded fan-out members:
+``VERIFIER_VOCAB``/``field_set_for``/``agent_for``/``when_to_use_for`` all
+derive from the registry, dispatch's ``_build_verifier`` reads each row's
+``field_set`` (no hardcoded ``if agent == "test-runner"``), and
+``registry-doc --verifier`` renders it. ``compile-runner`` is the build
+verify-only tier — the mirror of test-runner fanned out on a build-gated
+(``compile``/``none``) phase instead of test-runner (see
+``workflow_shapes.verifiers_for``'s per-phase substitution).
 
 These tests pin that contract:
 
-- the registry data file exists and carries both verifiers;
-- ``VERIFIER_VOCAB``/``field_set_for``/``agent_for`` flow (test-runner adds
-  ``PHASE_INDEX``, ac-tracer does not);
+- the registry data file exists and carries all three verifiers;
+- ``VERIFIER_VOCAB``/``field_set_for``/``agent_for`` flow (test-runner AND
+  compile-runner add ``PHASE_INDEX``, ac-tracer does not);
 - the project overlay layer (``conductor/workflow/verifier-profiles.json``)
   adds/overrides a verifier with ZERO plugin edits, fail-open on malformed;
 - accessors return copies / are fail-open on unknown.
@@ -31,8 +35,8 @@ from scripts.track_state import verifier_profiles as vp
 ROOT = Path(__file__).resolve().parent.parent
 REGISTRY = ROOT / "templates" / "workflow" / "verifier-profiles.json"
 
-# The baseline verifiers the registry ships (the two that exist today).
-BASELINE_VERIFIERS = ("ac-tracer", "test-runner")
+# The baseline verifiers the registry ships.
+BASELINE_VERIFIERS = ("ac-tracer", "test-runner", "compile-runner")
 
 
 class RegistryVerifierTests(TestCase):
@@ -61,14 +65,26 @@ class RegistryVerifierTests(TestCase):
         self.assertEqual(vp.field_set_for("test-runner"),
                          ("TRACK_DIR", "TRACK_ID", "PHASE_INDEX"))
 
+    def test_compile_runner_mirrors_test_runner_field_set(self):
+        # compile-runner is the build verify-only mirror of test-runner: same
+        # field_set (TRACK_DIR/TRACK_ID/PHASE_INDEX), distinct agent, distinct
+        # when_to_use (BUILD, not suite). The build floor in the `none`/`compile`
+        # protocols reads BUILD_VERIFY_STATUS from this verifier's result block.
+        self.assertEqual(vp.field_set_for("compile-runner"),
+                         ("TRACK_DIR", "TRACK_ID", "PHASE_INDEX"))
+        self.assertEqual(vp.agent_for("compile-runner"), "compile-runner")
+        self.assertIn("build", vp.when_to_use_for("compile-runner").lower())
+
     def test_agent_for_defaults_to_name(self):
         # A verifier row's `agent` defaults to the verifier key itself.
         self.assertEqual(vp.agent_for("ac-tracer"), "ac-tracer")
         self.assertEqual(vp.agent_for("test-runner"), "test-runner")
+        self.assertEqual(vp.agent_for("compile-runner"), "compile-runner")
 
     def test_when_to_use_returns_registry_prose(self):
         self.assertIn("AC", vp.when_to_use_for("ac-tracer"))
         self.assertIn("L1", vp.when_to_use_for("test-runner"))
+        self.assertIn("BUILD", vp.when_to_use_for("compile-runner"))
 
     def test_vocab_matches_registry_keys(self):
         data = json.loads(REGISTRY.read_text(encoding="utf-8"))

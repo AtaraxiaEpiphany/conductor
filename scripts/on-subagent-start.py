@@ -68,6 +68,7 @@ AGENT_REMINDERS = {
     "phase-checker": "[Conductor] Result format: ---CHECKPOINT RESULT--- ... ---END RESULT---",
     "ac-tracer": "[Conductor] Result format: ---AC TRACE RESULT--- ... ---END RESULT---",
     "test-runner": "[Conductor] Result format: ---L1 VERIFY RESULT--- ... ---END RESULT---",
+    "compile-runner": "[Conductor] Result format: ---BUILD VERIFY RESULT--- ... ---END RESULT---",
     "corpus-writer": "[Conductor] Result format: ---DOC SYNC RESULT--- ... ---END RESULT---",
     "wiki-synthesizer": "[Conductor] Result format: ---DOC SYNC RESULT--- ... ---END RESULT---",
     "doc-linter": "[Conductor] Result format: ---DOC LINT RESULT--- ... ---END RESULT---",

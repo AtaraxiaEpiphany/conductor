@@ -56,23 +56,45 @@ class ResolvePhaseGateTests(TestCase):
         self.assertEqual(gp["verify_modes"], [])
         self.assertEqual(gp["gate_group"], {"name": None, "is_terminal": False})
 
-    def test_verify_compile_directive_is_parsed(self):
+    def test_verify_compile_directive_is_parsed_and_routes_compile_runner(self):
         # A migration phase carrying the directive → verify_modes == ["compile"].
+        # B3 (dynamic fan-out): a build-gated phase fans out compile-runner
+        # (the build verdict), NOT test-runner (the suite verdict). The
+        # directive now DOES change the fan-out — that's the whole point of the
+        # per-phase substitution in verifiers_for.
         td = self._track(
             "# Plan\n\n## Phase 1: Migrate <!-- verify: compile -->\n"
             "- [ ] [Migrate] bump <!-- AC-1 -->\n")
         gp = d.resolve_phase_gate(td, self._state(), 1)
         self.assertEqual(gp["verify_modes"], ["compile"])
-        # The directive does not change the fan-out (verifiers come from shape).
-        self.assertEqual(gp["verifiers"], ("ac-tracer", "test-runner"))
+        self.assertEqual(gp["verifiers"], ("ac-tracer", "compile-runner"))
+
+    def test_verify_none_directive_routes_compile_runner(self):
+        # A debt-carrying deps phase → fans out compile-runner so the `none`
+        # mode's build floor has a BUILD_VERIFY_STATUS to read (without it, the
+        # floor degrades to NO_GATE: skipped and the phase passes on nothing).
+        td = self._track(
+            "# Plan\n\n## Phase 1: Bump parent <!-- verify: none -->\n"
+            "- [ ] [Migrate] bump <!-- AC-1 -->\n"
+            "## Phase 2: Wire up <!-- verify: test -->\n"
+            "- [ ] [Migrate] wire <!-- AC-1 -->\n")
+        gp = d.resolve_phase_gate(td, self._state(), 1)
+        self.assertEqual(gp["verify_modes"], ["none"])
+        self.assertEqual(gp["verifiers"], ("ac-tracer", "compile-runner"))
+        # The closing phase (test) fans out the standard pair.
+        gp2 = d.resolve_phase_gate(td, self._state(), 2)
+        self.assertEqual(gp2["verify_modes"], ["test"])
+        self.assertEqual(gp2["verifiers"], ("ac-tracer", "test-runner"))
 
     def test_verify_test_start_directive_preserves_order(self):
-        # The terminal integration phase directive → test,start.
+        # The terminal integration phase directive → test,start (suite-gated,
+        # so the standard pair — no build substitution).
         td = self._track(
             "# Plan\n\n## Phase 2: Wire up <!-- verify: test,start -->\n"
             "- [ ] [Migrate] wire <!-- AC-1 -->\n")
         gp = d.resolve_phase_gate(td, self._state(), 2)
         self.assertEqual(gp["verify_modes"], ["test", "start"])
+        self.assertEqual(gp["verifiers"], ("ac-tracer", "test-runner"))
 
     def test_gate_group_terminal_membership_resolved(self):
         # A phase that is the terminal member of a gate_group → membership.
@@ -109,6 +131,19 @@ class BuildVerifierWaveTests(TestCase):
     """``_build_verifier_wave`` threads the resolved verifiers through (avoids a
     double-resolve when the caller already has the gate plan)."""
 
+    def setUp(self):
+        self._dirs = []
+
+    def tearDown(self):
+        import shutil
+        for td in self._dirs:
+            shutil.rmtree(td, ignore_errors=True)
+
+    def _track(self, plan_text, shape="default"):
+        td = _track(plan_text, shape)
+        self._dirs.append(td)
+        return td
+
     def test_passing_verifiers_thread_through(self):
         state = {"track_id": "t", "workflow_shape": "default"}
         # Pass a custom verifier tuple — the wave should use it verbatim, NOT
@@ -121,6 +156,26 @@ class BuildVerifierWaveTests(TestCase):
         state = {"track_id": "t", "workflow_shape": "default"}
         wave = d._build_verifier_wave("/td", state, 2)
         self.assertEqual([m["name"] for m in wave], ["ac-tracer", "test-runner"])
+
+    def test_none_branch_is_phase_aware_when_verifiers_omitted(self):
+        # The step/Rail-B spine calls _build_verifier_wave WITHOUT verifiers=.
+        # The None branch must be phase-aware (re-parse the directive) so a
+        # build-gated phase fans out compile-runner — byte-for-byte parity with
+        # the resolve_phase_gate path (cmd_dispatch_next).
+        td = self._track(
+            "# Plan\n\n## Phase 1: Bump parent <!-- verify: none -->\n"
+            "- [ ] [Migrate] bump <!-- AC-1 -->\n"
+            "## Phase 2: Wire up <!-- verify: test -->\n"
+            "- [ ] [Migrate] wire <!-- AC-1 -->\n")
+        state = {"track_id": "t", "workflow_shape": "default"}
+        # Phase 1 (none) → compile-runner via the None branch.
+        wave1 = d._build_verifier_wave(td, state, 1)
+        self.assertEqual([m["name"] for m in wave1],
+                         ["ac-tracer", "compile-runner"])
+        # Phase 2 (test) → standard pair via the None branch.
+        wave2 = d._build_verifier_wave(td, state, 2)
+        self.assertEqual([m["name"] for m in wave2],
+                         ["ac-tracer", "test-runner"])
 
 
 if __name__ == "__main__":

@@ -125,6 +125,84 @@ class VerifiersForTests(TestCase):
                           f"shape [{shape}] must declare its `verifiers`")
 
 
+class VerifiersForVerifyModesTests(TestCase):
+    """``verifiers_for(shape, verify_modes)`` — the per-phase dynamic seam.
+
+    A build-gated phase (directive contains ``none`` or ``compile``) wants the
+    BUILD verdict, not the suite verdict: ``test-runner`` is substituted for
+    ``compile-runner`` in place (when the shape fans out test-runner and doesn't
+    already fan out compile-runner). This is what routes a migration/deps phase
+    to compile-runner so the ``none`` mode's build floor has a verdict to read —
+    without persisting any state (the substitution is recomputed from the
+    re-parsed directive each call).
+    """
+
+    def test_no_verify_modes_is_unchanged(self):
+        # The opt-in kwarg defaults to None → byte-identical to the pre-B3 call.
+        self.assertEqual(ws.verifiers_for("default", None),
+                         ("ac-tracer", "test-runner"))
+        self.assertEqual(ws.verifiers_for("default", []),
+                         ("ac-tracer", "test-runner"))
+
+    def test_build_gated_mode_substitutes_compile_runner(self):
+        # none / compile → swap test-runner for compile-runner (build verdict).
+        self.assertEqual(ws.verifiers_for("default", ["none"]),
+                         ("ac-tracer", "compile-runner"))
+        self.assertEqual(ws.verifiers_for("default", ["compile"]),
+                         ("ac-tracer", "compile-runner"))
+
+    def test_suite_gated_mode_is_unchanged(self):
+        # test / adversarial / anchor / start alone → suite gate, no swap.
+        self.assertEqual(ws.verifiers_for("default", ["test"]),
+                         ("ac-tracer", "test-runner"))
+        self.assertEqual(ws.verifiers_for("default", ["anchor"]),
+                         ("ac-tracer", "test-runner"))
+
+    def test_compose_none_with_start_swaps(self):
+        # none,start → still build-gated (none present), start composes after.
+        r = ws.verifiers_for("default", ["none", "start"])
+        self.assertIn("compile-runner", r)
+        self.assertNotIn("test-runner", r)
+
+    def test_shape_already_declaring_compile_runner_left_alone(self):
+        # A custom shape that already fans out compile-runner is not duplicated.
+        proj = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(proj, ignore_errors=True))
+        Path(proj, "conductor", "workflow").mkdir(parents=True)
+        Path(proj, "conductor", "workflow", "workflow-shapes.json").write_text(
+            json.dumps({"shapes": {"build-only": {
+                "nodes": ["task-executor", "phase-checker"],
+                "verifiers": ["ac-tracer", "compile-runner"]}}}), encoding="utf-8")
+        os.environ["CLAUDE_PROJECT_DIR"] = proj
+        ws._load.cache_clear()
+        try:
+            r = ws.verifiers_for("build-only", ["none"])
+            self.assertEqual(r, ("ac-tracer", "compile-runner"))
+        finally:
+            os.environ.pop("CLAUDE_PROJECT_DIR", None)
+            ws._load.cache_clear()
+
+    def test_lint_only_shape_left_alone(self):
+        # A shape that declares neither test-runner nor compile-runner (e.g. a
+        # lint-only shape) is not mutated by the substitution (fail-open).
+        proj = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(proj, ignore_errors=True))
+        Path(proj, "conductor", "workflow").mkdir(parents=True)
+        Path(proj, "conductor", "workflow", "workflow-shapes.json").write_text(
+            json.dumps({"shapes": {"lint-only": {
+                "nodes": ["task-executor", "phase-checker"],
+                "verifiers": ["ac-tracer", "lint-runner"]}}}), encoding="utf-8")
+        os.environ["CLAUDE_PROJECT_DIR"] = proj
+        ws._load.cache_clear()
+        try:
+            # none directive, but test-runner isn't fanned out → no swap.
+            self.assertEqual(ws.verifiers_for("lint-only", ["none"]),
+                             ("ac-tracer", "lint-runner"))
+        finally:
+            os.environ.pop("CLAUDE_PROJECT_DIR", None)
+            ws._load.cache_clear()
+
+
 class ResolveShapeTests(TestCase):
     """resolve_shape is the fail-open chokepoint the dispatch spine reads."""
 

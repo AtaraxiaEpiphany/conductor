@@ -66,10 +66,14 @@ class RegistryShapeTests(TestCase):
         self.assertIn("frozen_anchor_pass_rate", vmp.protocol_for("anchor"))
         self.assertIn("frozen_anchor_drift_rate", vmp.protocol_for("anchor"))
         self.assertIn("no frozen anchor", vmp.protocol_for("anchor"))
-        # The debt-carrying migration mode: gates on nothing, passes on intent.
+        # The debt-carrying migration mode: the BUILD floor (green build passes,
+        # broken build fails) when compile-runner was fanned out; degrades to
+        # NO_GATE: skipped when no build verifier was fanned out.
         self.assertIn("debt-carrying phase", vmp.protocol_for("none"))
-        self.assertIn("PASSES on the operator's declared intent",
-                      vmp.protocol_for("none"))
+        self.assertIn("BUILD_VERIFY_STATUS", vmp.protocol_for("none"))
+        self.assertIn("NO_GATE: passed (build ok", vmp.protocol_for("none"))
+        self.assertIn("NO_GATE: skipped", vmp.protocol_for("none"))
+        self.assertIn("build is broken", vmp.protocol_for("none"))
 
     def test_runs_and_fix_policy_flow(self):
         self.assertEqual(vmp.runs_for("compile"), ["build"])

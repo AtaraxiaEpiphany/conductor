@@ -268,7 +268,7 @@ def nodes_for(shape: str) -> tuple[str, ...]:
     return tuple(_shape(shape).get("nodes", ()))
 
 
-def verifiers_for(shape: str) -> tuple[str, ...]:
+def verifiers_for(shape: str, verify_modes=None) -> tuple[str, ...]:
     """The ordered checkpoint-VERIFIER list a shape's checkpoint fans out.
 
     This is the **load-bearing** seam where the workflow-shape axis meets the
@@ -284,6 +284,19 @@ def verifiers_for(shape: str) -> tuple[str, ...]:
     standard ``("ac-tracer", "test-runner")`` pair (fail-open to the pre-registry
     behavior, mirroring :func:`nodes_for`'s fail-open to default). Unknown shape
     → the default shape's verifiers. Returns a tuple for stable membership.
+
+    **Per-phase substitution (the dynamic seam).** When ``verify_modes`` is
+    passed (the phase's resolved directive modes, e.g. ``["none"]`` or
+    ``["compile"]``) and contains a build-gated mode (``"none"`` or
+    ``"compile"``), a phase wants the **build** verdict, not the suite verdict.
+    If the declared set fans out ``test-runner`` but NOT ``compile-runner``,
+    substitute ``test-runner → compile-runner`` in place (preserving order). This
+    is what routes a migration/deps phase to fan out the build verifier so the
+    ``none`` mode's build floor has a verdict to read — without persisting any new
+    state (the substitution is recomputed from the re-parsed directive each call,
+    true to the six reasons ``verify_modes`` is not persisted). Idempotent: a
+    shape that already declares ``compile-runner`` is left alone; a shape that
+    declares neither test-runner nor compile-runner is left alone (fail-open).
     """
     raw = _shape(shape).get("verifiers")
     if not isinstance(raw, list) or not raw:
@@ -291,8 +304,19 @@ def verifiers_for(shape: str) -> tuple[str, ...]:
                      ("ac-tracer", "test-runner"))
     # Drop non-str / empty entries defensively (a malformed row never crashes
     # the fan-out) — the verifier registry's vocab check happens at dispatch.
-    return tuple(str(v) for v in raw if isinstance(v, str) and v) or \
+    declared = tuple(str(v) for v in raw if isinstance(v, str) and v) or \
         ("ac-tracer", "test-runner")
+    if not verify_modes:
+        return declared
+    # Dynamic substitution: a build-gated phase wants compile-runner, not
+    # test-runner. Substitute only when test-runner is fanned out AND
+    # compile-runner is not already present (don't duplicate). Leave shapes that
+    # declare neither alone (fail-open — a lint-only shape is not our concern).
+    if ("none" in verify_modes or "compile" in verify_modes) and \
+            "test-runner" in declared and "compile-runner" not in declared:
+        return tuple("compile-runner" if v == "test-runner" else v
+                     for v in declared)
+    return declared
 
 
 def verify_policy_for(shape: str) -> str:

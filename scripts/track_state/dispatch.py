@@ -1272,6 +1272,31 @@ def _build_executor(track_dir, pre, attempt):
     return "task-executor", "\n".join(lines)
 
 
+def _resolve_phase_verify_modes(track_dir, phase):
+    """Re-parse a phase's ``<!-- verify: <modes> -->`` directive from plan.md.
+
+    The single source for the directive at dispatch time (resolve_phase_gate AND
+    _build_verifier_wave's None branch both need it). verify_modes is advisory
+    metadata re-parsed at every read, NOT persisted (the plan_parse contract) —
+    so any dispatch path that resolves verifiers per-phase must re-parse it here
+    to feed verifiers_for's build-gated substitution. Returns ``[]`` on any miss
+    (no plan.md, no heading, no directive) — fail-open, never raises.
+    """
+    from . import plan_parse
+    try:
+        plan_text = (Path(track_dir) / "plan.md").read_text(encoding="utf-8")
+        m = re.search(rf"^##\s+Phase\s+{phase}\b.*$",
+                      plan_text, re.MULTILINE)
+        if m:
+            # _extract_verify scans the whole heading for the verify comment and
+            # ignores stray `verify` inside AC/TC comments.
+            modes, _has, _fails = plan_parse._extract_verify(m.group(0))
+            return modes
+    except (OSError, UnicodeDecodeError):
+        pass
+    return []
+
+
 def resolve_phase_gate(track_dir, state, phase):
     """The single dispatch-side composition of a phase's checkpoint gate plan.
 
@@ -1301,24 +1326,17 @@ def resolve_phase_gate(track_dir, state, phase):
     """
     from .workflow_shapes import resolve_shape, verifiers_for
     from .helpers import _phase_gate_group_membership
-    from . import plan_parse
 
     shape = resolve_shape(state.get("workflow_shape"))
-    verifiers = verifiers_for(shape)
     # Re-derive the directive from the raw heading (the plan_parse contract —
     # verify_modes is advisory metadata re-parsed at every read, NOT persisted).
-    verify_modes = []
-    try:
-        plan_text = (Path(track_dir) / "plan.md").read_text(encoding="utf-8")
-        m = re.search(rf"^##\s+Phase\s+{phase}\b.*$",
-                      plan_text, re.MULTILINE)
-        if m:
-            # _extract_verify expects the heading text AFTER the `## Phase N:`
-            # marker — pass the whole matched heading; it scans for the verify
-            # comment and ignores stray `verify` inside AC/TC comments.
-            verify_modes, _has, _fails = plan_parse._extract_verify(m.group(0))
-    except (OSError, UnicodeDecodeError):
-        pass
+    verify_modes = _resolve_phase_verify_modes(track_dir, phase)
+    # Resolve verifiers AFTER verify_modes so the per-phase substitution in
+    # verifiers_for sees the directive (a build-gated compile/none phase swaps
+    # test-runner for compile-runner). The order flip is load-bearing: resolving
+    # verifiers first would fan out test-runner on a `none` phase and the build
+    # floor in the none protocol would degrade to NO_GATE: skipped.
+    verifiers = verifiers_for(shape, verify_modes)
     gname, is_terminal = _phase_gate_group_membership(track_dir, phase)
     return {
         "verifiers": verifiers,
@@ -1343,7 +1361,12 @@ def _build_verifier_wave(track_dir, state, phase, verifiers=None):
 
     ``verifiers`` lets a caller that already resolved the gate plan via
     :func:`resolve_phase_gate` pass the tuple through (avoids a double-resolve);
-    when ``None`` it is resolved here.
+    when ``None`` it is resolved here — **phase-aware**, re-parsing the phase's
+    directive (via :func:`_resolve_phase_verify_modes`) so the Rail-B ``step``
+    spine (which calls without ``verifiers=``) gets the same build-gated
+    substitution the Rail-A ``cmd_dispatch_next`` path gets via
+    :func:`resolve_phase_gate`. Byte-for-byte parity between the two rails on a
+    ``none``/``compile`` phase is the point: both fan out compile-runner.
 
     Read-only verifiers run on the main checkout (no worktree pinning, unlike
     wave members). ``name`` mirrors the wave member shape (a display label).
@@ -1352,7 +1375,11 @@ def _build_verifier_wave(track_dir, state, phase, verifiers=None):
     from .verifier_profiles import agent_for
     if verifiers is None:
         shape = resolve_shape(state.get("workflow_shape"))
-        verifiers = verifiers_for(shape)
+        # Phase-aware: a build-gated phase swaps test-runner for compile-runner.
+        # Both rails resolve the same way; this None branch is the step-spine
+        # path that did not pre-resolve via resolve_phase_gate.
+        verify_modes = _resolve_phase_verify_modes(track_dir, phase)
+        verifiers = verifiers_for(shape, verify_modes)
     members = []
     for verifier in verifiers:
         agent = agent_for(verifier)
@@ -1444,6 +1471,14 @@ def _build_phase_checker(track_dir, state, phase, marker):
     lines.append(f"L1_VERIFY_STATUS={marker.get('l1_status', '')}")
     if marker.get("l1_command"):
         lines.append(f"L1_VERIFY_COMMAND={marker['l1_command']}")
+    # Build verdict — present ONLY when compile-runner was fanned out (a
+    # build-gated compile/none phase). The none mode's build floor reads this;
+    # its absence is the backward-compat signal (test-runner ran instead) and the
+    # floor degrades to NO_GATE: skipped.
+    if marker.get("build_status"):
+        lines.append(f"BUILD_VERIFY_STATUS={marker['build_status']}")
+    if marker.get("build_command"):
+        lines.append(f"BUILD_VERIFY_COMMAND={marker['build_command']}")
     return "\n".join(lines)
 
 
@@ -2446,14 +2481,27 @@ _L1_STATUSES = ("passed", "failed", "error")
 
 
 def cmd_phase_verdict(track_dir, ac_verdict, ac_gate, ac_n_ungrounded,
-                      l1_status, l1_command):
+                      l1_status=None, l1_command=None, build_status=None,
+                      build_command=None):
     """Transcribe the fanned verifier verdicts to the checkpoint marker (WM2-2).
 
-    After ``dispatch_batch`` fans ac-tracer + test-runner, the teleoperator parses
-    both RESULT blocks and runs this with ``VERDICT``/``GATE``/``N_UNGROUNDED``
-    (ac-tracer) and ``STATUS``/``COMMAND`` (test-runner). Writes
-    ``stage=synth_pending`` so the next ``step`` emits the phase-checker synth
-    dispatch (pre-assembled from the stored verdicts) instead of re-fanning.
+    After ``dispatch_batch`` fans the checkpoint verifiers, the teleoperator parses
+    the RESULT blocks and runs this with ``VERDICT``/``GATE``/``N_UNGROUNDED``
+    (ac-tracer), ``STATUS``/``COMMAND`` (test-runner, when fanned out), and
+    ``STATUS``/``COMMAND`` from compile-runner's ``---BUILD VERIFY RESULT---``
+    (when the phase is build-gated and compile-runner was fanned out instead of
+    test-runner — see :func:`workflow_shapes.verifiers_for`'s per-phase
+    substitution). Writes ``stage=synth_pending`` so the next ``step`` emits the
+    phase-checker synth dispatch (pre-assembled from the stored verdicts) instead
+    of re-fanning.
+
+    ``l1_status``/``l1_command`` and ``build_status``/``build_command`` are each
+    optional pairs: exactly one is present depending on which second verifier ran.
+    A suite-gated phase (test-runner) passes the L1 pair and omits build; a
+    build-gated ``compile``/``none`` phase (compile-runner) passes the build pair
+    and omits L1. The ``none`` protocol reads ``BUILD_VERIFY_STATUS`` when present
+    and degrades to ``NO_GATE: skipped`` when absent; the suite is always ignored
+    on a none/compile phase regardless.
 
     Validates the verdict enums (a code guard: a transcription typo HALTs with a
     clear error rather than handing the synthesizer garbage) and confirms a
@@ -2465,9 +2513,17 @@ def cmd_phase_verdict(track_dir, ac_verdict, ac_gate, ac_n_ungrounded,
         out(dict(error=f"unrecognized ac-verdict: {ac_verdict!r}", track_dir=td,
                  hint=f"one of: {', '.join(_AC_VERDICTS)} (from ---AC TRACE RESULT--- VERDICT)"))
         return
-    if l1_status not in _L1_STATUSES:
+    # l1_status optional: a build-gated phase fanned out compile-runner, not
+    # test-runner, so there is no L1 verdict to transcribe. When present it must
+    # be a known token.
+    if l1_status and l1_status not in _L1_STATUSES:
         out(dict(error=f"unrecognized l1-status: {l1_status!r}", track_dir=td,
                  hint=f"one of: {', '.join(_L1_STATUSES)} (from ---L1 VERIFY RESULT--- STATUS)"))
+        return
+    # build_status is optional — a suite-gated phase has no build verdict.
+    if build_status and build_status not in _L1_STATUSES:
+        out(dict(error=f"unrecognized build-status: {build_status!r}", track_dir=td,
+                 hint=f"one of: {', '.join(_L1_STATUSES)} (from ---BUILD VERIFY RESULT--- STATUS)"))
         return
     state, _fixes, verrors = ensure_healthy(track_dir)
     if state is None:
@@ -2486,6 +2542,8 @@ def cmd_phase_verdict(track_dir, ac_verdict, ac_gate, ac_n_ungrounded,
         "ac_n_ungrounded": ac_n_ungrounded,
         "l1_status": l1_status,
         "l1_command": l1_command or None,
+        "build_status": build_status or None,
+        "build_command": build_command or None,
     }
     _phase_cp_write_marker(track_dir, marker)
     out(dict(ok=True, phase=cp, stage="synth_pending", track_dir=td))

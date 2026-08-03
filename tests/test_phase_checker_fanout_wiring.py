@@ -105,6 +105,51 @@ class TestRunnerContractTests(TestCase):
         self.assertIn("STATUS: passed|failed|error", self.agent)
 
 
+class CompileRunnerContractTests(TestCase):
+    """``compile-runner`` is the build verify-only mirror of ``test-runner`` —
+    fanned out on a build-gated (``compile``/``none``) phase instead of
+    test-runner. Its RESULT block feeds the ``none`` mode's build floor."""
+
+    def setUp(self):
+        self.agent = (AGENTS / "compile-runner.md").read_text(encoding="utf-8")
+
+    def test_agent_exists(self):
+        self.assertTrue((AGENTS / "compile-runner.md").exists())
+
+    def test_result_block_delimiter(self):
+        # Distinct from test-runner's ---L1 VERIFY RESULT---: the synthesizer
+        # parses the BUILD verdict from this block.
+        self.assertIn("---BUILD VERIFY RESULT---", self.agent)
+
+    def test_report_field_is_build(self):
+        # The JSON carries report_field: BUILD so the synth parser keys on it.
+        self.assertIn('"report_field": "BUILD"', self.agent)
+
+    def test_is_read_only(self):
+        # Mirror of test-runner: runs the build once, no fix/edit/write.
+        tools = _frontmatter_tools(self.agent)
+        self.assertNotIn("Edit", tools)
+        self.assertNotIn("Write", tools)
+        self.assertNotIn("Agent", tools)
+
+    def test_resolves_build_command_not_test(self):
+        # The defining seam vs test-runner: resolves the BUILD (``# compile``)
+        # command, NOT the test command.
+        lower = self.agent.lower()
+        self.assertIn("build", lower)
+        self.assertIn("# compile", self.agent)
+
+    def test_runs_once_no_fix(self):
+        # Verify-only, single run, no retry — same posture as test-runner.
+        lower = self.agent.lower()
+        self.assertIn("once", lower)
+        self.assertIn("do not retry", lower)
+
+    def test_failed_build_is_not_error(self):
+        # A failing build is a real verdict (STATUS: failed), not an agent error.
+        self.assertIn("STATUS: passed|failed|error", self.agent)
+
+
 class PhaseCheckerSynthesizerTests(TestCase):
     """phase-checker is now the synthesizer — it consumes the fleet's verdicts
     rather than running the verify tiers inline."""
@@ -117,9 +162,24 @@ class PhaseCheckerSynthesizerTests(TestCase):
         self.assertIn("`L1_VERIFY_STATUS`", self.agent)
         self.assertIn("`L1_VERIFY_COMMAND`", self.agent)
 
+    def test_consumes_build_verdict_in_assignment(self):
+        # The build floor: phase-checker reads BUILD_VERIFY_STATUS/COMMAND when
+        # compile-runner was fanned out (a compile/none phase). Absent on a
+        # suite-gated phase → the none floor degrades to NO_GATE: skipped.
+        self.assertIn("`BUILD_VERIFY_STATUS`", self.agent)
+        self.assertIn("`BUILD_VERIFY_COMMAND`", self.agent)
+
     def test_names_both_verifiers(self):
         self.assertIn("conductor:ac-tracer", self.agent)
         self.assertIn("conductor:test-runner", self.agent)
+        self.assertIn("conductor:compile-runner", self.agent)
+
+    def test_documents_build_floor_for_none_mode(self):
+        # The none mode's protocol runs a build floor: green build → NO_GATE
+        # passed, broken build → FAILED. The directive loop must mention it.
+        lower = self.agent.lower()
+        self.assertIn("build floor", lower)
+        self.assertIn("none", lower)
 
     def test_result_block_has_l1_verify_and_l2_fields(self):
         # §8.0 extended so the synthesizer reports the merged fleet state.
@@ -146,34 +206,45 @@ class DispatcherWiringTests(TestCase):
         self.stop = (ROOT / "scripts" / "on-subagent-stop.py").read_text(encoding="utf-8")
         self.template = (ROOT / "templates" / "phase-checkpoint.md").read_text(encoding="utf-8")
 
-    def test_implement_fans_out_both_verifiers_in_one_message(self):
-        # §3.2 must fan out ac-tracer + test-runner in parallel, THEN dispatch
-        # phase-checker with the verdicts.
+    def test_implement_fans_out_verifiers_in_one_message(self):
+        # §3.2 must fan out the verifiers in parallel, THEN dispatch
+        # phase-checker with the verdicts. The verifier set is dynamic per
+        # phase (ac-tracer always; test-runner on a suite-gated phase OR
+        # compile-runner on a build-gated compile/none phase).
         self.assertIn("conductor:ac-tracer", self.implement)
-        self.assertIn("conductor:test-runner", self.implement)
+        self.assertIn("test-runner", self.implement)
+        self.assertIn("compile-runner", self.implement)
         self.assertIn("ONE message", self.implement)
         self.assertIn("fan-out-and-synthesize", self.implement)
-        # And pass the verdicts through to the synthesizer.
+        # And pass the verdicts through to the synthesizer — both pairs named
+        # (one ran, depending on the phase's gate).
         self.assertIn("AC_TRACE_VERDICT", self.implement)
         self.assertIn("L1_VERIFY_STATUS", self.implement)
+        self.assertIn("BUILD_VERIFY_STATUS", self.implement)
 
     def test_parallel_references_the_fanout(self):
         self.assertIn("ac-tracer", self.parallel)
         self.assertIn("test-runner", self.parallel)
 
-    def test_hooks_matchers_include_both_verifiers(self):
+    def test_hooks_matchers_include_all_verifiers(self):
+        # All three verifiers are in the SubagentStart + SubagentStop matchers
+        # so compile-runner gets the safety-floor injection + result-block
+        # recovery like the other two.
         self.assertIn("ac-tracer", self.hooks)
         self.assertIn("test-runner", self.hooks)
+        self.assertIn("compile-runner", self.hooks)
 
-    def test_start_reminders_include_both_verifiers(self):
+    def test_start_reminders_include_all_verifiers(self):
         self.assertIn('"ac-tracer"', self.start)
         self.assertIn('"test-runner"', self.start)
+        self.assertIn('"compile-runner"', self.start)
 
-    def test_stop_stdout_block_registry_includes_both_verifiers(self):
-        # Both are STDOUT_BLOCK agents (the skill needs their verdict; a missing
+    def test_stop_stdout_block_registry_includes_all_verifiers(self):
+        # All are STDOUT_BLOCK agents (the skill needs their verdict; a missing
         # block earns a recovery turn).
         self.assertIn('"ac-tracer"', self.stop)
         self.assertIn('"test-runner"', self.stop)
+        self.assertIn('"compile-runner"', self.stop)
 
     def test_template_documents_the_fanout_realization(self):
         # The project-side protocol notes that Steps 3 + 3.6 run as fanned-out

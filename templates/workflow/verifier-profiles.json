@@ -1,7 +1,7 @@
 {
-  "_comment": "Single source of truth for checkpoint VERIFIERS (the 4th axis). The task-type registry says what each node SAYS; the verify-mode registry says what each phase gate MEANS; the workflow-shape registry says the node SEQUENCE — and THIS registry says which read-only agents a checkpoint fans out and the assignment field-set each one needs. Code reads it via track_state.verifier_profiles — the dispatch fan-out (scripts/track_state/dispatch.py cmd_dispatch_next + _step_emit_dispatch_batch) iterates the resolved shape's verifiers, and _build_verifier reads each verifier's field_set to emit its assignment (NOT a hardcoded if/elif on the agent name). Adding a verifier = one row here + an agent definition, zero fan-out Python edits. A project may overlay conductor/workflow/verifier-profiles.json (opt-in by file presence) to add or override verifiers with zero plugin edits; the workflow-shape's `verifiers` field (templates/workflow/workflow-shapes.json) names which verifiers a shape fans out, by the keys here.",
+  "_comment": "Single source of truth for checkpoint VERIFIERS (the 4th axis). The task-type registry says what each node SAYS; the verify-mode registry says what each phase gate MEANS; the workflow-shape registry says the node SEQUENCE — and THIS registry says which read-only agents a checkpoint fans out and the assignment field-set each one needs. Code reads it via track_state.verifier_profiles — the dispatch fan-out (scripts/track_state/dispatch.py cmd_dispatch_next + _step_emit_dispatch_batch) iterates the resolved shape's verifiers (dynamically substituted per phase by verifiers_for when the phase is build-gated — a compile/none phase swaps test-runner for compile-runner so the build verdict, not the suite verdict, is what's fanned out), and _build_verifier reads each verifier's field_set to emit its assignment (NOT a hardcoded if/elif on the agent name). Adding a verifier = one row here + an agent definition, zero fan-out Python edits. A project may overlay conductor/workflow/verifier-profiles.json (opt-in by file presence) to add or override verifiers with zero plugin edits; the workflow-shape's `verifiers` field (templates/workflow/workflow-shapes.json) names which verifiers a shape fans out, by the keys here.",
   "_fields": {
-    "agent": "the dispatch agent name this verifier dispatches (the value in the wave member's `agent` slot). MUST match an agents/<name>.md definition. ac-tracer / test-runner today.",
+    "agent": "the dispatch agent name this verifier dispatches (the value in the wave member's `agent` slot). MUST match an agents/<name>.md definition. ac-tracer / test-runner / compile-runner today.",
     "field_set": "the ordered assignment fields _build_verifier emits for this verifier's `dispatch_batch` envelope body, drawn from shared state. Recognized tokens: TRACK_DIR (always), TRACK_ID (always), PHASE_INDEX (the checkpoint phase number — reporting-only, never a state index, per agents/test-runner.md §2.0). Each token resolves to one `KEY=value` line. Absent/unknown field_set => TRACK_DIR + TRACK_ID only (the floor every verifier gets).",
     "when_to_use": "one-line 'what this verifier checks' hint, rendered by `track-state registry-doc --verifier <name>` for human/tooling reference. Advisory."
   },
@@ -15,6 +15,11 @@
       "agent": "test-runner",
       "field_set": ["TRACK_DIR", "TRACK_ID", "PHASE_INDEX"],
       "when_to_use": "The L1 suite runner — resolves the test command from conductor/workflow/dev-commands and runs it once, returning L1_VERIFY_STATUS + L1_VERIFY_COMMAND for the phase-checker to consume. Read-only; runs on the main checkout alongside ac-tracer as the always-on checkpoint fan-out."
+    },
+    "compile-runner": {
+      "agent": "compile-runner",
+      "field_set": ["TRACK_DIR", "TRACK_ID", "PHASE_INDEX"],
+      "when_to_use": "The build verify-only tier — resolves the project's BUILD command (not the test command) from conductor/workflow/dev-commands and runs it once, returning BUILD_VERIFY_STATUS + BUILD_VERIFY_COMMAND for the phase-checker to consume. Read-only; fans out alongside ac-tracer as the build-gate verifier for compile/none phases (the mirror of test-runner for the suite gate)."
     }
   }
 }

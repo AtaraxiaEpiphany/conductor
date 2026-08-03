@@ -99,14 +99,26 @@ the coverage gate. Audit for the **dangerous direction only**:
   implementation task** → finding (these are silently dropped or lose
   traceability).
 
-### 3.4 Structure Audit
+### 3.4 Phase-Verify Directive Audit
+
+The `<!-- verify: <modes> -->` directive on a `## Phase N:` heading (plan-format-contract.md §"Phase Verify Directives") declares what "done" means for that phase — distinct from the task-level tags above. A `verify: none` phase gates on **nothing by default** (debt-carrying), which is the exact posture that can silently drop a mid-step that broke the build. This audit is the second pair of eyes on those directives (the planner's own `track-state init-from-plan --check` is the first signal). The closed mode vocabulary is in your injected `[Conductor Registry]` block (`MODE_VOCAB`) — `compile` / `test` / `start` / `adversarial` / `anchor` / `none`.
+
+For each `## Phase N:` heading, read its `<!-- verify: ... -->` directive (if any) and check:
+
+- **`none` odd-one-out (advisory → finding when risky):** a `verify: none` phase sitting among phases with explicit gates (`compile`/`test`/`anchor`) carries no gate while its siblings are explicitly gated. The debt is usually intentional (a mid-migration deps bump closed by a later phase), so the *default* is an **advisory**: "Phase N carries `verify: none` while Phases {M,…} are explicitly gated — confirm the debt is intentional and closed by a later `compile`/`test`/`start` phase; consider `verify: compile` to at least gate the build so a broken mid-step can't pass silently." Escalate to a **finding** only when the closure is also missing (next bullet) — an unclosed `none` is never merely advisory.
+- **Unclosed `none` (finding):** if `validate_verify_none_closure` would flag it — a `verify: none` phase with **no later** `compile`/`test`/`start` phase to close the debt — record a **finding**, since the debt would never be exercised and the phase passes on nothing. Suggested fix: add a closing phase with `verify: compile` or `verify: test`, or re-tag the phase `verify: compile` if it should gate the build itself. (This duplicates the `init-from-plan --check` warning at review time — a cheap second signal; the `none` mode now runs a build floor when compile-runner is fanned out, but a phase with no later closure still drops the suite debt silently.)
+- **Unknown mode (advisory):** a mode token not in `MODE_VOCAB` → **advisory** (the planner's `--check` already warned at init; surface it for the operator). An unknown mode is dropped fail-open by the resolver, so the phase falls back to the full gate — safe, just worth flagging.
+
+Keep the existing posture: under-tagged is advisory not finding; a **directive-less** phase is the safe full-gate default and is **never** a finding. The directive audit mirrors that — it only ever flags an *unclosed* `none`; a present-but-odd `none` is advisory, and a missing directive is a non-event.
+
+### 3.5 Structure Audit
 
 - spec.md: `## Requirements`, `## Acceptance Criteria`, `## Test Scenarios`
   sections present and non-empty (unless spec-less).
 - plan.md: at least one `## Phase N:` heading; every task line carries `[ ]`;
   manual-verification task appended at each phase end (tagged `[Manual]`).
 
-### 3.5 Build the Verdict
+### 3.6 Build the Verdict
 
 - **No findings** → `STATUS: APPROVED`.
 - **One or more findings** → `STATUS: CHANGES_REQUESTED` and emit every finding
