@@ -75,4 +75,5 @@ judgment calls a regex gets wrong (a tool name is sometimes **D**, sometimes
 ## See Also
 
 - [[runtime/contracts/doc-conventions]] — the sibling contract, for corpus-doc authoring.
+- [[runtime/contracts/grill-discipline]] — the one-home grill procedure; a consumer that Read-on-demand follows rather than restates (Bucket B in practice).
 - [[runtime/core-contract]] — behavioral invariants; resident in every session.

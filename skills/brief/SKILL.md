@@ -71,91 +71,31 @@ CRITICAL: Validate every tool call. On failure → halt → announce.
 ## 2.5 FOUR-QUADRANT STANCE (how to think, not what to ask)
 
 A brief is a two-party epistemic artifact — you and the user each know things the
-other doesn't, and each kind of gap closes differently. Before the §3 grill, hold
-this 2×2 (you × user × known × unknown) as your posture. Each quadrant points at
-the concrete §3 mechanism that already implements it (or that §3's premise-challenge
-pass adds):
+other doesn't, and each kind of gap closes differently. Hold the four-quadrant
+stance (the 2×2 of you × user × known × unknown) as your posture for the §3 grill.
 
-1. **SHARED-KNOWN** — goals/context/boundaries already in `$ARGUMENTS` + the §2
-   discovered docs + `product.md`/`purpose.md`/`tech-stack.md`. Do NOT re-ask. (The
-   §3 look-it-up-first rule: a fact you can read is yours to gather, never a
-   question. The decisions are the user's; the facts are yours.)
-2. **YOUR-KNOWN / USER-UNKNOWN** — context only in the user's head (the real
-   motivation, the unspoken deadline, the stakeholder who must sign off). Surface
-   at most ONE such question per grill node; if you can state a defensible
-   assumption instead, state it and ask the user to confirm. (One-question-at-a-time,
-   §3; recommendations-with-rationale, not bare interrogation.)
-3. **YOUR-UNKNOWN / USER-KNOWN** — knowledge, risks, or better paths the user may
-   NOT have considered, because you read the codebase and they didn't (yet). If a
-   stated goal, an out-of-scope, or a constraint looks **wrong** — solving the wrong
-   problem, over-constraining, or mistaking a symptom for a cause — say so directly
-   and propose the alternative with trade-offs. (The §3 premise-challenge pass. Your
-   asymmetric knowledge is wasted if you only capture what the user already knows.
-   `## Out of Scope` is copied verbatim into the spec, so a wrong premise propagates
-   unchanged — catching it at the brief is far cheaper than at spec-review.)
-4. **SHARED-UNKNOWN** — unknowns NEITHER party settles by reading (a behavior under
-   load, a third-party API's real limits, a migration's blast radius). Don't just
-   admit these under Open Questions — convert each into a testable hypothesis:
-   minimal experiment, single variable, success/fail signal, data to collect. (The
-   Open Questions node, §3; operationalized, not merely confessed.)
-
-Quadrants 1 and 2 are the brief's baseline competence (capture the known). Quadrants
-3 and 4 are where an expert collaborator earns its keep (challenge the wrong,
-operationalize the unknown). The grill below implements all four.
+**The stance, the grill loop, the premise-challenge pass, and the
+operationalize-unknowns rule are single-homed.** Before the grill, Read
+`${CLAUDE_PLUGIN_ROOT}/runtime/contracts/grill-discipline.md` **and follow it** —
+that contract is the one home; this skill does not restate the discipline (a second
+home drifts). What stays here is brief-specific: the decision tree and the
+done-signal in §3.
 
 ## 3.0 GRILL TO SHARED UNDERSTANDING
 
 > **MUST — one question at a time, via `AskUserQuestion`, no exceptions.**
-> Every decision below is posed as a **single** `AskUserQuestion` call, and you
-> **wait for the answer before posing the next one.** Never batch two decisions
-> into one prompt; never free-text a question as plain prose instead of calling
-> the tool. A `Write` to `brief.md` is denied by the `on-brief-grill-tripwire`
-> hook until every tree node is resolved (the marker is `committed:false`), so
-> skipping the grill cannot reach the write — but the grill's *quality* still
-> depends on you asking one at a time. Asking multiple questions at once is
-> bewildering; the user can't give each decision the thought it deserves.
+> Every decision is a **single** `AskUserQuestion` call; wait for the answer before
+> the next. A `Write` to `brief.md` is denied by the `on-brief-grill-tripwire` hook
+> until every tree node is resolved (the marker is `committed:false`), so skipping
+> the grill cannot reach the write — but the grill's *quality* still depends on you
+> asking one at a time. The full procedure (one-decision loop, look-it-up-first,
+> recommended-answer-first) is in the contract you Read at §2.5.
 
 Goal: reach a **shared understanding** of the track before anything is written.
-Interview the user **relentlessly but one question at a time** — never batch.
-Walk the decision tree, resolving dependencies one-by-one so each answer
-informs the next question.
-
-**Premise-challenge pass (Q3 — do this FIRST, once).** Before walking the decision
-tree, state your read of the brief's **central premise** in one sentence (the
-problem this track believes it's solving). Then ask yourself: is any premise
-**questionable** — a goal that may solve the wrong problem, an out-of-scope that
-may over-constrain (ruling out a cheaper path the user didn't see), a constraint
-that may be a *symptom* of a deeper cause rather than a real limit? If so, pose
-**at most one** challenge via `AskUserQuestion` (recommended option = your better
-alternative, with the trade-off named; "Other" lets the user defend the original).
-This is bounded to **one challenge total** so the grill stays tight — pick the
-single highest-leverage disagreement. If the premise holds, proceed straight to the
-convergent grill below. This is quadrant 3 of §2.5: your asymmetric knowledge
-(codebase, docs, prior tracks) is wasted if you only transcribe what the user
-already knows. `## Out of Scope` is copied **verbatim** into the spec, so a wrong
-premise propagates unchanged — a one-question catch here is cheaper than a spec
-re-plan later. (This one challenge counts toward the tripwire's `AskUserQuestion`
-budget like any other; the `grill_complete` signal is the real gate, unaffected.)
-
-**The grill loop (one decision per iteration):**
-
-1. **Pick the next decision** from the dependency-ordered tree below — the first
-   not yet resolved. Don't jump ahead; later questions depend on earlier ones.
-2. **Look it up before you ask.** If a fact can be found by exploring the
-   environment — reading the §2 discovered docs, `conductor/product/product.md`,
-   `conductor/design/tech-stack.md`, the codebase, or `conductor/purpose.md` —
-   look it up rather than asking. The *decisions* are the user's; the *facts*
-   are yours to gather. Never ask a question you could answer by reading.
-3. **Pose ONE question** via `AskUserQuestion`, and **provide your recommended
-   answer as the first option** (marked "(Recommended)") with a one-line
-   rationale grounded in what you read. The user confirms, corrects, or picks
-   "Other." A grilling without recommendations is just an interrogation — you
-   are an expert collaborator, not a stenographer.
-4. **Record the answer**, note any new dependency it opens (e.g. an Out-of-Scope
-   decision may raise a fresh Open Question), and loop to step 1.
-
-**Ask the questions one at a time, waiting for feedback on each before
-continuing. This is non-negotiable.**
+Per `grill-discipline.md`: run the **premise-challenge pass first (contract §4)** —
+one bounded challenge to the brief's central premise — then walk the tree below one
+question at a time (contract §3), resolving dependencies one-by-one so each answer
+informs the next.
 
 ### The decision tree (resolve top-to-bottom — parents before children)
 
@@ -191,41 +131,23 @@ The `## ` sections in `brief.md` form a tree, not a flat checklist:
 7. **Open Questions** *(depends on all above)* — honest unknowns to resolve
    *during planning* (not blockers). Many emerge from earlier answers — an
    ambiguous Goal or an unconfirmed constraint becomes an Open Question rather
-   than a guessed answer. "None identified." is a valid, honest result. **But
-   when an unknown is decidable by an experiment** (quadrant 4 of §2.5 — a
-   shared-unknown neither party settles by reading), operationalize it rather
-   than just naming it. For each such unknown, capture:
-   - **The hypothesis** — what specifically we'd need to learn (a falsifiable
-     claim, not an open-ended "figure out X").
-   - **The minimal experiment** — the smallest action that surfaces the answer
-     (a spike, a probe, a one-file repro), not a full implementation.
-   - **The single variable** — the one thing that differs between the options
-     (if you can't name one, the experiment isn't tight enough).
-   - **The success/fail signal** — the concrete data that settles it (a timing
-     number, an error gone, a count), so planning can act on the result.
-   A brief that names its falsifiable predictions can correct itself during
-   planning; a brief that only confesses "we don't know" hands the unknown
-   forward unchanged. Unknowns that are genuinely "ask the stakeholder" (not
-   experimentally decidable) stay as plain open questions — don't fabricate an
-   experiment where the real resolution is a human decision.
+   than a guessed answer. "None identified." is a valid, honest result. When an
+   unknown is decidable by an experiment (a shared-unknown neither party settles by
+   reading), **operationalize it per `grill-discipline.md` §5** rather than just
+   confessing it. Unknowns that are genuinely "ask the stakeholder" (a human
+   decision, not an experiment) stay as plain open questions — don't fabricate an
+   experiment where the real resolution is a person.
 8. **Suggested Acceptance Signals** *(depends on #2)* — coarse, user-facing
    pass/fail conditions, roughly one per Goal. Recommend a draft signal per goal.
 
-### Cadence & escape hatches
+### Cadence
 
-- **Informed, not generic.** Surface what §2 observed (e.g. *"Found
-  `conductor/design/api-specs/auth.md` — recommend treating the auth boundary
-  there as out-of-scope for this track. Confirm?"*) and let the user confirm or
-  correct. Informed questions with a recommended answer beat generic ones.
-- **Skip a branch only when it's genuinely resolved.** If the `$ARGUMENTS`
-  description plus the §2 docs already fully answer a decision, **state your
-  understanding and ask the user to confirm that one point** ("I'm reading this
-  as: the goal is X, out-of-scope is Y — correct?") rather than re-asking from
-  scratch. Do *not* silently default — a confirmation prompt is the floor, not
-  a skip.
-- **Do not write until shared understanding is reached.** The grill loop ends
-  only when every tree node is resolved-or-confirmed. Then — and only then —
-  proceed to §4. A brief written from guesses is worse than no brief.
+The generic cadence rules — informed-not-generic, skip-a-branch-only-when-resolved,
+don't-write-until-shared-understanding — live in `grill-discipline.md` §3 / §6;
+follow them. The one brief-specific note: **ground every recommended answer in what
+§2 discovered** (e.g. *"Found `conductor/design/api-specs/auth.md` — recommend
+treating the auth boundary there as out-of-scope. Confirm?"*) — the §2
+`CONTEXT_PATHS` are your look-it-up-first substrate.
 
 Consolidate the answers (and any carried-over description) into a single
 `USER_ANSWERS` block for §4, structured by the sections above, plus any
@@ -238,15 +160,11 @@ run:
 track-state brief-grill-done "<track_dir>"
 ```
 
-This sets `grill_complete: true` on the brief marker, which is the **real gate**
-the `on-brief-grill-tripwire` hook checks — NOT the raw `AskUserQuestion` count.
-The count is only a backstop, and it's a *proxy* that's wrong exactly when you
-do this well: many decisions are pre-resolved by reading docs / `$ARGUMENTS`
-(§3 step 2), so a grill done in **fewer than six** questions is legitimate.
-Signaling explicitly is how you tell the hook *"the grill is genuinely complete,
-the low count is skillful look-it-up-first, not a shortcut."* Without it, a
-well-done <6 grill is wrongly blocked. Always emit this signal after the last
-question, before the §4 Write.
+This sets `grill_complete: true` on the brief marker — the **real gate** the
+`on-brief-grill-tripwire` hook checks, not the raw `AskUserQuestion` count (contract
+§6: the count is a proxy wrong exactly when used well, so a grill done in fewer than
+six questions by look-it-up-first is legitimate). Always emit this signal after the
+last question, before the §4 Write.
 
 ## 4.0 WRITE brief.md INLINE
 

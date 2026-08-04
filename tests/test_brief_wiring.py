@@ -97,51 +97,39 @@ class BriefSkillWiringTests(TestCase):
         self.assertIn("USER_REFERENCES", txt)
 
 
-class BriefFourQuadrantTests(TestCase):
-    """The four-quadrant stance (Part 2): §2.5 preamble + §3 premise-challenge
-    pass + Open Questions operationalization. Grep-assertions mirror the existing
-    wiring-test pattern — these pin the load-bearing prose so a regression
-    (deletion or drift) is caught. Additive: the grill's structure, one-question-
-    at-a-time rule, and grill-done gate are unchanged."""
+class BriefGrillConsumerTests(TestCase):
+    """brief §2.5 + §3.0 are now a THIN CONSUMER of the single-homed grill
+    contract. The skill must point at `runtime/contracts/grill-discipline.md`
+    (Read-on-demand, like task-executor loads refactor.md) and must NOT restate
+    the discipline — a second restated home silently drifts (prose-style Bucket B).
+    What stays brief-owned is pinned here: the decision tree's anchor labels, the
+    one-question-at-a-time salience hook, and the brief-grill-done signal."""
 
-    def test_section_2_5_four_quadrant_preamble_present(self):
-        # The posture section framing the 2x2 (you x user x known x unknown),
-        # pointing each quadrant at the §3 mechanism that implements it.
+    def test_section_2_5_points_at_grill_contract(self):
+        # §2.5 keeps the brief-specific framing + a Read-on-demand pointer to the
+        # single home, rather than restating the four-quadrant stance.
         txt = _read("skills/brief/SKILL.md")
         self.assertIn("## 2.5 FOUR-QUADRANT STANCE", txt)
-        # All four quadrants named.
-        self.assertIn("SHARED-KNOWN", txt)
-        self.assertIn("YOUR-KNOWN / USER-UNKNOWN", txt)
-        self.assertIn("YOUR-UNKNOWN / USER-KNOWN", txt)
-        self.assertIn("SHARED-UNKNOWN", txt)
+        self.assertIn("runtime/contracts/grill-discipline", txt)
 
-    def test_premise_challenge_pass_present_and_bounded(self):
-        # §3's premise-challenge (Q3): pose at most ONE challenge before the
-        # convergent grill. Must be bounded (one challenge total) so the grill
-        # stays tight, and must name the Out-of-Scope verbatim propagation as
-        # the reason catching it early is high-leverage.
+    def test_brief_does_not_restate_grill_discipline(self):
+        # The canonical label set lives in the contract, NOT in the skill —
+        # restating it here recreates the drift surface the extraction closed.
         txt = _read("skills/brief/SKILL.md")
-        self.assertIn("Premise-challenge pass", txt)
-        self.assertIn("questionable", txt)  # the trigger condition
-        self.assertIn("at most one", txt.lower())  # bounded
-        self.assertIn("verbatim", txt)  # why early catch matters
+        self.assertNotIn("SHARED-KNOWN", txt)
 
-    def test_open_questions_operationalized(self):
-        # Q4: a shared-unknown decidable by experiment is operationalized
-        # (hypothesis / minimal experiment / single variable / success-fail
-        # signal) rather than merely confessed. "None identified." stays valid.
+    def test_brief_keeps_its_decision_tree(self):
+        # The 8-node tree is brief-owned and stays; only generic grill *rules*
+        # moved out. Node labels must remain as anchors the writer fills.
         txt = _read("skills/brief/SKILL.md")
-        self.assertIn("operationalize", txt)
-        self.assertIn("hypothesis", txt.lower())
-        self.assertIn("single variable", txt.lower())
-        self.assertIn("success/fail signal", txt.lower())
-        self.assertIn("None identified.", txt)  # still a valid honest result
+        self.assertIn("Out of Scope", txt)
+        self.assertIn("Acceptance Signals", txt)
+        self.assertIn("None identified.", txt)  # honest-empty still valid
 
     def test_grill_one_at_a_time_rule_preserved(self):
-        # Regression guard: the four-quadrant additions must NOT weaken the
-        # one-question-at-a-time rule or the grill-done gate. The premise-
-        # challenge is ONE AskUserQuestion (counts toward the budget like any
-        # other); grill_complete is still the real gate.
+        # Regression guard: the consumer refactor must NOT weaken the
+        # one-question-at-a-time rule or the grill-done gate. grill_complete is
+        # still the real gate (contract §6).
         txt = _read("skills/brief/SKILL.md")
         self.assertIn("brief-grill-done", txt)
         self.assertIn("grill_complete", txt)
