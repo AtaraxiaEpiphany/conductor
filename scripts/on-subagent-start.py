@@ -316,10 +316,12 @@ def _tag_summary_rows():
 def _mode_summary_lines():
     """One summary line per registered verify-mode: ``mode: runs -> report_field``.
 
-    Surfaces the ``max_fix_attempts`` cap alongside ``fix-and-retry`` so the cap
-    is visible at dispatch (no-silent-caps: a stop-on-budget or retry cap is
-    disclosed, never silently applied — mirrors the wave scheduler's
-    ``ineligible`` disclosure pattern).
+    Each line also carries the mode's one-line ``when_to_use`` hint (mirrors the
+    tag side) so the rare hand-authoring case picks correctly, and surfaces the
+    ``max_fix_attempts`` cap alongside ``fix-and-retry`` so the cap is visible at
+    dispatch (no-silent-caps: a stop-on-budget or retry cap is disclosed, never
+    silently applied — mirrors the wave scheduler's ``ineligible`` disclosure
+    pattern).
     """
     from track_state import verify_mode_profiles as vmp
     lines = []
@@ -340,7 +342,12 @@ def _mode_summary_lines():
         if prof.get("carries_debt"):
             mflags.append("carries-debt")
         mflagstr = f" [{', '.join(mflags)}]" if mflags else ""
-        lines.append(f"  - {mode}: {runs}{fieldstr}{fixstr}{mflagstr}")
+        # Surface the mode's one-line `when_to_use` so the (now-rare) hand-authoring
+        # case — adversarial, the one mode a goal cannot signal — picks correctly.
+        # Mirrors the tag side's `when_to_use_for(tag)` hint above.
+        hint = vmp.when_to_use_for(mode)
+        hintstr = f" — {hint}" if hint else ""
+        lines.append(f"  - {mode}: {runs}{fieldstr}{fixstr}{mflagstr}{hintstr}")
     return lines
 
 
