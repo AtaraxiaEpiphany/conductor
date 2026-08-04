@@ -21,6 +21,7 @@ Load-bearing invariants:
 import sys
 from pathlib import Path
 from unittest import TestCase, main
+from unittest.mock import patch
 
 _scripts = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(_scripts))
@@ -170,6 +171,52 @@ class DeriveVerifyModesDebtCarrying(TestCase):
             vmp.derive_verify_modes("Migrate source, wire up, and boot the app"),
             ["test", "start"],
         )
+
+
+class DeriveVerifyModesVocabFilter(TestCase):
+    """Every proposed mode is validated against the resolved ``MODE_VOCAB``.
+
+    This closes the asymmetry the docstring advertised but the code didn't
+    enforce: ``default_verify_for`` (the tag-derived path) filtered its proposals
+    against ``MODE_VOCAB``, while ``derive_verify_modes`` returned bare literals.
+    An overlay that *removed* a mode (dropped ``none`` or ``anchor``) would have
+    let the resolver propose a mode the parser then warns on. Each list-returning
+    branch now routes through ``_filter_to_vocab``.
+    """
+
+    def test_shipped_vocab_proposals_pass_through(self):
+        """Against the shipped vocab, every branch's proposal is unchanged — the
+        filter is pure additive safety with no behavior change for the baseline."""
+        self.assertEqual(vmp.derive_verify_modes("Boot the app"), ["test", "start"])
+        self.assertEqual(
+            vmp.derive_verify_modes("Refactor against the frozen anchor"), ["anchor"],
+        )
+        self.assertEqual(vmp.derive_verify_modes("Bump the spring-boot parent"), ["none"])
+        self.assertEqual(vmp.derive_verify_modes("Migrate and make it build"), ["compile"])
+
+    def test_none_dropped_from_vocab_proposes_empty(self):
+        """An overlay that removed ``none`` must not have the resolver propose it
+        — the debt-carry phase falls back to the default full gate ([]) instead."""
+        surviving = ("compile", "test", "start", "adversarial", "anchor")
+        with patch.object(vmp, "MODE_VOCAB", return_value=surviving):
+            self.assertEqual(vmp.derive_verify_modes("Bump the spring-boot parent"), [])
+
+    def test_anchor_dropped_from_vocab_proposes_empty(self):
+        """Same guarantee for ``anchor``: removed from the vocab → the
+        refactor-with-anchor branch yields [] rather than a stale literal."""
+        surviving = ("compile", "test", "start", "adversarial", "none")
+        with patch.object(vmp, "MODE_VOCAB", return_value=surviving):
+            self.assertEqual(
+                vmp.derive_verify_modes("Refactor against the frozen anchor"), [],
+            )
+
+    def test_compile_and_start_partial_drop(self):
+        """If the vocab drops ONE member of a multi-mode proposal, only the
+        survivor is returned (no whole-list collapse). Drop ``start``: the
+        boot phase proposes ``["test"]``, not ``["test","start"]`` or ``[]``."""
+        with patch.object(vmp, "MODE_VOCAB",
+                          return_value=("compile", "test", "adversarial", "anchor", "none")):
+            self.assertEqual(vmp.derive_verify_modes("Boot the app"), ["test"])
 
 
 class DeriveVerifyModesFailOpen(TestCase):

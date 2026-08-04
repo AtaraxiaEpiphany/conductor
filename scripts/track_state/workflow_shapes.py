@@ -312,7 +312,11 @@ def verifiers_for(shape: str, verify_modes=None) -> tuple[str, ...]:
     # test-runner. Substitute only when test-runner is fanned out AND
     # compile-runner is not already present (don't duplicate). Leave shapes that
     # declare neither alone (fail-open — a lint-only shape is not our concern).
-    if ("none" in verify_modes or "compile" in verify_modes) and \
+    # build-gated-ness is read from the registry (is_build_gated), not a bare
+    # 'none'/'compile' literal, so an overlay mode that also gates on a build
+    # floor joins the substitution with zero code edits.
+    from . import verify_mode_profiles as vmp
+    if any(vmp.is_build_gated(m) for m in verify_modes) and \
             "test-runner" in declared and "compile-runner" not in declared:
         return tuple("compile-runner" if v == "test-runner" else v
                      for v in declared)

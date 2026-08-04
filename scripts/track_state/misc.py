@@ -1526,6 +1526,49 @@ def cmd_registry_doc(tag=None, mode=None, shape=None, verifier=None):
           "`verifiers` list — zero plugin edits beyond the agent definition.")
 
 
+def cmd_resolve_phase_verify(goal=None, tags=None, explicit=None):
+    """Resolve a phase-verify directive from free-text inputs the planner has.
+
+    The deterministic, registry-aware replacement for the prose ladder the
+    ``spec-planner`` used to re-encode by hand. This is a thin stdin/stdout
+    adapter over :func:`verify_mode_profiles.resolve_phase_verify_modes`, which
+    composes the EXACT precedence the contract states (no new resolution logic
+    is invented here — only exposed):
+
+    1. **Explicit wins** — an operator-authored directive carried verbatim across
+       a retry is passed straight through (``--explicit``).
+    2. **Goal-derived default** — :func:`derive_verify_modes(goal)` classifies the
+       phase goal text (boots → test,start; refactor+frozen anchor → anchor; a
+       pure deps bump → none; migration that compiles → compile; else []).
+    3. **Tag-derived default** — only when the goal classifier returned [] do we
+       fall back to :func:`default_verify_for_phase(tags)` (the task-type's
+       ``default_verify`` field, e.g. Migrate → compile).
+    4. **Full gate** — no modes resolved → no directive (the default full gate).
+
+    Both resolution seams — this CLI and ``init-from-plan``'s missing-directive
+    injector — call that shared core, so the precedence lives in exactly one
+    place and cannot drift between them. The core is pure and fail-open (any
+    error → ``[]``); this wrapper adds only a final belt-and-braces ``except``.
+
+    Strictly read-only — no track-dir, no writes (same posture as
+    :func:`cmd_registry_doc`). Consumed by ``track-state resolve-phase-verify``.
+    """
+    try:
+        from . import verify_mode_profiles as vmp
+        tag_list = None
+        if tags:
+            tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+        modes, _src = vmp.resolve_phase_verify_modes(goal=goal, tags=tag_list, explicit=explicit)
+        if modes:
+            print("verify: " + ",".join(modes))
+        else:
+            print("(no directive — default full gate)")
+    except Exception:
+        # Fail-open: any error → the safe full gate, never a raised exception
+        # into the planner's one-shot CLI call.
+        print("(no directive — default full gate)")
+
+
 def cmd_record_summary(track_dir):
     """Record a compact task summary for context recovery after compaction."""
     summaries_path = conductor_dir(track_dir) / "task-summaries.json"

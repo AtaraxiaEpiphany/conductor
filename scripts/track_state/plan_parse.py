@@ -583,6 +583,70 @@ def parse_plan(plan_path):
     return {"phases": phases, "errors": errors, "warnings": warnings}
 
 
+def inject_missing_directives(plan_path, parsed):
+    """Resolve and write any phase-verify directives the planner left absent.
+
+    The ``spec-planner`` agent has no Bash (``tools: Read, Write, Grep, Glob,
+    Edit``), so it cannot run the deterministic resolver itself. Rather than grant
+    it Bash or have it re-encode the resolution as a prose ladder, ``init-from-plan``
+    calls this on the **init path only** (not ``--check``): for every phase whose
+    heading carries NO ``<!-- verify: … -->`` comment, it resolves the directive via
+    :func:`verify_mode_profiles.resolve_phase_verify_modes` (explicit > goal-derived
+    > tag-derived > full gate) and appends the directive to that heading line in
+    plan.md. Phases the planner already authored a directive for are left untouched
+    (explicit wins).
+
+    Idempotent: a re-run finds every phase already carrying a comment and writes
+    nothing. The full-gate outcome (no directive) writes nothing either — the
+    absence of a directive IS the full-gate signal, so emitting an empty directive
+    would be noise. Returns the list of injections (for advisory logging) — each
+    ``{"phase": int, "line": int, "modes": [..], "source": str}``.
+
+    Pure resolution is delegated to the shared composer, so this injector and the
+    ``track-state resolve-phase-verify`` CLI cannot drift on precedence.
+    """
+    from . import verify_mode_profiles as vmp
+    from .helpers import phase_task_tags
+
+    text = Path(plan_path).read_text()
+    lines = text.splitlines()
+    injections = []
+    changed = False
+
+    for ph in parsed["phases"]:
+        # A phase the planner already authored a directive for is explicit — skip.
+        if ph.get("verify_has_comment"):
+            continue
+        goal = ph.get("name") or ""
+        tags = phase_task_tags(parsed, ph["number"])
+        modes, source = vmp.resolve_phase_verify_modes(goal=goal, tags=tags)
+        if not modes:
+            # Full gate — the absence of a directive is the signal; write nothing.
+            continue
+        lineno = ph["line"]
+        # Defensive: the parsed line number must land on the heading we recorded.
+        if not (1 <= lineno <= len(lines)):
+            continue
+        directive = f" <!-- verify: {','.join(modes)} -->"
+        # Guard against a malformed plan where the heading moved between parse and
+        # write (shouldn't happen in one shot, but never corrupt a line silently).
+        if directive in lines[lineno - 1]:
+            continue
+        lines[lineno - 1] = lines[lineno - 1].rstrip() + directive
+        injections.append({"phase": ph["number"], "line": lineno,
+                           "modes": list(modes), "source": source})
+        changed = True
+
+    if changed:
+        # Preserve the trailing newline shape read_text() saw.
+        new_text = "\n".join(lines)
+        if text.endswith("\n"):
+            new_text += "\n"
+        Path(plan_path).write_text(new_text)
+
+    return injections
+
+
 def to_plan_structure(parsed):
     """Convert parse_plan() output → PLAN_STRUCTURE dict for _init_core.
 
@@ -822,10 +886,16 @@ def validate_verify_none_closure(parsed):
     """
     issues = []
     phases = parsed.get("phases", [])
-    CLOSING_MODES = {"compile", "test", "start"}
+    # Closing/debt mode sets are read from the registry, not bare literals, so
+    # an overlay mode that closes debt (or carries it) joins this guard with
+    # zero code edits. Falls back to the empty set if the registry is absent
+    # (no closing/debt modes => the guard never fires, matching fail-open).
+    from . import verify_mode_profiles as vmp
+    CLOSING_MODES = set(vmp.closing_modes())
+    DEBT_MODES = set(vmp.debt_modes())
 
     for i, ph in enumerate(phases):
-        if ph.get("verify_modes") != ["none"]:
+        if not (set(ph.get("verify_modes") or []) & DEBT_MODES):
             continue
         # Does any strictly-later phase carry a closing gate?
         later_modes = [set(p.get("verify_modes") or []) for p in phases[i + 1:]]
@@ -835,10 +905,13 @@ def validate_verify_none_closure(parsed):
             hint = ("it is the last phase"
                     if kind == "none_unclosed_terminal"
                     else "every later phase is also verify: none")
+            # Name the concrete closing modes for the operator; fall back to the
+            # generic phrase if the registry's set is somehow empty.
+            closing_names = "/".join(sorted(CLOSING_MODES)) or "a debt-closing"
             issues.append({
                 "kind": kind, "at": f"Phase {ph['number']}",
                 "detail": f"verify: none phase is never closed by a later "
-                          f"compile/test/start phase ({hint}) — the debt it "
+                          f"{closing_names} phase ({hint}) — the debt it "
                           f"stages would never be exercised at a gate"})
     return issues
 

@@ -13,7 +13,7 @@ from .helpers import out, now_iso, conductor_dir, _reset_task, _resolve_conducto
 from .constants import EXECUTION_MODES
 from .handoff import _ensure_handoff_index
 from .validate import _parse_plan_structure
-from .plan_parse import parse_plan, to_plan_structure
+from .plan_parse import parse_plan, to_plan_structure, inject_missing_directives
 from .task_profiles import derive_task_type
 
 
@@ -332,6 +332,24 @@ def cmd_init_from_plan(track_dir, track_id, track_type, description,
         out(result)
         return
 
+    # --check is a pure read: it reports the directives as-authored on disk and
+    # never mutates plan.md. Directive injection happens only on the init path
+    # below, so an operator running ``init-from-plan --check`` sees exactly what
+    # the planner wrote (and what the resolver *would* inject, surfaced as
+    # ``would_inject``), not a half-mutated file.
+    injected = []
+    if not check:
+        # The spec-planner agent has no Bash, so it writes phase goals and MAY
+        # omit directives; this resolves them deterministically (explicit >
+        # goal-derived > tag-derived > full gate) and rewrites plan.md. A phase
+        # the planner already authored a directive for is left untouched.
+        # Re-parse so the structure written into track-state.json reflects the
+        # resolved directives (verifiers_for / phase-checker read these at dispatch).
+        injected = inject_missing_directives(plan_path, parsed)
+        if injected:
+            parsed = parse_plan(plan_path)
+            plan_warnings = list(parsed["warnings"])
+
     structure = to_plan_structure(parsed)
     phase_count = len(structure["phases"])
     task_count = sum(len(p["tasks"]) for p in structure["phases"])
@@ -351,6 +369,11 @@ def cmd_init_from_plan(track_dir, track_id, track_type, description,
     # pass; the only advisory notes are plan-syntax warnings from parse_plan.
     if plan_warnings and result.get("ok"):
         result["plan_warnings"] = plan_warnings
+    if injected and result.get("ok"):
+        # Surface what the resolver added so the operator can audit/override by
+        # editing plan.md (the directive is advisory — the generator proposes,
+        # init-from-plan disposes, the operator can correct).
+        result["injected_directives"] = injected
     out(result)
 
 

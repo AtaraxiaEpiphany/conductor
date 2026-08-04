@@ -81,12 +81,9 @@ For every requirement under `## Requirements` (functional and non-functional):
 
 ### 3.3 Plan Audit (dispatch-tag correctness)
 
-Tags (`[Explore]`/`[Docs]`/`[Config]`/`[Chore]`/`[Manual]`/`[Migrate]`) are
-**TDD exemptions** — a wrong tag silently skips the Red→Green→Refactor cycle and
-the coverage gate. Audit for the **dangerous direction only**:
+A task tag whose resolved registry profile is `tdd_exempt` is a **TDD exemption** — a wrong tag silently skips the Red→Green→Refactor cycle and the coverage gate. The closed tag set lives in your injected `[Conductor Registry]` block (`TAG_VOCAB`); do not enumerate it here. Audit for the **dangerous direction only**:
 
-- **Over-tagged (finding — must fix):** a task tagged `[Docs]`/`[Config]`/
-  `[Chore]`/`[Migrate]` whose description or `<!-- AC-n -->` refs name business
+- **Over-tagged (finding — must fix):** a task tagged with an exemption tag (a `tdd_exempt` tag — e.g. `[Docs]` for a no-code edit) whose description or `<!-- AC-n -->` refs name business
   logic/behavior it must implement → the exemption is wrong, the task needs full
   TDD. Record as a finding with the suggested fix (drop the tag).
 - **Under-tagged (advisory only — NOT a finding):** a task that looks
@@ -101,7 +98,7 @@ the coverage gate. Audit for the **dangerous direction only**:
 
 ### 3.4 Phase-Verify Directive Audit
 
-The `<!-- verify: <modes> -->` directive on a `## Phase N:` heading (plan-format-contract.md §"Phase Verify Directives") declares what "done" means for that phase — distinct from the task-level tags above. A `verify: none` phase gates on **nothing by default** (debt-carrying), which is the exact posture that can silently drop a mid-step that broke the build. This audit is the second pair of eyes on those directives (the planner's own `track-state init-from-plan --check` is the first signal). The closed mode vocabulary is in your injected `[Conductor Registry]` block (`MODE_VOCAB`) — `compile` / `test` / `start` / `adversarial` / `anchor` / `none`.
+The `<!-- verify: <modes> -->` directive on a `## Phase N:` heading (plan-format-contract.md §"Phase Verify Directives") declares what "done" means for that phase — distinct from the task-level tags above. A `verify: none` phase gates on **nothing by default** (debt-carrying), which is the exact posture that can silently drop a mid-step that broke the build. This audit is the second pair of eyes on those directives (the planner's own `track-state init-from-plan --check` is the first signal). The closed mode vocabulary lives in your injected `[Conductor Registry]` block (`MODE_VOCAB`) — do not enumerate it here; consult the block for the resolved set.
 
 For each `## Phase N:` heading, read its `<!-- verify: ... -->` directive (if any) and check:
 

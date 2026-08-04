@@ -69,9 +69,10 @@ class TagTableDriftTests(TestCase):
                 "| `[Migrate]` | migration |\n"
             )
             r = _run()
-        # sys.exit(msg) writes the HALT message to stderr.
+        # sys.exit(msg) writes the HALT message to stderr. The finding message
+        # names the kind + literal; the HALT banner is the same across detectors.
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
-        self.assertIn("duplicates registry data", r.stderr)
+        self.assertIn("enumerated as a table row", r.stderr)
         self.assertIn("[Explore]", r.stderr)
         self.assertIn("[Migrate]", r.stderr)
 
@@ -86,7 +87,7 @@ class ModeTableDriftTests(TestCase):
             )
             r = _run()
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
-        self.assertIn("duplicates registry data", r.stderr)
+        self.assertIn("enumerated as a table row", r.stderr)
         self.assertIn("compile", r.stderr)
         self.assertIn("anchor", r.stderr)
 
@@ -104,7 +105,7 @@ class VerifierTableDriftTests(TestCase):
             )
             r = _run()
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
-        self.assertIn("duplicates registry data", r.stderr)
+        self.assertIn("enumerated as a table row", r.stderr)
         self.assertIn("ac-tracer", r.stderr)
         self.assertIn("test-runner", r.stderr)
 

@@ -368,14 +368,22 @@ class AuthoringResolutionTests(TestCase):
         self.assertIn("none", goal_step.lower())
 
     def test_planner_documents_resolution_procedure(self):
-        # The planner must carry the 4-step procedure, not just the old
-        # hand-authored "emit verify: compile on migrations" heuristic.
-        self.assertIn("resolve", SPEC_PLANNER.lower())
-        self.assertIn("Tag-derived default", SPEC_PLANNER)
-        self.assertIn("Goal-derived default", SPEC_PLANNER)
-        # The goal-derived step must list `none` as a reachable outcome.
-        goal_step = SPEC_PLANNER.split("Goal-derived default", 1)[1]
-        self.assertIn("none", goal_step.lower())
+        # Option A (approved): the planner has NO Bash, so it does NOT call the
+        # resolver — it authors the phase goal and MAY omit the directive; init-
+        # from-plan resolves any directive-less heading at load by the contract
+        # precedence. The planner must document THIS (not a re-encoded 4-step
+        # ladder, which is the drift liability the collapse removed).
+        self.assertIn("init-from-plan", SPEC_PLANNER)
+        # The contract precedence must be stated (explicit > goal > tag > gate).
+        self.assertIn("explicit > goal-derived > tag-derived > full gate",
+                      SPEC_PLANNER)
+        # The planner controls the ONE input the resolver keys on: the phase goal.
+        self.assertIn("name the intent", SPEC_PLANNER.lower())
+        self.assertIn("phase goal", SPEC_PLANNER.lower())
+        # A verify: none outcome is reachable from the goal classifier (debt) —
+        # the planner must acknowledge it can be produced, not pretend only
+        # compile/test/start exist.
+        self.assertIn("none", SPEC_PLANNER.lower())
 
     def test_planner_documents_none_must_be_closed(self):
         # A verify: none phase is debt-carrying and must be followed by a closing

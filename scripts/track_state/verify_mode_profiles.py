@@ -329,6 +329,43 @@ def phase_workflow_for(mode: str) -> str:
     return _profile(mode).get("phase_workflow", "")
 
 
+def is_build_gated(mode: str) -> bool:
+    """True iff this mode gates on a BUILD floor (compile/none today).
+
+    The data-driven form of the bare ``"none" in modes or "compile" in modes``
+    check that ``workflow_shapes.verifiers_for`` used to hardcode — a mode that
+    fans out ``compile-runner`` (instead of / in addition to ``test-runner``)
+    declares ``build_gated: true`` here, so an overlay mode that should also
+    gate on a build joins the substitution with zero code edits. Absent on a
+    row => ``False`` (the default; most modes are test-gated, not build-gated).
+    """
+    return bool(_profile(mode).get("build_gated", False))
+
+
+def closing_modes() -> list[str]:
+    """Modes that CLOSE a debt-carrying ``none`` phase (compile/test/start today).
+
+    The data-driven form of the hardcoded ``{"compile", "test", "start"}`` literal
+    set in ``plan_parse.validate_verify_none_closure``. A mode that can discharge
+    deferred-red debt declares ``closes_debt: true``; an overlay mode joining this
+    set participates in the "a none phase must be closed by a later phase" guard
+    with zero code edits. Returns registry-order modes (stable across runs).
+    """
+    return [m for m in MODE_VOCAB() if _profile(m).get("closes_debt", False)]
+
+
+def debt_modes() -> list[str]:
+    """Modes that CARRY debt (``none`` today).
+
+    The data-driven form of the bare ``verify_modes == ["none"]`` check in
+    ``plan_parse.validate_verify_none_closure``. A mode that defers verification
+    (gates on nothing but a build floor) declares ``carries_debt: true``; an
+    overlay debt mode joins the "is this phase a debt phase" test with zero code
+    edits. Returns registry-order modes (stable across runs).
+    """
+    return [m for m in MODE_VOCAB() if _profile(m).get("carries_debt", False)]
+
+
 def _mode_signals(mode: str) -> list[str]:
     """Lowercased keyword signals for a mode, derived from its ``when_to_use``.
 
@@ -361,6 +398,21 @@ def _any_in(text: str, signals: tuple[str, ...]) -> bool:
     regex lookbehind at its call site, not here.
     """
     return any(s in text for s in signals)
+
+
+def _filter_to_vocab(modes: list[str]) -> list[str]:
+    """Drop any mode not in the resolved :func:`MODE_VOCAB`.
+
+    The symmetric guarantee :func:`default_verify_for` already makes at
+    ``task_profiles.py``: a proposed mode is only ever returned if the resolved
+    vocab (plugin-baseline ⊕ project-overlay) actually contains it. This makes an
+    overlay that *removed* a mode (e.g. dropped ``none`` or ``anchor``) safe — the
+    resolver will not propose a mode the parser will then warn on. No reordering,
+    no dedupe (the inputs are already small, ordered literals); pure membership
+    filtering against the live vocab.
+    """
+    vocab = set(MODE_VOCAB())
+    return [m for m in modes if m in vocab]
 
 
 def derive_verify_modes(phase_goal: str) -> list[str]:
@@ -420,7 +472,7 @@ def derive_verify_modes(phase_goal: str) -> list[str]:
             "start the app", "starts the app", "run the app",
             "boot smoke", "startup stack trace",
         )):
-            return ["test", "start"]
+            return _filter_to_vocab(["test", "start"])
 
         # Refactor with a frozen anchor: the suite is in flux, the pinned
         # subset is the safety net. Requires BOTH a refactor intent and an
@@ -431,7 +483,7 @@ def derive_verify_modes(phase_goal: str) -> list[str]:
         anchor_signals = ("anchor", "frozen", "pinned", "subset", "regression set",
                           "counter-anchor", "goodhart")
         if (_any_in(text, refactor_signals) and _any_in(text, anchor_signals)):
-            return ["anchor"]
+            return _filter_to_vocab(["anchor"])
 
         # Debt-carrying intermediate: a pure dependency/version mutation that
         # does NOT aim to compile or pass the suite this phase — it carries the
@@ -462,7 +514,7 @@ def derive_verify_modes(phase_goal: str) -> list[str]:
         if (_any_in(text, debt_carry_signals)
                 and not _any_in(text, compile_signals)
                 and not _any_in(text, suite_green_signals)):
-            return ["none"]
+            return _filter_to_vocab(["none"])
 
         # Migration intermediate: it compiles. The suite is expected red, so the
         # build — NOT the suite — is the gate. "compile"/"build" without a boot
@@ -471,7 +523,7 @@ def derive_verify_modes(phase_goal: str) -> list[str]:
                              "jakarta", "framework version", "deprecation",
                              "major dependency", "spring boot")
         if _any_in(text, compile_signals):
-            return ["compile"]
+            return _filter_to_vocab(["compile"])
         # A migration goal WITHOUT an explicit compile/boot word: the safest
         # intermediate-phase proposal is still compile (the suite is red), but
         # only if the goal reads as an *intermediate* migration step, not the
@@ -479,7 +531,7 @@ def derive_verify_modes(phase_goal: str) -> list[str]:
         # goal does NOT promise a green suite ("tests pass"/"green"/"suite").
         if (_any_in(text, migration_signals)
                 and not _any_in(text, suite_green_signals)):
-            return ["compile"]
+            return _filter_to_vocab(["compile"])
 
         # Default: feature work, or a migration's final "tests pass" phase → the
         # full gate. Emitting [] (no directive) is the correct, safe outcome.
@@ -495,10 +547,9 @@ def default_verify_for_phase(task_tags: list[str]) -> list[str]:
     phase's *goal text*, this one reads the phase's *task tags*. For each
     top-level task tag it pulls that tag's ``default_verify``
     (:func:`task_profiles.default_verify_for`) and reduces the set across the
-    phase. spec-planner composes the two at authoring time — see the precedence
-    in ``plan-format-contract.md`` §"Phase Verify Directives → Default source":
-    explicit directive > this tag-derived default > goal-derived
-    :func:`derive_verify_modes` > full gate.
+    phase. The precedence (see :func:`resolve_phase_verify_modes`, the single
+    composer) is: explicit directive > goal-derived
+    :func:`derive_verify_modes` > this tag-derived fallback > full gate.
 
     Reduction rules:
     * **No tag contributes** (every tag's ``default_verify`` is empty) → ``[]``.
@@ -550,4 +601,51 @@ def default_verify_for_phase(task_tags: list[str]) -> list[str]:
         return out
     except Exception:
         return []
+
+
+def resolve_phase_verify_modes(goal=None, tags=None, explicit=None):
+    """The single phase-verify directive composer — one precedence, two callers.
+
+    Both ``track-state resolve-phase-verify`` (the planner-facing CLI) and
+    ``init-from-plan``'s missing-directive injector call THIS, so the precedence
+    lives in exactly one place and cannot drift between the two seams. The
+    resolution order (goal-before-tag — a goal that says "make it build" is a
+    compile phase for ANY task tag):
+
+    1. **explicit** — an operator-authored directive carried over a retry wins,
+       returned as-is (the caller passes it through verbatim).
+    2. **goal-derived** — :func:`derive_verify_modes(goal)` classifies the phase
+       goal text.
+    3. **tag-derived** — only when the goal classifier returned ``[]`` do we fall
+       back to :func:`default_verify_for_phase(tags)` (the task-type's
+       ``default_verify`` field).
+    4. **full gate** — nothing resolved → ``[]`` (emit no directive).
+
+    Returns ``(modes, source)`` where ``modes`` is the resolved list (possibly
+    empty) and ``source`` ∈ ``{"explicit","goal","tag","full_gate"}``. Pure,
+    fail-open: any exception → ``([], "full_gate")``, never raises into a caller.
+    """
+    try:
+        if explicit:
+            # Normalize an explicit "verify: a,b" string to a list if handed one;
+            # a bare list passes through. Either way the caller emits it verbatim.
+            if isinstance(explicit, str):
+                # Strip a leading "verify:" if the caller passed the whole directive.
+                body = explicit.strip()
+                if body.lower().startswith("verify:"):
+                    body = body[len("verify:"):].strip()
+                modes = [m.strip() for m in body.split(",") if m.strip()]
+            else:
+                modes = list(explicit)
+            return (modes, "explicit")
+        modes = derive_verify_modes(goal or "")
+        if modes:
+            return (modes, "goal")
+        if tags:
+            modes = default_verify_for_phase(list(tags))
+            if modes:
+                return (modes, "tag")
+        return ([], "full_gate")
+    except Exception:
+        return ([], "full_gate")
 

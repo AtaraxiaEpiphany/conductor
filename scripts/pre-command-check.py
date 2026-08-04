@@ -103,7 +103,7 @@ _SANCTIONED_TS_SUBCOMMANDS = {
     "post-loop-review", "post-loop-status",
     "post-loop-step", "preflight", "process-result", "quality-snapshot",
     "record-summary", "recover", "reconcile-plan", "registry-add", "registry-doc", "registry-update", "reset",
-    "resolve-track", "set-max-retries", "set-mode", "set-workflow-shape", "setup", "shas", "skip",
+    "resolve-track", "resolve-phase-verify", "set-max-retries", "set-mode", "set-workflow-shape", "setup", "shas", "skip",
     "skip-analyst-verdict", "skip-refute-review", "set-contract", "spec-anchors", "spec-delta",
     "spec-integrity", "subagent-log", "log-path",
     "brief-init", "brief-finalize", "brief-grill-done", "brief-resume",

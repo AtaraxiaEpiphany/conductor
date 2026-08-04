@@ -302,6 +302,22 @@ def is_coverage_exempt(tags: list[str]) -> bool:
     return any(_profile(t).get("coverage_exempt", False) for t in tags)
 
 
+def has_over_tag_risk(tag: str) -> bool:
+    """True if a tag is an over-tagging risk in :func:`derive_task_tag`.
+
+    The data-driven form of the bare ``winner in ("Docs", "Config", "Chore")``
+    check the signal classifier used to hardcode — a tag that is tempting-but-
+    wrong for feature work that merely *touches* its surface (Docs/Config/Chore
+    today) declares ``over_tag_risk: true`` here, so an overlay exemption tag
+    with the same risk joins the over-tag guard with zero code edits. Absent on a
+    row => ``False`` (the default; most tags carry no over-tagging risk).
+
+    Takes a single tag (the classifier's ``winner``), not a list — the guard is a
+    per-tag property of the one tag the classifier settled on.
+    """
+    return bool(_profile(tag).get("over_tag_risk", False))
+
+
 def derive_task_type(name: str) -> str:
     """The lowercased primary task type for a name, or ``"default"`` when untagged.
 
@@ -503,7 +519,10 @@ def derive_task_tag(description: str) -> str | None:
         guard_text = text
         for ex in _FEATURE_MARKER_EXCEPTIONS:
             guard_text = guard_text.replace(ex, "")
-        if winner in ("Docs", "Config", "Chore") and top < 2 and any(
+        # over_tag_risk is read from the registry (has_over_tag_risk), not a
+        # bare ('Docs','Config','Chore') literal, so an overlay exemption tag
+        # with the same over-tagging risk joins this guard with zero code edits.
+        if has_over_tag_risk(winner) and top < 2 and any(
             m in guard_text for m in _FEATURE_MARKER_PHRASES
         ):
             return None

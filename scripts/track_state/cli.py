@@ -24,6 +24,7 @@ from .misc import (
     cmd_reset, cmd_indices, cmd_shas, cmd_add_checkpoint,
     cmd_deferred_report, cmd_phase_done, cmd_registry_update, cmd_registry_add,
     cmd_registry_doc,
+    cmd_resolve_phase_verify,
     cmd_record_summary, cmd_preflight, cmd_quality_snapshot,
     cmd_spec_integrity, cmd_derive_name, cmd_post_loop_status,
     cmd_resolve_track, cmd_check, _resolve_track_dir_or_halt,
@@ -263,6 +264,13 @@ COMMAND_HELP = {
                      "Append the canonical entry for a track to tracks.md (idempotent; auto-locates registry)"),
     "registry-doc": ("registry-doc [--tag <Name>] [--mode <name>] [--shape <name>] [--verifier <name>]",
                      "Render the resolved task-type + verify-mode + workflow-shape + verifier registries (baseline ⊕ overlay) as tables. Read-only — no track-dir, no writes. --tag/--mode/--shape/--verifier render ONE entity's row plus its workflow/protocol/instruction/when-to-use prose (the on-demand payload agents fetch)."),
+    "resolve-phase-verify": ("resolve-phase-verify --goal '<phase goal text>' [--tags <Tag>,<Tag>] [--explicit '<existing directive>'",
+                             "Resolve a phase-verify directive (the `verify: <modes>` a phase heading should "
+                             "carry) from free-text inputs. Read-only — no track-dir, no writes. Composes the "
+                             "exact contract precedence (explicit > goal-derived > tag-derived > full gate) by "
+                             "calling the existing resolver functions — the deterministic replacement for the "
+                             "planner's hand-written prose ladder. Emits `verify: <modes>` or the full-gate line; "
+                             "the planner emits the directive verbatim or emits nothing on the full-gate line."),
     "write-result": ("write-result <track-dir> --status success|failure --commit-sha <sha>\n"
                      "                                --summary <text> --coverage-pct <n> ...\n"
                      "                  <track-dir> [--data '<json>']   (or pipe JSON on stdin)",
@@ -490,6 +498,9 @@ _NO_TRACK_DIR_COMMANDS = frozenset({
     "resolve-track", "check", "setup", "new-track-resume",
     "log-path", "subagent-log", "brief-resume",
     "registry-doc",
+    # resolve-phase-verify: its inputs are --goal/--tags/--explicit flags (a
+    # phase goal text, not a path) — same no-track-dir posture as registry-doc.
+    "resolve-phase-verify",
 })
 
 
@@ -638,6 +649,16 @@ def main():
             cmd_registry_doc(tag=flag(rest, "--tag"), mode=flag(rest, "--mode"),
                              shape=flag(rest, "--shape"),
                              verifier=flag(rest, "--verifier"))
+        elif cmd == "resolve-phase-verify":
+            # Read-only resolver: maps a phase goal (+optional tags, +optional
+            # explicit override) to the verify directive the planner should emit.
+            # No track-dir, no writes — same posture as registry-doc, so its
+            # flags start at argv[2] via the same flag() scan (see the note above
+            # on why the post-track-dir ``args`` slice can't be used here).
+            rest = sys.argv[2:]
+            cmd_resolve_phase_verify(goal=flag(rest, "--goal"),
+                                     tags=flag(rest, "--tags"),
+                                     explicit=flag(rest, "--explicit"))
         elif cmd == "start":
             cmd_start(track_dir)
         elif cmd == "set-mode":
