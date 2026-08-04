@@ -34,6 +34,7 @@ All interaction happens through Claude Code slash commands:
 | `/conductor:setup` | Scaffold a new project with the Conductor environment |
 | `/conductor:new-track [description]` | Create a new track (generates spec, plan, state) |
 | `/conductor:brief [topic]` | Grill shared understanding one question at a time, then write a `brief.md` that `new-track` consumes as authoritative input |
+| `/conductor:discover [focus_area]` | Find recurring dev frictions worth making tracks for (read `git log` + `dispatch-lifecycle.log` + `.conductor/` signals first), grill-triage them, write a `proposals.md` the user feeds to `/conductor:brief` per accepted proposal |
 | `/conductor:implement [track]` | Execute the dispatch loop to implement a track |
 | `/conductor:implement-step [track]` | Thin Rail B-min teleoperator — relays exactly the leaf action `track-state step` emits (small-window friendly) |
 | `/conductor:parallel [track]` | Fan out file-disjoint, deps-declared tasks into worktree-isolated waves, then serially integrate each commit |
@@ -111,7 +112,7 @@ conductor-plugin/
 │   ├── lib/                Shared library (env, dispatch_inflight, hook_io, logging, recovery, validation …)
 │   ├── track_state/        State machine CLI package (cli + cmd_* modules + *_profiles.py registries)
 │   └── *.py                Hook scripts (session start/end, subagent-start, dispatch-dedupe, tripwire …)
-├── skills/                 15 slash-command skills (implement, new-track, reconcile, re-spec, parallel, wiki …)
+├── skills/                 16 slash-command skills (implement, new-track, reconcile, re-spec, parallel, wiki …)
 ├── templates/
 │   ├── workflow/             The three registries: task-type / verify-mode / workflow-shape profiles (.json)
 │   ├── code-styleguides/     10 language style guides
