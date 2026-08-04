@@ -170,5 +170,37 @@ class ReviewVerdictPersistenceTests(TestCase):
         self.assertIn("--high", row)
 
 
+class SpecReviewerFourQuadrantLensTests(TestCase):
+    """spec-reviewer §3.3 holds the four-quadrant stance as a read-only **lens**
+    (no turns, no questions — findings only) over `spec.md`. EARS checks *form*;
+    the lens checks *substance*: a propagated wrong premise (Q3) and an
+    operationalizable unknown confessed as "TBD" (Q4). The canonical stance lives
+    in the grill-discipline contract; this section is a thin consumer that cites it
+    (Read-on-demand pointer), so the stance has one home and a future drift lint
+    passes. The lens stays read-only — the `tools:` line is still pinned to
+    Read/Grep/Glob by ``test_on_subagent_stop_recovery.py``."""
+
+    def setUp(self):
+        self.agent = (ROOT / "agents" / "spec-reviewer.md").read_text(encoding="utf-8")
+
+    def test_section_heading_present(self):
+        # New §3.3 sits between EARS conformance (§3.2) and the Plan Audit (§3.4).
+        self.assertIn("### 3.3 Spec Audit (four-quadrant lens)", self.agent)
+        # Renumber cascade held: the old §3.3 is now §3.4.
+        self.assertIn("### 3.4 Plan Audit", self.agent)
+
+    def test_lens_cites_grill_contract(self):
+        # The stance is single-homed in the contract; the lens must cite it
+        # (Read-on-demand pointer), not restate the four labels here.
+        self.assertIn("runtime/contracts/grill-discipline", self.agent)
+
+    def test_lens_flags_q3_and_q4(self):
+        # Q3 = propagated wrong premise (Out of Scope copied verbatim); Q4 =
+        # operationalizable unknown (decidable by experiment). Both surface as
+        # pipe-delimited findings (any finding → CHANGES_REQUESTED, per §3.7).
+        self.assertIn("Q3", self.agent)
+        self.assertIn("Q4", self.agent)
+
+
 if __name__ == "__main__":
     main()

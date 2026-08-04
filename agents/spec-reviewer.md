@@ -79,7 +79,41 @@ For every requirement under `## Requirements` (functional and non-functional):
 - **Vague response:** `fast`, `user-friendly`, `efficient` with no measure →
   finding. Suggest a measurable bound.
 
-### 3.3 Plan Audit (dispatch-tag correctness)
+### 3.3 Spec Audit (four-quadrant lens)
+
+Hold the four-quadrant stance as a read-only **lens** on `spec.md` — no turns, no
+questions, findings only (the canonical stance is defined in
+`${CLAUDE_PLUGIN_ROOT}/runtime/contracts/grill-discipline.md` §2; you apply it as a
+lens, not a grill — contract §1). This lens catches the two premise-level failures
+an EARS-pattern audit cannot — EARS checks *form*; this checks *substance*:
+
+- **Q3 — propagated wrong premise (finding):** a goal, an out-of-scope, or a
+  constraint that looks **wrong** — solving the wrong problem, over-constraining
+  (an `## Out of Scope` exclusion that rules out a cheaper path the user may not
+  have seen), or mistaking a symptom for a cause. `## Out of Scope` is copied
+  **verbatim** into the spec, so a wrong premise propagates unchanged — this is the
+  cheapest place to catch it. Record a finding naming the premise and the
+  alternative; the orchestrator/user decides.
+- **Q4 — confessed unknown (finding when operationalizable):** an unknown left as a
+  bare confession — "TBD", "figure out", "investigate", "needs research" — that is
+  in fact **decidable by an experiment** (a behavior under load, a third-party
+  limit, a migration's blast radius). Operationalizable unknowns should be stated as
+  a testable hypothesis (the minimal experiment + the single variable + the
+  success/fail signal that settles it — contract §5), not handed forward as an open
+  wound. Unknowns that are genuinely "ask the stakeholder" (a human decision, not an
+  experiment) are **not** findings — leave them as open questions.
+
+Findings use the standard `file | location | issue | fix` shape, e.g.:
+
+- `file: spec.md | location: ## Out of Scope | issue: Q3 premise over-constrains — excludes the X path (a cheaper alternative) | fix: restate the exclusion to cover only the premise's consequences, not the cheaper path`
+- `file: spec.md | location: Open Questions | issue: Q4 confessed unknown ("figure out load ceiling") is decidable by experiment | fix: restate as a hypothesis + the probe that settles it (a load probe + the threshold signal)`
+
+Do not manufacture Q3/Q4 findings to look thorough — a spec whose premises are sound
+and whose unknowns are genuinely human-decisions is clean. The lens earns its keep
+only where a premise is actually questionable or an unknown is actually ducking a
+decidable experiment.
+
+### 3.4 Plan Audit (dispatch-tag correctness)
 
 A task tag whose resolved registry profile is `tdd_exempt` is a **TDD exemption** — a wrong tag silently skips the Red→Green→Refactor cycle and the coverage gate. The closed tag set lives in your injected `[Conductor Registry]` block (`TAG_VOCAB`); do not enumerate it here. Audit for the **dangerous direction only**:
 
@@ -99,7 +133,7 @@ A task tag whose resolved registry profile is `tdd_exempt` is a **TDD exemption*
   implementation task** → finding (these are silently dropped or lose
   traceability).
 
-### 3.4 Phase-Verify Directive Audit
+### 3.5 Phase-Verify Directive Audit
 
 The `<!-- verify: <modes> -->` directive on a `## Phase N:` heading (plan-format-contract.md §"Phase Verify Directives") declares what "done" means for that phase — distinct from the task-level tags above. A `verify: none` phase gates on **nothing by default** (debt-carrying), which is the exact posture that can silently drop a mid-step that broke the build. This audit is the second pair of eyes on those directives (the planner's own `track-state init-from-plan --check` is the first signal). The closed mode vocabulary lives in your injected `[Conductor Registry]` block (`MODE_VOCAB`) — do not enumerate it here; consult the block for the resolved set.
 
@@ -111,14 +145,14 @@ For each `## Phase N:` heading, read its `<!-- verify: ... -->` directive (if an
 
 Keep the existing posture: under-tagged is advisory not finding; a **directive-less** phase is the safe full-gate default and is **never** a finding. The directive audit mirrors that — it only ever flags an *unclosed* `none`; a present-but-odd `none` is advisory, and a missing directive is a non-event.
 
-### 3.5 Structure Audit
+### 3.6 Structure Audit
 
 - spec.md: `## Requirements`, `## Acceptance Criteria`, `## Test Scenarios`
   sections present and non-empty (unless spec-less).
 - plan.md: at least one `## Phase N:` heading; every task line carries `[ ]`;
   manual-verification task appended at each phase end (tagged `[Manual]`).
 
-### 3.6 Build the Verdict
+### 3.7 Build the Verdict
 
 - **No findings** → `STATUS: APPROVED`.
 - **One or more findings** → `STATUS: CHANGES_REQUESTED` and emit every finding
