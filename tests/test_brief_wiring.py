@@ -169,6 +169,16 @@ class NewTrackConsumesBriefTests(TestCase):
         txt = _read("skills/new-track/SKILL.md")
         self.assertIn("Existing-track adoption", txt)
 
+    def test_new_track_recommends_brief_before_qa_fallback(self):
+        """When no brief is found, §2.2 step 3 must recommend /conductor:brief
+        FIRST (the grilled path) before falling back to minimal Q&A — grilling is
+        consolidated to one surface (the brief skill), rather than the weak legacy
+        sequential Q&A. The Q&A escape hatch stays for trivial tracks."""
+        txt = _read("skills/new-track/SKILL.md")
+        self.assertIn("/conductor:brief", txt)
+        self.assertIn("recommended", txt)         # brief-first is the recommended option
+        self.assertIn("escape hatch", txt)        # minimal Q&A remains reachable
+
     def test_spec_planner_reads_brief_first(self):
         txt = _read("agents/spec-planner.md")
         self.assertIn("### 3.0 Brief (if present)", txt)

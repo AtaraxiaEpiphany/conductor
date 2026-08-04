@@ -68,7 +68,9 @@ CRITICAL: Validate every tool call. On failure → halt → announce.
 
 1. **Scan & Match:** Search `conductor/index.md` for file paths semantically related to track's goal.
 2. **Found relevant docs** → collect paths only (do NOT read contents). Pass paths to spec-planner as `RELATED_DOCS`.
-3. **Not found** → ask user: interactive Q&A (2-5 questions sequentially), manual context, or correct paths. Pass answers as `USER_ANSWERS`.
+3. **Not found** → no discovered docs *and* (per §2.2b) no brief — this is the only path where new-track does its own grilling, and it is the weak legacy path (bare sequential Q&A: no recommended-first, no look-it-up, no premise-challenge). Offer a single `AskUserQuestion`: *"No brief found — run `/conductor:brief <track_id>` for a grilled shared understanding (recommended), or proceed with minimal Q&A now?"*
+   - **Run `/conductor:brief`** → halt new-track and hand off. The user runs `/conductor:brief <track_id>`, then re-invokes `/conductor:new-track <track_id>` (existing-track adoption in §2.1 picks up the same dir + its new `brief.md`, which §2.2b then consumes). A brief is the last input before spec-planner freezes the plan — it earns the grill's turn-cost where ad-hoc Q&A does not.
+   - **Proceed with Q&A** → the low-friction escape hatch for trivial tracks; keep it. 2-5 questions sequentially, manual context, or correct paths. Pass answers as `USER_ANSWERS`.
 
 > Context content is loaded by spec-planner itself. The orchestrator handles only paths and summaries.
 
@@ -86,7 +88,7 @@ Before the §2.2 Q&A branch above, check for a **Track Brief** at `<track_dir>/b
      - `## Out of Scope` → lift each exclusion into purpose.md `## Out of Scope` **only if not already present**, and only where it does not **widen** past what setup established (intersect, never contradict — mirror the Brief's own Out-of-Scope-vs-purpose.md rule). A Brief's Out-of-Scope is a *track-level* cut; only the project-persistent ones belong here.
      Skip the append silently if purpose.md already has the content (idempotent) or if the Brief section is empty/`"None identified."`. This is a `## Key Questions`/`## Out of Scope` append only — never touch Goals, Thesis, or Active Decisions (those are owned by setup / wiki-synthesizer respectively). If `conductor/purpose.md` is absent, skip (setup owns creating it).
    - Pass `USER_ANSWERS` (with `USER_CONTEXT: brief`) and `RELATED_DOCS` to the §2.3 dispatch. spec-planner §3.0 reads the Brief itself first and honors `## Out of Scope` verbatim.
-3. **Not found** → proceed with §2.2 unchanged (scan → Q&A fallback). This is the default; no Brief means new-track behaves exactly as before.
+3. **Not found** → proceed with §2.2 (scan → brief-first offer at step 3, then the Q&A fallback). This is the default; without a Brief the user chooses between grilling a brief now or the minimal Q&A.
 
 > The Brief is additive: it only changes behavior when present. A re-invoked new-track on a track with a Brief will plan from the Brief; without one, the original flow applies.
 
