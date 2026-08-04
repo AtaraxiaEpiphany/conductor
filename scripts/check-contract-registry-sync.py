@@ -23,26 +23,52 @@ script makes "never drift" a CI guarantee, not a hope — the same discipline as
 
 What it flags
 -------------
-Two detectors, run against every watched file:
+Three doc/code detectors + two wiring assertions.
+
+**Doc detectors** (per watched file, line by line):
 
 1. **Table-row enumeration** (the original detector). A markdown table row (a
    line beginning with ``|``) whose first cell is a known tag/mode/shape/verifier
    literal — the data-duplication shape.
 
-2. **Prose closed-set enumeration** (new). A non-table line that *enumerates* a
-   closed vocab — ≥2 distinct resolved-vocab literals (tag/mode/shape/verifier)
-   on one line AND a closed-set marker phrase (``closed``, ``only``,
-   ``exempted``, ``vocabulary``, ``the set``, ``MODE_VOCAB``, …). This is the
-   shape of "Exempted task types ONLY: ``[Docs]``, ``[Config]``, …" and "Tags
-   (``[Explore]``/``[Docs]``/…) are TDD exemptions" — the two confirmed drift
-   bugs. A grammar example (``- [ ] [Migrate] bump spring-boot``) carries only
-   one literal and no marker, so it does not trip (mirrors the original lint's
-   prose exemption).
+2. **Prose closed-set enumeration.** A non-table line that *enumerates* a closed
+   vocab. Two adjacency-keyed trip conditions (literals listed together in one
+   comma/slash run, not scattered one-per-``e.g.``-clause):
 
-3. **Code-literal assertion** (new). The Tier-1 code sites that branch on
+   - a **bracketed-tag** run of ≥3 (``[Explore]/[Docs]/[Config]``) — always a
+     "the tag set is …" claim, no marker needed; OR
+   - a **bare-identifier** run of ≥3 modes/shapes/verifiers WITH a strong
+     closed-set marker (``only:``, ``exhaustive``, ``MODE_VOCAB``, ``closed
+     six``, …) — modes legitimately appear 2-at-a-time in ``verify: test,start``
+     examples, so a bare run needs both the length and the marker.
+
+   Two refinements catch the restated debt/gate sets the registry flags replace:
+   a **behavioral ladder** (≥2 ``On `<mode>` …`` rungs restating each mode's
+   ``protocol``), and a **tight mode enumeration** (≥3 modes joined by ``,``/``/``
+   only) co-occurring with a debt/gate marker (``closes_debt``, ``explicit
+   gate``, ``debt-carrying``, …). These are the shapes
+   "phases with explicit gates (compile/test/anchor)" and the
+   ``On `compile` … On `anchor` … On `none` …`` ladder carried before the flag
+   migration.
+
+3. **Code-literal assertion.** The Tier-1 code sites that branch on
    registry-value names (``verifiers_for``, ``validate_verify_none_closure``,
    ``derive_task_tag``) must read the vocab via an accessor / registry flag, not
-   a bare literal set — guarding the Part-3 data-driving against regression.
+   a bare literal set — guarding the data-driving against regression.
+
+**Wiring assertions** (close the injection seam this campaign opened):
+
+4. **Defer-implies-injected.** A watched *agent* doc whose body references the
+   ``[Conductor Registry]`` block / ``TAG_VOCAB`` / ``MODE_VOCAB`` must have its
+   filename-stem in ``on-subagent-start._REGISTRY_AGENTS`` — else the prose
+   defers to a block the agent never receives. This is the assertion that would
+   have caught the original half-wired migration (reviewer prose pointed at the
+   block before the reviewers were injected) automatically.
+
+5. **Flag-coverage.** A watched agent that audits by a registry flag name
+   (``over_tag_risk``, ``closes_debt``, …) is guaranteed the block surfaces the
+   flag's token — ``reviewer_block_flags`` is the explicit ``{name: token}`` map
+   of what the renderers emit. Closes the loop prose → flag → block-data.
 
 Exit 0 + OK line on success; exit 1 + remediation message on any failure.
 """
@@ -68,6 +94,8 @@ WATCHED = [
     "runtime/core-contract.md",
     "agents/spec-planner.md",
     "agents/spec-reviewer.md",
+    "agents/refuter.md",
+    "agents/phase-checker.md",
 ]
 
 # Two independent trip conditions for a prose closed-set enumeration, both keyed
@@ -107,6 +135,22 @@ _CLOSED_SET_MARKERS = (
     "mode_vocab", "tag_vocab", "shapes_vocab", "verifier_vocab",
     "closed vocabulary", "closed mode vocabulary", "closed tag vocabulary",
     "closed six",                 # "outside the closed six" (spec-reviewer)
+)
+
+# Debt/gate CONCEPT markers — a ≥3 bare-mode run co-occurring with one of these
+# is a completeness claim about the debt/gate structure ("phases with explicit
+# gates (compile/test/anchor)", "no later compile/test/start phase to close the
+# debt"). These restated sets are exactly what the registry flags
+# (closes_debt/carries_debt/build_gated) replace, so naming the concept alongside
+# a 3+ mode run is the same drift shape as a closed-set marker. Matched
+# case-insensitively. Deliberately compound phrases — bare "debt"/"gate" appear
+# in unrelated contexts ("a debt phase", "the gate fails"), so only the flag
+# names or the multi-word concepts trip.
+_DEBT_GATE_MARKERS = (
+    "closes_debt", "carries_debt", "build_gated",   # flag names (backticked or bare)
+    "closes debt", "carries debt", "build-gated", "build gated",
+    "explicit gate", "explicit gates", "gates on", "close the debt",
+    "debt-carrying", "debt carrying",
 )
 
 
@@ -176,6 +220,63 @@ def _is_closed_set_line(line):
     """True iff the line carries a strong closed-set marker phrase (case-insensitive)."""
     low = line.lower()
     return any(marker in low for marker in _CLOSED_SET_MARKERS)
+
+
+def _is_debt_gate_line(line):
+    """True iff the line carries a debt/gate-concept marker (case-insensitive).
+
+    A ≥3 bare-mode run is a completeness claim only when the line is *about* the
+    debt/gate structure; this recognizes that context so the bare-mode trip fires
+    on "phases with explicit gates (compile/test/anchor)" (the restated
+    closes_debt set) without firing on a grammar example that happens to list 3
+    modes for another reason.
+    """
+    low = line.lower()
+    return any(marker in low for marker in _DEBT_GATE_MARKERS)
+
+
+def _behavioral_ladder_modes(line, literals):
+    """Modes enumerated as the rungs of a per-mode behavioral ladder.
+
+    The shape ``phase-checker`` §3 and the contract "Resolution" section used to
+    carry: a restatement of each mode's behavior as ``On `compile`…; On `anchor`…
+    ; On `none`…`` — exactly what each mode's registry ``protocol`` is the single
+    source for. ≥2 ``On <mode>`` rungs on one line (backticked or bare) is a
+    ladder regardless of any completeness marker. Returns the set of modes found.
+    """
+    rungs = set()
+    for m in re.finditer(r"\bOn\s+`?([A-Za-z][A-Za-z-]*)`?", line):
+        tok = m.group(1)
+        if tok in literals and not tok.startswith("["):
+            rungs.add(tok)
+    return rungs
+
+
+def _tight_enum_modes(line, literals):
+    """≥3 modes joined TIGHTLY by ``,`` / ``/`` only — a restated mode set.
+
+    The shape of "explicit gates (compile/test/anchor)" or "no later compile,
+    test, start phase" — modes listed with nothing but enumeration punctuation
+    between them. This is distinct from ``_max_per_run``'s loose run, which counts
+    modes scattered across a long paragraph whose commas happen to link the
+    clauses: tightness requires the modes to be adjacent list items, so a paragraph
+    that merely *mentions* compile/default/none amid prose does not trip. Backtick
+    and emphasis formatting is stripped first so `` `compile`/`test`/`anchor` ``
+    matches. Modes only (tags have their own bracketed-run trip; verifiers/shapes
+    are out of scope for this detector). Requires a marker at the call site so a
+    legitimate directive example (``verify: compile, test, start``) is spared.
+    """
+    bare_modes = {l for l, kind in literals.items() if kind == "mode"}
+    cleaned = re.sub(r"[`*]", "", line)
+    found = set()
+    # Maximal runs of "word(,word)*" — comma/slash-joined alphabetic tokens. A
+    # conjunction ("and") or any prose breaks the run, so only a real list forms.
+    for chunk in re.finditer(r"[A-Za-z][A-Za-z-]*(?:\s*[,/]\s*[A-Za-z][A-Za-z-]*)*", cleaned):
+        toks = {t.strip() for t in re.split(r"\s*[,/]\s*", chunk.group(0))}
+        mode_toks = toks & bare_modes
+        if len(mode_toks) >= _CLOSED_SET_MIN_BARE:
+            found |= mode_toks
+    return found
 
 
 def _literals_in_token(tok, bracketed, bare):
@@ -277,10 +378,28 @@ def _scan_doc(path, literals):
         #  (b) a bare-IDENTIFIER run of ≥3 (modes/shapes/verifiers) WITH a strong
         #      closed-set marker (modes appear legitimately in `verify: test,start`
         #      examples, so a bare run needs both length and the marker).
+        #  (c) a BEHAVIORAL LADDER: ≥2 "On <mode>" rungs restating per-mode
+        #      behavior that lives in each mode's registry `protocol`.
+        #  (d) a TIGHT mode enumeration (≥3 modes joined by , // ONLY — not
+        #      scattered) WITH a closed-set OR debt/gate marker: the shape
+        #      "explicit gates (compile/test/anchor)" — the restated closes_debt
+        #      set the registry flags replace. Tightness + marker together avoid
+        #      the false positive of 3 modes scattered through a long paragraph.
+        ladder = _behavioral_ladder_modes(line, literals)
+        if len(ladder) >= 2:
+            yield (lineno,
+                   f"behavioral ladder 'On <mode>…' restates per-mode behavior for "
+                   f"{len(ladder)} modes ({', '.join(sorted(ladder))}) — each mode's "
+                   f"behavior is its registry `protocol` (resolve via `track-state "
+                   f"registry-doc --mode <name>`); do not restate the ladder in prose")
+            continue
         max_bracketed, max_bare = _max_per_run(line, literals)
         is_tag_run = max_bracketed >= _CLOSED_SET_MIN_BRACKETED
         is_marked_mode_run = (max_bare >= _CLOSED_SET_MIN_BARE
                               and _is_closed_set_line(line))
+        tight = _tight_enum_modes(line, literals)
+        is_tight_mode_run = (len(tight) >= _CLOSED_SET_MIN_BARE
+                             and (_is_closed_set_line(line) or _is_debt_gate_line(line)))
         if is_tag_run or is_marked_mode_run:
             found = _prose_literals_on_line(line, literals)
             listed = ", ".join(sorted(found))
@@ -290,6 +409,15 @@ def _scan_doc(path, literals):
                    f"(a registry/overlay change silently contradicts it). Reference "
                    f"the registry instead: 'task types whose profile is "
                    f"tdd_exempt' / 'the injected [Conductor Registry] block'.")
+            continue
+        if is_tight_mode_run:
+            marker_kind = "closed-set" if _is_closed_set_line(line) else "debt/gate"
+            yield (lineno,
+                   f"tight mode enumeration ({', '.join(sorted(tight))}) + "
+                   f"{marker_kind} marker — a restated mode set is a drift surface "
+                   f"(the registry flags closes_debt/carries_debt/build_gated replace "
+                   f"it). Reference the flag instead: 'modes whose profile carries "
+                   f"closes_debt' / 'the injected [Conductor Registry] block'.")
 
 
 def _scan_code_literals(root):
@@ -336,6 +464,95 @@ def _scan_code_literals(root):
     return findings
 
 
+def _load_hook():
+    """Load ``on-subagent-start.py`` (hyphenated → importlib) for its registry set.
+
+    The injection allowlist ``_REGISTRY_AGENTS`` and the flag declaration
+    ``reviewer_block_flags`` live in the hook script; this lint asserts against
+    both so prose that defers to the block is guaranteed the block arrives, and
+    prose that names a flag is guaranteed the block surfaces it.
+    """
+    import importlib.util
+    p = Path(__file__).parent / "on-subagent-start.py"
+    spec = importlib.util.spec_from_file_location("on_subagent_start", p)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _check_defer_implies_injected(root, hook):
+    """A watched agent that defers to the block must actually receive it.
+
+    The half-wired migration this whole campaign closes: ``spec-reviewer`` /
+    ``refuter`` prose said "consult your injected ``[Conductor Registry]`` block"
+    while neither was in ``_REGISTRY_AGENTS``, so the block never arrived and the
+    prose pointed at data the agent could not see. For each watched AGENT doc
+    (contracts document the block; they do not receive it) whose body references
+    the block / ``TAG_VOCAB`` / ``MODE_VOCAB``, assert its filename-stem name is
+    in ``_REGISTRY_AGENTS``. This is the assertion that would have caught the
+    original bug automatically.
+    """
+    findings = []
+    injected = hook._REGISTRY_AGENTS
+    defer_re = re.compile(r"\[Conductor Registry\]|TAG_VOCAB|MODE_VOCAB")
+    for rel in WATCHED:
+        if not rel.startswith("agents/"):
+            continue  # contracts document the block; agents receive it
+        path = root / rel
+        if not path.exists():
+            continue
+        agent_name = Path(rel).stem
+        text = path.read_text(encoding="utf-8")
+        if defer_re.search(text) and agent_name not in injected:
+            findings.append(
+                f"  {rel}: defers to the [Conductor Registry] block / TAG_VOCAB / "
+                f"MODE_VOCAB but `{agent_name}` is not in "
+                f"on-subagent-start._REGISTRY_AGENTS — the block is never injected, "
+                f"so the prose points at data that never arrives. Add the agent to "
+                f"_REGISTRY_AGENTS and a _registry_for_<agent>() builder.")
+    return findings
+
+
+def _check_flag_coverage(root, hook):
+    """Every registry flag a watched agent names must be surfaced by the block.
+
+    Closes the loop prose -> flag -> block-data. ``reviewer_block_flags`` is the
+    explicit ``{flag-name: emitted-token}`` map of what the renderers surface; if
+    a watched agent's prose audits by one of those names, the rendered reviewer
+    block must emit its token — else the prose defers to data the agent cannot
+    see. Catches a renderer that stops emitting a flag the prose still names. The
+    token comes from the map (not ``name.replace('_','-')``) because one flag
+    shortens: ``over_tag_risk`` -> ``over-tag``. The reverse direction — every
+    declared token IS emitted — is a unit test's job.
+    """
+    findings = []
+    block = hook._registry_for_reviewer()
+    flag_map = hook.reviewer_block_flags()
+    flag_re = re.compile(
+        r"`?(" + "|".join(re.escape(f) for f in sorted(flag_map, key=len, reverse=True)) + r")`?")
+    seen = set()
+    for rel in WATCHED:
+        if not rel.startswith("agents/"):
+            continue
+        path = root / rel
+        if not path.exists():
+            continue
+        for m in flag_re.finditer(path.read_text(encoding="utf-8")):
+            name = m.group(1)
+            key = (rel, name)
+            if key in seen:
+                continue
+            seen.add(key)
+            token = flag_map[name]
+            if token not in block:
+                findings.append(
+                    f"  {rel}: audits by flag `{name}` but the [Conductor "
+                    f"Registry] block does not emit `{token}` — surface it in "
+                    f"_tag_summary_rows/_mode_summary_lines (and add it to "
+                    f"reviewer_block_flags) or drop the reference.")
+    return findings
+
+
 def main():
     root = get_plugin_root()
 
@@ -352,6 +569,10 @@ def main():
             findings.append(f"  {rel}:{lineno}: {msg}")
 
     findings.extend(_scan_code_literals(root))
+
+    hook = _load_hook()
+    findings.extend(_check_defer_implies_injected(root, hook))
+    findings.extend(_check_flag_coverage(root, hook))
 
     if findings:
         sys.exit(
@@ -371,8 +592,10 @@ def main():
         )
 
     print("OK: watched docs carry no hand-maintained tag/mode/shape/verifier "
-          "enumeration (table or prose closed-set), and Tier-1 code sites read "
-          "the vocab via registry accessors (vocab is registry-sourced).")
+          "enumeration (table or prose closed-set), Tier-1 code sites read the "
+          "vocab via registry accessors, every agent that defers to the "
+          "[Conductor Registry] block is injected, and every flag an agent names "
+          "is surfaced by the block.")
 
 
 if __name__ == "__main__":

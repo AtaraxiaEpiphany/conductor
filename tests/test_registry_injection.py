@@ -155,6 +155,93 @@ class PhaseCheckerInjectionTests(TestCase):
             self.assertIn(mode, ctx)
 
 
+class ReviewerInjectionTests(TestCase):
+    """spec-reviewer + refuter AUDIT tag/mode membership, so they receive the
+    resolved vocab WITH the review flags (over_tag_risk / closes_debt /
+    carries_debt / build_gated) per row — letting their prose defer to the flag
+    names instead of restating which tags/modes carry them (a restated set is the
+    first thing to drift; the producer side of the adversarial pair must read the
+    same ground truth as the verifier)."""
+
+    _REVIEWERS = ("spec-reviewer", "refuter")
+
+    def test_reviewers_receive_registry_block(self):
+        for agent in self._REVIEWERS:
+            ctx = _run(agent).get("hookSpecificOutput", {}).get("additionalContext", "")
+            self.assertIn("[Conductor Registry]", ctx, f"{agent} missing the block")
+            # The reviewer-framed lead names the audit role (distinct from the
+            # planner/executor/phase-checker leads).
+            self.assertIn("audit membership", ctx, f"{agent} missing reviewer lead")
+
+    def test_reviewers_see_every_tag_and_mode(self):
+        # Reviewers audit the full resolved membership, so the whole vocab flows.
+        for agent in self._REVIEWERS:
+            ctx = _run(agent).get("hookSpecificOutput", {}).get("additionalContext", "")
+            for tag in tp.TAG_VOCAB():
+                self.assertIn(f"[{tag}]", ctx, f"{agent} missing tag {tag!r}")
+            for mode in vmp.MODE_VOCAB():
+                self.assertIn(mode, ctx, f"{agent} missing mode {mode!r}")
+
+    def test_reviewers_see_the_review_flags_per_row(self):
+        # The block surfaces the flag tokens the reviewers' prose names — the
+        # data the lint's flag-coverage assertion guarantees. Pinned on the
+        # baseline tags/modes that carry each flag so a dropped emission is
+        # caught (over-tag from Docs; default-verify from Migrate; build-gated
+        # from compile; closes-debt from test; carries-debt from none).
+        for agent in self._REVIEWERS:
+            ctx = _run(agent).get("hookSpecificOutput", {}).get("additionalContext", "")
+            for token in ("over-tag", "default-verify=compile",
+                          "build-gated", "closes-debt", "carries-debt"):
+                self.assertIn(token, ctx, f"{agent} missing flag token {token!r}")
+
+    def test_reviewer_block_flags_map_is_honest(self):
+        # Every {flag: token} the declaration claims is actually emitted by the
+        # rendered reviewer block (the explicit map, not name.replace). This is
+        # the reverse direction of the lint's flag-coverage assertion — the
+        # declaration cannot drift from what the renderers emit.
+        import importlib.util
+        hspec = importlib.util.spec_from_file_location(
+            "oss_reviewer", _scripts / "on-subagent-start.py")
+        hook = importlib.util.module_from_spec(hspec)
+        hspec.loader.exec_module(hook)
+        block = hook._registry_for_reviewer()
+        missing = {name: tok for name, tok in hook.reviewer_block_flags().items()
+                   if tok not in block}
+        self.assertFalse(missing, f"declared flags not emitted: {missing}")
+
+    def test_overlay_tag_and_mode_flags_reach_the_reviewer(self):
+        # Headline end-to-end: a project overlay adds a tag carrying over_tag_risk
+        # and a mode carrying carries_debt. Both must surface in spec-reviewer's
+        # injected block WITH their flags — so the reviewer's prose (which defers
+        # to the flag names) reads the SAME resolved ground truth the dispatch
+        # layer does, with zero plugin edits. Mirrors OverlayEndToEndTests for the
+        # reviewer path; the overlay chokepoint (_load, baseline ⊕ project) is
+        # shared by tags and modes, so exercising both proves the reviewer is
+        # overlay-aware end-to-end.
+        overlay_tag = {"tags": {"AcmeRollout": {
+            "route": "manual", "tdd_exempt": True, "coverage_exempt": True,
+            "over_tag_risk": True, "when_to_use": "Project rollout tag.",
+        }}}
+        overlay_mode = {"modes": {"acme-debt": {
+            "runs": [], "when_to_use": "Project debt-carrying mode.",
+            "report_field": "NO_GATE", "carries_debt": True,
+        }}}
+        with tempfile.TemporaryDirectory() as d:
+            proj = Path(d)
+            (proj / "conductor" / "workflow").mkdir(parents=True)
+            (proj / "conductor" / "workflow" / "task-type-profiles.json").write_text(
+                json.dumps(overlay_tag))
+            (proj / "conductor" / "workflow" / "verify-mode-profiles.json").write_text(
+                json.dumps(overlay_mode))
+            ctx = _run("spec-reviewer", env={"CLAUDE_PROJECT_DIR": str(proj)}).get(
+                "hookSpecificOutput", {}
+            ).get("additionalContext", "")
+        self.assertIn("[AcmeRollout]", ctx, "overlay tag did not reach spec-reviewer")
+        self.assertIn("over-tag", ctx, "overlay tag's over_tag_risk flag did not surface")
+        self.assertIn("acme-debt", ctx, "overlay mode did not reach spec-reviewer")
+        self.assertIn("carries-debt", ctx, "overlay mode's carries_debt flag did not surface")
+
+
 class ExecutorInjectionTests(TestCase):
     def test_executor_with_migrate_task_gets_workflow(self):
         with _track(_flat_state()) as cwd:

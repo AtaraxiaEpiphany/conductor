@@ -85,12 +85,15 @@ A task tag whose resolved registry profile is `tdd_exempt` is a **TDD exemption*
 
 - **Over-tagged (finding — must fix):** a task tagged with an exemption tag (a `tdd_exempt` tag — e.g. `[Docs]` for a no-code edit) whose description or `<!-- AC-n -->` refs name business
   logic/behavior it must implement → the exemption is wrong, the task needs full
-  TDD. Record as a finding with the suggested fix (drop the tag).
+  TDD. Tags whose profile carries `over_tag_risk` are the highest-priority
+  scrutinies (the no-code, no-gate tags whose misapplication hides business logic
+  most easily), but any `tdd_exempt` tag on a task with real behavior is a
+  finding. Record as a finding with the suggested fix (drop the tag).
 - **Under-tagged (advisory only — NOT a finding):** a task that looks
   config/docs/migration-shaped but has no tag is **not an error** — no-tag is the
   safe default (full TDD). Record it as an advisory in `ADVISORY`, never as a
   finding and never as something to fix.
-- **Unknown tag** (outside the closed six) is ignored by the parser → finding
+- **Unknown tag** (outside the resolved vocab) is ignored by the parser → finding
   with the suggested fix.
 - **Missing `[ ]` checkbox / missing `<!-- AC-n -->` annotation on an untagged
   implementation task** → finding (these are silently dropped or lose
@@ -102,8 +105,8 @@ The `<!-- verify: <modes> -->` directive on a `## Phase N:` heading (plan-format
 
 For each `## Phase N:` heading, read its `<!-- verify: ... -->` directive (if any) and check:
 
-- **`none` odd-one-out (advisory → finding when risky):** a `verify: none` phase sitting among phases with explicit gates (`compile`/`test`/`anchor`) carries no gate while its siblings are explicitly gated. The debt is usually intentional (a mid-migration deps bump closed by a later phase), so the *default* is an **advisory**: "Phase N carries `verify: none` while Phases {M,…} are explicitly gated — confirm the debt is intentional and closed by a later `compile`/`test`/`start` phase; consider `verify: compile` to at least gate the build so a broken mid-step can't pass silently." Escalate to a **finding** only when the closure is also missing (next bullet) — an unclosed `none` is never merely advisory.
-- **Unclosed `none` (finding):** if `validate_verify_none_closure` would flag it — a `verify: none` phase with **no later** `compile`/`test`/`start` phase to close the debt — record a **finding**, since the debt would never be exercised and the phase passes on nothing. Suggested fix: add a closing phase with `verify: compile` or `verify: test`, or re-tag the phase `verify: compile` if it should gate the build itself. (This duplicates the `init-from-plan --check` warning at review time — a cheap second signal; the `none` mode now runs a build floor when compile-runner is fanned out, but a phase with no later closure still drops the suite debt silently.)
+- **`none` odd-one-out (advisory → finding when risky):** a `verify: none` phase — the `carries_debt` mode — sitting among phases whose modes are not `carries_debt` (its siblings gate on something) carries no gate while its siblings are explicitly gated. The debt is usually intentional (a mid-migration deps bump closed by a later phase), so the *default* is an **advisory**: "Phase N carries `verify: none` while Phases {M,…} are explicitly gated — confirm the debt is intentional and closed by a later phase carrying a `closes_debt` mode; consider `verify: compile` to at least gate the build so a broken mid-step can't pass silently." Escalate to a **finding** only when the closure is also missing (next bullet) — an unclosed `none` is never merely advisory.
+- **Unclosed `none` (finding):** if `validate_verify_none_closure` would flag it — a `verify: none` phase with **no later** phase carrying a `closes_debt` mode to close the debt — record a **finding**, since the debt would never be exercised and the phase passes on nothing. Suggested fix: add a closing phase with `verify: compile` or `verify: test`, or re-tag the phase `verify: compile` if it should gate the build itself. (This duplicates the `init-from-plan --check` warning at review time — a cheap second signal; the `none` mode now runs a build floor when compile-runner is fanned out, but a phase with no later closure still drops the suite debt silently.)
 - **Unknown mode (advisory):** a mode token not in `MODE_VOCAB` → **advisory** (the planner's `--check` already warned at init; surface it for the operator). An unknown mode is dropped fail-open by the resolver, so the phase falls back to the full gate — safe, just worth flagging.
 
 Keep the existing posture: under-tagged is advisory not finding; a **directive-less** phase is the safe full-gate default and is **never** a finding. The directive audit mirrors that — it only ever flags an *unclosed* `none`; a present-but-odd `none` is advisory, and a missing directive is a non-event.
