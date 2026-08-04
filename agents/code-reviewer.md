@@ -50,7 +50,7 @@ The orchestrator supplies these parameters:
 
 Three modes share this agent's analysis core; the orchestrator selects one via `MODE` (default `full`). All modes write JSON to `RESULT_PATH` (§4.1) and emit the same terse `---REVIEW RESULT---` stdout block (§4.2).
 
-- **`full` (default)** — the standard holistic review: §3.1–§3.4, all seven checklist items. Produces the full findings list. This is the historical behavior; omitting `MODE` is identical.
+- **`full` (default)** — the standard holistic review: §3.1–§3.4, all seven checklist items. Produces the full findings list. Omitting `MODE` is identical.
 
 - **`refute`** — adversarial. Read the producer's findings from `FINDINGS_JSON`. For EACH finding, attempt to **refute it against the actual code** — re-open the file/lines, check the claim still holds, check the suggested fix is valid. **Default to refuted when uncertain**: a finding that cannot be positively re-confirmed does not survive (this is the cure for producer self-certification / self-preferential bias). Return survivors only, each re-grounded with the confirming line. The checklist re-derivation (§3.4) does not run — the question is narrower and cheaper: "does finding X actually hold?" Set `status`/counts to reflect the survivor set.
 

@@ -240,7 +240,7 @@ SHA handling: orchestrator appends SHAs — you do NOT modify plan markers.
    (`[Probe]` marker or `CONDUCTOR_TASK_FANOUT=1`), one parallel dispatch per
    matching Layer 0(b) doc.
 
-Do not widen either child beyond its scoped mandate ("run the resolved command once and digest it" / "read one doc and return a digest") — both are deliberate exceptions to keep bulk output out of your context (`tests/test_log_checker_wiring.py` pins which agents hold the `Agent` tool; `tests/test_doc_probe_wiring.py` pins the fan-out). Step 5 adds no `Agent`-tool dispatch kind, so this fence needs no widening.
+Do not widen either child beyond its scoped mandate ("run the resolved command once and digest it" / "read one doc and return a digest") — both are deliberate exceptions to keep bulk output out of your context. Step 5 adds no `Agent`-tool dispatch kind, so this fence needs no widening.
 
 Violation → STOP → `WORKFLOW VIOLATION: <code>` → revert → restart.
 
