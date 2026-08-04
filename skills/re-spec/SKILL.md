@@ -54,11 +54,11 @@ If `spec-anchors` is already failing, **halt** — fix the existing spec defect 
 
 Parse `$ARGUMENTS` for the structured flags; fall back to free-edit when none are present.
 
-**Mode A — `--add-constraint "<text>"` (repeatable):** append a bullet under `## Constraints`. If the heading is absent, create it (above `## Out of Scope`, per `templates/spec-scaffold.md`). Use the Edit tool. **Then also append the constraint to `.conductor/track-directives.md`** (the directive channel — see §3.3b): this is what makes the constraint live to future dispatches.
+**Mode A — `--add-constraint "<text>"` (repeatable):** append a bullet under `## Constraints`. If the heading is absent, create it (above `## Out of Scope`, per `templates/spec-scaffold.md`). **Then also append the constraint to `.conductor/track-directives.md`** (the directive channel — see §3.3b): this is what makes the constraint live to future dispatches.
 
-**Mode B — `--edit-ac AC-n "<new text>"` (repeatable):** rewrite that AC bullet's body in place. Match the line with `^-\s+AC-<n>\s*[:\-]?\s*.*$` and replace the body after the ID. Keep the `- AC-N:` prefix byte-identical (the parser keys on it — `spec_parse._AC`). Use the Edit tool, one edit per AC.
+**Mode B — `--edit-ac AC-n "<new text>"` (repeatable):** rewrite that AC bullet's body in place. Match the line with `^-\s+AC-<n>\s*[:\-]?\s*.*$` and replace the body after the ID. Keep the `- AC-N:` prefix byte-identical (the parser keys on it — `spec_parse._AC`). One edit per AC.
 
-**Mode C — free-edit (no flags):** the user has already hand-edited `spec.md` (or will, via the Edit tool mid-skill). You still run §3.4–§7 to commit, assess blast-radius, and re-validate. If the working-tree `spec.md` is unchanged from the §3.2 snapshot AND no flags were given, **halt and ask** what the user wants changed — don't invent an edit.
+**Mode C — free-edit (no flags):** the user has already hand-edited `spec.md` (or will, by hand mid-skill). You still run §3.4–§7 to commit, assess blast-radius, and re-validate. If the working-tree `spec.md` is unchanged from the §3.2 snapshot AND no flags were given, **halt and ask** what the user wants changed — don't invent an edit.
 
 #### 3.3b The directive channel (`.conductor/track-directives.md`)
 For every `--add-constraint` (and any future `--directive "<section>:<text>"`), **also** append a line to `{TRACK_DIR}/.conductor/track-directives.md`. Format:

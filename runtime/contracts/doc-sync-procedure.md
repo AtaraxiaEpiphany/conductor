@@ -65,7 +65,7 @@ from all currently loaded documents:
 5. **Track History Summary:** Compact summary of completed tracks from `tracks.md` + `log.md`.
 6. **Cross-Reference Index:** Alphabetical list of all `conductor/**/*.md` files with their `[[wikilink]]` paths.
 
-Use the Write tool to replace the entire file.
+Replace the entire file.
 
 ## C. Purpose Update Spec
 

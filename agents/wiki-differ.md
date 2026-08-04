@@ -139,7 +139,7 @@ Each `-- list` is the terse, machine-parseable counterpart of that report sectio
 
 ### 7.2 Markdown report (written to `REPORT_PATH`, full mode only)
 
-Write the full user-facing report to `REPORT_PATH` (default `{PROJECT_DIR}/.conductor/wiki-diff-report.md`) via the Write tool. Create the parent directory if absent. Content:
+Write the full user-facing report to `REPORT_PATH` (default `{PROJECT_DIR}/.conductor/wiki-diff-report.md`). Create the parent directory if absent. Content:
 
 ```
 # Wiki Diff: Documentation vs Codebase

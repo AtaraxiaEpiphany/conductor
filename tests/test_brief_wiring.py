@@ -55,9 +55,10 @@ class BriefSkillWiringTests(TestCase):
         txt = _read("skills/brief/SKILL.md")
         self.assertNotIn("track-brief-writer", txt)
         self.assertNotIn("BRIEF RESULT", txt)
-        # The inline write + scaffold fill is the new contract.
+        # The inline write step + scaffold fill is the new contract (§4 writes
+        # brief.md directly — no writer subagent, no result-block handoff).
         self.assertIn("brief-scaffold.md", txt)
-        self.assertIn("Write tool", txt)
+        self.assertIn("Write `{track_dir}/brief.md`", txt)
 
     def test_skill_uses_derive_name_and_brief_cli(self):
         txt = _read("skills/brief/SKILL.md")

@@ -183,7 +183,7 @@ Options: "Yes, seed" / "Skip"
 
 For each document the user confirms:
 
-1. Apply the proposed changes using Edit tool.
+1. Apply the proposed changes.
 2. **Bump provenance** — if the edited file is a scoped corpus doc (`conductor/design/`, `conductor/resource/`, `conductor/requirement/`), ensure its frontmatter block exists (see `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/doc-conventions.md` → Page Provenance Frontmatter) and update `last_verified` to this run's date/SHA. `sources:` gains the `{TRACK_ID}` if not already listed. If the doc lacks frontmatter entirely, add the block (this is how legacy docs are brought into compliance).
 3. Verify the edit was applied correctly.
 4. Record the file as updated.

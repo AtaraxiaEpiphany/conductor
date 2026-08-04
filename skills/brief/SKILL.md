@@ -277,7 +277,7 @@ stop-without-a-result-block failure mode that seam carried.
    - **References** = the union of (a) §2 discovered `CONTEXT_PATHS`,
      (b) any user-named files/URLs captured as `USER_REFERENCES` during §3,
      (c) the scaffold's default project links. List paths only.
-4. Use the **Write tool** to write `{track_dir}/brief.md`.
+4. Write `{track_dir}/brief.md`.
 
 ## 4.1 VALIDATE
 

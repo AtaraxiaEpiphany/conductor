@@ -163,8 +163,8 @@ The AC/TC comment is still mandatory and separate — `deps` is an *additional* 
 
 ### 4.3 Write Files
 
-1. Use the **Write tool** to write `spec.md` to `{TRACK_DIR}/spec.md`.
-2. Use the **Write tool** to write `plan.md` to `{TRACK_DIR}/plan.md`.
+1. Write `spec.md` to `{TRACK_DIR}/spec.md`.
+2. Write `plan.md` to `{TRACK_DIR}/plan.md`.
 3. Verify both writes succeeded before proceeding to output.
 
 ---
