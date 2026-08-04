@@ -165,6 +165,10 @@ Before every code-modifying action, Conductor enforces six checks (authoritative
 PYTHONPATH=. python3 -m pytest tests/
 ```
 
+### Drift gates
+
+The `scripts/` tree also hosts a family of **drift gates** (`lint-*.py` / `check-*.py`) — each is wired through a `tests/test_<gate>.py` wrapper that runs it over the live tree, so `pytest tests/` sweeps them too. Two examples: `lint-prose-impl-leak.py` flags rotting `file.ext:NN` line-number citations in markdown prose (a `:NN` goes stale the moment a line is inserted above it), and `check-contract-registry-sync.py` forbids a second hand-maintained vocabulary home in the contract.
+
 ### Verification ladder
 
 Conductor verifies work across a ladder — **L0** static, **L1** unit/integration, **L2** browser-E2E (opportunistic, when a browser-automation MCP is connected), **L4** human manual plan. It does **not** cover **L3** (production logs/metrics/traces): that rung is project-specific infrastructure a generic plugin cannot provision and is left to the host project.
