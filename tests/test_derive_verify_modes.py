@@ -77,6 +77,43 @@ class DeriveVerifyModesGuards(TestCase):
             vmp.derive_verify_modes("Bump spring-boot and make it build"), ["compile"],
         )
 
+    def test_spaced_spring_boot_is_compile_not_start(self):
+        """The spaced form ``Spring Boot`` (as a goal writes it, e.g. "Migrate to
+        Spring Boot 3") must resolve to ``compile``, NOT ``test,start``. The
+        hyphenated form is blocked by the ``[-\\w]`` lookbehind, but the spaced
+        form leaves ``boot`` preceded by a bare space — which alone passes that
+        lookbehind — so a second ``(?<!spring )`` lookbehind closes the gap. This
+        is the original bug: the resolver routed a framework-migration goal to the
+        boot-smoke branch."""
+        self.assertEqual(
+            vmp.derive_verify_modes("Migrate to Spring Boot 3"), ["compile"],
+        )
+        self.assertEqual(
+            vmp.derive_verify_modes("Upgrade to spring boot 3.2"), ["compile"],
+        )
+
+    def test_genuine_app_boot_still_resolves_to_test_start(self):
+        """The spaced-``spring boot`` fix must NOT over-fire and swallow a genuine
+        app-boot goal. "Migrate source and boot" has ``boot`` preceded by a space
+        but NOT by "spring ", so the boot-smoke branch still fires → test,start."""
+        self.assertEqual(
+            vmp.derive_verify_modes("Migrate source and boot"), ["test", "start"],
+        )
+
+    def test_intermediate_migration_incidental_green_is_compile(self):
+        """An intermediate migration goal that only INCIDENTALLY mentions green
+        ("keep the suite green", "stay green") still resolves to ``compile`` — the
+        suite is the safety net there, not the gate. Bare ``green``/``suite green``
+        are the incidental words that falsely routed such phases to the suite gate
+        before; only an explicit pass-promise ("make tests pass") defeats compile."""
+        self.assertEqual(
+            vmp.derive_verify_modes(
+                "Migrate the persistence layer, keeping the suite green"), ["compile"],
+        )
+        self.assertEqual(
+            vmp.derive_verify_modes("Migrate the DAO layer and stay green"), ["compile"],
+        )
+
     def test_plain_refactor_without_anchor_is_default(self):
         """A readability refactor with no frozen-anchor signal is just default
         TDD work — not an anchor phase. anchor requires BOTH refactor intent

@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .core import load, save
 from .git_ops import docs_synced_for_track, _git_commit
-from .helpers import out, now_iso, conductor_dir, _reset_task, _resolve_conductor_root
+from .helpers import out, now_iso, conductor_dir, _reset_task, _resolve_conductor_root, phase_task_tags
 from .constants import EXECUTION_MODES
 from .handoff import _ensure_handoff_index
 from .validate import _parse_plan_structure
@@ -349,6 +349,35 @@ def cmd_init_from_plan(track_dir, track_id, track_type, description,
         if injected:
             parsed = parse_plan(plan_path)
             plan_warnings = list(parsed["warnings"])
+
+    # Advisory drift check on AUTHORED directives. Directive-less phases are the
+    # resolver's call (harmful_conflict evaluates them authored==derived → clean);
+    # this catches the rare hand-authored directive that fights the resolver —
+    # e.g. ``verify: test`` on a Migrate phase, where the suite is expected red
+    # and a suite gate fix-and-retries forever (the defect ``compile`` prevents).
+    # Surfaces in both --check and init; advisory, never blocks (same posture as
+    # the parser's own verify warnings). Lazy import matches the other vmp sites.
+    from . import verify_mode_profiles as vmp
+    for ph in parsed["phases"]:
+        if not ph.get("verify_has_comment"):
+            continue
+        drift = vmp.harmful_conflict(
+            goal=ph.get("name", ""),
+            tags=phase_task_tags(parsed, ph["number"]),
+            explicit=ph.get("verify_modes") or [],
+        )
+        if drift["harmful"]:
+            derived = ",".join(drift["derived"]) or "the full gate"
+            authored = ",".join(drift["authored"]) or "(empty)"
+            display = re.sub(r"<!-- verify:.*?-->", "", ph.get("name", "")).strip()
+            plan_warnings.append(
+                f"Phase {ph['number']} '{display}': authored "
+                f"<!-- verify: {authored} --> under-gates a build/debt phase — the "
+                f"resolver derives '{derived}' because the suite is expected red "
+                f"here. Fix: remove the directive so init injects '{derived}', or "
+                f"rephrase the goal if the suite is genuinely the gate, or add a "
+                f"build-gated mode (compile/none) to keep the build floor."
+            )
 
     structure = to_plan_structure(parsed)
     phase_count = len(structure["phases"])

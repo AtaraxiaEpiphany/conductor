@@ -17,7 +17,9 @@ reads it directly from ``plan.md``. These tests pin the plumbing:
 - ``phase-checker.md`` carries the compile branch (build command from
   dev-commands, ignore the test-runner verdict, no fix-and-retry).
 - ``plan-format-contract.md`` documents the directive and its closed vocabulary.
-- ``spec-planner.md`` teaches the planner to emit it for staged migrations.
+- ``spec-planner.md`` teaches the planner to OMIT the directive by default (the
+  resolver derives the mode from the phase goal) and to hand-author one ONLY for
+  ``adversarial`` — the one mode a goal cannot signal.
 """
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -312,9 +314,28 @@ class ContractDocTests(TestCase):
 
 
 class PlannerDocTests(TestCase):
-    def test_planner_emits_directive_for_migrations(self):
-        self.assertIn("verify: compile", SPEC_PLANNER)
-        self.assertIn("verify: test,start", SPEC_PLANNER)
+    def test_planner_omits_directive_by_default(self):
+        """Under omit-by-default, the planner writes phase GOALS and OMITS the
+        verify directive — ``init-from-plan`` resolves the mode from the goal.
+        The worked migration example is directive-less (the resolver derives
+        compile / test,start / none from the goals); the ONLY hand-authored
+        directive in the example is ``adversarial`` (the one mode a goal cannot
+        signal). This inverts the old "emit a directive on every migration
+        heading" guidance, which authored wrong modes the resolver then had to
+        honor verbatim (explicit wins) — the original bug."""
+        # The prescriptive omit-by-default lead.
+        self.assertIn("OMIT", SPEC_PLANNER)
+        # The worked migration example is directive-less: the headings appear
+        # with NO trailing ``<!-- verify:`` comment.
+        self.assertIn("## Phase 1: Migrate dependencies\n", SPEC_PLANNER)
+        self.assertIn("## Phase 3: Bump the spring-boot parent\n", SPEC_PLANNER)
+        # The resolver-derives message ties each goal to its derived mode.
+        self.assertIn("compile", SPEC_PLANNER)
+        self.assertIn("test,start", SPEC_PLANNER)
+        # The only hand-authored directive in the example is adversarial.
+        self.assertIn("verify: test,adversarial", SPEC_PLANNER)
+        # And the drift warning an authored under-gate would trip is documented.
+        self.assertIn("under-gates", SPEC_PLANNER)
 
 
 class AuthoringResolutionTests(TestCase):
@@ -390,6 +411,63 @@ class AuthoringResolutionTests(TestCase):
         # compile/test/start phase — the planner must say so (and the contract
         # must enforce it, see PlanParseNoneClosureTests).
         self.assertIn("debt-carrying", SPEC_PLANNER.lower())
+
+
+class InjectMissingDirectivesTests(TestCase):
+    """``inject_missing_directives``: an authored directive is preserved verbatim
+    (explicit wins); a directive-less heading gets the resolver's mode written in
+    (or nothing, when the resolver derives the full gate). The spec-planner has no
+    Bash, so this injector — not the agent — owns directive resolution at init."""
+
+    BODY = (
+        "# Implementation Plan: demo\n"
+        # Phase 1: authored compile directive → preserved, NOT re-resolved.
+        "## Phase 1: Migrate dependencies <!-- verify: compile -->\n"
+        "- [ ] [Migrate] bump parent <!-- AC-1 -->\n"
+        "- [ ] [Manual] verify\n"
+        # Phase 2: directive-less feature goal → resolver derives [] (full gate)
+        # → the injector writes nothing (absence IS the full-gate signal).
+        "## Phase 2: Add the payments feature\n"
+        "- [ ] add the route <!-- AC-2 -->\n"
+        "- [ ] [Manual] verify\n"
+        # Phase 3: directive-less debt goal → resolver derives ["none"] → injected.
+        "## Phase 3: Bump the spring-boot parent\n"
+        "- [ ] [Migrate] bump the parent <!-- AC-3 -->\n"
+        "- [ ] [Manual] verify\n"
+    )
+
+    def _inject(self):
+        from scripts.track_state.plan_parse import parse_plan, inject_missing_directives
+        f = NamedTemporaryFile("w", suffix=".md", delete=False)
+        f.write(self.BODY)
+        f.close()
+        parsed = parse_plan(f.name)
+        injected = inject_missing_directives(f.name, parsed)
+        text = Path(f.name).read_text(encoding="utf-8")
+        Path(f.name).unlink()
+        return injected, text
+
+    def test_authored_directive_preserved_verbatim(self):
+        injected, text = self._inject()
+        # The authored compile directive is untouched (explicit wins).
+        self.assertIn("## Phase 1: Migrate dependencies <!-- verify: compile -->\n", text)
+        # And Phase 1 is NOT in the injection list (it was skipped, not resolved).
+        self.assertFalse(any(i["phase"] == 1 for i in injected))
+
+    def test_directive_less_debt_phase_gets_resolver_mode(self):
+        injected, text = self._inject()
+        # Phase 3 → resolver derives none; the directive is written into the heading.
+        self.assertIn("## Phase 3: Bump the spring-boot parent <!-- verify: none -->\n", text)
+        match = [i for i in injected if i["phase"] == 3]
+        self.assertEqual(len(match), 1)
+        self.assertEqual(match[0]["modes"], ["none"])
+
+    def test_directive_less_full_gate_phase_writes_nothing(self):
+        injected, text = self._inject()
+        # Phase 2 → resolver derives [] (full gate) → no directive written; the
+        # heading is unchanged and Phase 2 is absent from the injection list.
+        self.assertIn("## Phase 2: Add the payments feature\n", text)
+        self.assertFalse(any(i["phase"] == 2 for i in injected))
 
 
 if __name__ == "__main__":

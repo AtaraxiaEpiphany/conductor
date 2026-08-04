@@ -445,8 +445,11 @@ def derive_verify_modes(phase_goal: str) -> list[str]:
       is red, the build is the gate); a debt-carrying goal names only the
       mutation, not a build, so neither the build nor the suite gates it.
     * **Migration intermediate** ("compiles"/"compile"/"build" without a
-      boot/suite-green signal) → ``["compile"]``. The suite is expected red;
-      the build is the gate.
+      boot signal) → ``["compile"]``. The suite is expected red;
+      the build is the gate. A migration goal that only *incidentally* mentions
+      green ("keep the suite green") is still this branch — the suite is the
+      safety net, not the gate; only a goal that makes passing the suite the
+      deliverable ("make tests pass") falls through to the default full gate.
     * **Plain feature work** (none of the above) → ``[]`` (default full gate).
 
     Fail-open: any ambiguity or exception → ``[]``. Never invents a mode not in
@@ -463,11 +466,16 @@ def derive_verify_modes(phase_goal: str) -> list[str]:
         # only ever meaningful combined with a green gate, so test,start together).
         # In a *phase goal* description these tokens overwhelmingly mean "the app
         # runs"; false positives (bootstrap/bootloader code) don't appear in goals.
-        # ``boot`` is matched with a negative lookbehind so it does NOT false-fire
+        # ``boot`` is matched with negative lookbehinds so it does NOT false-fire
         # inside "spring-boot" (the classic substring trap — a migration goal
         # mentioning the Spring Boot framework is a *compile* goal, not a
-        # boot-smoke goal). The lookbehind excludes word chars AND hyphen.
-        if re.search(r"(?<![-\w])boot", text) or _any_in(text, (
+        # boot-smoke goal). The lookbehind excludes word chars AND hyphen, AND the
+        # spaced "spring " prefix: the hyphenated form is blocked by [-\w], but a
+        # spaced "Spring Boot 3" goal leaves "boot" preceded by a bare space, which
+        # alone would pass and mis-route to test,start — so the second lookbehind
+        # closes that gap. Both lookbehinds are fixed-width (Python ``re`` allows
+        # chained fixed-width lookbehinds).
+        if re.search(r"(?<!spring )(?<![-\w])boot", text) or _any_in(text, (
             "boots", "starts up", "app starts", "the app starts",
             "start the app", "starts the app", "run the app",
             "boot smoke", "startup stack trace",
@@ -525,12 +533,20 @@ def derive_verify_modes(phase_goal: str) -> list[str]:
         if _any_in(text, compile_signals):
             return _filter_to_vocab(["compile"])
         # A migration goal WITHOUT an explicit compile/boot word: the safest
-        # intermediate-phase proposal is still compile (the suite is red), but
-        # only if the goal reads as an *intermediate* migration step, not the
-        # final "tests pass" step. We require a migration signal AND that the
-        # goal does NOT promise a green suite ("tests pass"/"green"/"suite").
+        # intermediate-phase proposal is still compile (the suite is red). The
+        # bar to LEAVE compile for the full gate is HIGH — the goal must promise
+        # the SUITE itself passes (the self-closing final phase). This is a
+        # narrower set than ``suite_green_signals`` above, and deliberately so:
+        # leaving ``none`` (gates on nothing) is cheap, so any green mention
+        # exits it; but an intermediate migration goal casually mentioning green
+        # ("keep the suite green", "stay green") still gates on the BUILD — the
+        # suite is the safety net there, not the gate. Bare ``green``/``suite
+        # green`` are exactly the incidental words that falsely routed such
+        # phases to the suite gate before; only an explicit pass-promise defeats
+        # compile now.
+        migration_self_close = ("tests pass", "test suite passes", "all tests pass")
         if (_any_in(text, migration_signals)
-                and not _any_in(text, suite_green_signals)):
+                and not _any_in(text, migration_self_close)):
             return _filter_to_vocab(["compile"])
 
         # Default: feature work, or a migration's final "tests pass" phase → the
@@ -648,4 +664,53 @@ def resolve_phase_verify_modes(goal=None, tags=None, explicit=None):
         return ([], "full_gate")
     except Exception:
         return ([], "full_gate")
+
+
+def harmful_conflict(goal=None, tags=None, explicit=None):
+    """Detect an authored verify directive that UNDER-GATES a build/debt phase.
+
+    The residual drift surface once the planner omits directives by default
+    (the planner now hand-authors a directive only for ``adversarial`` or a
+    deliberate override). When an authored directive IS present, this answers
+    the one question ``init-from-plan`` could not answer before: is it
+    HARMFUL? Harmful = the resolver says this phase needs the BUILD gate
+    (``compile``/``none`` — the suite is expected red) but the authored
+    directive runs the SUITE (``test``/``start``/``adversarial``/default). On
+    such a phase the suite is red by design, so a suite gate fix-and-retries
+    forever — the exact defect ``compile`` exists to prevent. This is never a
+    legitimate override (no correct plan gates a build/debt phase on the red
+    suite), so unlike an unknown mode it warns even though every authored mode
+    is individually valid.
+
+    Build-gated-ness is read data-driven via :func:`is_build_gated`
+    (``compile`` + ``none`` today; an overlay mode that joins them participates
+    automatically), not a bare literal set.
+
+    Returns a dict::
+
+        {"harmful": bool, "unknown_mode": bool,
+         "derived": [...], "authored": [...]}
+
+    where ``derived`` is what the resolver WOULD inject (explicit=None) and
+    ``authored`` is the explicit directive passed through verbatim.
+    ``unknown_mode`` is True when an authored token is not in the resolved
+    :func:`MODE_VOCAB` (a typo like ``verify: verify``); the plan parser
+    already warns on those at parse time, this field exists for tests and so a
+    caller can tell the two warning species apart. Pure, fail-open: any
+    exception → ``{"harmful": False, "unknown_mode": False, ...}``.
+    """
+    try:
+        derived = list(resolve_phase_verify_modes(goal=goal, tags=tags)[0])
+        authored = list(resolve_phase_verify_modes(
+            goal=goal, tags=tags, explicit=explicit)[0])
+        build_gated = {m for m in MODE_VOCAB() if is_build_gated(m)}
+        harmful = (bool(set(derived) & build_gated)
+                   and not bool(set(authored) & build_gated))
+        vocab = set(MODE_VOCAB())
+        unknown_mode = bool(authored) and any(m not in vocab for m in authored)
+        return {"harmful": harmful, "unknown_mode": unknown_mode,
+                "derived": derived, "authored": authored}
+    except Exception:
+        return {"harmful": False, "unknown_mode": False,
+                "derived": [], "authored": []}
 

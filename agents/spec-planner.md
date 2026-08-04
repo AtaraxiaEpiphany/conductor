@@ -122,16 +122,27 @@ Structure:
 - [ ] [Manual] Conductor - User Manual Verification 'Phase 2' (Protocol in task-workflow.md)
 ```
 
-For a **staged migration**, add the phase-verify directive to each heading:
+For a **staged migration**, write the GOAL on each heading and OMIT the directive — `init-from-plan` resolves every mode from the goal text:
 
 ```markdown
-## Phase 1: Migrate dependencies <!-- verify: compile -->
+## Phase 1: Migrate dependencies
 - [ ] [Migrate] {bump spring-boot parent, resolve dependency tree} <!-- AC-1 -->
 - [ ] [Manual] Conductor - User Manual Verification 'Phase 1' (Protocol in task-workflow.md)
 
-## Phase 2: Migrate source and boot <!-- verify: test,start -->
+## Phase 2: Migrate source and boot
 - [ ] [Migrate] {javax → jakarta rename, fix config} <!-- AC-1 -->
 - [ ] [Manual] Start the app and confirm it boots
+
+## Phase 3: Bump the spring-boot parent
+- [ ] [Migrate] {bump parent, defer consumer fixes to a later phase} <!-- AC-1 -->
+- [ ] [Manual] verify the build compiles
+```
+
+`init-from-plan` resolves those goals deterministically — Phase 1 → `compile` (the suite is expected red; the build is the gate), Phase 2 → `test,start` (the app boots), Phase 3 → `none` (a debt-carrying bump whose suite debt a later phase closes). You wrote **zero** directives; the resolver owns all six modes. The ONE mode no goal can signal is **adversarial** — hand-author it, and only it:
+
+```markdown
+## Phase 4: Harden authN <!-- verify: test,adversarial -->
+- [ ] {close the auth-bypass, add rate-limit} <!-- AC-4 -->
 ```
 
 **Within-track parallelism is flat-only (v1).** `conductor:parallel` fans out worktree-isolated waves, but a task with **subtasks can never be a wave member** — the wave scheduler rejects subtasked tasks before checking deps (plan-format-contract.md §8 rule 6). The planner's default is to decompose non-trivial work into subtasks, so by default *nothing* is wave-eligible. When the user asks for parallelism (or you see genuinely disjoint, independent units of work in one phase), author those tasks **flat** — no subtasks, the steps inlined as the task body — and add an empty `<!-- deps: -->` (independent) or `<!-- deps: P1.T1 -->` (depends on a sibling). Independent tasks you want concurrent must BOTH be flat and BOTH carry a deps comment.
@@ -144,11 +155,11 @@ For a **staged migration**, add the phase-verify directive to each heading:
 
 **When no registered tag's `when_to_use`/`signals` match — or you are unsure between an exemption tag and no-tag — leave the task UNTAGGED.** The default TDD path is the safe failure mode: a wrongly-untagged `[Config]` task costs one extra Red cycle, but a wrongly-tagged feature task silently skips TDD and the coverage gate (F2/F3 exempt). Defaulting to no-tag biases toward correctness. Never invent a tag **not in the injected registry** (e.g. `[Feature]`, `[Bugfix]`, `[Test]`, `[TDD]`) — `init-from-plan` **rejects** an unrecognized tag as a hard error (it validates against the resolved registry vocab), so an invented tag blocks the track from starting. The registry lives at `conductor/workflow/task-type-profiles.json` (baseline ⊕ project overlay — see `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/plan-format-contract.md`), and the project's overlay there is where a project-specific tag is registered so it appears in your injected vocab.
 
-**Phase-verify directive — `init-from-plan` resolves it; you author the goal.** A `## Phase N:` heading MAY carry a `<!-- verify: <modes> -->` comment declaring that phase's checkpoint gate (plan-format-contract.md §"Phase Verify Directives"). The mode vocabulary is data-driven — **emit any mode the injected `[Conductor Registry]` block lists.** You have **no Bash**, so you do not call the resolver yourself: write the phase **goal** (the heading name) and you MAY omit the directive entirely. When `init-from-plan` runs it resolves any phase heading lacking a `<!-- verify: -->` comment, deterministically, by the exact contract precedence (explicit > goal-derived > tag-derived > full gate) and rewrites that heading in plan.md. A phase you authored a directive for is left untouched (explicit wins).
+**Phase-verify directive — OMIT it; `init-from-plan` resolves the mode from your goal.** Do NOT author a `<!-- verify: <modes> -->` directive. Write the phase **goal** (the heading name) so it describes what the phase actually does, and `init-from-plan` resolves the mode deterministically — by the exact contract precedence (explicit > goal-derived > tag-derived > full gate) — and writes it into the heading for you. The resolver derives five of the six modes from the goal text (`compile`, `none`, `test,start`, `anchor`, and the default full gate); you author a directive ONLY for the one mode a goal cannot signal — **adversarial** (and its compositions, e.g. `test,adversarial`). The mode vocabulary is data-driven — **emit only modes the injected `[Conductor Registry]` block lists.**
 
 This makes directive resolution one-pass and drift-free: the same resolver functions the runtime uses compose the directive at load, so the resolution procedure is not re-encoded as agent prose and cannot diverge from the CLI/dispatch view. The one input the resolver keys on that **you** control is the **phase goal text** — it is the goal classifier's most discriminating signal. So **name the intent in the phase goal**: a specific goal ("bump the spring-boot parent" → resolves to a debt-carrying phase) classifies differently from a vague one ("Migrate dependencies" → resolves to `compile`). Write the goal that describes what the phase actually does; the resolver reads it.
 
-Author the directive **by hand** only when you want a result the resolver would not reach from the goal — e.g. `verify: anchor` on a specific refactor phase, or a multi-mode directive like `verify: test,adversarial` on a security phase. In that case write the full `<!-- verify: <modes> -->` into the heading yourself and it will be passed through verbatim (explicit wins). This is a **proposal**, not a verdict: the directive is advisory, `init-from-plan --check` warns (never blocks), and the operator may override any phase by editing its heading after init.
+So the rule is: **omit by default; hand-author only `adversarial`** (or a deliberate override the goal did not signal, e.g. `verify: anchor` on a refactor phase). Write the full `<!-- verify: <modes> -->` into the heading yourself and it is passed through verbatim (explicit wins). An authored directive that conflicts with what the resolver would derive is **drift**: if it under-gates a build/debt phase to the suite (e.g. `verify: test` on a Migrate phase, where the suite is expected red), `init-from-plan` surfaces a warning naming the phase and the mode it would have derived. The directive is advisory and never blocks init — the operator may override any phase by editing its heading afterward — but treat that warning as a signal that the goal and the directive disagree; one of them is wrong.
 
 A `verify: none` phase is **debt-carrying** — it skips the suite gate because the work it stages will not pass tests until a *later* phase finishes the migration, and the build itself may be red mid-step. **The build floor:** a `none` phase fans out `compile-runner` (not `test-runner`), and the phase-checker gates on that build verdict — a green build passes (`NO_GATE: passed (build ok)`), but a *broken build* fails the checkpoint (`STATUS: FAILED`). The debt is in the *suite*, not the build: a deps-bump that broke compilation is a broken mid-step, not debt. The contract requires that a subsequent phase closes the suite debt, and `init-from-plan --check` warns if no such closing phase follows a `none` phase. So never hand-author `verify: none` on the plan's final phase — always pair it with a later integration phase that actually exercises the staged work.
 
