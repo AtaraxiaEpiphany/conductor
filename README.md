@@ -167,7 +167,7 @@ PYTHONPATH=. python3 -m pytest tests/
 
 ### Drift gates
 
-The `scripts/` tree also hosts a family of **drift gates** (`lint-*.py` / `check-*.py`) — each is wired through a `tests/test_<gate>.py` wrapper that runs it over the live tree, so `pytest tests/` sweeps them too. Two examples: `lint-prose-impl-leak.py` flags rotting `file.ext:NN` line-number citations in markdown prose (a `:NN` goes stale the moment a line is inserted above it), and `check-contract-registry-sync.py` forbids a second hand-maintained vocabulary home in the contract.
+The `scripts/` tree also hosts a family of **drift gates** (`lint-*.py` / `check-*.py`) — each is wired through a `tests/test_<gate>.py` wrapper that runs it over the live tree, so `pytest tests/` sweeps them too. Two examples: `lint-prose-impl-leak.py` flags rotting `file.ext:NN` line-number citations in markdown prose (a `:NN` goes stale the moment a line is inserted above it), and `check-contract-registry-sync.py` forbids a second hand-maintained vocabulary home in the contract. The full prompt-prose keep/cut rules live in [`runtime/contracts/prose-style.md`](runtime/contracts/prose-style.md).
 
 ### Verification ladder
 

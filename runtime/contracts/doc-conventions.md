@@ -89,6 +89,7 @@ clickable surfaces.
 ## See Also
 
 - [[runtime/core-contract]] — behavioral invariants; resident in every session.
+- [[runtime/contracts/prose-style]] — authoring conventions for the *prompt* surface (`agents/` / `skills/` / `runtime/`), the sibling of this page.
 - [[conductor/design/decision-serial-execution]] — why the state model is globally locked (serial execution).
 - [[conductor/design/decision-loop-heartbeat]] — why housekeeping rides deterministic hooks, not a cron.
 - [[conductor/design/decision-pattern-realization]] — which multi-agent patterns run on prose skills vs the Workflow tool.

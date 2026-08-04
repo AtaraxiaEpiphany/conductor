@@ -98,7 +98,8 @@ def main() -> int:
             "\nFix: drop the `:NN` suffix. Cite the STABLE referent instead — the\n"
             "file (`git_ops.py`) or the symbol (`_git_commit` in `git_ops.py`),\n"
             "which a reader can grep for regardless of where code moves. A line\n"
-            "number is stale the moment a line is inserted above it."
+            "number is stale the moment a line is inserted above it.\n"
+            "Full keep/cut rules: runtime/contracts/prose-style.md."
         )
         return 1
     print(f"prose-impl-leak: OK ({len(files)} markdown files clean)")
