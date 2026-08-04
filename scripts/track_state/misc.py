@@ -1569,6 +1569,36 @@ def cmd_resolve_phase_verify(goal=None, tags=None, explicit=None):
         print("(no directive — default full gate)")
 
 
+def cmd_derive_task_type(description=None):
+    """Derive a task's leading dispatch tag from its free-text description.
+
+    The task-type half of the same deterministic, registry-aware seam
+    :func:`cmd_resolve_phase_verify` closes for phase-verify modes. This is a
+    thin stdin/stdout adapter over :func:`task_profiles.derive_task_tag`, which
+    signal-matches each registered tag's ``signals`` set against the description
+    (no new classification logic is invented here — only exposed). Emits JSON
+    ``{"tag": <tag>}`` where ``<tag>`` is the derived tag or ``null`` — ``null``
+    IS the default full-TDD path (the safe failure mode and the correct outcome
+    for most tasks: a wrongly-untagged task costs one Red cycle, a wrongly-tagged
+    one silently skips TDD and the coverage gate).
+
+    Strictly read-only — no track-dir, no writes (same posture as
+    :func:`cmd_resolve_phase_verify` / :func:`cmd_registry_doc`). Consumed by
+    ``track-state derive-task-type``. The spec-planner has no Bash, so it does
+    NOT call this — its tag input is the injected ``[Conductor Registry]``
+    ``signals`` plus the plan-init validator; the consumers are Bash-having
+    agents (brief, discover, task-executor) that want a deterministic tag for a
+    description without re-encoding the matcher as prose.
+    """
+    try:
+        from .task_profiles import derive_task_tag
+        out(dict(tag=derive_task_tag(description or "")))
+    except Exception:
+        # Fail-open: any error → null (default TDD), never a raised exception
+        # into the caller's one-shot CLI call.
+        out(dict(tag=None))
+
+
 def cmd_record_summary(track_dir):
     """Record a compact task summary for context recovery after compaction."""
     summaries_path = conductor_dir(track_dir) / "task-summaries.json"

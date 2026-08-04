@@ -20,8 +20,10 @@ The load-bearing invariants under test:
 - **Advisory-only**: ``init-from-plan`` still hard-validates the final tag, so
   this only *proposes*.
 """
+import importlib.util
 import json
 import os
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -29,6 +31,12 @@ from unittest import TestCase, main
 
 _scripts = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(_scripts))
+_CLI = _scripts / "track-state"
+
+_pcc_spec = importlib.util.spec_from_file_location(
+    "pre_command_check_dtt", _scripts / "pre-command-check.py")
+_pcc = importlib.util.module_from_spec(_pcc_spec)
+_pcc_spec.loader.exec_module(_pcc)
 
 from track_state import task_profiles as tp  # noqa: E402
 
@@ -172,6 +180,87 @@ class DeriveTaskTagOverlay(TestCase):
         self.assertEqual(
             tp.derive_task_tag("canary deploy to the kubernetes cluster"), "K8sRollout",
         )
+
+
+class DeriveTaskTypeCLI(TestCase):
+    """``track-state derive-task-type`` — the stdin/stdout adapter over
+    ``derive_task_tag``. Emits compact JSON ``{"tag": <tag|null>}``; ``null`` is
+    the correct default-TDD outcome, not an error. Read-only (no track-dir)."""
+
+    def _run(self, description=None, env=None):
+        argv = [sys.executable, str(_CLI), "derive-task-type"]
+        if description is not None:
+            argv += ["--description", description]
+        proc = subprocess.run(argv, capture_output=True, text=True, env=env)
+        return proc.returncode, proc.stdout.strip(), proc.stderr
+
+    def test_migrate_description_cli(self):
+        rc, out, err = self._run(
+            description="bump spring-boot to 3.0 and fix the javax->jakarta rename")
+        self.assertEqual(rc, 0, f"failed: {err}")
+        self.assertEqual(json.loads(out), {"tag": "Migrate"})
+
+    def test_feature_description_is_null_cli(self):
+        # Feature work → null (default full TDD), the safe majority outcome.
+        rc, out, err = self._run(description="add a DB connection pool to the app")
+        self.assertEqual(rc, 0, f"failed: {err}")
+        self.assertEqual(json.loads(out), {"tag": None})
+
+    def test_empty_description_is_null_cli(self):
+        rc, out, err = self._run(description="")
+        self.assertEqual(rc, 0, f"failed: {err}")
+        self.assertEqual(json.loads(out), {"tag": None})
+
+    def test_omitted_description_is_null_cli(self):
+        # No --description at all → derive_task_tag("") → null, never a crash.
+        rc, out, err = self._run(description=None)
+        self.assertEqual(rc, 0, f"failed: {err}")
+        self.assertEqual(json.loads(out), {"tag": None})
+
+    def test_writes_nothing_in_temp_dir(self):
+        # Read-only contract: no track-dir, no overlay discoverable, no writes.
+        with tempfile.TemporaryDirectory() as d:
+            env = {**os.environ, "CLAUDE_PROJECT_DIR": d}
+            before = sorted(Path(d).rglob("*"))
+            rc, out, err = self._run(
+                description="bump spring-boot to 3.0", env=env)
+            self.assertEqual(rc, 0, f"failed in temp dir: {err}")
+            after = sorted(Path(d).rglob("*"))
+            self.assertEqual(before, after, "derive-task-type wrote/deleted a file")
+
+    def test_first_flag_not_eaten_as_track_dir(self):
+        # The no-track-dir guard: --description must not be mis-parsed as a
+        # phantom track-dir positional (the bug that bit the first wiring).
+        rc, out, err = self._run(description="bump spring-boot to 3.0")
+        self.assertEqual(rc, 0)
+        self.assertNotIn("not an existing directory", err)
+
+
+class DeriveTaskTypeWiring(TestCase):
+    """derive-task-type is registered at every site the CLI requires — the
+    6-site registration the brief-resume bug taught us to enforce (a command
+    missing from any one site fails invisibly until the path that needs it is
+    hit)."""
+
+    def test_is_sanctioned(self):
+        # Else pre-command-check's broad-verb scan could false-positive on the
+        # --description text.
+        self.assertIn("derive-task-type", _pcc._SANCTIONED_TS_SUBCOMMANDS)
+
+    def test_is_in_command_help(self):
+        from track_state.cli import COMMAND_HELP
+        self.assertIn("derive-task-type", COMMAND_HELP)
+
+    def test_is_in_command_groups(self):
+        from track_state.cli import _COMMAND_GROUPS
+        grouped = {c for _name, cmds in _COMMAND_GROUPS for c in cmds}
+        self.assertIn("derive-task-type", grouped)
+
+    def test_is_no_track_dir_command(self):
+        # Else the arity guard rejects `derive-task-type --description ...` for
+        # a missing <track-dir> positional.
+        from track_state.cli import _NO_TRACK_DIR_COMMANDS
+        self.assertIn("derive-task-type", _NO_TRACK_DIR_COMMANDS)
 
 
 if __name__ == "__main__":

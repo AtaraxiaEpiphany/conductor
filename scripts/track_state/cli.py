@@ -25,6 +25,7 @@ from .misc import (
     cmd_deferred_report, cmd_phase_done, cmd_registry_update, cmd_registry_add,
     cmd_registry_doc,
     cmd_resolve_phase_verify,
+    cmd_derive_task_type,
     cmd_record_summary, cmd_preflight, cmd_quality_snapshot,
     cmd_spec_integrity, cmd_derive_name, cmd_post_loop_status,
     cmd_resolve_track, cmd_check, _resolve_track_dir_or_halt,
@@ -271,6 +272,12 @@ COMMAND_HELP = {
                              "calling the existing resolver functions — the deterministic replacement for the "
                              "planner's hand-written prose ladder. Emits `verify: <modes>` or the full-gate line; "
                              "the planner emits the directive verbatim or emits nothing on the full-gate line."),
+    "derive-task-type": ("derive-task-type --description '<task description text>'",
+                         "Derive a task's leading dispatch tag from its free-text description. Read-only — no "
+                         "track-dir, no writes. Signal-matches each registered tag's `signals` set via the existing "
+                         "`derive_task_tag` (the deterministic replacement for a hand-written tag ladder). Emits "
+                         "JSON `{\"tag\": <tag>}`; `null` IS the correct default full-TDD outcome (no exemption), "
+                         "not an error."),
     "write-result": ("write-result <track-dir> --status success|failure --commit-sha <sha>\n"
                      "                                --summary <text> --coverage-pct <n> ...\n"
                      "                  <track-dir> [--data '<json>']   (or pipe JSON on stdin)",
@@ -438,7 +445,11 @@ _COMMAND_GROUPS = [
     ("State Mutations", ["lock", "complete", "fail", "skip", "defer", "block", "reset",
                          "set-max-retries", "split"]),
     ("Sync & Registry", ["sync-plan", "reconcile-plan", "sync-handoff",
-                         "registry-update", "registry-add", "registry-doc"]),
+                         "registry-update", "registry-add", "registry-doc",
+                         # Read-only registry-backed resolvers — map a goal /
+                         # description to the directive / tag the planner emits.
+                         # No track-dir, no writes (same posture as registry-doc).
+                         "resolve-phase-verify", "derive-task-type"]),
     ("Handoff", ["get-handoff", "append-handoff", "harvest-candidates",
                  "compile-track-findings"]),
     ("Result Processing", ["write-result", "process-result"]),
@@ -501,6 +512,8 @@ _NO_TRACK_DIR_COMMANDS = frozenset({
     # resolve-phase-verify: its inputs are --goal/--tags/--explicit flags (a
     # phase goal text, not a path) — same no-track-dir posture as registry-doc.
     "resolve-phase-verify",
+    # derive-task-type: input is a --description flag (task text, not a path).
+    "derive-task-type",
 })
 
 
@@ -659,6 +672,13 @@ def main():
             cmd_resolve_phase_verify(goal=flag(rest, "--goal"),
                                      tags=flag(rest, "--tags"),
                                      explicit=flag(rest, "--explicit"))
+        elif cmd == "derive-task-type":
+            # Read-only task-type resolver: maps a task description to its
+            # leading dispatch tag (or null = default full-TDD). Same no-track-dir,
+            # no-writes posture as resolve-phase-verify / registry-doc, so its
+            # --description flag starts at argv[2] via the same flag() scan.
+            rest = sys.argv[2:]
+            cmd_derive_task_type(description=flag(rest, "--description"))
         elif cmd == "start":
             cmd_start(track_dir)
         elif cmd == "set-mode":
