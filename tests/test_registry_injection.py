@@ -3,18 +3,21 @@
 The deterministic layer (CLI, plan parser, dispatch router, F2/F3 gates) is
 data-driven via the task-type registry (baseline ⊕ project overlay). This file
 pins the bridge that data-drives the *agent-prose* layer too: the SubagentStart
-hook injects a ``[Conductor Registry]`` block into spec-planner, task-executor,
-spec-reviewer, and refuter, so a project overlay's tags flow end-to-end to the
-agents with zero plugin edits.
+hook injects a ``[Conductor Registry]`` block into task-executor, spec-reviewer,
+and refuter, so a project overlay's tags flow end-to-end to those agents with
+zero plugin edits. spec-planner is deliberately NOT injected — it fetches the
+full catalog on demand via ``track-state registry-doc`` (a tier-B join, pinned
+in test_registry_doc.py); only the small/per-task resolved bits stay injected.
 
 These are the load-bearing guards that:
-- spec-planner sees the full resolved TAG_VOCAB (emit any, refuse none).
+- spec-planner is NOT in _REGISTRY_AGENTS (it fetches the vocab via registry-doc;
+  the floor + reminder still arrive, but no registry block).
 - task-executor sees this task's leading-tag profile (and its on-demand
   `workflow` pointer when the tag carries one) and the resolved exemption sets.
 - the registry block is ordered between the reminder and any retry block.
 - fail-open: a malformed/missing registry never breaks the floor/reminder.
 - the headline end-to-end proof: a synthetic project overlay adding a tag
-  appears in the injected vocab.
+  appears in the registry-doc render AND the injected reviewer/executor blocks.
 """
 import contextlib
 import io
@@ -92,52 +95,37 @@ _FAILURE_HANDOFF = """# Handoff: demo
 """
 
 
-class PlannerInjectionTests(TestCase):
-    def test_planner_receives_registry_lead(self):
-        ctx = _run("spec-planner").get("hookSpecificOutput", {}).get("additionalContext", "")
-        self.assertIn("[Conductor Registry]", ctx)
+class PlannerOnDemandTests(TestCase):
+    """spec-planner fetches the full tag catalog on demand via
+    ``track-state registry-doc`` (§3.1) — it is NOT in ``_REGISTRY_AGENTS``, so
+    the SubagentStart hook injects no ``[Conductor Registry]`` block for it. The
+    full catalog is a tier-B join (large + not per-task), so only the
+    small/per-task resolved bits stay hook-injected (task-executor's leading-tag
+    profile). These tests pin the deliberate removal: spec-planner gets the
+    floor + reminder only, and the vocab reaches it via the CLI it runs itself
+    (the every-tag / when-to-use / signals properties of that render are pinned
+    in test_registry_doc.py)."""
 
-    def test_planner_sees_every_tag(self):
-        ctx = _run("spec-planner").get("hookSpecificOutput", {}).get("additionalContext", "")
-        for tag in tp.TAG_VOCAB():
-            self.assertIn(f"[{tag}]", ctx, f"planner injection missing tag {tag!r}")
+    def test_planner_not_in_registry_agents(self):
+        import importlib.util
+        hspec = importlib.util.spec_from_file_location(
+            "oss_planner", _scripts / "on-subagent-start.py")
+        hook = importlib.util.module_from_spec(hspec)
+        hspec.loader.exec_module(hook)
+        self.assertNotIn("spec-planner", hook._REGISTRY_AGENTS)
 
-    def test_planner_sees_when_to_use_hints(self):
+    def test_planner_receives_no_registry_block(self):
         ctx = _run("spec-planner").get("hookSpecificOutput", {}).get("additionalContext", "")
-        # The injected block carries each tag's when-to-use hint, data-driven.
-        self.assertIn(tp.when_to_use_for("Config"), ctx)
+        self.assertNotIn("[Conductor Registry]", ctx)
+        # ...but the floor + result-format reminder still arrive.
+        self.assertIn("Validate every tool call", ctx)
+        self.assertIn("SPEC PLAN RESULT", ctx)
 
-    def test_planner_sees_explicit_signals_keywords(self):
-        # The matcher DATA (tier-A): each tag that explicitly declares `signals`
-        # in the registry surfaces a `signals:` keyword line, so the planner
-        # matches a task description against the same inputs derive_task_tag
-        # uses — not a re-encoded ladder in agent prose. Pinned on a baseline
-        # tag with an explicit signals row (Config) so a regression (signals
-        # line dropped) is caught.
-        ctx = _run("spec-planner").get("hookSpecificOutput", {}).get("additionalContext", "")
-        self.assertIn("signals:", ctx)
-        # A keyword from Config's explicit signals list must appear.
-        cfg_signals = tp._profile("Config").get("signals")
-        self.assertIsInstance(cfg_signals, list)
-        self.assertTrue(cfg_signals, "Config must declare signals in the registry")
-        self.assertIn(str(cfg_signals[0]), ctx)
-
-    def test_planner_signals_line_omitted_for_refactor(self):
-        # [Refactor] deliberately carries NO explicit `signals` (opt-in, not
-        # goal-detected). Its row must NOT get a derived `signals:` line —
-        # showing tokens lifted from when_to_use would imply it's matchable,
-        # which breaks the "derive_task_tag must not auto-propose Refactor"
-        # invariant. Only EXPLICIT signals rows emit the line.
-        ctx = _run("spec-planner").get("hookSpecificOutput", {}).get("additionalContext", "")
-        lines = ctx.splitlines()
-        for i, line in enumerate(lines):
-            if "[Refactor] route=" in line:
-                after = lines[i + 1] if i + 1 < len(lines) else ""
-                self.assertNotIn("signals:", after,
-                                 "[Refactor] must not carry a signals: line")
-                break
-        else:
-            self.fail("[Refactor] row not found in planner injection")
+    def test_registry_for_planner_builder_removed(self):
+        # _registry_for_planner is dead code now — the on-demand CLI replaced it.
+        # Pin the removal so a stale builder can't creep back.
+        txt = (_scripts / "on-subagent-start.py").read_text()
+        self.assertNotIn("_registry_for_planner", txt)
 
 
 class ReviewerInjectionTests(TestCase):
@@ -261,8 +249,8 @@ class OrderingTests(TestCase):
     """floor < reminder < registry < retry (the contract the assembly preserves)."""
 
     def test_registry_follows_reminder(self):
-        ctx = _run("spec-planner").get("hookSpecificOutput", {}).get("additionalContext", "")
-        self.assertLess(ctx.index("SPEC PLAN RESULT"), ctx.index("[Conductor Registry]"))
+        ctx = _run("spec-reviewer").get("hookSpecificOutput", {}).get("additionalContext", "")
+        self.assertLess(ctx.index("REVIEW RESULT"), ctx.index("[Conductor Registry]"))
 
     def test_registry_precedes_retry(self):
         with _track(_flat_state(), _FAILURE_HANDOFF) as cwd:
@@ -270,8 +258,9 @@ class OrderingTests(TestCase):
         self.assertLess(ctx.index("[Conductor Registry]"), ctx.index("[Conductor Retry]"))
 
     def test_floor_still_leads_with_registry_present(self):
-        ctx = _run("spec-planner").get("hookSpecificOutput", {}).get("additionalContext", "")
-        self.assertLess(ctx.index("Validate every tool call"), ctx.index("SPEC PLAN RESULT"))
+        ctx = _run("spec-reviewer").get("hookSpecificOutput", {}).get("additionalContext", "")
+        self.assertIn("[Conductor Registry]", ctx)  # registry present for this agent
+        self.assertLess(ctx.index("Validate every tool call"), ctx.index("REVIEW RESULT"))
 
 
 class FailOpenTests(TestCase):
@@ -297,14 +286,17 @@ class FailOpenTests(TestCase):
 class OverlayEndToEndTests(TestCase):
     """The headline proof: a project overlay's tag flows to the agents."""
 
-    def test_overlay_tag_appears_in_planner_injection(self):
-        # A project drops conductor/workflow/task-type-profiles.json adding a
-        # project-specific tag. It must surface in spec-planner's injected vocab.
+    def test_overlay_tag_reaches_planner_via_registry_doc(self):
+        # spec-planner fetches the vocab on demand via registry-doc (no longer
+        # injected). A project overlay tag must appear in that render — with its
+        # signals — so the planner can match + emit it. The on-demand replacement
+        # for the old injected block.
         overlay = {
             "tags": {
                 "K8sRollout": {
                     "route": "manual", "tdd_exempt": True, "coverage_exempt": True,
                     "when_to_use": "Project-specific k8s rollout tag.",
+                    "signals": ["k8s", "kubectl", "helm", "rollout"],
                 }
             }
         }
@@ -314,11 +306,13 @@ class OverlayEndToEndTests(TestCase):
             (proj / "conductor" / "workflow" / "task-type-profiles.json").write_text(
                 json.dumps(overlay)
             )
-            ctx = _run("spec-planner", env={"CLAUDE_PROJECT_DIR": str(proj)}).get(
-                "hookSpecificOutput", {}
-            ).get("additionalContext", "")
-        self.assertIn("[K8sRollout]", ctx, "project-overlay tag did not reach spec-planner")
-        self.assertIn("Project-specific k8s rollout tag.", ctx)
+            env = {**os.environ, "CLAUDE_PROJECT_DIR": str(proj)}
+            rc, out = _run_cli(env=env)
+        self.assertEqual(rc, 0, f"registry-doc with overlay failed:\n{out}")
+        self.assertIn("[K8sRollout]", out, "overlay tag did not reach registry-doc")
+        self.assertIn("Project-specific k8s rollout tag.", out)
+        # The overlay tag's signals reach the on-demand render too.
+        self.assertIn("kubectl", out)
 
     def test_overlay_tag_appears_in_executor_exemption_set(self):
         # Same overlay; the executor's injected exemption set must list it too.

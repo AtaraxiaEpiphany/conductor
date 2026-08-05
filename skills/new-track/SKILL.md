@@ -82,12 +82,11 @@ Before the §2.2 Q&A branch above, check for a **Track Brief** at `<track_dir>/b
 2. **Found** → Read it. Announce: *"Consuming brief.md at `<track_dir>/brief.md` as authoritative planning input."* Then:
    - **Skip the §2.2 interactive Q&A entirely** — the Brief already captured it.
    - Set `RELATED_DOCS` from the Brief's `## References` section (paths only; if empty, `N/A`).
-   - Build a rich `USER_ANSWERS` block for spec-planner from the Brief's structured sections: Problem & Motivation, Goals, **Out of Scope (verbatim)**, Context & Constraints, Stakeholders, Open Questions, Suggested Acceptance Signals. Prefix it `USER_CONTEXT: brief`.
    - **Seed `conductor/purpose.md` from this first Brief** (additive, intersection-only — the compounding-context the wiki pattern wants, so purpose.md has real content on day one instead of placeholders). For each of:
      - `## Open Questions` → lift each question into purpose.md `## Key Questions` **only if not already present** (dedupe by gist).
      - `## Out of Scope` → lift each exclusion into purpose.md `## Out of Scope` **only if not already present**, and only where it does not **widen** past what setup established (intersect, never contradict — mirror the Brief's own Out-of-Scope-vs-purpose.md rule). A Brief's Out-of-Scope is a *track-level* cut; only the project-persistent ones belong here.
      Skip the append silently if purpose.md already has the content (idempotent) or if the Brief section is empty/`"None identified."`. This is a `## Key Questions`/`## Out of Scope` append only — never touch Goals, Thesis, or Active Decisions (those are owned by setup / wiki-synthesizer respectively). If `conductor/purpose.md` is absent, skip (setup owns creating it).
-   - Pass `USER_ANSWERS` (with `USER_CONTEXT: brief`) and `RELATED_DOCS` to the §2.3 dispatch. spec-planner §3.0 reads the Brief itself first and honors `## Out of Scope` verbatim.
+   - Pass `USER_ANSWERS=N/A` and `USER_CONTEXT: brief` (plus `RELATED_DOCS`) to the §2.3 dispatch — the Brief's content reaches spec-planner as a **path it self-loads** (`USER_CONTEXT: brief` signals `<track_dir>/brief.md`), NOT inlined into the prompt. spec-planner §3.0 reads the Brief itself first and honors `## Out of Scope` verbatim.
 3. **Not found** → proceed with §2.2 (scan → brief-first offer at step 3, then the Q&A fallback). This is the default; without a Brief the user chooses between grilling a brief now or the minimal Q&A.
 
 > The Brief is additive: it only changes behavior when present. A re-invoked new-track on a track with a Brief will plan from the Brief; without one, the original flow applies.
@@ -125,6 +124,7 @@ TRACK_DESCRIPTION={desc}
 TRACK_TYPE={type}
 USER_ANSWERS={answers or N/A}
 RELATED_DOCS={paths or N/A}
+USER_CONTEXT={brief or N/A}
 ```
 
 Parse `---SPEC PLAN RESULT---` block. Confirm `STATUS: SUCCESS` (halt on FAILURE and announce `SUMMARY`).
@@ -149,6 +149,7 @@ TRACK_DESCRIPTION={desc}
 TRACK_TYPE={type}
 USER_ANSWERS={answers or N/A}
 RELATED_DOCS={paths or N/A}
+USER_CONTEXT={brief or N/A}
 PREVIOUS_ERRORS:
 {the format errors[], the spec-anchors errors[], and/or the AC-integrity gate string, verbatim}
 REGEN_FOCUS: The prior plan.md/spec.md failed validation. FORMAT: every task/subtask line begins with `- [ ]`; every phase begins with `## Phase N: Name`. SPEC-ANCHOR: spec.md has `## Acceptance Criteria` with `- AC-N:` bullets and `## Test Scenarios` with `| TC-N.M | AC-N |` rows — these headings + ID tokens are machine anchors, keep them ASCII even when prose is another language. AC-INTEGRITY: every AC-n appears in some task's `<!-- AC-n -->` AND maps to a `TC-{n}.{m} | AC-n` row. Re-read `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/plan-format-contract.md` and `${CLAUDE_PLUGIN_ROOT}/templates/spec-scaffold.md`, then regenerate a conforming plan.md/spec.md.

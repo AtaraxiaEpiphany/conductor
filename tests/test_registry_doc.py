@@ -87,6 +87,26 @@ class RegistryDocRender(TestCase):
         self.assertIn("ac-tracer", out)
         self.assertIn("test-runner", out)
 
+    def test_renders_tag_signals_section(self):
+        # spec-planner fetches the matcher DATA (each tag's explicit `signals`
+        # keywords) from registry-doc on demand instead of receiving it injected.
+        # The section must render, list a baseline tag's signals, and OMIT tags
+        # that declare none ([Refactor] is opt-in — never auto-proposed).
+        env = {**os.environ}
+        env.pop("CLAUDE_PROJECT_DIR", None)
+        rc, out, _ = _run_cli(env=env)
+        self.assertIn("## Tag Signals", out)
+        # Config declares explicit signals in the baseline registry.
+        cfg_signals = tp._profile("Config").get("signals")  # noqa: SLF001
+        self.assertIsInstance(cfg_signals, list)
+        self.assertTrue(cfg_signals)
+        self.assertIn(str(cfg_signals[0]), out)
+        # [Refactor] deliberately carries no signals — it must not get a row.
+        refactor_line = next(
+            (ln for ln in out.splitlines() if ln.startswith("- `[Refactor]`")), "")
+        self.assertEqual(refactor_line, "",
+                         "[Refactor] must not carry a signals row (opt-in only)")
+
 
 class RegistryDocReadOnly(TestCase):
     """The safety contract: registry-doc never writes anywhere."""

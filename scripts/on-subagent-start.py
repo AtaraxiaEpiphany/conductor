@@ -96,12 +96,15 @@ _RETRY_AGENTS = {"task-executor"}
 
 # Agents that receive the resolved registry-vocab block (task-type tags).
 # This is how a project overlay's tags flow end-to-end to the agent-prose
-# layer: spec-planner and task-executor are data-driven by injection here.
-# spec-reviewer and refuter AUDIT tag membership — they receive the vocab WITH
-# the review flags (over_tag_risk) so their prose can defer to the flags
-# instead of restating which tags carry them (a restated set is the first thing
-# to drift). Add here if another agent should see the resolved vocab at dispatch.
-_REGISTRY_AGENTS = {"spec-planner", "task-executor", "spec-reviewer", "refuter"}
+# layer: task-executor is data-driven by injection here (its OWN task's leading-
+# tag profile — small + per-task-resolved, tier A). spec-reviewer and refuter
+# AUDIT tag membership — they receive the vocab WITH the review flags
+# (over_tag_risk) so their prose can defer to the flags instead of restating
+# which tags carry them (a restated set is the first thing to drift). spec-planner
+# is NOT here: it needs the FULL tag catalog (a tier-B join), which it fetches on
+# demand via `track-state registry-doc` (§3.1) — only the small/resolved bits stay
+# injected. Add here if another agent should see the resolved vocab at dispatch.
+_REGISTRY_AGENTS = {"task-executor", "spec-reviewer", "refuter"}
 
 _REGISTRY_LEAD = (
     "[Conductor Registry] The closed task-type tag set below is resolved at "
@@ -330,12 +333,14 @@ def _registry_context(agent_type, cwd):
     """The resolved registry-vocab block for an agent, or ``None``.
 
     This is the injection that data-drives the agent-prose layer the way the CLI
-    layer already is: spec-planner and task-executor read the closed tag
-    vocabulary from here rather than from hardcoded prose, so a project overlay
+    layer already is: task-executor reads its own task's resolved leading-tag
+    profile from here rather than from hardcoded prose, so a project overlay
     flows end-to-end with zero plugin edits. spec-reviewer and refuter audit tag
     membership — they get the same vocab with the review flags surfaced
     (:func:`_registry_for_reviewer`), so their audit prose points at flag names
-    instead of restated literal sets.
+    instead of restated literal sets. spec-planner is deliberately NOT injected
+    here — it fetches the full catalog on demand via ``track-state registry-doc``
+    (the full tag+shape tables are a tier-B join, not a small per-task bit).
 
     Fail-safe: any error → ``None``. This block is advisory and must NEVER break
     the floor/reminder/retry injection that is the hook's primary contract — a
@@ -347,8 +352,6 @@ def _registry_context(agent_type, cwd):
     if agent_type not in _REGISTRY_AGENTS:
         return None
     try:
-        if agent_type == "spec-planner":
-            return _registry_for_planner()
         if agent_type == "task-executor":
             return _registry_for_executor(cwd)
         if agent_type in ("spec-reviewer", "refuter"):
@@ -356,19 +359,6 @@ def _registry_context(agent_type, cwd):
     except Exception:
         return None
     return None
-
-
-def _registry_for_planner():
-    """spec-planner: the full tag vocab (with when-to-use hints).
-
-    The planner authors plan.md — it must emit any registered tag and refuse
-    none. The injected vocab IS the closed set it validates against (the registry
-    resolves baseline ⊕ overlay), so it no longer hardcodes the 7-tag decision
-    rule: it matches a task to a registered tag by the injected when-to-use hints.
-    """
-    lines = [f"{_REGISTRY_LEAD}", "", "RESOLVED TASK-TYPE TAG VOCAB (emit any; refuse none):"]
-    lines.extend(f"  - {r}" for r in _tag_summary_rows())
-    return "\n".join(lines)
 
 
 def _registry_for_reviewer():

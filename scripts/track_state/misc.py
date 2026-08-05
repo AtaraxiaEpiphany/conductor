@@ -1240,6 +1240,20 @@ def cmd_registry_doc(tag=None, shape=None):
         marker = f" *({', '.join(markers)})*" if markers else ""
         return f"| `{tag}` | `{route}` | {tdd} | {cov} | {when}{marker} |"
 
+    def _explicit_signals(tag):
+        """The tag's EXPLICIT ``signals`` keyword list, or ``None``.
+
+        Only a registry row that declares ``signals`` (a list) returns a value.
+        Tags like ``[Refactor]`` deliberately omit it — they are opt-in, not
+        goal-detected — so this returns ``None`` for them (never the weaker
+        tokens ``_signals_for`` would *derive* from ``when_to_use``, which exist
+        only for ``derive_task_tag``'s coarse fallback). Mirrors
+        ``on-subagent-start._tag_summary_rows``: the planner matches a task
+        description against these same keywords.
+        """
+        sig = tp._profile(tag).get("signals")  # noqa: SLF001 — registry-internal profile lookup
+        return sig if isinstance(sig, list) and sig else None
+
     def _shape_row(shape):
         """One registry-derived table row for a workflow-shape (reused by full + filtered)."""
         nodes = " → ".join(ws.nodes_for(shape))
@@ -1277,6 +1291,17 @@ def cmd_registry_doc(tag=None, shape=None):
                       f"`CONDUCTOR_TASK_REFACTOR=1` env required (those remain as escape "
                       f"hatches). The `[Conductor Registry]` block the executor receives "
                       f"carries this flag as `refactor: true`.")
+            sig = _explicit_signals(tag)
+            if sig:
+                print()
+                print(f"## `signals` for `{tag}` (description-matching keywords)")
+                print()
+                print(f"Match a task to this tag by these keywords: "
+                      f"{', '.join(str(k) for k in sig)}")
+            else:
+                print()
+                print(f"_(no explicit `signals` for `{tag}` → opt-in; match "
+                      f"deliberately, never auto-propose)_")
         else:
             # Fail-open, mirroring the no-filter posture: an unknown tag is
             # surfaced, not raised (the *validator* hard-errors on unknown tags;
@@ -1336,6 +1361,25 @@ def cmd_registry_doc(tag=None, shape=None):
           "the tactical refactorer at the §3.6c seam after success. `[Explore]` "
           "routes to explorer; task-executor REFUSES it.")
     print()
+
+    # Tag signals: the description-matching keywords a planner/deriver match
+    # against. Only tags that explicitly declare `signals` appear (opt-in tags
+    # like [Refactor] omit it). This is the matcher DATA spec-planner fetches
+    # here on demand (tier B) instead of receiving it injected — so the planner
+    # matches a task description against the same inputs derive_task_tag uses.
+    sig_rows = [(t, _explicit_signals(t)) for t in tags]
+    sig_rows = [(t, s) for t, s in sig_rows if s]
+    if sig_rows:
+        print("## Tag Signals (description-matching keywords)")
+        print()
+        print("Match a task description to a tag by these keywords (the same "
+              "inputs `derive_task_tag` uses). Only tags that explicitly declare "
+              "`signals` appear; a tag with no row here (e.g. `[Refactor]`) is "
+              "opt-in — match it deliberately, never auto-propose it.")
+        print()
+        for sig_tag, sig in sig_rows:
+            print(f"- `[{sig_tag}]`: {', '.join(str(k) for k in sig)}")
+        print()
 
     # --- Workflow shapes (the node sequence) ---------------------------------
     shapes = ws.SHAPES_VOCAB()
