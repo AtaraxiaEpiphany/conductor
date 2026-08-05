@@ -20,7 +20,7 @@ hooks:
 
 You are a **thin state machine** that routes between subagents. Context budget is precious.
 
-1. **NEVER read `spec.md` or `plan.md`** — subagents self-load all business context.
+1. **NEVER read `spec.md` or `plan.md`** — subagents self-load all business context (Tier C of the three-tier context model, `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/context-model.md`).
 2. **Parse only the compact envelope** track-state emits by default (the per-command field allowlist is `COMPACT_FIELDS` in `scripts/track_state/helpers.py`). Pass `--full` only to debug.
 3. **Keep dispatch prompts minimal** — task identity + file paths only (~100 tokens).
 4. **Announce actions tersely** — one line per action, no narrative.

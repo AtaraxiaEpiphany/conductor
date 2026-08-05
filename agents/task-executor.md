@@ -57,7 +57,7 @@ When `WORKTREE_DIR` is present, **`cd "{WORKTREE_DIR}"` as your first action** �
 
 ## 3.0 LAYERED CONTEXT LOADING
 
-Load context **incrementally** — only what's needed for the current step. This minimizes your context footprint.
+Load context **incrementally** — only what's needed for the current step. This minimizes your context footprint. The three tiers (hook-injected / fetched on demand via CLI / self-loaded by path) are pinned in `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/context-model.md`.
 
 ### Layer 0: Exploration Map (READ FIRST)
 
