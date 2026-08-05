@@ -1599,6 +1599,99 @@ def cmd_derive_task_type(description=None):
         out(dict(tag=None))
 
 
+def cmd_plan_profile(track_dir):
+    """Emit the resolved phase-verify profile for a track's plan.md (read-only).
+
+    The whole-plan view of what :func:`cmd_resolve_phase_verify` answers one
+    phase at a time: parses ``<track-dir>/plan.md`` once and, per phase, shows
+    the modes the resolver WOULD inject (the same
+    :func:`verify_mode_profiles.resolve_phase_verify_modes` ``init-from-plan``
+    calls — so this CLI and init cannot drift), the resolution ``source``
+    (``explicit``/``goal``/``tag``/``full_gate``), the authored directive if any,
+    and per-task the extracted leading tag plus the signal-derived tag. This is
+    the structured surface a planner or reviewer reads to see, at a glance, every
+    phase's gate and where each comes from — the input ``check-conflicts`` then
+    audits for drift.
+
+    Takes a ``<track-dir>`` positional (reads ``plan.md`` from it); read-only, no
+    writes. Consumed by ``track-state plan-profile``. Fail-open: any error →
+    ``{"ok": false, "error": ...}``, never a raised exception into the caller.
+    """
+    try:
+        from .plan_parse import parse_plan
+        from .task_profiles import derive_task_tag
+        from .helpers import phase_task_tags
+        from . import verify_mode_profiles as vmp
+
+        plan_path = Path(track_dir) / "plan.md"
+        if not plan_path.exists():
+            out({"ok": False, "error": f"no plan.md at {plan_path}"})
+            return
+        parsed = parse_plan(plan_path)
+        phases_out = []
+        for ph in parsed.get("phases", []):
+            number = ph.get("number")
+            # goal = heading prose with any verify-directive comment stripped
+            # (the directive is captured separately as authored_directive).
+            goal = re.sub(r"<!-- verify:.*?-->", "", ph.get("name", "")).strip()
+            has_comment = ph.get("verify_has_comment")
+            authored_modes = list(ph.get("verify_modes") or []) if has_comment else None
+            tags = phase_task_tags(parsed, number)
+            modes, source = vmp.resolve_phase_verify_modes(
+                goal=goal, tags=tags, explicit=authored_modes)
+            tasks_out = []
+            for t in ph.get("tasks", []):
+                tname = t.get("name", "")
+                ttags = extract_tags(tname)
+                tasks_out.append({
+                    "name": tname,
+                    "tag": ttags[0] if ttags else None,
+                    "derived": derive_task_tag(tname),
+                })
+            phases_out.append({
+                "phase": number,
+                "goal": goal,
+                "tags": tags,
+                "verify_modes": modes,
+                "source": source,
+                "authored_directive": ",".join(authored_modes) if authored_modes else None,
+                "tasks": tasks_out,
+            })
+        out({"ok": True, "phases": phases_out})
+    except Exception as e:
+        out({"ok": False, "error": str(e)})
+
+
+def cmd_check_conflicts(track_dir):
+    """Emit the structured conflict set for a track's plan.md (read-only).
+
+    The clean gate surface a hook or skill reads to decide whether a generated
+    plan needs another pass: parses ``<track-dir>/plan.md`` and runs
+    :func:`verify_mode_profiles.collect_plan_conflicts` — the single whole-plan
+    composer ``init-from-plan``'s advisory drift check also calls (so the init
+    path and this CLI cannot drift). ``conflicts`` non-empty ⇒ revise (the
+    planner re-phrases a goal, drops a harmful directive, or adds the one
+    legitimate ``adversarial`` directive). Every conflict is advisory — none
+    blocks init/load.
+
+    Takes a ``<track-dir>`` positional (reads ``plan.md`` from it); read-only, no
+    writes. Consumed by ``track-state check-conflicts``. Fail-open: any error →
+    ``{"ok": false, "error": ...}``.
+    """
+    try:
+        from .plan_parse import parse_plan
+        from . import verify_mode_profiles as vmp
+
+        plan_path = Path(track_dir) / "plan.md"
+        if not plan_path.exists():
+            out({"ok": False, "error": f"no plan.md at {plan_path}"})
+            return
+        parsed = parse_plan(plan_path)
+        out({"ok": True, "conflicts": vmp.collect_plan_conflicts(parsed)})
+    except Exception as e:
+        out({"ok": False, "error": str(e)})
+
+
 def cmd_record_summary(track_dir):
     """Record a compact task summary for context recovery after compaction."""
     summaries_path = conductor_dir(track_dir) / "task-summaries.json"

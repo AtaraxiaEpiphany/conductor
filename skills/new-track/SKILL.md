@@ -127,7 +127,7 @@ Parse `---SPEC PLAN RESULT---` block. Confirm `STATUS: SUCCESS` (halt on FAILURE
 
 **Absent block (spec-planner exhausted turns mid-generation).** If the `---SPEC PLAN RESULT---` block is **missing entirely** (not `STATUS: FAILURE` — the block itself never appeared), the spec-planner ran out of turns reading context before it could emit §5.0. **Do NOT read `spec.md`/`plan.md` to recover** (the read-guard hook denies that while a dispatch is open, and doing the work yourself violates the thin-router contract). The `on-subagent-stop` recovery hook fires a bounded recovery turn first; this is the backstop when recovery is exhausted. **Re-dispatch `conductor:spec-planner` once** with `PREVIOUS_ERRORS: prior attempt returned no result block — emit §5.0 FIRST, then do only minimal §3.0 discovery`. If the second dispatch also returns no block → **halt**: `"spec-planner failed to emit a result block after 2 attempts — inspect <track_dir>/plan.md / spec.md manually."` `plan.md` and `spec.md` are now on disk — `PLAN_STRUCTURE` is **no longer required**: Section 2.6 derives the full task/subtask structure mechanically from `plan.md`, eliminating manual transcription.
 
-**Validate the generated plan + spec before §2.6.** Run three read-only checks; re-dispatch spec-planner with the combined defects if any fails. Max **2 re-dispatches (3 total attempts)**, counting from the first dispatch above:
+**Validate the generated plan + spec before §2.6.** Run four read-only checks; re-dispatch spec-planner with the combined defects if any fails. Max **2 re-dispatches (3 total attempts)**, counting from the first dispatch above:
 
 1. **Format** — `track-state init-from-plan "<track_dir>" --check` (the same `parse_plan` §2.6 uses). `ok: false` → collect `errors[]`. `ok: true` → continue.
 2. **Spec anchors** — `track-state spec-anchors "<track_dir>"` (run only if format passed). Catches a `spec.md` written as free-form narrative with no `## Acceptance Criteria` section / `## Test Scenarios` table. Language-agnostic: it checks the English machine-anchor tokens, not prose. `ok: false` → collect `errors[]`. `ok: true` → continue.
@@ -136,8 +136,11 @@ Parse `---SPEC PLAN RESULT---` block. Confirm `STATUS: SUCCESS` (halt on FAILURE
    - `N/A` + `"no_acs"` → treat as FAILED: spec.md exists but has no `## Acceptance Criteria` (the weak-model anchor-drift failure). Collect the gate string **verbatim**.
    - `FAILED` → collect the gate string **verbatim** (it names the offending AC IDs + the fix).
    - `PASS` / `WARN` → clean (WARN is advisory; carry into §2.4).
+4. **Phase-verify conflicts** — `track-state check-conflicts "<track_dir>"` (run only if integrity passed). This is the gate the spec-planner cannot run itself (it has no Bash) and the one the original drift incident escaped: `harmful_conflict` was advisory-only at init, so a Migrate phase landed on a suite-gating directive the resolver contradicts. `check-conflicts` shares the single composer `init-from-plan` uses, so this surface and init cannot drift. Branch on `conflicts[]`:
+   - empty → clean.
+   - non-empty → collect each conflict's `kind` + `phase` + `detail` (the `detail` already prescribes the fix; for `all_exempt_suite_gated` also carry `suggestion`). All advisory — none blocks init — but each names a correctable drift the planner CAN fix: `harmful_undergating` (an authored directive gates a build/debt phase on the red suite — **omit it** and let init derive the mode, or rephrase the goal so the resolver reaches it); `all_exempt_suite_gated` (an all-suite-exempt phase, e.g. all `[Docs]`, over-gates — author the `suggestion` directive or split the phase out); `tag_mode_conflict` (a mixed-type phase with no single gate — split it); `none_unclosed_*` (a `verify: none` phase never closed by a later gating phase — add the closing phase).
 
-**All three clean → break (proceed to the resume marker below).** Any failed → if a re-dispatch remains, re-dispatch `conductor:spec-planner` with the combined defects:
+**All four clean → break (proceed to the resume marker below).** Any failed → if a re-dispatch remains, re-dispatch `conductor:spec-planner` with the combined defects:
 
 ```
 TRACK_DIR={track_dir}
@@ -146,8 +149,8 @@ TRACK_TYPE={type}
 USER_ANSWERS={answers or N/A}
 RELATED_DOCS={paths or N/A}
 PREVIOUS_ERRORS:
-{the format errors[], the spec-anchors errors[], and/or the AC-integrity gate string, verbatim}
-REGEN_FOCUS: The prior plan.md/spec.md failed validation. FORMAT: every task/subtask line begins with `- [ ]`; every phase begins with `## Phase N: Name`. SPEC-ANCHOR: spec.md has `## Acceptance Criteria` with `- AC-N:` bullets and `## Test Scenarios` with `| TC-N.M | AC-N |` rows — these headings + ID tokens are machine anchors, keep them ASCII even when prose is another language. AC-INTEGRITY: every AC-n appears in some task's `<!-- AC-n -->` AND maps to a `TC-{n}.{m} | AC-n` row. Re-read `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/plan-format-contract.md` and `${CLAUDE_PLUGIN_ROOT}/templates/spec-scaffold.md`, then regenerate a conforming plan.md/spec.md.
+{the format errors[], the spec-anchors errors[], and/or the AC-integrity gate string, and/or the phase-verify conflict kind+phase+detail strings, verbatim}
+REGEN_FOCUS: The prior plan.md/spec.md failed validation. FORMAT: every task/subtask line begins with `- [ ]`; every phase begins with `## Phase N: Name`. SPEC-ANCHOR: spec.md has `## Acceptance Criteria` with `- AC-N:` bullets and `## Test Scenarios` with `| TC-N.M | AC-N |` rows — these headings + ID tokens are machine anchors, keep them ASCII even when prose is another language. AC-INTEGRITY: every AC-n appears in some task's `<!-- AC-n -->` AND maps to a `TC-{n}.{m} | AC-n` row. PHASE-VERIFY: OMIT verify directives by default — `init-from-plan` derives every mode from the goal (re-read `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/plan-format-contract.md` "Phase Verify Directives"). Hand-author a directive ONLY for `adversarial` or a deliberate override (e.g. `verify: none` on an all-suite-exempt phase, `verify: anchor` on a refactor). A `harmful_undergating` conflict means you authored a directive that gates a build/debt phase on the red suite — remove it and name the goal precisely so the resolver derives the build floor. Re-read `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/plan-format-contract.md` and `${CLAUDE_PLUGIN_ROOT}/templates/spec-scaffold.md`, then regenerate a conforming plan.md/spec.md.
 ```
 
 Re-parse the returned `---SPEC PLAN RESULT---` block (halt on FAILURE), then loop back to step 1.

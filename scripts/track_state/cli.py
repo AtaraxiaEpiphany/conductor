@@ -26,6 +26,7 @@ from .misc import (
     cmd_registry_doc,
     cmd_resolve_phase_verify,
     cmd_derive_task_type,
+    cmd_plan_profile, cmd_check_conflicts,
     cmd_record_summary, cmd_preflight, cmd_quality_snapshot,
     cmd_spec_integrity, cmd_derive_name, cmd_post_loop_status,
     cmd_resolve_track, cmd_check, _resolve_track_dir_or_halt,
@@ -278,6 +279,19 @@ COMMAND_HELP = {
                          "`derive_task_tag` (the deterministic replacement for a hand-written tag ladder). Emits "
                          "JSON `{\"tag\": <tag>}`; `null` IS the correct default full-TDD outcome (no exemption), "
                          "not an error."),
+    "plan-profile": ("plan-profile <track-dir>",
+                     "Emit the resolved phase-verify profile for a track's plan.md. Read-only. Per phase: the modes "
+                     "the resolver WOULD inject (same `resolve_phase_verify_modes` init-from-plan calls — so this CLI "
+                     "and init cannot drift), the resolution source (explicit/goal/tag/full_gate), the authored "
+                     "directive if any, and per-task the extracted leading tag plus the signal-derived tag. Emits "
+                     "JSON {\"ok\": true, \"phases\": [...]}."),
+    "check-conflicts": ("check-conflicts <track-dir>",
+                        "Emit the structured conflict set for a track's plan.md. Read-only. Runs the single "
+                        "whole-plan conflict composer (`collect_plan_conflicts`) that init-from-plan's advisory drift "
+                        "check also calls — so init and this CLI cannot drift. Kinds: harmful_undergating (authored "
+                        "directive gates a build/debt phase on the red suite), all_exempt_suite_gated (every task "
+                        "suite-exempt yet suite-gated), tag_mode_conflict, none_unclosed_*. Emits JSON "
+                        "{\"ok\": true, \"conflicts\": [...]}; conflicts non-empty ⇒ revise."),
     "write-result": ("write-result <track-dir> --status success|failure --commit-sha <sha>\n"
                      "                                --summary <text> --coverage-pct <n> ...\n"
                      "                  <track-dir> [--data '<json>']   (or pipe JSON on stdin)",
@@ -466,7 +480,11 @@ _COMMAND_GROUPS = [
     ("Diagnostics", ["validate", "gc", "shas", "post-loop-status", "checklist-verify",
                      "deferred-report", "phase-done", "add-checkpoint", "preflight",
                      "quality-snapshot", "spec-integrity", "spec-anchors", "spec-delta",
-                     "anchor-status"]),
+                     "anchor-status",
+                     # Read-only plan-audit CLIs — emit the resolved phase-verify
+                     # profile / the structured conflict set for a track's plan.md.
+                     # Take a <track-dir>; no writes (same posture as validate).
+                     "plan-profile", "check-conflicts"]),
     ("Anchor", ["freeze", "thaw", "set-contract"]),
     ("Logs", ["log-path", "subagent-log"]),
 ]
@@ -689,6 +707,14 @@ def main():
             cmd_indices(track_dir)
         elif cmd == "validate":
             cmd_validate(track_dir, fix="--fix" in args)
+        elif cmd == "plan-profile":
+            # Read-only plan audit: emit the resolved phase-verify profile.
+            # Takes a <track-dir> (like validate), no writes.
+            cmd_plan_profile(track_dir)
+        elif cmd == "check-conflicts":
+            # Read-only plan audit: emit the structured conflict set. Takes a
+            # <track-dir> (like validate), no writes.
+            cmd_check_conflicts(track_dir)
         elif cmd == "phase-done":
             cmd_phase_done(track_dir, pos[0])
         elif cmd == "shas":

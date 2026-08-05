@@ -714,3 +714,224 @@ def harmful_conflict(goal=None, tags=None, explicit=None):
         return {"harmful": False, "unknown_mode": False,
                 "derived": [], "authored": []}
 
+
+def collect_plan_conflicts(parsed):
+    """The single whole-plan conflict composer — one walk, two callers.
+
+    Both ``track-state check-conflicts`` (the planner-facing CLI) and
+    ``init-from-plan``'s advisory drift check call THIS, so the per-phase
+    conflict logic lives in exactly one place and cannot drift between the init
+    path and the dedicated conflict surface. Walks ``parsed["phases"]`` once and
+    returns a list of structured conflict dicts, each::
+
+        {"kind": str, "severity": "warning"|"info",
+         "phase": int|None, "goal": str, "detail": str,
+         "derived": [...]|None,      # harmful_undergating only
+         "authored": [...]|None,     # harmful_undergating only
+         "suggestion": str|None}     # all_exempt_suite_gated only
+
+    Conflict kinds (all advisory — none ever blocks init/load):
+    - ``harmful_undergating`` (warning): an AUTHORED directive gates a build/debt
+      phase on the red suite (delegates to :func:`harmful_conflict`; only phases
+      carrying a ``<!-- verify: -->`` comment are evaluated — directive-less
+      phases are the resolver's call and are clean by construction).
+    - ``all_exempt_suite_gated`` (warning): every non-``[Manual]`` task in the
+      phase is suite-exempt yet the phase resolves to a suite gate — over-gating.
+      Advisory only; the resolver rule that would auto-relax the gate is
+      deliberately out of scope (the operator or planner acts on the signal).
+    - ``tag_mode_conflict`` (info): the phase's task tags disagree on their
+      ``default_verify``, so the resolver fell through to the full gate — a
+      mixed-type phase with no single gate (surfaces the silent fall-through in
+      :func:`default_verify_for_phase`'s disagreement branch).
+    - ``none_unclosed_terminal`` / ``none_unclosed_run`` (warning): a
+      debt-carrying ``verify: none`` phase is never closed by a later gating
+      phase (delegates to :func:`plan_parse.validate_verify_none_closure`).
+
+    NOTE on the none-closure kinds: ``parse_plan`` ALREADY surfaces them as
+    string warnings into ``parsed["warnings"]``, so the init path filters them
+    out when folding this list into ``plan_warnings`` (it emits only
+    ``harmful_undergating``) — the CLI is the structured surface that emits the
+    full set. Pure, fail-open: any exception (module-wide or per-phase) → ``[]``
+    or a partial list; a conflict check must never crash init or the CLI.
+    """
+    try:
+        from .helpers import extract_tags, phase_task_tags
+        from .task_profiles import default_verify_for, is_tdd_exempt
+        from .plan_parse import validate_verify_none_closure
+    except Exception:
+        return []
+
+    conflicts: list[dict] = []
+    phases = parsed.get("phases", []) if isinstance(parsed, dict) else []
+    for ph in phases:
+        try:
+            conflicts.extend(_phase_conflicts(
+                ph, parsed, extract_tags, phase_task_tags,
+                default_verify_for, is_tdd_exempt))
+        except Exception:
+            # One malformed phase must not abort the walk — contain and continue.
+            continue
+
+    # Plan-wide: none-closure (parsed already string-warns; CLI is structured).
+    try:
+        for issue in validate_verify_none_closure(parsed):
+            conflicts.append({
+                "kind": issue["kind"], "severity": "warning",
+                "phase": _phase_num(issue.get("at", "")), "goal": "",
+                "detail": f"{issue.get('at', '')}: verify: none closure issue "
+                          f"({issue['kind']}) — {issue['detail']}",
+                "derived": None, "authored": None, "suggestion": None,
+            })
+    except Exception:
+        pass
+
+    return conflicts
+
+
+def _phase_num(at):
+    """Pull the integer phase number out of a ``"Phase N"`` locator string."""
+    m = re.search(r"\d+", at or "")
+    return int(m.group()) if m else None
+
+
+def _tags_disagree_on_default_verify(tags, default_verify_for):
+    """True iff ≥2 tags carry DIFFERENT NON-EMPTY ``default_verify`` lists.
+
+    Mirrors :func:`default_verify_for_phase` exactly: that reducer SKIPS empty
+    contributions (line ~595), then checks every non-empty one equals the first.
+    So ``[Docs]+[Migrate]`` (``[]`` vs ``["compile"]``) does NOT disagree — Docs's
+    empty contribution is dropped and Migrate's ``compile`` wins as the single
+    voice (that is agreement, not conflict). Only two tags with distinct NON-EMPTY
+    lists (``["compile"]`` vs ``["test"]``) disagree — the silent fall-through to
+    the full gate that this ``tag_mode_conflict`` kind exists to surface. Sets,
+    not tuples, because order within one tag's list is not load-bearing for the
+    conflict decision (mirrors the reducer's own comparison at line ~608).
+    """
+    contributed = [
+        tuple(default_verify_for(t)) for t in tags
+        if t and default_verify_for(t)
+    ]
+    if len(contributed) < 2:
+        return False
+    first = set(contributed[0])
+    return any(set(c) != first for c in contributed[1:])
+
+
+def _phase_is_all_exempt(ph, extract_tags, is_tdd_exempt, default_verify_for):
+    """True iff the phase has ≥1 non-``[Manual]`` top-level task AND every such
+    task's leading tag is BOTH suite-exempt AND carries no gate of its own.
+
+    Suite-exempt means two things, and BOTH must hold for every non-``[Manual]``
+    task's leading tag (mirrors the plan's P1b spec):
+    * :func:`is_tdd_exempt` (rules out suite-owing types like ``[Feature]``), AND
+    * no ``default_verify`` (rules out ``[Migrate]``, which IS ``tdd_exempt`` yet
+      build-gated — its ``compile`` contribution makes a pure-Migrate phase
+      build-gated, not suite-over-gated).
+
+    A pure-suite-exempt phase (all ``[Docs]``/``[Config]``/``[Chore]``/
+    ``[Explore]``) over-gates under the full suite gate; ``[Manual]`` is excluded
+    (deferred to manual verification, a different concern). An untagged task uses
+    the default profile (not exempt), so a phase with any untagged task is NOT
+    all-exempt — that task genuinely owes the suite.
+    """
+    leading_tags = []
+    for t in ph.get("tasks", []):
+        tags = extract_tags(t.get("name", ""))
+        if tags and tags[0] == "Manual":
+            continue
+        leading_tags.append(tags[0] if tags else None)
+    if not leading_tags:
+        return False
+    return all(
+        lg is not None
+        and is_tdd_exempt([lg])
+        and not default_verify_for(lg)
+        for lg in leading_tags
+    )
+
+
+def _phase_conflicts(ph, parsed, extract_tags, phase_task_tags,
+                     default_verify_for, is_tdd_exempt):
+    """Per-phase conflicts for one phase dict; returns a list (may be empty).
+
+    Isolated in its own function so :func:`collect_plan_conflicts` can contain a
+    per-phase exception without aborting the whole-plan walk.
+    """
+    out: list[dict] = []
+    number = ph.get("number")
+    goal = ph.get("name", "")
+    has_comment = ph.get("verify_has_comment")
+    authored = list(ph.get("verify_modes") or []) if has_comment else None
+    tags = phase_task_tags(parsed, number)
+
+    modes, _source = resolve_phase_verify_modes(
+        goal=goal, tags=tags, explicit=authored)
+
+    # 1. harmful_undergating — only an AUTHORED directive can under-gate.
+    if has_comment:
+        drift = harmful_conflict(goal=goal, tags=tags, explicit=authored)
+        if drift["harmful"]:
+            derived = ",".join(drift["derived"]) or "the full gate"
+            authored_str = ",".join(drift["authored"]) or "(empty)"
+            display = re.sub(r"<!-- verify:.*?-->", "", goal).strip()
+            out.append({
+                "kind": "harmful_undergating", "severity": "warning",
+                "phase": number, "goal": display,
+                "detail": (
+                    f"Phase {number} '{display}': authored "
+                    f"<!-- verify: {authored_str} --> under-gates a build/debt "
+                    f"phase — the resolver derives '{derived}' because the suite "
+                    f"is expected red here. Fix: remove the directive so init "
+                    f"injects '{derived}', or rephrase the goal if the suite is "
+                    f"genuinely the gate, or add a build-gated mode (compile/none) "
+                    f"to keep the build floor."
+                ),
+                "derived": list(drift["derived"]),
+                "authored": list(drift["authored"]),
+                "suggestion": None,
+            })
+
+    # 2. tag_mode_conflict — tags disagree → silent fall-through to full gate.
+    #    Only surfaces when it actually steered resolution: source == "full_gate"
+    #    (goal unresolved AND tag-derived returned []). An explicit directive
+    #    always wins, so this never fires on an authored phase.
+    tags_disagree = _tags_disagree_on_default_verify(tags, default_verify_for)
+    if _source == "full_gate" and tags_disagree:
+        tag_list = ", ".join(f"[{t}]" for t in dict.fromkeys(tags)) or "(none)"
+        out.append({
+            "kind": "tag_mode_conflict", "severity": "info",
+            "phase": number, "goal": goal,
+            "detail": (
+                f"Phase {number} '{goal}': task tags {tag_list} disagree on their "
+                f"default verify mode, so the resolver fell through to the full "
+                f"gate. A mixed-type phase has no single gate — consider splitting "
+                f"it or hand-authoring the intended directive."
+            ),
+            "derived": None, "authored": None, "suggestion": None,
+        })
+
+    # 3. all_exempt_suite_gated — every task suite-exempt, yet suite-gated.
+    #    Suppressed when tags disagree (tag_mode_conflict is then the primary
+    #    signal for the same phase). Resolved modes that include a build-gated
+    #    mode (compile/none) already relax the suite, so they are not over-gating.
+    if (not tags_disagree
+            and _phase_is_all_exempt(
+                ph, extract_tags, is_tdd_exempt, default_verify_for)):
+        if not any(is_build_gated(m) for m in modes):
+            tag_list = ", ".join(f"[{t}]" for t in dict.fromkeys(tags)) or "(none)"
+            resolved_str = ",".join(modes) if modes else "the full gate"
+            out.append({
+                "kind": "all_exempt_suite_gated", "severity": "warning",
+                "phase": number, "goal": goal,
+                "detail": (
+                    f"Phase {number} '{goal}': every task is suite-exempt "
+                    f"({tag_list}) but the phase resolves to {resolved_str} — the "
+                    f"full suite gate is likely over-gating. Consider a build-floor "
+                    f"mode (verify: none / compile) or splitting the exempt work out."
+                ),
+                "derived": None, "authored": None,
+                "suggestion": "verify: none",
+            })
+
+    return out
+

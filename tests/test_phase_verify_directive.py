@@ -292,14 +292,63 @@ class ContractDocTests(TestCase):
 
     def test_contract_documents_directive(self):
         self.assertIn("Phase Verify Directives", self.text)
-        self.assertIn("<!-- verify: compile -->", self.text)
+        # The directive form is documented via the legitimate hand-authored
+        # cases (``adversarial`` — the one mode a goal cannot signal; ``anchor``
+        # — a deliberate override). Migration-phase modes (compile / none /
+        # test,start) are goal-derived, so they no longer appear as authored
+        # examples — see test_contract_example_omits_migration_directives.
+        self.assertIn("<!-- verify: test,adversarial -->", self.text)
+        self.assertIn("<!-- verify: anchor -->", self.text)
+
+    def test_contract_example_omits_migration_directives(self):
+        """The contract's Phase-Verify-Directives example block must mirror the
+        omit-by-default design. Only two hand-authored directives are ever
+        legitimate (spec-planner.md:162): a directive containing ``adversarial``
+        (the one mode a goal cannot signal) or exactly ``anchor`` (a deliberate
+        override). Every other mode — ``compile`` / ``none`` / ``test`` /
+        ``test,start`` / ``start`` — is goal-DERIVED at load and must NOT appear
+        as an authored directive in the example. Regression guard for the drift
+        class behind the original bug: the example showed
+        ``<!-- verify: compile -->`` on every Migrate heading and the planner
+        copied the example louder than the OMIT prose."""
+        block = self._phase_verify_example_block()
+        for line in block.splitlines():
+            start = line.find("<!-- verify:")
+            if start < 0:
+                continue
+            end = line.find("-->", start)
+            self.assertGreater(
+                end, -1, f"unterminated directive in example: {line.strip()!r}"
+            )
+            body = line[start + len("<!-- verify:"):end].strip()
+            declared = {m.strip() for m in body.split(",") if m.strip()}
+            legit = ("adversarial" in declared) or (declared == {"anchor"})
+            self.assertTrue(
+                legit,
+                f"the example block hand-authors {sorted(declared)} — only a "
+                f"directive containing 'adversarial', or exactly 'anchor', may "
+                f"be hand-authored; the rest are goal-derived at load. "
+                f"Line: {line.strip()!r}",
+            )
+
+    def _phase_verify_example_block(self):
+        idx = self.text.find("## Phase Verify Directives")
+        self.assertGreater(idx, -1, "Phase Verify Directives section missing")
+        rest = self.text[idx:]
+        open_fence = rest.find("```")
+        self.assertGreater(open_fence, -1, "example fence open missing")
+        after_open = rest[open_fence + 3:]
+        close_fence = after_open.find("```")
+        self.assertGreater(close_fence, -1, "example fence close missing")
+        return after_open[:close_fence]
 
     def test_contract_does_not_enumerate_modes_as_table(self):
         # The collapse: the mode vocabulary lives in the resolved registry
         # (rendered by `track-state registry-doc`), NOT a hand-maintained table
         # in the contract (the drift liability `check-contract-registry-sync`
         # polices). A mode may appear as a grammar/directive example (e.g.
-        # `<!-- verify: compile -->`), but never as a table row's first cell.
+        # `<!-- verify: test,adversarial -->`), but never as a table row's first
+        # cell.
         self.assertIn("track-state registry-doc", self.text)
         for mode in MODE_VOCAB():
             for ln in self.text.splitlines():
