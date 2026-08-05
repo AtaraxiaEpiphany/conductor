@@ -141,6 +141,17 @@ class ExemptionTests(TestCase):
     def test_chore_tag_exempt(self):
         self.assertEqual(_mod._scan("- [ ] [Chore] Task: bump deps\n"), [])
 
+    def test_refactor_tag_not_exempt(self):
+        # [Refactor] is real implementation work (tdd_exempt=False — it owes a
+        # working test), so it must NOT be exempt from §6 the way the other
+        # dispatch tags are. An earlier revision exempted the whole registry
+        # vocab and silently dropped refactor traceability.
+        self.assertEqual(len(_mod._scan("- [ ] [Refactor] extract validation\n")), 1)
+        # With a well-formed annotation it passes (not false-flagged).
+        self.assertEqual(
+            _mod._scan("- [ ] [Refactor] extract validation <!-- AC-1, TC-1.1 -->\n"),
+            [])
+
     def test_indented_subtask_exempt(self):
         # 2-space indent = subtask (inherits AC from parent) → not a top-level task.
         self.assertEqual(_mod._scan("  - [ ] Subtask: nested\n"), [])

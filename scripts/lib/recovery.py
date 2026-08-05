@@ -90,15 +90,18 @@ def parse_result_block(text):
         return None
     import json
     for block in blocks:
-        m = _JSON_FENCE_PATTERN.search(block)
-        if not m:
-            continue
-        try:
-            obj = json.loads(m.group(1))
-        except ValueError:
-            continue
-        if isinstance(obj, dict) and "status" in obj:
-            return obj
+        # Scan EVERY fenced object in the block, not just the first: an agent may
+        # emit a non-status snippet (or one that fails json.loads) before its
+        # verdict fence. The earlier ``.search`` + ``continue`` form skipped to
+        # the next BLOCK on a statusless first fence, dropping a status-bearing
+        # verdict that wasn't first in its own block.
+        for m in _JSON_FENCE_PATTERN.finditer(block):
+            try:
+                obj = json.loads(m.group(1))
+            except ValueError:
+                continue
+            if isinstance(obj, dict) and "status" in obj:
+                return obj
     return None
 
 # Bounded recovery: how many SubagentStop recovery turns a result-file agent

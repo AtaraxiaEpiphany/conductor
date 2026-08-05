@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from functools import lru_cache
 from pathlib import Path
@@ -296,8 +297,27 @@ def is_coverage_exempt(tags: list[str]) -> bool:
     return any(_profile(t).get("coverage_exempt", False) for t in tags)
 
 
+def _task_is_code_free(tags: list[str]) -> bool:
+    """True if a single task produces no code (every one of its tags is
+    ``coverage_exempt``).
+
+    The ALL-exempt complement of :func:`is_coverage_exempt`'s ANY — and the
+    per-task predicate :func:`phase_is_code_free` composes. ``is_coverage_exempt``
+    is ANY on purpose (it answers the F2/F3 gate: "is this task *exempt from the
+    coverage gate*"), but "does this task *produce code*?" is the stricter
+    question the test-runner fan-out narrows on: a ``[Config][Refactor]`` task
+    carries a code-producing tag, so it is NOT code-free even though
+    ``is_coverage_exempt([Config, Refactor])`` returns True. Untagged tasks use
+    the ``default`` profile (not exempt) → not code-free (conservative — keep
+    test-runner).
+    """
+    if not tags:
+        return bool(_load()["default"].get("coverage_exempt", False))
+    return all(_profile(t).get("coverage_exempt", False) for t in tags)
+
+
 def phase_is_code_free(state, phase) -> bool:
-    """True if every task in a phase is ``coverage_exempt`` (no code → no tests).
+    """True if every task in a phase is code-free (no code → no tests).
 
     The phase-composition predicate the checkpoint fan-out narrows on
     (:func:`dispatch._build_verifier_wave`): a phase of pure
@@ -307,13 +327,17 @@ def phase_is_code_free(state, phase) -> bool:
     the lowercased ``task_type`` cache dispatch never reads); no directive, no
     authoring — the lightweight alternative to the per-phase verify apparatus.
 
-    Deliberately keys on ``coverage_exempt`` (the F2/F3 gate's predicate), NOT
-    ``tdd_exempt``: ``[Explore]`` is tdd_exempt but not coverage_exempt, yet an
-    explore-heavy track uses the ``research-first`` shape whose
-    ``verify_policy: none`` runs no checkpoint at all — so an explore-only phase
-    reaching this fan-out is a non-case, and Explore stays out of the "code-free"
-    set. False (conservative — keep test-runner) for a mixed phase, an empty
-    phase (malformed, not code-free), or an out-of-range index.
+    Composes :func:`_task_is_code_free` (ALL-exempt per task), NOT
+    :func:`is_coverage_exempt` (ANY) — a phase of ``[Config][Refactor]`` tasks
+    carries code-producing tags, so it must NOT narrow out test-runner even
+    though each task is coverage-exempt under the ANY predicate. Deliberately
+    keys on ``coverage_exempt`` (the F2/F3 gate's predicate), NOT ``tdd_exempt``:
+    ``[Explore]`` is tdd_exempt but not coverage_exempt, yet an explore-heavy
+    track uses the ``research-first`` shape whose ``verify_policy: none`` runs no
+    checkpoint at all — so an explore-only phase reaching this fan-out is a
+    non-case, and Explore stays out of the "code-free" set. False (conservative —
+    keep test-runner) for a mixed phase, an empty phase (malformed, not
+    code-free), or an out-of-range index.
     """
     from .helpers import extract_tags
     phases = state.get("phases") or []
@@ -326,7 +350,7 @@ def phase_is_code_free(state, phase) -> bool:
     tasks = phases[pi].get("tasks") or []
     if not tasks:
         return False
-    return all(is_coverage_exempt(extract_tags(t.get("name", ""))) for t in tasks)
+    return all(_task_is_code_free(extract_tags(t.get("name", ""))) for t in tasks)
 
 
 def has_over_tag_risk(tag: str) -> bool:
@@ -358,6 +382,28 @@ def derive_task_type(name: str) -> str:
 
     tags = extract_tags(name)
     return tags[0].lower() if tags else "default"
+
+
+def derive_child_task_type(parent: dict) -> str:
+    """The ``task_type`` for a subtask created/split/absorbed under ``parent``.
+
+    Subtasks never carry their own tag (contract: only top-level tasks are
+    tagged), so a new subtask inherits its parent's ``task_type`` — the same
+    rule :func:`quality._init_state` applies at construction. Used by the
+    mid-track creation paths (``validate._fix_plan_mismatches`` absorb,
+    ``mutations._do_split`` / ``reconcile`` split, ``sync`` absorb) so every
+    task dict carries the cache, not just init-created ones — otherwise
+    :func:`on_subagent_start._resolve_locked_task_type` reads ``None`` for an
+    absorbed task and the executor loses its per-tag profile.
+
+    Falls back to re-deriving from the parent *name* when the parent's cached
+    field is itself absent (a parent absorbed by a pre-fix run). The name is
+    authoritative; this keeps the child's mirror in lockstep with it.
+    """
+    tt = parent.get("task_type")
+    if tt and tt != "default":
+        return tt
+    return derive_task_type(parent.get("name", ""))
 
 
 def workflow_for(tag: str) -> str:
@@ -410,18 +456,54 @@ def _signals_for(tag: str) -> list[str]:
     and keeping its alphabetic tokens of length >= 4 — weaker matching, but the
     mechanism never *depends* on ``signals`` being present (a registry without
     it still classifies, just less precisely). Always lowercased for matching.
+    De-duped (order-preserving): a duplicate token in a row would otherwise
+    double-count a single hit in :func:`derive_task_tag`'s plurality score, so a
+    repeated signal is collapsed here rather than scored twice.
     """
     prof = _profile(tag)
     raw = prof.get("signals")
     if isinstance(raw, list) and raw:
-        return [str(s).lower() for s in raw]
+        return _dedupe_signals(str(s).lower() for s in raw)
     hint = when_to_use_for(tag).lower()
     # Minimal fallback: alphabetic tokens of length >= 4 from the when_to_use
     # hint (filters out stopwords like "the/with/that"). This is deliberately
     # coarse — `signals` is the quality path; this is just "better than nothing."
-    return [t for t in (
-        "".join(ch for ch in w if ch.isalpha()) for w in hint.split()
-    ) if len(t) >= 4]
+    return _dedupe_signals(
+        t for t in ("".join(ch for ch in w if ch.isalpha()) for w in hint.split())
+        if len(t) >= 4
+    )
+
+
+def _dedupe_signals(signals):
+    """Lowercased, de-duped, order-preserving copy of an iterable of signals."""
+    seen, out = set(), []
+    for s in signals:
+        if s and s not in seen:
+            seen.add(s)
+            out.append(s)
+    return out
+
+
+def _signal_in(sig: str, text: str) -> bool:
+    """Word-boundary-aware signal match — the fix for bare ``sig in text``.
+
+    A bare substring check let short alpha signals (``ci``, ``map``) match
+    inside longer words (``ci`` in "discipline"/"specificity"), inflating
+    plurality scores past the over-tag guard. A signal now matches only when it
+    is not glued to extra *letters* on either flank: a letter-flanked signal
+    edge requires a non-letter (or string edge) beside it, while a
+    punctuation-flanked edge (file extensions like ``.md``/``.env``, hyphenated
+    ``cross-browser``) is unconstrained on that side — so ``.md`` still matches
+    "readme.md" but ``ci`` no longer matches "discipline".
+    """
+    if not sig:
+        return False
+    pat = re.escape(sig)
+    if sig[0].isalpha():
+        pat = r"(?<![A-Za-z])" + pat
+    if sig[-1].isalpha():
+        pat = pat + r"(?![A-Za-z])"
+    return re.search(pat, text) is not None
 
 
 # Words that mark a task as genuine business-logic work — the over-tagging guard.
@@ -489,7 +571,7 @@ def derive_task_tag(description: str) -> str | None:
             # [Refactor] is a deliberate opt-in (leading tag or inline marker), full stop.
             if _profile(tag).get("refactor"):
                 continue
-            hits = sum(1 for sig in _signals_for(tag) if sig and sig in text)
+            hits = sum(1 for sig in _signals_for(tag) if _signal_in(sig, text))
             if hits:
                 scores[tag] = hits
 
@@ -520,5 +602,14 @@ def derive_task_tag(description: str) -> str | None:
             return None
 
         return winner
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 — fail-open contract: never raise
+        # Surface the defect rather than swallow it silently. A malformed
+        # registry row (e.g. a bad overlay: signals as a string, a missing key a
+        # future change assumes) would otherwise make EVERY description classify
+        # as None (default TDD) with no diagnostic — masking a real registry
+        # defect init-from-plan's validator does not cover. Still returns None
+        # (the safe default) per the fail-open contract.
+        import sys
+        print(f"derive_task_tag: classifier failed ({exc!r}); defaulting to None",
+              file=sys.stderr)
         return None

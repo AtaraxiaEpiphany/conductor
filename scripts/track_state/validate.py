@@ -14,6 +14,7 @@ from .constants import TERMINAL_STATUSES, TERMINAL_FOR_PARENT, STALE_LOCK_SECOND
 from .plan_parse import parse_plan
 from .sync import _do_sync_plan
 from .git_ops import _find_conductor_shas, _is_start_commit, _git_uncommitted_files, _git_head_sha
+from .task_profiles import derive_task_type, derive_child_task_type
 
 
 def _wave_inflight_locs(track_dir):
@@ -184,12 +185,31 @@ def _fix_plan_mismatches(track_dir, state, errors=None):
                 plan_subs = pt.get("subtasks", [])
                 for si in range(len(state_subs), len(plan_subs)):
                     sub_name = plan_subs[si]["name"]
-                    state_subs.append({"name": sub_name, "status": "pending"})
+                    # Subtask inherits the parent's task_type (contract: never
+                    # tag subtasks) so the cache is populated consistently with
+                    # init-created subtasks.
+                    state_subs.append({
+                        "name": sub_name,
+                        "status": "pending",
+                        "task_type": derive_child_task_type(state_tasks[ti]),
+                    })
                     fixes.append(
                         f"P{pi}.T{ti + 1}.S{si + 1}: added subtask from plan.md as pending")
             else:
-                # Task doesn't exist in state — add it
-                new_task = {"name": pt["name"], "status": "pending", "subtasks": pt["subtasks"]}
+                # Task doesn't exist in state — add it. task_type is the typed
+                # mirror of the name's tag (the cache _resolve_locked_task_type
+                # reads at dispatch); derived here so an absorbed task keeps its
+                # per-tag profile rather than reading None. Subtasks inherit the
+                # parent's tag (contract: never tag subtasks individually).
+                parent_type = derive_task_type(pt["name"])
+                for st in pt["subtasks"]:
+                    st["task_type"] = parent_type
+                new_task = {
+                    "name": pt["name"],
+                    "status": "pending",
+                    "task_type": parent_type,
+                    "subtasks": pt["subtasks"],
+                }
                 state_tasks.append(new_task)
                 fixes.append(
                     f"P{pi}.T{ti + 1}.{pt['name']}: added task from plan.md as pending "

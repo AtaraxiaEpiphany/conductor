@@ -34,7 +34,7 @@ from .helpers import (
 from .plan_parse import parse_plan
 from .sync import _do_sync_plan
 from .git_ops import _git_commit_ensured
-from .task_profiles import derive_task_type
+from .task_profiles import derive_task_type, derive_child_task_type
 
 
 # status char → status name (inverse of MARKER_MAP). Built once.
@@ -506,7 +506,13 @@ def _apply_reconciliation(track_dir, diff, drops, clear_dangling, state=None):
             subs = parent.setdefault("subtasks", [])
             key = _name_key(item["new_subtask"])
             if not any(_name_key(s.get("name", "")) == key for s in subs):
-                subs.append({"name": item["new_subtask"], "status": "pending"})
+                # Split pieces inherit the parent's task_type (contract: never
+                # tag subtasks) — keeps the cache populated like init subtasks.
+                subs.append({
+                    "name": item["new_subtask"],
+                    "status": "pending",
+                    "task_type": derive_child_task_type(parent),
+                })
 
         # drops: remove the node from its parent container.
         for path in drop_paths:

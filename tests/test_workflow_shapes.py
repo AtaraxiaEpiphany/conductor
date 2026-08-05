@@ -304,6 +304,63 @@ class DispatchConstraintTests(TestCase):
         self.assertEqual(shape, "default")
 
 
+class RailAShapeDisclosureTests(TestCase):
+    """``cmd_dispatch_next`` (Rail A — the implement skill's primary §3.1 flow)
+    surfaces the same ``shape_violation`` disclosure Rail B's ``step`` spine
+    does, so the no-silent-caps constraint holds on BOTH rails — not only the
+    step spine. Without this, an off-topology dispatch via dispatch-next was
+    silently unflagged while the same dispatch via ``step`` attached the
+    violation."""
+
+    def _recent_iso(self):
+        from datetime import datetime, timezone, timedelta
+        return (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+
+    def _track(self, task_name, shape="default"):
+        from scripts.track_state.core import save
+        d = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(d, ignore_errors=True))
+        Path(d, "plan.md").write_text(
+            f"# Plan\n\n## Phase 1: Build\n- [ ] {task_name}\n")
+        save(d, {
+            "track_id": "sd", "type": "feature", "status": "in_progress",
+            "current_phase_index": 1, "current_task_index": 1,
+            "workflow_shape": shape, "updated_at": self._recent_iso(),
+            "phases": [{"name": "P1", "status": "pending",
+                        "tasks": [{"name": task_name, "status": "pending"}]}],
+        })
+        return d
+
+    def _dispatch_next(self, d):
+        import io, sys
+        old = sys.stdout
+        sys.stdout = io.StringIO()
+        try:
+            from scripts.track_state.dispatch import cmd_dispatch_next
+            cmd_dispatch_next(d)
+            return json.loads(sys.stdout.getvalue())
+        finally:
+            sys.stdout = old
+
+    def test_off_topology_dispatch_surfaces_violation_on_rail_a(self):
+        # explorer is not in the default shape's nodes → an [Explore] task
+        # dispatch surfaces the advisory on Rail A too (mirrors Rail B's step).
+        d = self._track("[Explore] map the module")
+        out = self._dispatch_next(d)
+        self.assertEqual(out["action"], "dispatch_explorer")
+        self.assertEqual(out["agent"], "explorer")
+        self.assertIn("shape_violation", out)
+        self.assertIn("explorer", out["shape_violation"])
+        self.assertEqual(out["workflow_shape"], "default")
+
+    def test_on_topology_executor_dispatch_no_violation_on_rail_a(self):
+        # task-executor IS in default's nodes → no disclosure.
+        d = self._track("build the feature")
+        out = self._dispatch_next(d)
+        self.assertEqual(out["action"], "dispatch_executor")
+        self.assertNotIn("shape_violation", out)
+
+
 class SetWorkflowShapeTests(TestCase):
     """``cmd_set_workflow_shape`` mutates the topology declaration on an existing
     track. Unlike ``task_type`` (re-derived from the name), ``workflow_shape`` is
@@ -403,6 +460,17 @@ class PhaseCodeFreeTests(TestCase):
         st = self._state([{"name": "[Config] tweak"}, {"name": "build the API"}])
         self.assertFalse(phase_is_code_free(st, 1))
 
+    def test_mixed_tag_task_is_not_code_free(self):
+        # A task carrying an exempt tag AND a code-producing tag
+        # ([Config][Refactor]) is NOT code-free — phase_is_code_free composes
+        # ALL-exempt per task, NOT is_coverage_exempt's ANY (which would call
+        # [Config][Refactor] exempt). The Refactor half produces code, so such
+        # a phase keeps test-runner.
+        from scripts.track_state.task_profiles import phase_is_code_free
+        st = self._state([{"name": "[Config][Refactor] extract validation"},
+                          {"name": "[Docs][Feature] ship it"}])
+        self.assertFalse(phase_is_code_free(st, 1))
+
     def test_explore_only_phase_is_not_code_free(self):
         # [Explore] is tdd_exempt but NOT coverage_exempt — excluded from the
         # code-free set, so an explore-only phase keeps test-runner.
@@ -447,6 +515,17 @@ class PhaseCodeFreeTests(TestCase):
             "/td", st, 1, verifiers=verifiers_for("default"))]
         self.assertNotIn("test-runner", agents)
 
+    def test_code_free_does_not_empty_the_wave(self):
+        # A pathological overlay shape declaring verifiers=['test-runner'] (no
+        # ac-tracer) on a code-free phase must NOT narrow to an empty wave —
+        # keep test-runner (it runs, finds nothing) rather than stalling the
+        # checkpoint with zero verifiers. Shipped shapes always pair the two,
+        # so only a custom overlay trips this; the guard keeps it safe.
+        from scripts.track_state.dispatch import _build_verifier_wave
+        st = self._state([{"name": "[Config] tweak"}])
+        members = _build_verifier_wave("/td", st, 1, verifiers=("test-runner",))
+        self.assertEqual([m["agent"] for m in members], ["test-runner"])
+
     def test_phase_checker_emits_skipped_for_code_free_phase(self):
         # No L1 verdict transcribed (test-runner didn't run) on a code-free
         # phase → the dispatch fills an explicit "skipped" so the checker
@@ -465,6 +544,20 @@ class PhaseCodeFreeTests(TestCase):
               "phases": [{"name": "P1", "tasks": [{"name": "build feature"}]}]}
         prompt = _build_phase_checker("/td", st, 1, {"ac_verdict": "passed"})
         self.assertNotIn("skipped", prompt)
+
+    def test_phase_checker_none_marker_is_empty_not_literal_none(self):
+        # cmd_phase_verdict writes l1_status=None when --l1-status is omitted
+        # (a code-free phase, or a transcription defect). The builder must coerce
+        # None to "" — NOT emit the literal "L1_VERIFY_STATUS=None", a token
+        # phase-checker.md has no branch for. On a code phase the empty status is
+        # the intended FAILURE-dispatch-defect signal.
+        from scripts.track_state.dispatch import _build_phase_checker
+        st = {"track_id": "t", "execution_mode": "interactive",
+              "phases": [{"name": "P1", "tasks": [{"name": "build feature"}]}]}
+        prompt = _build_phase_checker("/td", st, 1,
+                                      {"ac_verdict": "passed", "l1_status": None})
+        self.assertIn("L1_VERIFY_STATUS=", prompt)
+        self.assertNotIn("L1_VERIFY_STATUS=None", prompt)
 
     def test_phase_checker_marker_verdict_wins_over_code_free(self):
         # If test-runner DID run (marker carries l1_status), that verdict is

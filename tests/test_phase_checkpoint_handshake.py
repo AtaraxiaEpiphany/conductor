@@ -190,6 +190,51 @@ class PhaseCheckpointReviewTests(TestCase):
         self.assertFalse(o["stamped"])
 
 
+class CheckpointStampDetectorConsistencyTests(TestCase):
+    """The four checkpoint-stamp detectors (``plan_parse._CHECKPOINT``,
+    ``validate``, ``helpers._phase_needs_checkpoint``,
+    ``misc._stamp_checkpoint_in_plan``) must agree on what counts as a stamp —
+    including a hand-authored/legacy no-space stamp (``[checkpoint:abcdef1]``).
+    An earlier ``\\s+``/``\\s*`` split let the parser strip a no-space stamp the
+    gate/removal regexes then missed → a re-run gate + a duplicate stamp."""
+
+    def _track_with_stamp(self, stamp):
+        import tempfile
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        Path(d, "plan.md").write_text(
+            f"# Plan\n\n## Phase 1: Build {stamp}\n- [x] Task A\n")
+        # Phase fully terminal so _phase_needs_checkpoint reaches the stamp check.
+        from scripts.track_state.core import save
+        save(d, {
+            "track_id": "cp", "type": "feature", "status": "in_progress",
+            "current_phase_index": 0, "current_task_index": 0,
+            "phases": [{"name": "Phase 1", "status": "pending", "tasks": [
+                {"name": "Task A", "status": "completed", "commit_sha": "abc1234"}]}],
+        })
+        return d
+
+    def test_no_space_stamp_recognized_as_checkpointed(self):
+        # helpers._phase_needs_checkpoint (was \s+) must recognize a no-space
+        # stamp the way plan_parse/validate do, so the gate does not re-run for
+        # an already-checkpointed phase.
+        from scripts.track_state.helpers import _phase_needs_checkpoint
+        from scripts.track_state.core import load
+        d = self._track_with_stamp("[checkpoint:abcdef1]")
+        self.assertIsNone(_phase_needs_checkpoint(d, load(d), 1))
+
+    def test_no_space_stamp_stripped_on_restamp_no_duplicate(self):
+        # misc._stamp_checkpoint_in_plan (was \s+) must strip a no-space stamp
+        # before re-stamping, so the heading does not carry two stamps.
+        from scripts.track_state.misc import _stamp_checkpoint_in_plan
+        d = self._track_with_stamp("[checkpoint:abcdef1]")
+        r = _stamp_checkpoint_in_plan(d, 1, "fedcba9")
+        self.assertTrue(r.get("ok"))
+        text = Path(d, "plan.md").read_text()
+        self.assertEqual(text.count("[checkpoint:"), 1)
+        self.assertIn("[checkpoint: fedcba9]", text)
+
+
 class CliWiringTests(TestCase):
     """The two commands resolve through cli.main (which reads sys.argv) with
     their flag parse, and are listed in help + a command group. The sanctioned

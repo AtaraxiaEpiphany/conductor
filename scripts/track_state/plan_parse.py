@@ -95,16 +95,18 @@ _KNOWN_BRACKET_TOKEN = re.compile(
     re.IGNORECASE,
 )
 
-# An unrecognized tag-shaped bracket token in a task NAME — e.g. ``[Migration]``
-# (an unregistered tag), ``[Springboot3]``, or ``[K8sRollout]``. These are the silent-drift defect: ``extract_tags`` drops
-# them and the task silently falls back to default TDD, with wrong executor
-# behavior and no error. This matches any bracket whose content has ≥2 chars and
-# starts with a letter — so it catches alphanumeric invented tags too. Pure-hex
-# SHAs (``[abcdef1]``), ``[N/A]``, and ``[verified]`` are excluded in
-# :func:`_find_unknown_tags` (they are legitimate trailing markers, not tags —
-# and ``_clean_name`` has already stripped most of them anyway). Registered tags
-# are also excluded there by case-insensitive comparison against the vocab.
-_UNKNOWN_TAG = re.compile(r"\[([A-Za-z][^\[\]]{1,})\]")
+# The unknown-tag guard checks ONLY the leading run of [...] bracket tokens —
+# the dispatch-tag position. Tags are leading (``[Chore] [Config] bump``); a
+# bracket AFTER prose (``[Config] Document the [Deprecated] attributes``) is a
+# mid-sentence reference, not an intended dispatch tag. Scanning the whole name
+# (an earlier revision) flagged legitimate annotations — ``[Deprecated]``,
+# ``[API]``, ``[MVP]``, ``[WIP]`` — as unrecognized tags and blocked the track,
+# so the guard is scoped to the leading run where a tag is actually intended.
+_LEADING_BRACKET_RUN = re.compile(r"^((?:\[[^\[\]]+\]\s*)+)")
+# A leading bracket token is "tag-shaped" if it has ≥2 chars starting with a
+# letter — catches ``[Migration]`` typos and ``[Springboot3]`` invented tags.
+# Single-char / non-letter tokens (``[1]``) are not tags.
+_TAG_SHAPE = re.compile(r"[A-Za-z][^\[\]]{1,}")
 
 # Trailing checkpoint marker on a phase heading: [checkpoint:abcdef1]
 _CHECKPOINT = re.compile(r"\[checkpoint:\s*[0-9a-f]+\]", re.IGNORECASE)
@@ -145,33 +147,42 @@ def _clean_name(rest):
 
 
 def _find_unknown_tags(name):
-    """Return unknown tag-shaped tokens in a cleaned task name (de-duped, in order).
+    """Return unknown tag-shaped tokens in a task name's LEADING tag run.
 
-    A token is "tag-shaped" if it is a bracket group of ≥2 letters, e.g.
-    ``[Migration]`` or ``[Springboot3]``'s alpha part. It is "unknown" if it is
-    not a registered dispatch tag (case-insensitive comparison against the
-    registry vocab). Trailing SHAs, ``[N/A]``, and ``[verified]`` are not
-    alphabetic-bracket tokens, so they never match. ``_clean_name`` has already
-    stripped HTML comments and trailing status markers, so any match here is
-    almost certainly an intended-but-unregistered tag — the silent-drift defect
-    this catches. Returns the raw bracket text (e.g. ``[Migration]``) so the
-    error message reads naturally.
+    Only the leading run of ``[...]`` bracket tokens (the dispatch-tag
+    position) is examined: ``[Chore] [Config] bump`` checks both leading tokens,
+    but ``[Config] Document the [Deprecated] attributes`` checks only
+    ``[Config]`` — a bracket AFTER prose is a mid-sentence reference
+    (``[Deprecated]``, ``[API]``, ``[MVP]``), not an intended dispatch tag, so
+    flagging it would block legitimate task names.
+
+    A leading token is "tag-shaped" if it has ≥2 chars starting with a letter
+    (catches ``[Migration]`` typos and ``[Springboot3]`` invented tags); it is
+    "unknown" if it is not a registered dispatch tag (case-insensitive
+    comparison against the registry vocab). ``_clean_name`` has already stripped
+    HTML comments and trailing status markers, so a leading match here is almost
+    certainly an intended-but-unregistered tag — the silent-drift defect this
+    catches. Returns the raw bracket text (e.g. ``[Migration]``) so the error
+    message reads naturally.
     """
     known = {t.lower() for t in _tag_vocab()}
     # Trailing status markers that are NOT tags: [N/A], [verified], and a bare
-    # hex SHA [0-9a-f]{7,}. (_clean_name strips most of these already, but a
-    # SHA-looking token could survive mid-name, so guard defensively.)
+    # hex SHA [0-9a-f]{7,}. (These aren't leading in practice, but a SHA-shaped
+    # token could lead a weird name, so guard defensively.)
     sha_re = re.compile(r"^[0-9a-fA-F]{7,}$")
     status_words = {"n/a", "verified"}
+    run = _LEADING_BRACKET_RUN.match(name)
+    inners = re.findall(r"\[([^\[\]]+)\]", run.group(1)) if run else []
     seen, out = set(), []
-    for m in _UNKNOWN_TAG.finditer(name):
-        inner = m.group(1)
+    for inner in inners:
+        if not _TAG_SHAPE.fullmatch(inner):
+            continue
         low = inner.lower()
         if low in known or low in status_words:
             continue
         if sha_re.match(inner):
             continue
-        token = m.group(0)
+        token = f"[{inner}]"
         if token not in seen:
             seen.add(token)
             out.append(token)

@@ -145,6 +145,46 @@ class MainEndToEndTests(TestCase):
         ctx = result["hookSpecificOutput"].get("additionalContext") or ""
         self.assertNotIn("subagent reported failure", ctx.lower())
 
+    def _verdict_payload(self, status_json, agent_type="ac-tracer"):
+        text = ("---AC TRACE RESULT---\n```json\n"
+                + status_json + "\n```\n---END RESULT---")
+        return self._run(_agent_payload(text, agent_type=agent_type))
+
+    def test_failed_verdict_fires_routing_nudge(self):
+        ctx = (self._verdict_payload(
+            '{"status": "FAILED", "failure_reason": "boom"}',
+            agent_type="task-executor")
+            ["hookSpecificOutput"].get("additionalContext") or "")
+        self.assertIn("status=FAILED", ctx)
+        self.assertIn("Branch on this status", ctx)
+
+    def test_skipped_verdict_does_not_fire_routing_nudge(self):
+        # skipped (a code-free phase / no spec) is benign — no loop-back nudge,
+        # or the orchestrator would re-dispatch/halt a verifier that simply had
+        # nothing to verify.
+        ctx = self._verdict_payload('{"status": "skipped"}')[
+            "hookSpecificOutput"].get("additionalContext") or ""
+        self.assertNotIn("Branch on this status", ctx)
+
+    def test_warn_verdict_does_not_fire_routing_nudge(self):
+        # warn is advisory — the checker proceeds — so it needs no routing nudge.
+        ctx = self._verdict_payload('{"status": "warn"}')[
+            "hookSpecificOutput"].get("additionalContext") or ""
+        self.assertNotIn("Branch on this status", ctx)
+
+    def test_failed_verdict_nudge_is_additive_to_recovery_advisory(self):
+        # A concurrently-relevant [Conductor Recovery] advisory must NOT be
+        # overwritten by the structured-verdict nudge (the comment calls the
+        # feature "Additive"). Both appear, verdict appended after recovery.
+        text = ("[Conductor Recovery] retry\nCoverage: 90%\n"
+                "---TASK RESULT---\n```json\n"
+                '{"status": "FAILED", "failure_reason": "boom"}\n'
+                "```\n---END RESULT---")
+        ctx = self._run(_agent_payload(text))[
+            "hookSpecificOutput"].get("additionalContext") or ""
+        self.assertIn("recovered from failure", ctx)
+        self.assertIn("status=FAILED", ctx)
+
     def test_updated_output_is_schema_valid_object_not_bare_string(self):
         """Regression: updatedToolOutput was emitted as a bare string, which
         Claude Code's PostToolUse schema validation REJECTS (Zod invalid_type

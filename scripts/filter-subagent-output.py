@@ -62,6 +62,14 @@ NO_RESULT_OK = (
     "but result.json was written — processing will continue via dispatch-finalize."
 )
 
+# Structured-verdict statuses that need NO routing nudge: the passing set plus the
+# benign ``skipped`` (code-free phase / no spec) and ``warn`` (advisory — the
+# checker proceeds). Anything else (FAILED / error / an unrecognized non-passing
+# status) gets a loop-back nudge so the orchestrator branches on it.
+_NO_ROUTING_STATUSES = frozenset({
+    "PASSED", "PASSED.", "OK", "SUCCESS", "DONE", "SKIPPED", "WARN",
+})
+
 
 def extract_result_blocks(response: str) -> Optional[str]:
     """Extract result blocks from subagent response."""
@@ -189,19 +197,25 @@ def main():
     # Structured verdict (Phase 2 control-flow backbone): when the result block
     # carries a fenced ```json verdict object, surface its status deterministically
     # so the orchestrator's loop-back edge branches on ``status`` instead of
-    # regex-mining ``STATUS:`` prose. Only emitted on a non-passing status — a
-    # passing verdict needs no routing nudge. Additive: absent/missing JSON falls
-    # through to the existing result-file / recovery advisories below (no cliff).
+    # regex-mining ``STATUS:`` prose. Fired only for a status that needs a ROUTING
+    # DECISION (FAILED / error / an unrecognized non-passing status) — ``skipped``
+    # (a code-free phase or no spec/ACs) and ``warn`` (advisory — the checker
+    # proceeds) are benign and need no loop-back nudge; the earlier form fired for
+    # any non-passing status and prompted a premature re-dispatch/halt of the
+    # verifier. Additive: APPENDED to a concurrently-relevant recovery advisory
+    # (not assigned over it), so the [Conductor Recovery] routing context is not
+    # silently dropped. Absent/missing JSON falls through to the advisories below.
     verdict = parse_result_block(response)
     if verdict:
         status = str(verdict.get("status", "")).upper()
-        if status and status not in ("PASSED", "PASSED.", "OK", "SUCCESS", "DONE"):
+        if status and status not in _NO_ROUTING_STATUSES:
             reason = verdict.get("failure_reason") or verdict.get("reason") or ""
-            extra_context = (
+            nudge = (
                 f"[Conductor] Structured verdict: status={status}"
                 + (f" — {reason}" if reason else "")
                 + ". Branch on this status for routing (re-dispatch / halt / advance)."
             )
+            extra_context = f"{extra_context}\n{nudge}" if extra_context else nudge
 
     # If no structured result block AND no recovery advisory, check for result file.
     # The result.json freshness probe only applies to dispatch-finalize agents

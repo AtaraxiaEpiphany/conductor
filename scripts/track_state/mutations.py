@@ -5,6 +5,7 @@ from .core import load, save, transaction
 from .helpers import target, clean, now_iso, out, _last_subtask_sha, _reset_task, _propagate_to_subtasks, _any_phase_needs_checkpoint, _normalize_sha
 from .constants import TERMINAL_FOR_PARENT, AUTO_COMPLETE_OK, LOCKED_AT_FIELD, task_max_retries
 from lib.recovery import RECOVERY_TURN_FIELD
+from .task_profiles import derive_child_task_type
 
 
 class F1StateLockError(ValueError):
@@ -434,7 +435,13 @@ def _do_split(track_dir, p, t, s, subtask_names, note=None):
         # Append the pieces as pending subtasks of the parent task.
         subs = parent.setdefault("subtasks", [])
         for name in subtask_names:
-            subs.append({"name": name, "status": "pending"})
+            # Split pieces inherit the parent's task_type (contract: never tag
+            # subtasks) — keeps the cache populated like init subtasks.
+            subs.append({
+                "name": name,
+                "status": "pending",
+                "task_type": derive_child_task_type(parent),
+            })
         # Point at the parent so dispatch-next/step picks up the first new piece.
         _set_current_indices(state, pi, ti, None)
         state["updated_at"] = now_iso()

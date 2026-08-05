@@ -308,15 +308,33 @@ def cmd_dispatch_next(track_dir, compact=True):
             tgt = _task_dict(state, result["phase"], result["task"], result.get("subtask"))
             retry_count = tgt.get("retry_count", 0) if tgt else 0
             attempt = retry_count + 1
+            # Per-task ceiling flows into BOTH the prompt (via pre → _build_executor)
+            # and the envelope field below, so they agree — a raised-budget task
+            # must not perceive itself past budget in the prompt on a late attempt.
+            max_retries = task_max_retries(tgt) if tgt else MAX_RETRIES
             pre = dict(phase=result["phase"], task=result["task"],
                        subtask=result.get("subtask"), name=result.get("name", "?"),
-                       tags=result.get("tags", []))
+                       tags=result.get("tags", []), max_retries=max_retries)
             agent, prompt = build_dispatch_prompt(
                 "dispatch_executor", track_dir, pre=pre, attempt=attempt)
             result["agent"] = agent
             result["prompt"] = prompt
             result["attempt"] = attempt
-            result["max_retries"] = task_max_retries(tgt) if tgt else MAX_RETRIES
+            result["max_retries"] = max_retries
+            # Third-axis (workflow-shapes) disclosure — mirrors _step_emit_dispatch
+            # (Rail B) so the no-silent-caps shape_violation surfaces on BOTH rails,
+            # not only the step spine. Without this, an off-topology dispatch via
+            # dispatch-next (the implement skill's primary §3.1 flow) was silently
+            # unflagged while the same dispatch via `step` attached the violation.
+            # Advisory: the dispatch still proceeds so a shape misconfiguration
+            # never deadlocks a track.
+            allowed, shape = shape_allows(track_dir, agent, state=state)
+            if not allowed:
+                result["shape_violation"] = (
+                    f"agent '{agent}' is not in workflow_shape '{shape}' nodes; "
+                    f"dispatching anyway (advisory) — fix track-state workflow_shape "
+                    f"or the shape's nodes if this is wrong")
+                result["workflow_shape"] = shape
         emit(result, "dispatch-next", compact)
         return
 
@@ -1266,7 +1284,12 @@ def _build_executor(track_dir, pre, attempt):
     if _classify_task(pre.get("tags", [])) == "explore":
         return "explorer", "\n".join(lines)
     lines.append(f"ATTEMPT={attempt}")
-    lines.append(f"MAX_RETRIES={MAX_RETRIES}")
+    # Per-task ceiling (a task whose budget was raised via set-max-retries): read
+    # from pre so the prompt agrees with the envelope's max_retries field (both
+    # rails populate it). Falls back to the global MAX_RETRIES only when a caller
+    # didn't supply one — never silently hardcode the global, or a raised-budget
+    # task would perceive itself past budget on a late attempt.
+    lines.append(f"MAX_RETRIES={pre.get('max_retries', MAX_RETRIES)}")
     return "task-executor", "\n".join(lines)
 
 
@@ -1322,7 +1345,14 @@ def _build_verifier_wave(track_dir, state, phase, verifiers=None):
     # resolves here) narrow identically — putting it only in resolve_phase_gate
     # would miss Rail B, which does not call it.
     if phase_is_code_free(state, phase) and "test-runner" in verifiers:
-        verifiers = tuple(v for v in verifiers if v != "test-runner")
+        # Guard: never narrow to an empty wave. A shipped shape always pairs
+        # test-runner with ac-tracer, but a project-overlay shape declaring
+        # verifiers=['test-runner'] (no ac-tracer) would drop to () here → a
+        # checkpoint that fans out zero verifiers and can produce no verdict
+        # (stall). Keep test-runner in that pathological case (it runs, finds no
+        # tests, reports) rather than emitting an empty wave.
+        if len(verifiers) > 1:
+            verifiers = tuple(v for v in verifiers if v != "test-runner")
     members = []
     for verifier in verifiers:
         members.append({
@@ -1381,7 +1411,11 @@ def _build_phase_checker(track_dir, state, phase, marker):
     # than treating a missing verdict as a failure. A genuinely empty verdict
     # on a NOT-code-free phase (test-runner should have run) stays empty — the
     # checker surfaces that as FAILURE (a dispatch defect).
-    l1_status = marker.get("l1_status", "")
+    # cmd_phase_verdict writes l1_status=None when --l1-status is omitted (a
+    # code-free phase, or a transcription defect), so .get("l1_status", "")
+    # returns None — coerce to "" or the f-string would emit the literal
+    # "L1_VERIFY_STATUS=None", a token phase-checker.md has no branch for.
+    l1_status = marker.get("l1_status") or ""
     if not l1_status:
         from .task_profiles import phase_is_code_free
         if phase_is_code_free(state, phase):

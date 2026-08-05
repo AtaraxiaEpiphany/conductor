@@ -38,7 +38,8 @@ sys.path.insert(0, str(Path(__file__).parent / "lib"))
 
 from lib.hook_io import read_hook_input, write_hook_output
 from track_state.plan_parse import _extract_refs
-from track_state.task_profiles import TAG_VOCAB
+from track_state.helpers import extract_tags
+from track_state.task_profiles import is_tdd_exempt
 
 # Valid plan.md checkbox marker chars (constants.MARKER_MAP values), copied from
 # check-plan-checkboxes.py.
@@ -49,14 +50,17 @@ _VALID_MARKER_CLASS = r"[ x~!>#\-d]"
 # the implicit start-anchor excludes indented (2-space) subtask lines.
 _TOP_TASK = re.compile(rf"^-\s+\[{_VALID_MARKER_CLASS}\]")
 
-# Dispatch tag that exempts a task from the annotation requirement (non-
-# implementation work). Boundary-anchored like helpers.extract_tags, so the
-# orchestrator's tag-based TDD gating and this hook agree on what's exempt. The
-# tag alternation is derived from the registry (task_profiles.TAG_VOCAB) so
-# adding a tag doesn't require editing this regex too.
-_EXEMPT_TAG = re.compile(
-    r"(?<!\S)\[(?:" + "|".join(TAG_VOCAB()) + r")\](?!\S)"
-)
+# A top-level task is exempt from the annotation requirement when it is
+# TDD-exempt (non-implementation work: [Explore]/[Docs]/[Config]/[Chore]/
+# [Manual]). Detected via the SAME predicates the orchestrator's TDD gating uses
+# (helpers.extract_tags + task_profiles.is_tdd_exempt) so this hook and the gate
+# agree on what's exempt — and [Refactor] (tdd_exempt=False, real implementation
+# work that owes a working test) is correctly NOT exempt, so a refactor task
+# still must carry its AC/TC annotation. NB: an earlier revision matched the
+# whole registry vocab (TAG_VOCAB), which exempted [Refactor] and silently
+# dropped its traceability. extract_tags strips HTML comments, so a tag named
+# only inside a <!-- --> note does NOT exempt the line (a real tag would lead
+# the task name, not sit in a comment).
 
 
 def _comment_refs(line: str):
@@ -85,8 +89,8 @@ def _scan(text: str, max_hits: int = 8):
     for idx, raw in enumerate(text.splitlines()):
         if not _TOP_TASK.match(raw):
             continue  # not a top-level task line (subtask/heading/prose/blank)
-        if _EXEMPT_TAG.search(raw):
-            continue  # tagged → non-implementation → exempt
+        if is_tdd_exempt(extract_tags(raw)):
+            continue  # TDD-exempt → non-implementation → exempt from §6
         has_ac, has_tc = _comment_refs(raw)
         if has_ac and has_tc:
             continue  # well-formed annotation present

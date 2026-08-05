@@ -128,9 +128,12 @@ COMPACT_FIELDS = {
                       # dispatch; wave for the phase-checker verifier fan-out) so
                       # skills/implement/SKILL.md §3.2/§3.3/§3.4 paste `prompt`
                       # verbatim instead of re-deriving KEY=value lines. Mirrors
-                      # the `step` allowlist (Rail B), one source for both rails.
+                      # the `step` allowlist (Rail B), one source for both rails —
+                      # INCLUDING the third-axis shape_violation/workflow_shape
+                      # disclosure so no-silent-caps holds on both rails.
                       "agent", "prompt", "attempt", "max_retries",
-                      "wave", "retry_count"),
+                      "wave", "retry_count",
+                      "shape_violation", "workflow_shape"),
     "dispatch-prepare": ("action", "phase", "task", "subtask", "name",
                          "sha", "is_resume", "retry_count",
                          "max_retries", "execution_mode"),
@@ -465,8 +468,13 @@ def _phase_needs_checkpoint(track_dir, state, phase_index):
         return phase_index
 
     # A real PASSED checkpoint stamp on this phase's heading reads as
-    # "checkpoint present" (skip the gate).
-    pattern = rf"^##\s+Phase\s+{phase_index}\b.*\[checkpoint:\s+[0-9a-f]+\]"
+    # "checkpoint present" (skip the gate). Inner space is \s* (not \s+) to match
+    # plan_parse._CHECKPOINT / validate / misc._stamp_checkpoint_in_plan — all
+    # four detectors must agree, or a hand-authored/legacy no-space stamp
+    # ([checkpoint:abcdef1]) parses as checkpointed but not here → the gate
+    # re-runs for an already-checkpointed phase. The runtime always writes with a
+    # space, so \s* still matches the canonical stamp.
+    pattern = rf"^##\s+Phase\s+{phase_index}\b.*\[checkpoint:\s*[0-9a-f]+\]"
     if re.search(pattern, content, re.MULTILINE):
         return None  # Checkpoint exists
 

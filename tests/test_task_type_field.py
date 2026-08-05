@@ -25,8 +25,9 @@ from pathlib import Path
 from unittest import TestCase, main
 
 from scripts.track_state.plan_parse import _find_unknown_tags, parse_plan
-from scripts.track_state.task_profiles import derive_task_type
+from scripts.track_state.task_profiles import derive_task_type, derive_child_task_type
 from scripts.track_state.quality import cmd_init_from_plan
+from scripts.track_state.validate import ensure_healthy
 from scripts.track_state.helpers import _reset_task
 from test_track_state import _make_track_dir, _out_captured
 
@@ -86,6 +87,19 @@ class UnknownTagHelperTests(TestCase):
     def test_untagged_name_clean(self):
         self.assertEqual(_find_unknown_tags("Add a plain button"), [])
 
+    def test_mid_name_bracket_not_flagged(self):
+        # A bracketed word AFTER prose ([Deprecated], [API], [V2], [MVP]) is a
+        # mid-sentence reference, not an intended dispatch tag — the guard
+        # checks only the leading tag position, so legitimate descriptions are
+        # not blocked. (Earlier revision scanned the whole name and flagged
+        # these as unrecognized tags → hard error at init.)
+        self.assertEqual(_find_unknown_tags("[Config] document the [Deprecated] attrs"), [])
+        self.assertEqual(_find_unknown_tags("[Docs] redesign the [V2] endpoint"), [])
+        self.assertEqual(_find_unknown_tags("[Refactor] drop the [Legacy] path"), [])
+        # A leading unknown tag is still caught (the silent-drift defect).
+        self.assertEqual(_find_unknown_tags("[Springboot3] migrate the boot app"),
+                         ["[Springboot3]"])
+
 
 class InitTaskTypeFieldTests(TestCase):
     """init-from-plan writes task_type derived from the name tag."""
@@ -116,6 +130,61 @@ class InitTaskTypeFieldTests(TestCase):
         schema = json.loads((plugin_root / "schemas" /
                              "track-state.schema.json").read_text())
         self.assertIn("task_type", schema["$defs"]["task"]["properties"])
+
+
+class AbsorbTaskTypeTests(TestCase):
+    """A task/subtask absorbed or split mid-track must carry ``task_type`` just
+    like an init-created one — otherwise ``on-subagent-start`` reads ``None``
+    and the executor silently loses its per-tag workflow profile / refactor
+    flag. Covers the creation sites outside init: ``validate._fix_plan_mismatches``
+    absorb, plus the ``derive_child_task_type`` helper split/sync share."""
+
+    def setUp(self):
+        self.td = _make_track_dir()
+        _write_plan(self.td, _PLAN_OK)
+        _out_captured(
+            cmd_init_from_plan,
+            str(self.td), track_id="tt_20260101", track_type="feature",
+            description="absorb task_type test",
+        )
+
+    def _reload(self):
+        return json.loads(Path(str(self.td), "track-state.json").read_text())
+
+    def test_absorbed_task_gets_task_type(self):
+        # spec-planner adds a new tagged task to plan.md mid-track.
+        _write_plan(self.td, _PLAN_OK +
+                    "- [ ] [Refactor] extract validation <!-- AC-9, TC-1.9 -->\n")
+        ensure_healthy(str(self.td))
+        tasks = self._reload()["phases"][0]["tasks"]
+        absorbed = next(t for t in tasks if "Refactor" in t["name"])
+        self.assertEqual(absorbed.get("task_type"), "refactor")
+
+    def test_absorbed_subtask_inherits_parent_type(self):
+        # A new subtask appears under the existing [Config] parent (task index 0)
+        # while the parent itself is unchanged — the subtask inherits the
+        # parent's task_type (contract: never tag subtasks individually).
+        plan = _PLAN_OK.replace(
+            "- [ ] [Config] Wire the jakarta package <!-- AC-1, TC-1.1 -->\n",
+            "- [ ] [Config] Wire the jakarta package <!-- AC-1, TC-1.1 -->\n"
+            "  - [ ] wire the sub-package\n")
+        _write_plan(self.td, plan)
+        ensure_healthy(str(self.td))
+        parent = self._reload()["phases"][0]["tasks"][0]
+        sub = parent["subtasks"][-1]
+        self.assertEqual(sub.get("task_type"), "config")
+
+    def test_child_helper_inherits_then_falls_back(self):
+        # derive_child_task_type: present parent field wins; absent field falls
+        # back to the parent name; untagged parent → default.
+        self.assertEqual(
+            derive_child_task_type({"task_type": "refactor", "name": "[Refactor] x"}),
+            "refactor")
+        self.assertEqual(
+            derive_child_task_type({"name": "[Docs] y"}), "docs")
+        self.assertEqual(
+            derive_child_task_type({"task_type": "default", "name": "no tag"}),
+            "default")
 
 
 class UnknownTagBlocksInitTests(TestCase):

@@ -1016,9 +1016,14 @@ def _stamp_checkpoint_in_plan(track_dir, p, sha):
     for line in lines:
         stripped = line.rstrip("\n")
         if re.match(rf"^##\s+Phase\s+{phase_num}\b", stripped):
-            # Remove an existing checkpoint SHA before re-stamping.
+            # Remove an existing checkpoint SHA before re-stamping. Inner space
+            # is \s* (not \s+) to match plan_parse._CHECKPOINT / validate — all
+            # four checkpoint detectors must agree, or a hand-authored/legacy
+            # no-space stamp ([checkpoint:abcdef1]) is stripped by the parser but
+            # not here → a duplicate stamp on re-stamp. The runtime always writes
+            # with a space (the f-string below), so \s* still matches it.
             base = re.sub(
-                r"\s+\[checkpoint:\s+[0-9a-f]+\]$", "", stripped)
+                r"\s+\[checkpoint:\s*[0-9a-f]+\]$", "", stripped)
             result.append(f"{base} [checkpoint: {sha}]")
             found = True
         else:

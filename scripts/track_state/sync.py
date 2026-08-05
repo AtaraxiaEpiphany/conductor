@@ -6,6 +6,7 @@ from pathlib import Path
 from .core import load, save
 from .helpers import now_iso, out, _clean_trailing_markers, _any_phase_needs_checkpoint
 from .constants import MARKER_MAP, SHA_MARKERS, TERMINAL_FOR_PARENT
+from .task_profiles import derive_child_task_type
 
 
 def _do_sync_plan(track_dir, state=None):
@@ -82,7 +83,13 @@ def _do_sync_plan(track_dir, state=None):
                         # Always absorb as 'pending' so the dispatcher sees new work.
                         # If parent was terminal, reopen it so the new subtask
                         # gets dispatched instead of being silently marked done.
-                        parent_subs.append({"name": rest_clean, "status": "pending"})
+                        # Subtask inherits the parent's task_type (contract: never
+                        # tag subtasks) — keeps the cache populated like init subtasks.
+                        parent_subs.append({
+                            "name": rest_clean,
+                            "status": "pending",
+                            "task_type": derive_child_task_type(parent_task),
+                        })
                         if parent_task["status"] in TERMINAL_FOR_PARENT:
                             parent_task["status"] = "in_progress"
                             for k in ("commit_sha", "completed_at"):

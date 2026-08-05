@@ -72,6 +72,14 @@ class DeriveTaskTagBasics(TestCase):
         self.assertIsNone(tp.derive_task_tag("extract the duplication and simplify"))
         self.assertIsNone(tp.derive_task_tag("clean up and deduplicate the helpers"))
 
+    def test_short_signal_substring_does_not_overmatch(self):
+        # 'ci' must NOT match inside 'discipline'/'specificity'. A bare
+        # substring check (``sig in text``) once did, inflating Chore's score
+        # past the over-tag guard so this description was wrongly tagged Chore
+        # (coverage_exempt → silently skipped TDD/coverage). Word-boundary
+        # matching keeps it untagged (default TDD).
+        self.assertIsNone(tp.derive_task_tag("add discipline and specificity to input parsing"))
+
 
 class DeriveTaskTagOverTaggingGuard(TestCase):
     """The headline invariant: feature work that *incidentally* touches a config
@@ -114,6 +122,23 @@ class DeriveTaskTagFailOpen(TestCase):
         # A caller passing the wrong type must not get an unhandled exception.
         for bad in (123, [], {}, object()):
             self.assertIsNone(tp.derive_task_tag(bad))
+
+    def test_internal_error_surfaces_on_stderr_and_returns_none(self):
+        # The fail-open contract holds (never raises), BUT an internal error —
+        # e.g. a malformed registry row raising inside _signals_for — is surfaced
+        # on stderr so the defect is not silently masked. An earlier bare
+        # ``except: return None`` returned None for EVERY description with no
+        # diagnostic, hiding a real registry defect init-from-plan doesn't cover.
+        import contextlib
+        import io
+        from unittest import mock
+        with mock.patch.object(tp, "_signals_for", side_effect=KeyError("bad row")):
+            buf = io.StringIO()
+            with contextlib.redirect_stderr(buf):
+                result = tp.derive_task_tag("bump the dependency versions")
+        self.assertIsNone(result)
+        self.assertIn("derive_task_tag", buf.getvalue())
+        self.assertIn("bad row", buf.getvalue())
 
 
 class DeriveTaskTagOverlay(TestCase):

@@ -117,6 +117,40 @@ class ParseResultBlockTests(unittest.TestCase):
         verdict = parse_result_block(text)
         self.assertEqual(verdict["status"], "FAILED")
 
+    def test_statused_fence_after_statusless_one_in_same_block(self):
+        # Two fenced JSON objects in ONE result block: a statusless snippet first,
+        # then the verdict. An earlier ``.search``+``continue`` form looked at only
+        # the first fence, saw no "status", and skipped to the next BLOCK — dropping
+        # the verdict. finditer over every fence in the block recovers it.
+        text = (
+            "---TASK RESULT---\n"
+            "```json\n"
+            '{"summary": "preamble object with no status"}\n'
+            "```\n"
+            "```json\n"
+            '{"status": "FAILED", "failure_reason": "boom"}\n'
+            "```\n"
+            "---END RESULT---"
+        )
+        verdict = parse_result_block(text)
+        self.assertIsNotNone(verdict)
+        self.assertEqual(verdict["status"], "FAILED")
+
+    def test_statused_fence_after_unparseable_one_in_same_block(self):
+        # First fence fails json.loads, second carries the verdict — still found.
+        text = (
+            "---TASK RESULT---\n"
+            "```json\n"
+            "{not valid json}\n"
+            "```\n"
+            "```json\n"
+            '{"status": "error"}\n'
+            "```\n"
+            "---END RESULT---"
+        )
+        verdict = parse_result_block(text)
+        self.assertEqual(verdict["status"], "error")
+
 
 class AgentFamilyParityTests(unittest.TestCase):
     """Each agent family's emitted block parses to a status-bearing verdict

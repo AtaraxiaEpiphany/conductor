@@ -166,5 +166,29 @@ class SetMaxRetriesCliTests(TestCase):
         self.assertNotIn("max_retries", load(d)["phases"][0]["tasks"][0])
 
 
+class ExecutorPromptCeilingTests(TestCase):
+    """The task-executor prompt's ``MAX_RETRIES`` line must mirror the per-task
+    ceiling (a raised budget), not the global constant — otherwise the executor
+    perceives itself past budget on a late attempt even though the state-machine
+    budget (the envelope's ``max_retries``) is still open. Both rails thread the
+    per-task ceiling into ``pre``; ``_build_executor`` reads it back."""
+
+    def test_prompt_uses_per_task_ceiling_from_pre(self):
+        from scripts.track_state.dispatch import build_dispatch_prompt
+        pre = dict(phase=1, task=1, name="[X] do work", tags=[], max_retries=5)
+        _agent, prompt = build_dispatch_prompt(
+            "dispatch_executor", "/td", pre=pre, attempt=4)
+        self.assertIn("MAX_RETRIES=5", prompt)
+        self.assertIn("ATTEMPT=4", prompt)
+        self.assertNotIn(f"MAX_RETRIES={MAX_RETRIES}", prompt)
+
+    def test_prompt_falls_back_to_global_when_pre_lacks_ceiling(self):
+        from scripts.track_state.dispatch import build_dispatch_prompt
+        pre = dict(phase=1, task=1, name="[X] do work", tags=[])
+        _agent, prompt = build_dispatch_prompt(
+            "dispatch_executor", "/td", pre=pre, attempt=1)
+        self.assertIn(f"MAX_RETRIES={MAX_RETRIES}", prompt)
+
+
 if __name__ == "__main__":
     main()

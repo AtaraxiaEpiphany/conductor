@@ -93,9 +93,9 @@ Returns `action` enum — switch on it:
 
 The phase checkpoint is a **fan-out-and-synthesize**: read-only verifier tiers run in parallel, then `conductor:phase-checker` consumes their verdicts and owns the L1 fix-and-retry + L2 + L4 + commit. Two verifiers fan out every checkpoint: `conductor:ac-tracer` (the AC-evidence trace) and `conductor:test-runner` (the suite verdict).
 
-**Step 1 — Fan out the verifiers in ONE message:** `conductor:ac-tracer` and `conductor:test-runner`, pasting each member's **pre-assembled `prompt` field verbatim** (built by `build_dispatch_prompt` — the single source both rails share; do NOT hand-interpolate `TRACK_DIR`/`TRACK_ID`/`PHASE_INDEX`).
+**Step 1 — Fan out the verifiers in ONE message:** `conductor:ac-tracer` and `conductor:test-runner`, pasting each member's **pre-assembled `prompt` field verbatim** (built by `build_dispatch_prompt` — the single source both rails share; do NOT hand-interpolate `TRACK_DIR`/`TRACK_ID`/`PHASE_INDEX`). On a **code-free phase** (every task `coverage_exempt` — `[Config]`/`[Docs]`/`[Chore]`/`[Manual]`), the wave omits `test-runner` (nothing to run) and **only `ac-tracer` fans out** — see Step 3 for how that surfaces in the synth.
 
-**Step 2 — Parse the result blocks.** From `ac-tracer`'s `---AC TRACE RESULT---`: `VERDICT` (passed/warn/skipped/FAILED/ERROR), `GATE` (when FAILED), `N_UNGROUNDED` (when warn). From `test-runner`'s `---L1 VERIFY RESULT---`: `STATUS`/`COMMAND` (the suite verdict).
+**Step 2 — Parse the result blocks.** From `ac-tracer`'s `---AC TRACE RESULT---`: `VERDICT` (passed/warn/skipped/FAILED/ERROR), `GATE` (when FAILED), `N_UNGROUNDED` (when warn). From `test-runner`'s `---L1 VERIFY RESULT---`: `STATUS`/`COMMAND` (the suite verdict). On a code-free phase there is no `test-runner` result block — record `L1_VERIFY_STATUS` as `skipped` in Step 3.
 
 **Step 3 — Dispatch `conductor:phase-checker`** (canonical dispatch — §2.1, §3.5b, §3.7 reuse this fan-out+synthesize; only the `PHASE` value source differs), passing the fleet's verdicts through:
 
@@ -107,11 +107,11 @@ EXECUTION_MODE={interactive|continuous}
 AC_TRACE_VERDICT=<ac-tracer VERDICT>
 AC_TRACE_GATE=<ac-tracer GATE — include only when VERDICT is FAILED>
 AC_TRACE_N_UNGROUNDED=<ac-tracer N_UNGROUNDED — include only when VERDICT is warn>
-L1_VERIFY_STATUS=<test-runner STATUS>
-L1_VERIFY_COMMAND=<test-runner COMMAND>
+L1_VERIFY_STATUS=<test-runner STATUS — or `skipped (no code-producing tasks)` when test-runner was omitted from the wave (code-free phase)>
+L1_VERIFY_COMMAND=<test-runner COMMAND — omit entirely on a code-free phase>
 ```
 
-Then transcribe to `track-state phase-verdict "<td>" --ac-verdict <V> [--ac-gate <G>] [--ac-n-ungrounded <N>] --l1-status <S> --l1-command "<CMD>"`. Then → **Section 3.6** (Phase Boundary).
+Then transcribe to `track-state phase-verdict "<td>" --ac-verdict <V> [--ac-gate <G>] [--ac-n-ungrounded <N>] --l1-status <S> [--l1-command "<CMD>"]` — on a code-free phase pass `--l1-status "skipped (no code-producing tasks)"` and omit `--l1-command`. Then → **Section 3.6** (Phase Boundary).
 
 ### 3.3 Action: `dispatch_explorer`
 
