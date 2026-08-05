@@ -59,6 +59,7 @@ tool_query
 .claude-trace/
 .claude/settings.json
 *.log
+.data/
 
 # Temporary files
 *.tmp
