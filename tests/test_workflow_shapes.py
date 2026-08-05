@@ -377,5 +377,107 @@ class SetWorkflowShapeTests(TestCase):
         self.assertEqual(load(d)["workflow_shape"], "default")
 
 
+class PhaseCodeFreeTests(TestCase):
+    """``phase_is_code_free`` narrows the checkpoint fan-out: a phase of pure
+    coverage_exempt tasks ([Config]/[Docs]/[Chore]/[Manual]) produces no code →
+    no tests, so test-runner is dropped from the wave. Auto-detected from the
+    live task tags; no directive, no authoring — the lightweight alternative to
+    the per-phase verify apparatus. Keys on ``coverage_exempt`` (the F2/F3
+    predicate), NOT ``tdd_exempt``: [Explore] is tdd_exempt but stays out of the
+    code-free set (explore-heavy tracks use research-first, which runs no
+    checkpoint at all)."""
+
+    def _state(self, tasks, shape="default"):
+        return {"workflow_shape": shape,
+                "phases": [{"name": "P1", "tasks": tasks}]}
+
+    def test_all_exempt_phase_is_code_free(self):
+        from scripts.track_state.task_profiles import phase_is_code_free
+        st = self._state([{"name": "[Config] tweak"}, {"name": "[Docs] write"},
+                          {"name": "[Manual] verify"}])
+        self.assertTrue(phase_is_code_free(st, 1))
+
+    def test_mixed_phase_is_not_code_free(self):
+        from scripts.track_state.task_profiles import phase_is_code_free
+        # An untagged task = default TDD (real code) → not code-free.
+        st = self._state([{"name": "[Config] tweak"}, {"name": "build the API"}])
+        self.assertFalse(phase_is_code_free(st, 1))
+
+    def test_explore_only_phase_is_not_code_free(self):
+        # [Explore] is tdd_exempt but NOT coverage_exempt — excluded from the
+        # code-free set, so an explore-only phase keeps test-runner.
+        from scripts.track_state.task_profiles import phase_is_code_free
+        st = self._state([{"name": "[Explore] map the module"}])
+        self.assertFalse(phase_is_code_free(st, 1))
+
+    def test_empty_phase_is_not_code_free(self):
+        # An empty phase is malformed, not code-free — keep test-runner.
+        from scripts.track_state.task_profiles import phase_is_code_free
+        self.assertFalse(phase_is_code_free(self._state([]), 1))
+
+    def test_out_of_range_phase_is_not_code_free(self):
+        from scripts.track_state.task_profiles import phase_is_code_free
+        self.assertFalse(phase_is_code_free(self._state([{"name": "[Config] x"}]), 99))
+
+    def test_code_free_phase_drops_test_runner_from_wave(self):
+        # THE narrowing: a code-free phase fans out ONLY ac-tracer (test-runner
+        # has nothing to run). Both rails share _build_verifier_wave, so this
+        # propagates everywhere.
+        from scripts.track_state.dispatch import _build_verifier_wave
+        st = self._state([{"name": "[Config] tweak"}, {"name": "[Manual] verify"}])
+        agents = [m["agent"] for m in _build_verifier_wave("/td", st, 1)]
+        self.assertNotIn("test-runner", agents)
+        self.assertIn("ac-tracer", agents)  # ac-tracer still runs (ACs declared)
+
+    def test_mixed_phase_keeps_both_verifiers(self):
+        from scripts.track_state.dispatch import _build_verifier_wave
+        st = self._state([{"name": "[Config] tweak"}, {"name": "build feature"}])
+        agents = [m["agent"] for m in _build_verifier_wave("/td", st, 1)]
+        self.assertIn("ac-tracer", agents)
+        self.assertIn("test-runner", agents)
+
+    def test_narrowing_applies_when_verifiers_passed_in(self):
+        # Rail A (cmd_dispatch_next) passes verifiers= from resolve_phase_gate;
+        # the narrowing must apply to the passed-in set too, not only the
+        # resolved-here path.
+        from scripts.track_state.dispatch import _build_verifier_wave
+        from scripts.track_state.workflow_shapes import verifiers_for
+        st = self._state([{"name": "[Config] tweak"}])
+        agents = [m["agent"] for m in _build_verifier_wave(
+            "/td", st, 1, verifiers=verifiers_for("default"))]
+        self.assertNotIn("test-runner", agents)
+
+    def test_phase_checker_emits_skipped_for_code_free_phase(self):
+        # No L1 verdict transcribed (test-runner didn't run) on a code-free
+        # phase → the dispatch fills an explicit "skipped" so the checker
+        # records it instead of treating the empty verdict as a failure.
+        from scripts.track_state.dispatch import _build_phase_checker
+        st = {"track_id": "t", "execution_mode": "interactive",
+              "phases": [{"name": "P1", "tasks": [{"name": "[Config] tweak"}]}]}
+        prompt = _build_phase_checker("/td", st, 1, {"ac_verdict": "passed"})
+        self.assertIn("L1_VERIFY_STATUS=skipped (no code-producing tasks)", prompt)
+
+    def test_phase_checker_keeps_empty_verdict_for_code_phase(self):
+        # A NOT-code-free phase with no L1 verdict keeps the empty status — the
+        # checker surfaces that as FAILURE (a dispatch defect), NOT "skipped".
+        from scripts.track_state.dispatch import _build_phase_checker
+        st = {"track_id": "t", "execution_mode": "interactive",
+              "phases": [{"name": "P1", "tasks": [{"name": "build feature"}]}]}
+        prompt = _build_phase_checker("/td", st, 1, {"ac_verdict": "passed"})
+        self.assertNotIn("skipped", prompt)
+
+    def test_phase_checker_marker_verdict_wins_over_code_free(self):
+        # If test-runner DID run (marker carries l1_status), that verdict is
+        # honored even on a code-free phase — the narrowing only fills the EMPTY
+        # case, it never clobbers a real verdict.
+        from scripts.track_state.dispatch import _build_phase_checker
+        st = {"track_id": "t", "execution_mode": "interactive",
+              "phases": [{"name": "P1", "tasks": [{"name": "[Config] tweak"}]}]}
+        prompt = _build_phase_checker(
+            "/td", st, 1, {"ac_verdict": "passed", "l1_status": "passed"})
+        self.assertIn("L1_VERIFY_STATUS=passed", prompt)
+        self.assertNotIn("skipped", prompt)
+
+
 if __name__ == "__main__":
     main()

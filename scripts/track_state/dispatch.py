@@ -1308,9 +1308,21 @@ def _build_verifier_wave(track_dir, state, phase, verifiers=None):
     wave member shape (a display label).
     """
     from .workflow_shapes import resolve_shape, verifiers_for
+    from .task_profiles import phase_is_code_free
     if verifiers is None:
         shape = resolve_shape(state.get("workflow_shape"))
         verifiers = verifiers_for(shape)
+    # Phase-composition narrowing: a phase of pure coverage_exempt tasks
+    # ([Config]/[Docs]/[Chore]/[Manual]) produces no code → no tests, so
+    # test-runner has nothing to run. Drop it from the fan-out (ac-tracer still
+    # runs — ACs are still declared and traced). Auto-detected from the live
+    # task tags; no directive, no authoring — the lightweight alternative to the
+    # per-phase verify apparatus. Lives in this shared builder so BOTH rails
+    # (cmd_dispatch_next threads verifiers= through; _step_emit_dispatch_batch
+    # resolves here) narrow identically — putting it only in resolve_phase_gate
+    # would miss Rail B, which does not call it.
+    if phase_is_code_free(state, phase) and "test-runner" in verifiers:
+        verifiers = tuple(v for v in verifiers if v != "test-runner")
     members = []
     for verifier in verifiers:
         members.append({
@@ -1363,7 +1375,18 @@ def _build_phase_checker(track_dir, state, phase, marker):
         lines.append(f"AC_TRACE_GATE={marker['ac_gate']}")
     if ac == "warn" and marker.get("ac_n_ungrounded") is not None:
         lines.append(f"AC_TRACE_N_UNGROUNDED={marker['ac_n_ungrounded']}")
-    lines.append(f"L1_VERIFY_STATUS={marker.get('l1_status', '')}")
+    # No L1 verdict is transcribed when test-runner was dropped from the fan-out
+    # (a code-free phase — _build_verifier_wave narrows it out). Convert that
+    # empty marker into an explicit "skipped" so the checker records it rather
+    # than treating a missing verdict as a failure. A genuinely empty verdict
+    # on a NOT-code-free phase (test-runner should have run) stays empty — the
+    # checker surfaces that as FAILURE (a dispatch defect).
+    l1_status = marker.get("l1_status", "")
+    if not l1_status:
+        from .task_profiles import phase_is_code_free
+        if phase_is_code_free(state, phase):
+            l1_status = "skipped (no code-producing tasks)"
+    lines.append(f"L1_VERIFY_STATUS={l1_status}")
     if marker.get("l1_command"):
         lines.append(f"L1_VERIFY_COMMAND={marker['l1_command']}")
     return "\n".join(lines)

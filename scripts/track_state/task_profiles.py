@@ -296,6 +296,39 @@ def is_coverage_exempt(tags: list[str]) -> bool:
     return any(_profile(t).get("coverage_exempt", False) for t in tags)
 
 
+def phase_is_code_free(state, phase) -> bool:
+    """True if every task in a phase is ``coverage_exempt`` (no code → no tests).
+
+    The phase-composition predicate the checkpoint fan-out narrows on
+    (:func:`dispatch._build_verifier_wave`): a phase of pure
+    ``[Config]``/``[Docs]``/``[Chore]``/``[Manual]`` tasks produces no code, so
+    test-runner has nothing to run and is dropped from the fan-out. Auto-detected
+    from each task's tags (:func:`helpers.extract_tags` on the live name — NOT
+    the lowercased ``task_type`` cache dispatch never reads); no directive, no
+    authoring — the lightweight alternative to the per-phase verify apparatus.
+
+    Deliberately keys on ``coverage_exempt`` (the F2/F3 gate's predicate), NOT
+    ``tdd_exempt``: ``[Explore]`` is tdd_exempt but not coverage_exempt, yet an
+    explore-heavy track uses the ``research-first`` shape whose
+    ``verify_policy: none`` runs no checkpoint at all — so an explore-only phase
+    reaching this fan-out is a non-case, and Explore stays out of the "code-free"
+    set. False (conservative — keep test-runner) for a mixed phase, an empty
+    phase (malformed, not code-free), or an out-of-range index.
+    """
+    from .helpers import extract_tags
+    phases = state.get("phases") or []
+    try:
+        pi = int(phase) - 1
+    except (TypeError, ValueError):
+        return False
+    if not (0 <= pi < len(phases)):
+        return False
+    tasks = phases[pi].get("tasks") or []
+    if not tasks:
+        return False
+    return all(is_coverage_exempt(extract_tags(t.get("name", ""))) for t in tasks)
+
+
 def has_over_tag_risk(tag: str) -> bool:
     """True if a tag is an over-tagging risk in :func:`derive_task_tag`.
 
