@@ -108,6 +108,45 @@ class RegistryDocRender(TestCase):
                          "[Refactor] must not carry a signals row (opt-in only)")
 
 
+class RegistryDocMigration(TestCase):
+    """Stage 2c: the ``migration`` shape + ``[Migrate]`` tag render on the
+    on-demand ``--tag`` / ``--shape`` paths the executor and spec-planner fetch
+    (Tier B in the context model). The full overview covers them implicitly via
+    TAG_VOCAB/SHAPES_VOCAB iteration; these tests pin the FILTERED render — the
+    one that emits the ``workflow`` prose verbatim and the shape-controlled
+    paradigm (gates / ac_grounding)."""
+
+    def _run(self, *args):
+        env = {**os.environ}
+        env.pop("CLAUDE_PROJECT_DIR", None)
+        proc = subprocess.run(
+            [sys.executable, str(_CLI), "registry-doc", *args],
+            capture_output=True, text=True, env=env,
+        )
+        self.assertEqual(proc.returncode, 0,
+                         f"registry-doc {args} failed: {proc.stderr}\n{proc.stdout}")
+        return proc.stdout
+
+    def test_tag_migrate_renders_workflow_prose(self):
+        out = self._run("--tag", "Migrate")
+        self.assertIn("`Migrate`", out)
+        # The on-demand path emits the workflow prose verbatim — this is what
+        # the executor fetches instead of TDD on a migration track.
+        self.assertIn("`workflow` for `Migrate`", out)
+        self.assertIn("EXISTING", out.upper())
+        # [Migrate] is opt-in (no signals): the render says so explicitly.
+        self.assertIn("opt-in", out.lower())
+
+    def test_shape_migration_renders_checkpoint_only_paradigm(self):
+        out = self._run("--shape", "migration")
+        self.assertIn("`migration`", out)
+        # The shape-controlled paradigm block: gates resolve to checkpoint only
+        # (tdd/coverage dropped at the track level), ACs grounded by existing tests.
+        self.assertIn("Shape-controlled paradigm", out)
+        self.assertIn("**gates**: checkpoint", out)
+        self.assertIn("**ac_grounding**: `test`", out)
+
+
 class RegistryDocReadOnly(TestCase):
     """The safety contract: registry-doc never writes anywhere."""
 

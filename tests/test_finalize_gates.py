@@ -9,6 +9,7 @@ track dir (the same fixture pattern as ``test_compact_output``).
 """
 import io
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -339,6 +340,68 @@ class FinalizeTCConsistencyGateTests(TestCase):
         result = _out_captured(cmd_dispatch_finalize, d)
         self.assertIn("tc_consistency_gate", result)  # survived --compact
         self.assertEqual(result["tc_consistency_gate"], "PASS (grounded)")
+
+
+class ShapeGateCompositionTests(TestCase):
+    """Stage 2b: a gate fires iff ``(gate in gates_for(shape)) and (not task_exempt)``.
+    The composition lives at the advisory single-source (:func:`_evaluate_gates`),
+    so this is the chokepoint both finalize paths flow through. A migration-shape
+    track drops tdd/coverage at the track level → a <80% non-exempt task shows
+    PASS/PASS; a default-shape track fires coverage exactly as today."""
+
+    def setUp(self):
+        from scripts.track_state import workflow_shapes as ws
+        self._ws = ws
+        self._prior_proj = os.environ.get("CLAUDE_PROJECT_DIR")
+        self._cwd = os.getcwd()
+
+    def tearDown(self):
+        if self._prior_proj is None:
+            os.environ.pop("CLAUDE_PROJECT_DIR", None)
+        else:
+            os.environ["CLAUDE_PROJECT_DIR"] = self._prior_proj
+        os.chdir(self._cwd)
+        self._ws._load.cache_clear()
+
+    def _mk_track(self, shape):
+        d = _make_git_track_dir()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        if shape:  # set the track's workflow_shape (absent => default)
+            state = load(d)
+            state["workflow_shape"] = shape
+            save(d, state)
+        # Project overlay registering a migration shape that drops tdd/coverage.
+        proj = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, proj, ignore_errors=True)
+        Path(proj, "conductor", "tracks").mkdir(parents=True)
+        Path(proj, "conductor", "workflow").mkdir(parents=True)
+        Path(proj, "conductor", "workflow", "workflow-shapes.json").write_text(
+            json.dumps({"shapes": {"migration": {
+                "nodes": ["spec-planner", "task-executor", "phase-checker"],
+                "verifiers": ["ac-tracer", "test-runner"],
+                "gates": ["checkpoint"],
+                "verify_policy": "checkpoint",
+                "stop_condition": "all_nodes_done"}}}), encoding="utf-8")
+        os.environ["CLAUDE_PROJECT_DIR"] = proj
+        self._ws._load.cache_clear()
+        return d
+
+    def test_default_shape_fires_coverage_gate(self):
+        # No workflow_shape => default => coverage gate ON (default-identical):
+        # a <80% non-exempt task is FAILED.
+        d = self._mk_track(None)
+        r = {"coverage_pct": 40, "files_changed": "src/foo.py"}
+        cov, _tdd, _pct = _evaluate_gates([], r, "abc1234", d)
+        self.assertTrue(cov.startswith("FAILED (40% < 80%)"))
+
+    def test_migration_shape_drops_coverage_and_tdd(self):
+        # migration shape => gates=[checkpoint] => coverage+tdd OFF at the track
+        # level: the SAME <80% non-exempt task is PASS/PASS.
+        d = self._mk_track("migration")
+        r = {"coverage_pct": 40, "files_changed": "src/foo.py"}
+        cov, tdd, _pct = _evaluate_gates([], r, "abc1234", d)
+        self.assertEqual(cov, "PASS")
+        self.assertEqual(tdd, "PASS")
 
 
 if __name__ == "__main__":

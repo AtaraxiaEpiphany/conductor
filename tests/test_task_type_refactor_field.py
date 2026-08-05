@@ -83,6 +83,50 @@ class RefactorIsRealTagTests(TestCase):
                          "[Refactor] must not carry signals (it is opt-in, not auto-derived)")
 
 
+class MigrateIsRealTagTests(TestCase):
+    """Stage 2c: ``[Migrate]`` is a real registry tag for behavior-PRESERVATION
+    tasks on a ``migration``-shaped track. It mirrors [Refactor]'s opt-in
+    discipline (executor-routed, NOT TDD/coverage-exempt, no auto-propose
+    signals) and adds one load-bearing difference: it CARRIES ``workflow`` prose
+    the executor fetches instead of TDD. The tag is NOT exempt itself — the
+    track's SHAPE is what drops the tdd/coverage gates (``gates_for(migration)``
+    is checkpoint-only), so a [Migrate] task on a default-shape track still owes
+    full TDD/coverage. Two-registry separation: the tag carries executor
+    behavior; the shape carries the gate paradigm."""
+
+    def test_migrate_in_vocab(self):
+        self.assertIn("Migrate", tp.TAG_VOCAB())
+
+    def test_migrate_routes_to_executor(self):
+        self.assertEqual(tp.route_for(["Migrate"]), "executor")
+
+    def test_migrate_not_tdd_exempt(self):
+        # Load-bearing: the SHAPE drops the tdd gate, not the tag. A [Migrate]
+        # task on a default-shape track still owes TDD.
+        self.assertFalse(tp.is_tdd_exempt(["Migrate"]))
+
+    def test_migrate_not_coverage_exempt(self):
+        self.assertFalse(tp.is_coverage_exempt(["Migrate"]))
+
+    def test_migrate_tag_accepted_by_parser(self):
+        from scripts.track_state.plan_parse import _find_unknown_tags
+        self.assertEqual(_find_unknown_tags("[Migrate] rename the API"), [])
+
+    def test_migrate_tag_has_no_signals(self):
+        # [Migrate] is opt-in, never auto-proposed — otherwise any description
+        # containing "upgrade"/"rename"/"port" would silently drop TDD/coverage.
+        self.assertFalse(tp._profile("Migrate").get("signals"),  # noqa: SLF001
+                         "[Migrate] must not carry signals (opt-in, not auto-derived)")
+
+    def test_migrate_tag_carries_workflow_prose(self):
+        # THE difference from [Refactor]: [Migrate] carries a `workflow` the
+        # executor follows instead of TDD (no new tests — keep the existing
+        # suite green). workflow_for is the single accessor the executor reads.
+        wf = tp.workflow_for("Migrate")
+        self.assertTrue(wf, "[Migrate] must carry workflow prose")
+        self.assertIn("EXISTING", wf.upper())
+
+
 class RefactorOverlayTests(TestCase):
     """The project-overlay layer: a project drops
     ``conductor/workflow/task-type-profiles.json`` declaring ``refactor: true``

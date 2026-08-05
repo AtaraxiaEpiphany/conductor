@@ -7,6 +7,8 @@ from lib.atomic_io import atomic_write_json
 from .core import load
 from .spec_integrity import _ac_integrity_gates, _TC_ID, _measured_tcs
 from .plan_parse import parse_plan
+from .workflow_shapes import resolve_shape, gates_for
+from . import task_profiles
 from .helpers import (
     out, conductor_dir, _store_evidence, _extract_tags_for_task,
     _tag_exempt_from_coverage, _tag_exempt_from_tdd, flag, flags_all,
@@ -153,6 +155,23 @@ def _tc_consistency_gate(track_dir, result_data, tags=None):
     return _grounding_refinement(track_dir, claimed, tags)
 
 
+def _resolved_shape_for(track_dir):
+    """Resolve the active workflow shape for a track dir, fail-open to ``default``.
+
+    The shape's ``gates`` field is the track-level ON/OFF for each quality gate;
+    a gate fires for a task iff ``(gate in gates_for(shape)) and (not task_exempt)``.
+    No ``track_dir`` / unreadable state / unknown shape → ``default`` (today's
+    full gate set), so a pre-shape track or a read error never silently drops a
+    gate.
+    """
+    if not track_dir:
+        return "default"
+    try:
+        return resolve_shape(load(track_dir).get("workflow_shape"))
+    except Exception:
+        return "default"
+
+
 def _evaluate_gates(tags, result_data, sha, track_dir=None):
     """Advisory F2/F3 gate evaluation — the single source shared by both the
     legacy ``process-result`` path and the ``dispatch-finalize`` hot path so the
@@ -163,23 +182,33 @@ def _evaluate_gates(tags, result_data, sha, track_dir=None):
     strings, never fails the task. The real teeth stay at the commit-time F2
     ``ask`` gate (pre-command-check) and the F3 server-side coverage probe
     (on-batch-complete); this surfaces the signal in the finalize envelope so the
-    orchestrator/plan can see it. ``[Docs]``/``[Config]``/``[Chore]``/``[Manual]``
-    tasks are exempt from coverage; ``[Explore]`` is additionally TDD-exempt.
+    orchestrator/plan can see it. Each gate fires iff it is BOTH declared on the
+    track's resolved ``workflow_shape`` (``gates_for``) AND not waived per-task
+    (the tag's ``coverage_exempt`` / ``tdd_exempt`` registry flag) — so a non-code
+    shape (e.g. ``migration``) drops F2/F3 at the track level while a code-bearing
+    task on a code shape still owes them unless its own tag exempts it.
     """
+    gates = gates_for(_resolved_shape_for(track_dir))
     cov_pct = result_data.get("coverage_pct")
     coverage_gate = "PASS"
-    if cov_pct is not None and not _tag_exempt_from_coverage(tags):
+    if ("coverage" in gates and cov_pct is not None
+            and not _tag_exempt_from_coverage(tags)):
         if cov_pct < 80:
             # Verdict prefix stays stable ("FAILED (...)") for prefix/substring
             # matching; the appended clause is the remediation that lets the
-            # agent self-correct in one turn.
+            # agent self-correct in one turn. The exempt-tag list is built from
+            # the registry so a project overlay's coverage-exempt tags appear
+            # here automatically (no literal enumeration to drift).
+            exempt_tags = ", ".join(
+                f"[{t}]" for t in task_profiles.TAG_VOCAB()
+                if task_profiles.is_coverage_exempt([t]))
             coverage_gate = (
                 f"FAILED ({cov_pct}% < 80%) — add tests for uncovered lines "
-                f"to reach ≥80%, or tag the task [Docs]/[Config]/[Chore]/"
-                f"[Manual] if it is coverage-exempt."
+                f"to reach ≥80%, or tag the task with a coverage-exempt tag "
+                f"({exempt_tags}) if it produces no testable code."
             )
     tdd_gate = "PASS"
-    if not _tag_exempt_from_tdd(tags):
+    if "tdd" in gates and not _tag_exempt_from_tdd(tags):
         tdd_gate = _verify_tdd_gate(track_dir, sha, result_data)
     return coverage_gate, tdd_gate, cov_pct
 

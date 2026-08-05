@@ -64,6 +64,8 @@ _FALLBACK = {
     "default": {
         "nodes": ["spec-planner", "task-executor", "phase-checker"],
         "verifiers": ["ac-tracer", "test-runner"],
+        "gates": ["tdd", "coverage", "checkpoint"],
+        "ac_grounding": "test",
         "verify_policy": "checkpoint",
         "stop_condition": "all_nodes_done",
     },
@@ -71,6 +73,8 @@ _FALLBACK = {
         "default": {
             "nodes": ["spec-planner", "task-executor", "phase-checker"],
             "verifiers": ["ac-tracer", "test-runner"],
+            "gates": ["tdd", "coverage", "checkpoint"],
+            "ac_grounding": "test",
             "verify_policy": "checkpoint",
             "stop_condition": "all_nodes_done",
         },
@@ -315,6 +319,45 @@ def instruction_for(shape: str) -> str:
     the default §3.0 dispatch loop.
     """
     return _shape(shape).get("instruction", "")
+
+
+def gates_for(shape: str) -> tuple[str, ...]:
+    """The quality gates a shape enforces at the TRACK level — the ON/OFF.
+
+    A gate fires for a task iff it is BOTH declared here AND not waived per-task
+    by the task-type registry (``tdd_exempt`` / ``coverage_exempt``). Compose as
+    ``(gate in gates_for(shape)) and (not task_exempt)``. This is the shape-level
+    switch; the task-type exemption is the per-task refinement within an enabled
+    gate — so a non-code shape drops F2/F3 at the track level while a code-bearing
+    task on a code shape still owes them unless its own tag exempts it.
+
+    Members: ``tdd`` (F2 red/green/refactor), ``coverage`` (F3 ≥80%), ``checkpoint``
+    (F5 — the phase-checker checkpoint gates progress; distinct from
+    :func:`verify_policy_for`, which is whether a checkpoint phase runs at all).
+    Absent/empty/malformed → the default shape's gates → ``("tdd", "coverage",
+    "checkpoint")`` (fail-open to today's behavior). Unknown shape → the default
+    shape's gates. Returns a tuple for stable membership tests.
+    """
+    raw = _shape(shape).get("gates")
+    if not isinstance(raw, list) or not raw:
+        return tuple(_shape("default").get("gates") or
+                     ("tdd", "coverage", "checkpoint"))
+    # Drop non-str / empty entries defensively (a malformed row never crashes a
+    # gate-composition membership test).
+    return tuple(str(g) for g in raw if isinstance(g, str) and g) or \
+        ("tdd", "coverage", "checkpoint")
+
+
+def ac_grounding_for(shape: str) -> str:
+    """How acceptance criteria are GROUNDED for a shape.
+
+    ``test`` (default) → ACs are grounded by ``test_TC_*`` functions (the basis of
+    ``spec_integrity``'s AC-grounding scan). A shape whose ACs ground another way
+    declares it here; the grounding scan keys off this (Stage 2f) so it does not
+    insist on test-grounding a shape that does not use it. Absent → ``"test"``
+    (fail-open to today's behavior). Unknown shape → the default shape's value.
+    """
+    return _shape(shape).get("ac_grounding", "test")
 
 
 def resolve_shape(track_state_field) -> str:

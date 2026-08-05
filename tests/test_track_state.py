@@ -1012,7 +1012,10 @@ class TestInitFromPlan(TestCase):
         d = self._plan("## Phase 1: P\n- [ ] Task: real work\n")
         parsed = parse_plan(Path(d, "plan.md"))
         self.assertEqual(parsed["errors"], [])
-        self.assertTrue(any("[Manual]" in w for w in parsed["warnings"]))
+        # The validator keys off the manual ROUTE (route_for == "manual"), not a
+        # "[Manual]" substring — so the warning names the route, not the tag, and
+        # a project overlay that renames/adds a manual-route tag still trips it.
+        self.assertTrue(any("manual-route" in w for w in parsed["warnings"]))
 
     def test_to_plan_structure_shape(self):
         d = self._plan(self.GOOD)

@@ -29,7 +29,7 @@ ROOT = Path(__file__).resolve().parent.parent
 REGISTRY = ROOT / "templates" / "workflow" / "workflow-shapes.json"
 
 # The baseline shapes the registry ships.
-BASELINE_SHAPES = ("default", "research-first")
+BASELINE_SHAPES = ("default", "research-first", "migration")
 
 
 class RegistryShapeTests(TestCase):
@@ -125,12 +125,87 @@ class VerifiersForTests(TestCase):
                           f"shape [{shape}] must declare its `verifiers`")
 
 
+class GatesForTests(TestCase):
+    """``gates_for(shape)`` is the track-level ON/OFF for each quality gate. A
+    gate fires for a task iff (gate in gates_for(shape)) AND (not task_exempt) —
+    composed at the F2 commit hook (``tdd``) and the F3 advisory gate
+    (``coverage``) from Stage 2b. Distinct from ``verifiers_for`` (checkpoint
+    children) and ``verify_policy_for`` (whether a checkpoint phase runs)."""
+
+    def test_default_shape_enforces_all_three_gates(self):
+        # Byte-identical to today: default runs the tdd, coverage, and checkpoint
+        # gates. The regression pin Stage 2b composes against.
+        self.assertEqual(ws.gates_for("default"),
+                         ("tdd", "coverage", "checkpoint"))
+
+    def test_research_first_inherits_default_gates(self):
+        # research-first overrides nodes/verify_policy but inherits gates from
+        # the default baseline (its executor tasks still owe tdd/coverage).
+        self.assertEqual(ws.gates_for("research-first"),
+                         ("tdd", "coverage", "checkpoint"))
+
+    def test_unknown_shape_fails_open_to_default_gates(self):
+        # A typo / unregistered shape must NOT silently drop a gate — fall back
+        # to the default shape's gates (fail-open, never blocks dispatch).
+        self.assertEqual(ws.gates_for("typo-shape"),
+                         ("tdd", "coverage", "checkpoint"))
+
+    def test_ac_grounding_for_defaults_to_test(self):
+        self.assertEqual(ws.ac_grounding_for("default"), "test")
+        self.assertEqual(ws.ac_grounding_for("typo-shape"), "test")
+
+    def test_fields_documents_new_axes(self):
+        # The new fields are documented in the registry's _fields block.
+        data = json.loads(REGISTRY.read_text(encoding="utf-8"))
+        for field in ("gates", "ac_grounding"):
+            self.assertIn(field, data["_fields"])
+
+
+class MigrationShapeTests(TestCase):
+    """Stage 2c: the built-in ``migration`` shape — the first non-code shape.
+    Behavior-preservation tracks (framework upgrade, API rename, cross-module
+    refactor) where correctness is witnessed by the EXISTING suite, not new
+    tests. The shape drops the tdd/coverage gates at the track level
+    (gates=[checkpoint]); its executor guidance lives on the [Migrate]
+    task-type tag (``workflow`` prose), NOT on the shape — the conductor's
+    two-registry separation (task-types own node behavior, shapes own
+    topology + gates)."""
+
+    def test_migration_resolves_with_canonical_topology(self):
+        self.assertEqual(ws.resolve_shape("migration"), "migration")
+        # Same planner→executor→checker spine as default — only the gates differ.
+        self.assertEqual(ws.nodes_for("migration"),
+                         ("spec-planner", "task-executor", "phase-checker"))
+
+    def test_migration_reuses_existing_verifiers(self):
+        # The existing suite is the behavior-preservation signal — no new verifier.
+        self.assertEqual(ws.verifiers_for("migration"),
+                         ("ac-tracer", "test-runner"))
+
+    def test_migration_drops_tdd_and_coverage_gates(self):
+        # The track-level gate set is checkpoint-only: tdd/coverage OFF here,
+        # composed with the per-task exemption at the F2/F3 enforcers (Stage 2b).
+        self.assertEqual(ws.gates_for("migration"), ("checkpoint",))
+
+    def test_migration_ac_grounding_is_test(self):
+        # Existing tests ground the ACs (ac_grounding=test), so the spec_integrity
+        # grounding scan (Stage 2f) won't insist on NEW test-grounding a migration.
+        self.assertEqual(ws.ac_grounding_for("migration"), "test")
+
+    def test_migration_when_to_use_pairs_with_migrate_tag(self):
+        data = json.loads(REGISTRY.read_text(encoding="utf-8"))
+        when = data["shapes"]["migration"].get("when_to_use", "")
+        self.assertIn("PRESERVATION", when)
+        self.assertIn("[Migrate]", when)
+
+
 class ResolveShapeTests(TestCase):
     """resolve_shape is the fail-open chokepoint the dispatch spine reads."""
 
     def test_known_shape_resolves(self):
         self.assertEqual(ws.resolve_shape("default"), "default")
         self.assertEqual(ws.resolve_shape("research-first"), "research-first")
+        self.assertEqual(ws.resolve_shape("migration"), "migration")
 
     def test_unknown_shape_falls_back_to_default(self):
         # A typo / an unregistered project shape must NOT block dispatch.
@@ -209,6 +284,30 @@ class OverrideLayerTests(TestCase):
         # The default shape is untouched (still the standard pair).
         self.assertEqual(ws.verifiers_for("default"),
                          ("ac-tracer", "test-runner"))
+
+    def test_project_shape_dropping_a_gate_controls_composition(self):
+        # THE load-bearing portability case: a project overlay declares a shape
+        # whose `gates` omits tdd/coverage. gates_for reads it, so this shape
+        # drops F2/F3 at the track level — zero plugin edits. Stage 2b composes
+        # `"tdd" in gates_for(shape)` at the F2 hook, so this is where the shape
+        # becomes load-bearing on the gate axis. (Mirrors the built-in migration
+        # shape's gate set; uses a fresh name to prove the OVERLAY adds a shape,
+        # not merely re-declares the built-in migration.)
+        proj = self._mk_project()
+        os.environ["CLAUDE_PROJECT_DIR"] = proj
+        self._write_overlay(proj, {"shapes": {"release-cut": {
+            "nodes": ["spec-planner", "task-executor", "phase-checker"],
+            "verifiers": ["ac-tracer", "test-runner"],
+            "gates": ["checkpoint"],
+            "verify_policy": "checkpoint",
+            "stop_condition": "all_nodes_done"}}})
+        ws._load.cache_clear()
+
+        self.assertIn("release-cut", ws.SHAPES_VOCAB())
+        self.assertEqual(ws.gates_for("release-cut"), ("checkpoint",))
+        # default is untouched (still all three gates).
+        self.assertEqual(ws.gates_for("default"),
+                         ("tdd", "coverage", "checkpoint"))
 
     def test_project_overlay_merges_keeps_builtins(self):
         # Overlay declares ONLY a new shape — built-ins must survive.
@@ -419,6 +518,20 @@ class SetWorkflowShapeTests(TestCase):
         self._capture(cmd_set_workflow_shape, d, "research-first")
         self.assertEqual(ws.resolve_shape(load(d).get("workflow_shape")),
                          "research-first")
+
+    def test_set_migration_shape_round_trips_and_drops_gates(self):
+        # Stage 2c: the §2.6 new-track path sets `--shape migration` after
+        # init-from-plan writes default. The set value round-trips through
+        # resolve_shape AND composes to checkpoint-only gates (Stage 2b).
+        from scripts.track_state.quality import cmd_set_workflow_shape, load
+        d = self._mk_track(shape="default")
+        emitted = self._capture(cmd_set_workflow_shape, d, "migration")
+        self.assertTrue(emitted["ok"])
+        self.assertEqual(emitted["previous"], "default")
+        self.assertEqual(ws.resolve_shape(load(d).get("workflow_shape")),
+                         "migration")
+        self.assertEqual(ws.gates_for(ws.resolve_shape(
+            load(d).get("workflow_shape"))), ("checkpoint",))
 
     def test_set_unknown_shape_rejected_and_field_unchanged(self):
         # Validate-before-mutate: a typo must hard-reject (NOT fail-open to

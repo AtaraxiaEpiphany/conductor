@@ -80,6 +80,9 @@ WATCHED = [
     "agents/spec-reviewer.md",
     "agents/refuter.md",
     "agents/phase-checker.md",
+    "agents/task-executor.md",
+    "skills/implement/SKILL.md",
+    "skills/parallel/SKILL.md",
 ]
 
 # Two independent trip conditions for a prose closed-set enumeration, both keyed
@@ -310,6 +313,16 @@ def _scan_code_literals(root):
          "over_tag_risk",  # has_over_tag_risk()
          "derive_task_tag over-tag guard must read the registry flag, not a "
          "bare ('Docs','Config','Chore') literal tuple"),
+        ("scripts/track_state/plan_parse.py", "def parse_plan",
+         "route_for",  # route_for(extract_tags(name)) != "manual"
+         "phase-end manual-task validator must key off route_for (the registry "
+         "route), not a '[Manual]' substring literal — else a project overlay "
+         "that renames/adds a manual-route tag silently fails the check"),
+        ("scripts/track_state/result.py", "def _evaluate_gates",
+         "is_coverage_exempt",  # built from task_profiles.is_coverage_exempt(...)
+         "_evaluate_gates coverage-failure remediation must build the exempt "
+         "tag list from the registry (task_profiles.is_coverage_exempt), not a "
+         "hardcoded '[Docs]/[Config]/[Chore]/[Manual]' literal enumeration"),
     ]
     for rel, anchor, needle, what in checks:
         f = root / rel

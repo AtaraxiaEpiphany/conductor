@@ -164,6 +164,8 @@ Do NOT repeat the same approach; focus on "Suggested Next Step". The handoff is 
 
 ## 4.0 TDD WORKFLOW
 
+**Gate check first:** the TDD cycle below is owed only if your track's shape lists `tdd` in its `gates` (see the `gates` line in your injected `[Conductor Registry]` block). A non-code shape (e.g. `migration`) drops `tdd`/`coverage` at the track level — on such a track, tag your task with the shape's workflow tag (e.g. `[Migrate]` on a `migration` track) so the `workflow: present` branch below fetches its prose and governs your steps; Step 6's 80% floor does not apply. The branching below assumes `tdd` is on (the common case); the tag profile then refines within it.
+
 Branch on **this task's leading tag**, resolved from the registry (the `[Conductor Registry]` block injected at your dispatch carries the resolved profile: `route`, `tdd_exempt`, `coverage_exempt`, and — when the tag carries one — a `workflow: present` pointer):
 
 - **`tdd_exempt: true` (and no `workflow`)** — the config/docs/chore-style exemption path → go **straight to Step 8** (commit-message format only; skip Steps 3-7). The injected profile names which tags are exempt.
@@ -176,7 +178,7 @@ Branch on **this task's leading tag**, resolved from the registry (the `[Conduct
 **Agent-specific bindings:**
 
 - **Step 3 (Red)** — derive test cases from your self-extracted ACs/TCs (Layer 2); map each `TC-{n}.{m}` row → one test function. **Name each `test_TC_{n}_{m}_*`** matching its TC row (see `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/plan-format-contract.md` §Test ↔ TC Naming Link) so the grounding check resolves your claimed TCs. **Confirm failure via the digester (§4.5, `PURPOSE=red`)** rather than running the suite inline — the verbose output stays in the child's sub-context. Proceed only on `red_confirmed`; else see §4.5.
-- **Step 5 (Refactor)** — default-on for code tasks (`[Docs]`/`[Config]`/`[Chore]` exempt). Load `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/refactor.md` and follow it. Boundary: one **diff-scoped**, **behavior-preserving** pass under green; own `refactor(area):` commit; `git revert` on red; cap ~6 rounds and skip near the §7.0 tripwire.
+- **Step 5 (Refactor)** — default-on for code tasks (TDD-exempt tags skip the whole TDD cycle, Step 5 included — see your injected `[Conductor Registry]` block). Load `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/refactor.md` and follow it. Boundary: one **diff-scoped**, **behavior-preserving** pass under green; own `refactor(area):` commit; `git revert` on red; cap ~6 rounds and skip near the §7.0 tripwire.
 - **Step 6 (Coverage)** — **measure via the digester (§4.5, `PURPOSE=coverage`)**. Take `COVERAGE_PCT` from the returned block (parsed by the shared `coverage-pct.py` — never eyeball/type a number) and pass it to `--coverage-pct` (§6.1). Do **not** commit below 80% (F3). On `COVERAGE_PCT: N/A`, report N/A honestly; never fabricate.
 - **Step 7 (Deviations)** — *Tech Stack* divergence → update `tech-stack.md` → resume; *Spec* deviation (AC unmet) → report as `SPEC_DEVIATION` (§6.1); *TC Coverage* → compare implemented vs expected TCs, report gaps.
 - **Step 8 (Commit)** — commit your implementation work BEFORE reporting success:
@@ -225,8 +227,7 @@ PURPOSE=coverage
 
 ## 5.0 FIREWALL
 
-Mandatory gates: F2 (TDD), F3 (Coverage), F6 (Context Guard).
-Exempted tags are resolved from the registry profile, not enumerated here — see the `[Conductor Registry]` block injected at your dispatch for the resolved `coverage_exempt`/`tdd_exempt` sets.
+Mandatory gates resolve from your track's shape — the `gates` line in your injected `[Conductor Registry]` block names them (today: F2 TDD, F3 Coverage, F6 Context Guard). A non-code shape (e.g. `migration`) drops F2/F3 at the track level; a gate then fires only if it is listed AND your task's tag is not exempt. Exempted tags are resolved from the registry profile, not enumerated here — the same block carries the resolved `coverage_exempt`/`tdd_exempt` sets.
 
 Prohibited: V1 (code before test), V3 (skip coverage), V8 (modify state).
 SHA handling: orchestrator appends SHAs — you do NOT modify plan markers.

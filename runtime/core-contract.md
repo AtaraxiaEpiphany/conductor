@@ -91,7 +91,7 @@ Conductor commits use `conductor` as the **scope**, never as a type. Valid prefi
 | V1   | Implementation before failing test         | F2           |
 | V2   | Non-transient marker without `[sha]`       | F4           |
 | V3   | Skip coverage verification                 | F3           |
-| V4   | Skip Steps 4-7 (non-Explore tasks)         | F2, F3       |
+| V4   | Skip Steps 4-7 (TDD-owing tasks)          | F2, F3       |
 | V5   | Bundle test + implementation in one commit | F2           |
 | V6   | Skip phase checkpoint                      | F5           |
 | V7   | Reconstruct/overwrite EXISTING state from plan.md | State Lock   |

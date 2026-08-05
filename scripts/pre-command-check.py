@@ -437,6 +437,32 @@ def _commit_type_from_command(command: str):
     return tm.group(1) if tm else None
 
 
+def _resolve_active_gates(cwd: Path):
+    """The resolved quality-gate set of the single active track under ``cwd`` —
+    fail-open to the default full set (``tdd, coverage, checkpoint``).
+
+    Mirrors :func:`_resolve_refactor_bound`: scans conductor tracks under ``cwd``
+    (via ``_iter_track_states``) and resolves each track's ``workflow_shape``.
+    Exactly one track → that shape's gates; zero or more than one → ``default``
+    (ambiguous → fail-open: a non-code shape never silently disables F2 in a
+    multi-track repo, and a pre-shape / non-track commit keeps today's gating).
+    Malformed/unreadable state files are skipped, never raised. The F2 commit
+    hook composes ``"tdd" in _resolve_active_gates(cwd)`` so a track whose shape
+    drops the tdd gate (e.g. ``migration``) is not denied for a missing test.
+    """
+    from track_state.workflow_shapes import resolve_shape, gates_for
+    shapes = []
+    for _state_path, state in _iter_track_states(cwd):
+        try:
+            field = (state.get("workflow_shape")
+                     if isinstance(state, dict) else None)
+            shapes.append(resolve_shape(field))
+        except Exception:
+            continue
+    shape = shapes[0] if len(shapes) == 1 else "default"
+    return gates_for(shape)
+
+
 def _check_f2_tdd_gate(cwd: Path, command: str) -> None:
     """F2 TDD gate: a feat/fix commit must stage a test alongside source code.
 
@@ -460,12 +486,22 @@ def _check_f2_tdd_gate(cwd: Path, command: str) -> None:
     if not any(_is_source_file(f) for f in staged):
         return  # only docs/config staged → not an impl commit
 
+    # Track-level gate: if the single active track's shape drops the tdd gate
+    # (e.g. a migration shape — behavior preserved by existing tests, so no new
+    # test is owed), this feat/fix commit does not owe TDD. Fail-open to the
+    # default full set on any ambiguity (see _resolve_active_gates) — so the
+    # common case (default / no-track / multi-track) gates exactly as today.
+    if "tdd" not in _resolve_active_gates(cwd):
+        return
+
     source_eg = next(f for f in staged if _is_source_file(f))
     additional_context = (
         f'[Conductor] F2 TDD gate: this feat/fix commit stages source code '
         f'({source_eg}) without a test file. TDD requires a test in the same '
-        f'commit (task-executor Step 3). Add a test, or if the task is exempt '
-        f'(Docs/Config/Chore/Explore/Manual) use commit type docs/chore/etc.'
+        f'commit (task-executor Step 3). Add a test, or — if this commit '
+        f'legitimately owes no new test (a TDD-exempt task, or a track whose '
+        f'shape drops the tdd gate) — use a non-gated commit type '
+        f'(docs/chore/refactor).'
     )
     permission_reason = (
         'F2: feat/fix commit adds code without a test file. Add a test '

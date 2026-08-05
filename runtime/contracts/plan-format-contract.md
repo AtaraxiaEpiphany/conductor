@@ -16,7 +16,7 @@ The mandatory structure, status-marker, dispatch-tag, and subtask rules for `pla
 These rules are **non-negotiable**. Violating any rule will break the orchestrator.
 
 1. **Status Markers**: Every task and subtask gets a `[ ]` status marker. Indented subtasks use two-space indentation under their parent. A line without `[ ]` is silently dropped by the parser — the task/subtask would vanish. The `Task:`/`Subtask:` prefix is **optional convention only**: the parser keys on the `[ ]` checkbox + indent, not the keyword, so it may be omitted (`- [ ] build API`); if kept it must *follow* the checkbox, never replace it. ❌ `- build API` (no checkbox) → ✅ `- [ ] build API`. A `[Tag]` is **not** a substitute for the checkbox: ❌ `- [Explore] build API` → ✅ `- [ ] [Explore] build API`.
-2. **Manual Verification**: Append a manual verification task at the end of each phase. Tag it with `[Manual]` so the orchestrator can auto-defer it in continuous mode.
+2. **Manual Verification**: Append a manual verification task at the end of each phase. Tag it with a **manual-route** tag (the shipped registry's `[Manual]` — `track-state registry-doc`) so the orchestrator can auto-defer it in continuous mode; the parser validates the route (`route_for == manual`), not the tag name.
 3. **Phase Order**: Phases should follow logical dependency order.
 4. **Atomic Tasks**: Tasks should be atomic and independently testable.
 5. **Workflow Conventions**: Read the workflow file to respect any task-level conventions.

@@ -271,6 +271,31 @@ def _resolve_locked_task_type(cwd):
     return None
 
 
+def _resolve_active_shape(cwd):
+    """The resolved workflow-shape name of the locked task's track, fail-open to
+    ``default``.
+
+    Reuses :func:`resolve_locked_task` — the same mechanism the leading-tag
+    resolver uses — so per-task and per-track resolution share one path. The
+    executor block surfaces the shape's gates + default workflow so §4.0/§5.0
+    prose can defer to the track's paradigm (a shape dropping tdd/coverage means
+    the executor owes neither; a tagless task follows the shape's workflow).
+    """
+    from track_state.workflow_shapes import resolve_shape
+    try:
+        locked = resolve_locked_task(cwd)
+        if locked is None:
+            return "default"
+        state_path = Path(locked[0]) / "track-state.json"
+        if not state_path.exists():
+            return "default"
+        import json
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        return resolve_shape(state.get("workflow_shape"))
+    except Exception:
+        return "default"
+
+
 def _tag_summary_rows():
     """One summary line per registered tag: ``[Tag] route tdd/coverage hint``.
 
@@ -436,6 +461,18 @@ def _registry_for_executor(cwd):
     lines.append(f"  - coverage(F2/F3)-exempt tags: {', '.join(f'[{t}]' for t in exempt) or '(none)'}")
     tdd_exempt = [t for t in tp.TAG_VOCAB() if tp._profile(t).get("tdd_exempt")]  # noqa: SLF001
     lines.append(f"  - tdd(F2)-exempt tags: {', '.join(f'[{t}]' for t in tdd_exempt) or '(none)'}")
+    # The track's resolved shape — the portability axis. Which gates the track
+    # enforces (a gate fires iff listed here AND the task's tag is not exempt),
+    # and the workflow a tagless task defaults to. Lets task-executor's §4.0/§5.0
+    # defer to the track's paradigm: a shape dropping tdd/coverage (e.g.
+    # migration) means the executor owes neither and follows the shape's workflow
+    # for a tagless task instead of default TDD.
+    from track_state.workflow_shapes import gates_for
+    shape = _resolve_active_shape(cwd)
+    lines.append("")
+    lines.append("RESOLVED SHAPE for this track:")
+    lines.append(f"  - shape: {shape}")
+    lines.append(f"  - gates: {', '.join(gates_for(shape)) or '(none)'}")
     return "\n".join(lines)
 
 

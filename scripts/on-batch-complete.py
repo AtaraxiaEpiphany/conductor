@@ -220,6 +220,30 @@ def should_verify_coverage(tool_calls: list[dict]) -> bool:
     return False
 
 
+def _resolve_active_gates(cwd: Path):
+    """The resolved quality-gate set of the single active track under ``cwd`` —
+    fail-open to the default full set.
+
+    Mirrors pre-command-check's ``_resolve_active_gates`` (duplicated rather than
+    shared to avoid a lib<->track_state cycle — workflow_shapes is deliberately a
+    leaf). Exactly one active track → that shape's gates; zero or >1 → default.
+    The F3 probe composes ``"coverage" in _resolve_active_gates(cwd)`` so a track
+    whose shape drops the coverage gate (e.g. migration) is not falsely flagged.
+    """
+    from lib.locked_task import _iter_track_states
+    from track_state.workflow_shapes import resolve_shape, gates_for
+    shapes = []
+    for _state_path, state in _iter_track_states(cwd):
+        try:
+            field = (state.get("workflow_shape")
+                     if isinstance(state, dict) else None)
+            shapes.append(resolve_shape(field))
+        except Exception:
+            continue
+    shape = shapes[0] if len(shapes) == 1 else "default"
+    return gates_for(shape)
+
+
 def verify_coverage_gate(cwd: Path) -> Optional[str]:
     """Run server-side coverage verification (F3 gate).
 
@@ -228,7 +252,12 @@ def verify_coverage_gate(cwd: Path) -> Optional[str]:
 
     Returns:
         Warning message if coverage gate fails, None otherwise
+
+    Skipped (returns None) when the active track's shape drops the coverage gate
+    (e.g. a migration shape) — F3 is not owed, so the probe does not run.
     """
+    if "coverage" not in _resolve_active_gates(cwd):
+        return None
     coverage = get_coverage_percent(cwd)
 
     if coverage is None:

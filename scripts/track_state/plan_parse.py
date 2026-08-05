@@ -21,7 +21,7 @@ import re
 from pathlib import Path
 
 from .constants import MARKER_MAP
-from .helpers import _clean_trailing_markers
+from .helpers import _clean_trailing_markers, extract_tags
 
 # "## Phase 1", "## Phase 1: Build", "## Phase 1 - Build", "## Phase 1 — Build".
 # group(1)=number, group(2)=name (may be empty / None).
@@ -89,7 +89,7 @@ _BRACKET_TOKEN = re.compile(r"^(\s*)-\s+(\[[^\]]*\])")
 # templates/workflow/task-type-profiles.json (the single source of truth,
 # surfaced via task_profiles.TAG_VOCAB); trailing markers mirror
 # _RE_TRAILING_MARKER.
-from .task_profiles import TAG_VOCAB as _tag_vocab
+from .task_profiles import TAG_VOCAB as _tag_vocab, route_for
 _KNOWN_BRACKET_TOKEN = re.compile(
     r"^\[(?:" + "|".join(_tag_vocab()) + r"|N/A|verified|[0-9a-fA-F]{7,})\]$",
     re.IGNORECASE,
@@ -425,10 +425,14 @@ def parse_plan(plan_path):
         if not ph["tasks"]:
             errors.append(f"{label}: has no tasks")
             continue
-        if "[Manual]" not in ph["tasks"][-1]["name"]:
+        # Phase must end on a manual-route task (route=="manual" in the
+        # registry), not a literal "[Manual]" substring — a project overlay may
+        # rename or add a manual-route tag, and this validator must follow it.
+        last_name = ph["tasks"][-1]["name"]
+        if route_for(extract_tags(last_name)) != "manual":
             warnings.append(
-                f"{label}: last task is not a [Manual] verification task "
-                f"(expected at the end of every phase)")
+                f"{label}: last task '{last_name}' is not a manual-route "
+                f"verification task (expected at the end of every phase)")
         for t in ph["tasks"]:
             if len(t["subtasks"]) == 1:
                 warnings.append(

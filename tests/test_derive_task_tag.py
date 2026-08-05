@@ -72,6 +72,33 @@ class DeriveTaskTagBasics(TestCase):
         self.assertIsNone(tp.derive_task_tag("extract the duplication and simplify"))
         self.assertIsNone(tp.derive_task_tag("clean up and deduplicate the helpers"))
 
+    def test_migrate_is_never_auto_proposed(self):
+        """Stage 2c: ``[Migrate]`` is opt-in, never auto-proposed — like [Refactor].
+
+        Migration-flavored descriptions must NOT classify as [Migrate]. [Migrate]
+        sets ``auto_propose: false`` — the unified opt-in flag shared with
+        [Refactor]. Without it, [Migrate]'s ``when_to_use`` tokens
+        (``refactor``/``upgrade``/``rename``) would auto-propose the tag and
+        silently drop TDD/coverage on any such description (the regression this
+        pins: ``"refactor the user service..."`` returned ``'Migrate'``;
+        ``"...module"`` tied out Docs). A [Migrate] task is AUTHORED on a
+        ``migration``-shaped track — never goal-detected.
+        """
+        # Mechanism: the unified opt-in flag (both opt-in tags), default True.
+        self.assertFalse(tp.auto_propose_for("Migrate"))
+        self.assertFalse(tp.auto_propose_for("Refactor"))   # unified opt-out
+        self.assertTrue(tp.auto_propose_for("Docs"))         # goal-detectable
+        self.assertTrue(tp.auto_propose_for("does-not-exist"))  # fail-open default
+        # Behavior: migration-flavored text stays untagged (default TDD), not [Migrate].
+        for desc in (
+            "refactor the user service for readability",   # was 'Migrate' before the fix
+            "rename the public API across the codebase",
+            "port the legacy module to the new SDK",        # 'module' tied out Docs before
+        ):
+            self.assertIsNone(
+                tp.derive_task_tag(desc),
+                f"migration-flavored description must not auto-propose [Migrate]: {desc!r}")
+
     def test_short_signal_substring_does_not_overmatch(self):
         # 'ci' must NOT match inside 'discipline'/'specificity'. A bare
         # substring check (``sig in text``) once did, inflating Chore's score

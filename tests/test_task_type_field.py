@@ -339,7 +339,7 @@ class OverrideLayerTests(TestCase):
 
         # No crash, built-in vocab intact, baseline routing restored.
         self.assertEqual(set(self.tp.TAG_VOCAB()),
-                         {"Explore", "Docs", "Config", "Chore", "Manual", "Refactor"})
+                         {"Explore", "Docs", "Config", "Chore", "Manual", "Refactor", "Migrate"})
         self.assertEqual(self.tp.route_for(["Manual"]), "manual")
 
     def test_malformed_shape_overlay_falls_back_to_baseline(self):
@@ -350,7 +350,7 @@ class OverrideLayerTests(TestCase):
         self.tp._load.cache_clear()
 
         self.assertEqual(set(self.tp.TAG_VOCAB()),
-                         {"Explore", "Docs", "Config", "Chore", "Manual", "Refactor"})
+                         {"Explore", "Docs", "Config", "Chore", "Manual", "Refactor", "Migrate"})
 
     def test_no_override_file_no_change(self):
         # CLAUDE_PROJECT_DIR set to a project tree with NO overlay file → baseline.
@@ -359,7 +359,7 @@ class OverrideLayerTests(TestCase):
         self.tp._load.cache_clear()
 
         self.assertEqual(set(self.tp.TAG_VOCAB()),
-                         {"Explore", "Docs", "Config", "Chore", "Manual", "Refactor"})
+                         {"Explore", "Docs", "Config", "Chore", "Manual", "Refactor", "Migrate"})
 
     def test_unknown_project_tag_blocks_init_then_passes_when_registered(self):
         # End-to-end: a project tag the validator rejects until the overlay registers it.

@@ -138,7 +138,7 @@ A task tag whose resolved registry profile is `tdd_exempt` is a **TDD exemption*
 - spec.md: `## Requirements`, `## Acceptance Criteria`, `## Test Scenarios`
   sections present and non-empty (unless spec-less).
 - plan.md: at least one `## Phase N:` heading; every task line carries `[ ]`;
-  manual-verification task appended at each phase end (tagged `[Manual]`).
+  manual-verification task appended at each phase end (a manual-route tag — `[Manual]` in the shipped registry).
 
 ### 3.6 Build the Verdict
 

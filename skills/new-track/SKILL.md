@@ -53,13 +53,17 @@ CRITICAL: Validate every tool call. On failure → halt → announce.
 
 1. Get description from `$ARGUMENTS` or `AskUserQuestion`.
 2. Infer track type (feature/bugfix/chore) — do NOT ask user.
-3. **Derive the track id deterministically** — pick a short slug (1–3 lowercase words) summarizing the track, then run:
+3. **Derive the workflow shape** (confirm only when non-default). Infer from the description: a behavior-preservation *migration* (keywords: migrate/migration/upgrade, framework/library bump, rename/port/rewrite-for-parity, backfill, retire-and-replace) → `migration`; everything else → `default`.
+   - `default` (the common case) → no prompt; set `$WORKFLOW_SHAPE=default`.
+   - `migration` → a consequential choice (the shape drops the `tdd`/`coverage` gates at the track level — tasks owe a green existing suite, not new tests), so confirm via ONE `AskUserQuestion`: *"This reads like a behavior-preservation migration. Use the `migration` shape (drops TDD/coverage gates; pair tasks with `[Migrate]`, whose workflow the executor fetches instead of TDD)?"* Options: **Yes, `migration` shape (Recommended)** / **No, `default` shape (full TDD)**. Store the choice as `$WORKFLOW_SHAPE`.
+   Override either way later via `track-state set-workflow-shape "<track_dir>" --shape <name>`. The conductor runs one track per session, so a mis-inferred shape is one command to fix.
+4. **Derive the track id deterministically** — pick a short slug (1–3 lowercase words) summarizing the track, then run:
    ```bash
    track-state derive-name <slug>
    ```
    Parse the JSON. Use `track_id` and `track_dir` from the result for **everything** below (resume marker, spec-planner `TRACK_DIR`, §2.6 init `--track-id` and `<track_dir>`). Never hand-write the date — the command stamps it from the clock.
    > **Existing-track adoption:** If `$ARGUMENTS` is a bare track_id whose `<track_dir>` already exists (commonly one carrying a `brief.md` from `/conductor:brief`, but any existing track dir qualifies), **adopt that track_id/track_dir directly** — do NOT re-derive (re-deriving would mint a new dated id and orphan the Brief). Skip `derive-name` for this case.
-4. **Initialize resume marker** (skip if resuming — `new-track-resume` already found it). Creates `<track_dir>/.conductor/` and the marker in one call (idempotent — a no-op if the marker already exists):
+5. **Initialize resume marker** (skip if resuming — `new-track-resume` already found it). Creates `<track_dir>/.conductor/` and the marker in one call (idempotent — a no-op if the marker already exists):
    ```bash
    track-state new-track-init "<track_dir>" --track-id <id> --description "<desc>" --type <type>
    ```
@@ -253,6 +257,10 @@ Store the user's choice as `$EXECUTION_MODE` for use in Section 2.6.
      --execution-mode <interactive|continuous>
    ```
    This validates `plan.md` syntax and creates `track-state.json` + `index.md` in one call, extracting every task and subtask deterministically. On `ok: false` (malformed `plan.md`) → halt → announce the reported `errors`.
+   > **Shape (if non-default):** `init-from-plan` writes `workflow_shape: default`. If `$WORKFLOW_SHAPE` is non-default (e.g. `migration` from §2.1), set it now so the gate set and verifier fan-out resolve correctly from the first dispatch:
+   > ```bash
+   > track-state set-workflow-shape "<track_dir>" --shape "$WORKFLOW_SHAPE"
+   > ```
    > **Resume:** `track-state new-track-step "<track_dir>" state_created`
 4. **Update Tracks Registry:** `track-state registry-add "<track_dir>"` — appends the canonical entry (`- [<marker>] <description> (conductor/tracks/<track_id>/)`) from `track-state.json`; idempotent and auto-locates `conductor/tracks.md`. **Never hand-write the line** — a freeform entry (no `(link)`, plain bullet, bold id) is silently dropped by `setup`/`resolve-track`, which breaks auto-select AND explicit `setup <track>`.
    > **Resume:** `track-state new-track-step "<track_dir>" registry_updated`

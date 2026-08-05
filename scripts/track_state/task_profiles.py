@@ -436,6 +436,23 @@ def refactor_for(tag: str) -> bool:
     return bool(_profile(tag).get("refactor", False))
 
 
+def auto_propose_for(tag: str) -> bool:
+    """True (the default) if :func:`derive_task_tag` may goal-detect this tag.
+
+    ``False`` marks an OPT-IN tag — one that is authored onto a task name and must
+    NEVER be inferred from a free-text description. Today both opt-in tags carry
+    ``auto_propose: false``: ``[Refactor]`` (a modifier that augments a primary
+    task) and ``[Migrate]`` (a behavior-preservation primary). The unified
+    mechanism that keeps them out of the advisory classifier — without it,
+    ``[Migrate]``'s ``when_to_use`` tokens (refactor/upgrade/rename) would
+    auto-propose it and silently drop TDD/coverage, and ``[Refactor]``'s would
+    auto-trigger the tactical refactorer. Distinct from :func:`refactor_for`
+    (which gates the refactorer, not classification). Absent = ``True`` (the tag
+    is a normal goal-detection candidate — the common case).
+    """
+    return bool(_profile(tag).get("auto_propose", True))
+
+
 def when_to_use_for(tag: str) -> str:
     """The one-line ``when to use this tag`` hint, injected into spec-planner.
 
@@ -546,10 +563,12 @@ def derive_task_tag(description: str) -> str | None:
       stronger exemption signal) returns ``None`` even if it incidentally
       matches an exemption tag's signals;
     - ``[Manual]`` requires a human-action signal;
-    - an opt-in modifier tag (``refactor: true``, today ``[Refactor]``) is
-      **never** auto-derived — it is skipped entirely (a modifier augments a
-      primary task, it does not classify one; ``[Refactor]`` is a deliberate
-      opt-in via the leading tag or inline name marker, never a goal detection).
+    - an opt-in tag (``auto_propose: false`` — today ``[Refactor]`` the modifier
+      and ``[Migrate]`` the behavior-preservation primary) is **never**
+      auto-derived — it is skipped entirely (authored onto a task name, never a
+      goal detection; ``[Refactor]`` is a deliberate opt-in via the leading tag
+      or inline name marker, ``[Migrate]`` via the leading tag on a
+      ``migration``-shaped track).
 
     This is **advisory only** — :func:`track_state.init_from_plan` still
     hard-validates the final tag against the resolved registry, so an
@@ -563,13 +582,16 @@ def derive_task_tag(description: str) -> str | None:
 
         scores: dict[str, int] = {}
         for tag in TAG_VOCAB():
-            # An opt-in modifier tag (refactor: true) is NEVER auto-derived as a
-            # leading tag — it augments whatever the primary task is, it does not
-            # classify it. Without this guard, [Refactor]'s when_to_use tokens
-            # ("refactor"/"extract"/"simplify") would auto-propose [Refactor] for
-            # any readability tweak, silently opting it into the tactical refactorer.
-            # [Refactor] is a deliberate opt-in (leading tag or inline marker), full stop.
-            if _profile(tag).get("refactor"):
+            # An opt-in tag (auto_propose: false) is NEVER auto-derived as a
+            # leading tag — it is authored onto a task name, not inferred from a
+            # description. Today both opt-in tags: [Refactor] (a modifier that
+            # augments a primary task) and [Migrate] (a behavior-preservation
+            # primary). Without this guard, [Refactor]'s when_to_use tokens
+            # ("refactor"/"extract"/"simplify") would auto-propose it for any
+            # readability tweak (silently opting into the refactorer), and
+            # [Migrate]'s ("refactor"/"upgrade"/"rename") would auto-propose it
+            # (silently dropping TDD/coverage). Both are deliberate opt-ins.
+            if not auto_propose_for(tag):
                 continue
             hits = sum(1 for sig in _signals_for(tag) if _signal_in(sig, text))
             if hits:

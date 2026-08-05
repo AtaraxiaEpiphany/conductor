@@ -93,7 +93,7 @@ Returns `action` enum — switch on it:
 
 The phase checkpoint is a **fan-out-and-synthesize**: read-only verifier tiers run in parallel, then `conductor:phase-checker` consumes their verdicts and owns the L1 fix-and-retry + L2 + L4 + commit. Two verifiers fan out every checkpoint: `conductor:ac-tracer` (the AC-evidence trace) and `conductor:test-runner` (the suite verdict).
 
-**Step 1 — Fan out the verifiers in ONE message:** `conductor:ac-tracer` and `conductor:test-runner`, pasting each member's **pre-assembled `prompt` field verbatim** (built by `build_dispatch_prompt` — the single source both rails share; do NOT hand-interpolate `TRACK_DIR`/`TRACK_ID`/`PHASE_INDEX`). On a **code-free phase** (every task `coverage_exempt` — `[Config]`/`[Docs]`/`[Chore]`/`[Manual]`), the wave omits `test-runner` (nothing to run) and **only `ac-tracer` fans out** — see Step 3 for how that surfaces in the synth.
+**Step 1 — Fan out the verifiers in ONE message:** `conductor:ac-tracer` and `conductor:test-runner`, pasting each member's **pre-assembled `prompt` field verbatim** (built by `build_dispatch_prompt` — the single source both rails share; do NOT hand-interpolate `TRACK_DIR`/`TRACK_ID`/`PHASE_INDEX`). On a **code-free phase** (every task resolves `coverage_exempt`; the code-free set is registry-derived, not a literal tag list — `track-state registry-doc`), the wave omits `test-runner` (nothing to run) and **only `ac-tracer` fans out** — see Step 3 for how that surfaces in the synth.
 
 **Step 2 — Parse the result blocks.** From `ac-tracer`'s `---AC TRACE RESULT---`: `VERDICT` (passed/warn/skipped/FAILED/ERROR), `GATE` (when FAILED), `N_UNGROUNDED` (when warn). From `test-runner`'s `---L1 VERIFY RESULT---`: `STATUS`/`COMMAND` (the suite verdict). On a code-free phase there is no `test-runner` result block — record `L1_VERIFY_STATUS` as `skipped` in Step 3.
 
@@ -225,7 +225,7 @@ Parse the `---FAILURE ANALYSIS---` JSON and act by `recommendation`:
 - the task NAME contains the marker `[Review]` (per-task opt-in), OR
 - env `CONDUCTOR_SELF_REVIEW=1` (global opt-in for every task this session).
 
-`[Review]` is a **name marker, not a tag** — it does NOT enter the `[Docs]`/`[Config]`/… exemption logic, so a reviewable task still owes TDD (F2) and coverage (F3).
+`[Review]` is a **name marker, not a tag** — it does NOT enter the exemption logic (TDD/coverage exemption derives from a task's registry profile, not name markers), so a reviewable task still owes TDD (F2) and coverage (F3).
 
 When opted in (after a SUCCESSFUL `dispatch-finalize`, before §3.7), run a **convergent review loop** (review → fix → re-review) that stops on a *dry* round (loop-until-dry — zero NEW Critical/High), not a fixed count. Maintain a `seen` set of finding **signatures** (`severity+title+file+lines`); dedup **new** findings vs `seen` (NOT vs the set you just fixed — a re-appearing finding is a *residual*, counted separately).
 

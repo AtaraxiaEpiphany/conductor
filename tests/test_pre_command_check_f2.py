@@ -196,5 +196,64 @@ class F2GateIntegrationTests(TestCase):
             shutil.rmtree(d, ignore_errors=True)
 
 
+class F2ShapeCompositionTests(TestCase):
+    """Stage 2b: the F2 commit hook composes ``"tdd" in gates_for(shape)`` at the
+    moment of denial. A migration-shape track (gates=[checkpoint]) drops the tdd
+    gate, so a feat/source-only commit is ALLOWED; a default-shape track DENIES it
+    exactly as today (default-identical). Runs the real hook as a subprocess, so
+    the lazy ``track_state.workflow_shapes`` import + overlay resolution are
+    exercised end-to-end."""
+
+    def tearDown(self):
+        os.environ.pop("CLAUDE_PROJECT_DIR", None)
+
+    def _seed_migration_track(self, repo, shape):
+        # A conductor track under the repo whose state carries the shape, plus a
+        # project overlay registering a migration shape that drops tdd/coverage.
+        tracks_dir = os.path.join(repo, "conductor", "tracks", "t1")
+        os.makedirs(tracks_dir, exist_ok=True)
+        with open(os.path.join(tracks_dir, "track-state.json"), "w") as f:
+            json.dump({"track_id": "t1", "workflow_shape": shape,
+                       "phases": [{"phase": 1, "tasks": [
+                           {"task": 1, "name": "migrate", "status": "in_progress"}]}]},
+                      f)
+        wf_dir = os.path.join(repo, "conductor", "workflow")
+        os.makedirs(wf_dir, exist_ok=True)
+        with open(os.path.join(wf_dir, "workflow-shapes.json"), "w") as f:
+            json.dump({"shapes": {"migration": {
+                "nodes": ["spec-planner", "task-executor", "phase-checker"],
+                "verifiers": ["ac-tracer", "test-runner"],
+                "gates": ["checkpoint"], "verify_policy": "checkpoint",
+                "stop_condition": "all_nodes_done"}}}, f)
+        os.environ["CLAUDE_PROJECT_DIR"] = repo  # inherited by the hook subprocess
+
+    def test_migration_shape_allows_feat_without_test(self):
+        d = _git_repo()
+        try:
+            self._seed_migration_track(d, "migration")
+            _stage(d, {"src/foo.ts": "x"})
+            rc, out = _run_hook(d, 'git commit -m "feat(api): migrate foo"')
+            # tdd gate dropped by the migration shape => not denied.
+            self._assert_allowed(out)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_default_shape_still_denies_feat_without_test(self):
+        # Default-identical: default gates include tdd => feat/source-only DENIED.
+        d = _git_repo()
+        try:
+            self._seed_migration_track(d, "default")
+            _stage(d, {"src/foo.ts": "x"})
+            rc, out = _run_hook(d, 'git commit -m "feat(api): add foo"')
+            spec = out.get("hookSpecificOutput", {})
+            self.assertEqual(spec.get("permissionDecision"), "deny")
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def _assert_allowed(self, out):
+        spec = out.get("hookSpecificOutput", {})
+        self.assertNotIn("permissionDecision", spec)
+
+
 if __name__ == "__main__":
     main()

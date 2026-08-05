@@ -1335,6 +1335,21 @@ def cmd_registry_doc(tag=None, shape=None):
                 print(instr)
             else:
                 print(f"_(no `instruction` for `{shape}` → the default §3.0 dispatch loop)_")
+            # The shape-controlled paradigm (the portability axis): which gates
+            # the shape enforces, the executor's default workflow, and how ACs
+            # are grounded. `registry-doc --shape <name>` shows the full shape
+            # contract — topology above, paradigm here.
+            gates = ", ".join(ws.gates_for(shape)) or "(none)"
+            print()
+            print(f"## Shape-controlled paradigm for `{shape}`")
+            print()
+            print(f"- **gates**: {gates} — the track-level ON/OFF each quality "
+                  f"gate composes with the per-task exemption (a gate fires for "
+                  f"a task iff listed here AND the task's tag is not exempt). "
+                  f"`tdd`=F2, `coverage`=F3, `checkpoint`=F5.")
+            print(f"- **ac_grounding**: `{ws.ac_grounding_for(shape)}` — how "
+                  f"acceptance criteria are grounded (`test` = by `test_TC_*` "
+                  f"functions).")
         else:
             print(f"# Workflow Shape `{shape}` — UNKNOWN to the resolved registry")
             print()
