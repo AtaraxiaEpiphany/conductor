@@ -59,6 +59,23 @@ _MISSING_CHECKBOX_ANNOTATED = re.compile(
     r"^(\s*)-\s+(?!\[[ x~!>#\-d]\])(?:\[[A-Za-z]+\]\s*)?.*<!--"
 )
 
+# A dash-bullet inside a phase carrying NO valid checkbox and NONE of the
+# stronger "this was meant to be a task" signals — no Task:/Subtask: keyword and
+# no <!-- annotation. Two flavors: a plain prose bullet ("- do the thing") or a
+# tag-led bullet without a keyword ("- [Explore] do thing"). Both are silently
+# dropped by the fall-through today (the keyword/annotated nets above miss them).
+# Inside a ## Phase section the checkbox is the SOLE mandatory element
+# (plan-format-contract.md rule 1): genuine prose belongs in a paragraph, not a
+# bullet, so any unchecked dash-bullet in a phase is a malformed task. The branch
+# is phase-guarded (current_phase is not None): a plain bullet BEFORE the first
+# phase is legitimate intro prose and stays ignored. The keyword/annotated
+# detectors fire first with their more-specific messages; this is the
+# keyword-independent catch-all that closes the silent-drop hole. Mirrors
+# scripts/check-plan-checkboxes.py.
+_MISSING_CHECKBOX_PLAIN = re.compile(
+    r"^(\s*)-\s+(?!\[[ x~!>#\-d]\])(?:\[[A-Za-z]+\]\s*)?\S"
+)
+
 # A dash-bullet whose first token is a bracket group [...] of ANY width. Used to
 # catch the bracket-MALFORMED case (below): a writer who intended a task but
 # botched the checkbox. group(1)=indent, group(2)=the bracket token incl. brackets.
@@ -372,6 +389,19 @@ def parse_plan(plan_path):
                 f"line {lineno}: {kind} line carries an annotation but is missing "
                 f"its '[ ]' checkbox ({where}) — write '- [ ] ...' so it is not "
                 f"silently dropped from track-state.json")
+            continue
+        # Keyword-independent catch-all: an unchecked dash-bullet inside a phase
+        # that carries neither the keyword nor an annotation. Phase-guarded — a
+        # plain bullet before the first phase is intro prose and falls through to
+        # ignored. (where is always a Phase here, never "before any phase".)
+        plain = _MISSING_CHECKBOX_PLAIN.match(line)
+        if plain and current_phase is not None:
+            indent = plain.group(1)
+            kind = "subtask" if indent else "task"
+            errors.append(
+                f"line {lineno}: {kind} line is missing its '[ ]' checkbox "
+                f"(Phase {current_phase['number']}) — write '- [ ] ...' so it "
+                f"is not silently dropped from track-state.json")
             continue
         # Everything else (title, prose, blank lines, non-checkbox bullets) ignored.
 

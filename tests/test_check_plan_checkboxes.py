@@ -102,6 +102,33 @@ class ScanTests(TestCase):
     def test_scan_plain_prose_bullet_without_annotation_not_flagged(self):
         self.assertEqual(_mod._scan("- a plain markdown bullet\n"), [])
 
+    def test_scan_plain_bullet_in_phase_is_flagged(self):
+        # A plain unchecked bullet inside a ## Phase (no keyword, no annotation)
+        # is the silent-drop hole the keyword/annotated nets miss — flagged once
+        # phase tracking is armed. The valid checkbox on the next line is not.
+        text = "## Phase 1: P\n- do the thing\n- [ ] Task: ok\n"
+        hits = _mod._scan(text)
+        self.assertEqual(len(hits), 1)
+        lineno, raw, suggested = hits[0]
+        self.assertEqual(lineno, 2)
+        self.assertIn("[ ]", suggested)
+
+    def test_scan_tagged_bullet_in_phase_without_keyword_is_flagged(self):
+        # "- [Explore] do thing" inside a phase — tag present, no checkbox, no
+        # keyword. Plain catch-all closes it.
+        hits = _mod._scan("## Phase 1: P\n- [Explore] do thing\n")
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0][1].strip(), "- [Explore] do thing")
+
+    def test_scan_valid_plan_with_phase_heading_not_false_flagged(self):
+        # Phase heading present + valid checkboxes → no hits (the plain check
+        # must not false-fire on a real checkbox once in_phase is armed).
+        text = ("## Phase 1: Foundation\n"
+                "- [ ] Task: ok <!-- AC-1, TC-1.1 -->\n"
+                "  - [ ] Subtask: x\n"
+                "- [ ] [Manual] Task: verify\n")
+        self.assertEqual(_mod._scan(text), [])
+
 
 class MalformedBracketRegexTests(TestCase):
     """``- [] x`` (empty) / ``- [  ] x`` (whitespace) / ``- [xy] x`` (wrong

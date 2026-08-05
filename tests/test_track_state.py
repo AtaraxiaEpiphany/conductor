@@ -949,6 +949,45 @@ class TestInitFromPlan(TestCase):
         self.assertTrue(any("missing" in e and "[ ]" in e for e in parsed["errors"]))
         self.assertFalse(any("malformed" in e for e in parsed["errors"]))
 
+    def test_error_plain_bullet_in_phase(self):
+        # A plain dash-bullet inside a Phase with no checkbox, no Task:/Subtask:
+        # keyword, and no <!-- annotation ("- do the thing") is silently dropped
+        # today. The [ ] checkbox is the sole mandatory element (rule 1), so the
+        # phase-guarded plain catch-all flags it.
+        d = self._plan("## Phase 1: P\n- do the thing\n- [ ] [Manual] Task: v\n")
+        parsed = parse_plan(Path(d, "plan.md"))
+        self.assertTrue(any("missing its '[ ]' checkbox" in e and "line 2" in e
+                            for e in parsed["errors"]), parsed["errors"])
+
+    def test_error_tagged_bullet_without_checkbox_or_keyword(self):
+        # "- [Explore] map the module" — tag present, but no checkbox AND no
+        # keyword: also silently dropped today. The plain catch-all closes it.
+        d = self._plan("## Phase 1: P\n- [Explore] map the module\n"
+                       "- [ ] [Manual] Task: v\n")
+        parsed = parse_plan(Path(d, "plan.md"))
+        self.assertTrue(any("missing its '[ ]' checkbox" in e and "line 2" in e
+                            for e in parsed["errors"]), parsed["errors"])
+
+    def test_plain_bullet_before_phase_not_flagged(self):
+        # A plain bullet BEFORE the first ## Phase is legitimate intro prose, not
+        # a malformed task — the plain detector is phase-guarded.
+        d = self._plan("Some intro prose.\n\n- a plain bullet\n\n"
+                       "## Phase 1: P\n- [ ] [Manual] Task: v\n")
+        parsed = parse_plan(Path(d, "plan.md"))
+        self.assertFalse(any("missing its '[ ]' checkbox" in e
+                             for e in parsed["errors"]), parsed["errors"])
+
+    def test_init_check_rejects_plain_bullet(self):
+        # The viewer surface: init-from-plan --check reports ok:false for a plain
+        # unchecked bullet so the defect is visible before any state is written.
+        d = self._plan("## Phase 1: P\n- do the thing\n- [ ] [Manual] Task: v\n")
+        result, _ = _out_captured(
+            cmd_init_from_plan, d, "demo_20260702", "feature", "desc",
+            check=True)
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("missing its '[ ]' checkbox" in e
+                            for e in result.get("errors", [])))
+
     def test_valid_plan_not_flagged_by_malformed_guard(self):
         # Regression: the malformed guard must not false-positive on real
         # checkboxes, multi-char dispatch tags on valid lines, or [N/A] prose.

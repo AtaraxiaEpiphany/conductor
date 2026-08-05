@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """PreToolUse hook: enforce well-formed ``[ ]`` checkboxes on plan.md task/subtask lines.
 
-Two classes of defect are blocked, both of which plan_parse would otherwise
+Three classes of defect are blocked, all of which plan_parse would otherwise
 silently drop (the line vanishes from track-state.json — a data-loss defect):
 
   * MISSING checkbox — spec-planner emits ``- Subtask: x`` with no bracket, or
@@ -11,6 +11,10 @@ silently drop (the line vanishes from track-state.json — a data-loss defect):
     (wrong width). These sit in the gap between plan_parse._TASK_LINE (one
     valid char) and _BAD_MARKER_LINE (exactly one char): zero/2+ chars match
     neither, so the line is silently dropped.
+  * PLAIN unchecked bullet — ``- do the thing`` inside a ``## Phase`` with no
+    checkbox, no keyword, and no annotation. The ``[ ]`` checkbox is the sole
+    mandatory element, so any unchecked dash-bullet in a phase is a malformed
+    task that would vanish. This check is phase-scoped (see _scan).
 
 This hook blocks the Write/Edit (basename ``plan.md``) before it lands and tells
 the model the corrected form so it self-corrects and retries.
@@ -34,6 +38,11 @@ _VALID_MARKER_CLASS = r"[ x~!>#\-d]"
 # A complete, well-formed checkbox: exactly one valid marker char inside [].
 # Used to exclude valid ``[ ]``/``[x]`` lines from the malformed-bracket check.
 _VALID_CHECKBOX = re.compile(rf"^\[{_VALID_MARKER_CLASS}\]$")
+
+# A ``## Phase N`` heading — arms phase tracking in _scan so the plain-bullet
+# catch-all (below) only fires inside a phase section. Mirrors plan_parse's
+# _PHASE_HEADING; a boolean is all _scan needs (no number/name capture).
+_PHASE_HEADING = re.compile(r"^##\s+Phase\s+\d+\b")
 
 # A task/subtask bullet that does NOT start with a valid checkbox.
 #   ^(\s*)-             — optional indent + bullet dash
@@ -59,6 +68,19 @@ _MISSING_CHECKBOX = re.compile(
 # hole. Mirrors plan_parse._MISSING_CHECKBOX_ANNOTATED.
 _MISSING_CHECKBOX_ANNOTATED = re.compile(
     rf'^(\s*)-\s+(?!\[{_VALID_MARKER_CLASS}\])(?:\[[A-Za-z]+\]\s*)?.*<!--',
+    re.MULTILINE,
+)
+
+# A dash-bullet inside a phase with NO valid checkbox and NEITHER the
+# Task:/Subtask: keyword NOR a <!-- annotation — a plain prose bullet
+# ("- do the thing") or a tag-led bullet without a keyword ("- [Explore] do
+# thing"). Both are the silent-drop hole the keyword/annotated nets miss: the
+# line vanishes from track-state.json. Inside a ## Phase the checkbox is the
+# sole mandatory element, so any unchecked dash-bullet is a malformed task.
+# _scan phase-guards this (a plain bullet before the first ## Phase is intro
+# prose). Mirrors plan_parse._MISSING_CHECKBOX_PLAIN.
+_MISSING_CHECKBOX_PLAIN = re.compile(
+    rf'^(\s*)-\s+(?!\[{_VALID_MARKER_CLASS}\])(?:\[[A-Za-z]+\]\s*)?\S',
     re.MULTILINE,
 )
 
@@ -101,19 +123,33 @@ def _suggest_malformed(raw_line: str) -> str:
 def _scan(text: str, max_hits: int = 8):
     """Return up to ``max_hits`` (lineno, raw_line, suggested) tuples.
 
-    Catches both classes of silent-drop defect on a task/subtask bullet:
+    Catches every class of silent-drop defect on a task/subtask bullet:
       * missing checkbox  — ``- Subtask: x`` / ``- [Explore] Task: x``
       * malformed bracket — ``- [] x`` / ``- [  ] x`` / ``- [xy] x`` (a bracket
         IS present but is not a valid single-marker checkbox)
+      * plain unchecked bullet — ``- do the thing`` inside a ## Phase (no
+        checkbox, no keyword, no annotation); the checkbox is the sole
+        mandatory element, so any unchecked dash-bullet in a phase is dropped
     A line is flagged at most once; malformed takes priority (the bracket is
-    the closer-to-correct form, so its fix is more specific). Valid checkboxes
-    (``[ ]``/``[x]``/…) and known non-checkbox tags (``[Manual]``, ``[N/A]``…)
-    are never flagged.
+    the closer-to-correct form, so its fix is more specific), then the
+    keyword/annotation nets, then the phase-guarded plain catch-all. Valid
+    checkboxes (``[ ]``/``[x]``/…) and known non-checkbox tags
+    (``[Manual]``, ``[N/A]``…) are never flagged.
+
+    Phase tracking is reliable only for ``Write`` (full file in one chunk);
+    ``Edit``/``MultiEdit`` fragments usually contain no ``## Phase`` heading, so
+    ``in_phase`` stays False and the plain check does not fire there — the
+    parser backstops those at ``init-from-plan`` (see module docstring).
     """
     hits = []
+    in_phase = False
     for idx, raw in enumerate(text.splitlines()):
         if len(hits) >= max_hits:
             break
+        if _PHASE_HEADING.match(raw):
+            # Monotonic — mirrors plan_parse's current_phase (once inside a
+            # phase, stay there for the rest of the file).
+            in_phase = True
         mb = _BRACKET_TOKEN.match(raw)
         if mb:
             bracket = mb.group(2)
@@ -124,6 +160,12 @@ def _scan(text: str, max_hits: int = 8):
             hits.append((idx + 1, raw, _suggest(raw)))
             continue
         if _MISSING_CHECKBOX_ANNOTATED.search(raw):
+            hits.append((idx + 1, raw, _suggest(raw)))
+            continue
+        # Plain unchecked bullet inside a phase — the keyword/annotation nets
+        # both miss it. Phase-guarded so intro prose before the first phase and
+        # (typical) Edit/MultiEdit fragments are not false-flagged.
+        if in_phase and _MISSING_CHECKBOX_PLAIN.search(raw):
             hits.append((idx + 1, raw, _suggest(raw)))
     return hits
 
