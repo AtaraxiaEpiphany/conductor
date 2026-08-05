@@ -29,6 +29,7 @@ from .misc import (
 )
 from .spec_integrity import cmd_spec_anchors
 from .spec_delta import cmd_spec_delta
+from .task_context import cmd_task_context
 from .handoff import cmd_get_handoff, cmd_sync_handoff, cmd_append_handoff, cmd_harvest_candidates, cmd_compile_track_findings
 from .sync import cmd_sync_plan
 from .reconcile import cmd_reconcile_plan
@@ -360,6 +361,10 @@ COMMAND_HELP = {
                    "Reports changed/added/removed ACs+FRs+NFRs and, the headline, at_risk_tasks: completed tasks "
                    "(with commit_sha) whose claimed AC was edited — SHAs that may no longer satisfy the new AC. "
                    "Engine behind /conductor:re-spec; usable standalone after any committed spec edit."),
+    "task-context": ("task-context <track-dir> --phase <N> --task <N>",
+                     "Read-only per-task join: the task's AC/TC refs from plan.md resolved to AC text + TC rows "
+                     "from spec.md, plus the leading tag's profile. task-executor fetches this instead of "
+                     "hand-extracting across both files."),
     "log-path": ("log-path",
                  "Print which data/logs dir resolved (and via which tier) + list the telemetry log files "
                  "with size/mtime. Ends 'where did my subagent log go?' — the project vs plugin-fallback split."),
@@ -425,7 +430,8 @@ _COMMAND_GROUPS = [
     ("Brief", ["brief-resume", "brief-init", "brief-finalize", "brief-grill-done"]),
     ("Diagnostics", ["validate", "gc", "shas", "post-loop-status", "checklist-verify",
                      "deferred-report", "phase-done", "add-checkpoint", "preflight",
-                     "quality-snapshot", "spec-integrity", "spec-anchors", "spec-delta"]),
+                     "quality-snapshot", "spec-integrity", "spec-anchors", "spec-delta",
+                     "task-context"]),
     ("Logs", ["log-path", "subagent-log"]),
 ]
 
@@ -638,6 +644,15 @@ def main():
             # explicit --before <path> overrides (used by re-spec when the edit
             # isn't committed yet, or to compare against a saved baseline).
             cmd_spec_delta(track_dir, before=flag(args, "--before"))
+        elif cmd == "task-context":
+            # The per-task plan↔spec join. Takes explicit --phase/--task (or
+            # positional) indices through the same resolver as wave-finalize /
+            # the index commands, so both forms work. Read-only.
+            p, t, _ = resolve_indices(pos, args)
+            if p is None or t is None:
+                out(dict(error="task-context requires --phase and --task"))
+                sys.exit(1)
+            cmd_task_context(track_dir, int(p), int(t))
         elif cmd == "log-path":
             cmd_log_path()
         elif cmd == "subagent-log":

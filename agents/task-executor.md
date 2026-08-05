@@ -102,32 +102,39 @@ Collect every `---PROBE RESULT---` block (`filter-subagent-output` trims the res
 
 ### Layer 1: Task Identity (READ FIRST)
 
-Read `{TRACK_DIR}/plan.md`. Find your task at `## Phase {PHASE}`, locate task `{TASK}`.
+Fetch the per-task plan↔spec join in one call — it deterministically resolves your task's AC/TC refs to AC text + TC rows AND the leading-tag profile, so you no longer hand-read plan.md + spec.md and extract them yourself (the CLI owns the join; the extraction can't drift from the parsers' grammar):
 
-Extract from task line:
-- Task description and annotations (`<!-- AC-n, TC-n.n -->`)
-- AC/TC references (record IDs for Layer 2)
-- Task tag (from the leading bracket, e.g. `[Config]`/`[Chore]` — resolved to its registry profile by Layer 1.5) — drives the Layer 1.5 fast path
+```
+track-state task-context {TRACK_DIR} --phase {PHASE} --task {TASK}
+```
+
+The JSON carries:
+- `name` + `tags` — the task description and its dispatch tag(s) (leading bracket, e.g. `[Config]`/`[Chore]`).
+- `ac_refs` / `tc_refs` — the IDs from the task's `<!-- AC-n, TC-n.m -->` annotation.
+- `acs` — each ref resolved to its AC text (`{id, text}`) from spec.md.
+- `tcs` — the TC rows tracing to those ACs (`{id, ac}`) from spec.md's Test Scenarios table.
+- `tag_profile` — the leading tag's resolved profile (`route`/`tdd_exempt`/`coverage_exempt`/`workflow`/`refactor`); `null` for an untagged default task. Drives the Layer 1.5 fast path.
+
+If `errors`/`warnings` are present (e.g. a dangling AC ref, or spec.md absent), read `plan.md`/`spec.md` directly to diagnose — the join is best-effort, not a gate.
 
 ### Layer 1.5: Task-Type Fast Path (TDD-exempt tags)
 
-Check the injected `[Conductor Registry]` block for this task's leading-tag profile. If its `tdd_exempt` is **true** AND it carries **no `workflow`** → the config/docs/chore-style fast path (§4.0 → Step 8 only; §5.0 exempts F2/F3). For such a tag:
+Check the `tag_profile` from the Layer 1 task-context fetch (the injected `[Conductor Registry]` block carries the same profile + exemption sets as the deterministic floor). If `tag_profile.tdd_exempt` is **true** AND `tag_profile.workflow` is **absent** → the config/docs/chore-style fast path (§4.0 → Step 8 only; §5.0 exempts F2/F3). For such a tag:
 
 - **Skip Layer 2** — no AC/TC annotations, so spec.md AC extraction doesn't apply.  (If the task description or Layer 0 notes name an out-of-scope boundary, honor it directly.)
 - **In Layer 3, skip `testing/strategy.md` and the styleguide** — read only `task-workflow.md` Step 8 (commit-message format).
 
 Then go **straight to §4.0 Step 8**. For any other tag → continue to Layer 2.
 
-**A tag that carries a `workflow` is NOT this fast path** (e.g. a project-overlay migration tag). Such a task loads Layers 1-3 normally (reads spec.md ACs, the styleguide, and `task-workflow.md`) — it needs AC context for the checkpoint's `ac-tracer` trace and it commits real code. It diverges only at §4.0, where it follows the injected `workflow` instead of full TDD. Continue to Layer 2 when the profile carries a `workflow`.
+**A tag whose `workflow` is `present` is NOT this fast path** (e.g. a project-overlay migration tag). Such a task loads Layers 1-3 normally (reads spec.md ACs, the styleguide, and `task-workflow.md`) — it needs AC context for the checkpoint's `ac-tracer` trace and it commits real code. It diverges only at §4.0, where it fetches `track-state registry-doc --tag <Tag>` and follows that `workflow` prose instead of full TDD. Continue to Layer 2 when `tag_profile.workflow` is `present`.
 
 ### Layer 2: Acceptance Criteria (READ BEFORE Step 3)
 
-Read `{TRACK_DIR}/spec.md`. Using AC IDs from Layer 1:
-- Extract ONLY the relevant ACs and TCs from `Acceptance Criteria` and `Test Scenarios` sections.
-- If no AC annotation → read full AC + TC sections as fallback.
+The AC text + TC rows are already in the Layer 1 task-context JSON (`acs` and `tcs`). Use them directly as your acceptance contract — no second spec.md extraction pass needed.
+- If `acs` is empty (no AC annotation) → Read `{TRACK_DIR}/spec.md` and use the full `Acceptance Criteria` + `Test Scenarios` sections as fallback.
 
 **Extract Out-of-Scope:**
-- Read the `Out of Scope` section if present in spec.md.
+- Read the `Out of Scope` section if present in spec.md (a spec.md prose section — not part of the task-context join, so read it yourself).
 - If Layer 0 Exploration Notes contain "Out-of-Scope Notes", integrate those boundaries too.
 
 **Boundary Enforcement:**

@@ -107,7 +107,7 @@ _SANCTIONED_TS_SUBCOMMANDS = {
     "skip-analyst-verdict", "skip-refute-review", "spec-anchors", "spec-delta",
     "spec-integrity", "subagent-log", "log-path",
     "brief-init", "brief-finalize", "brief-grill-done", "brief-resume",
-    "split", "start", "step", "sync-handoff", "sync-plan", "validate", "wave-abort",
+    "split", "start", "step", "sync-handoff", "sync-plan", "task-context", "validate", "wave-abort",
     "wave-finalize", "wave-status", "wave-step", "write-result",
 }
 
