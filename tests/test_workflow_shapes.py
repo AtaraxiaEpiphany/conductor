@@ -1,12 +1,12 @@
 """Wiring tests for the workflow-shape registry (the third axis).
 
-The workflow-shape axis graduated to a data-driven registry
+The workflow-shape axis is a data-driven registry
 (``workflow-shapes.json`` + ``workflow_shapes.py``, baseline ⊕ project overlay)
-— mirroring the task-type and verify-mode registries. Adding a shape is now one
-JSON row with zero Python edits: ``SHAPES_VOCAB``/``nodes_for``/
-``verify_policy_for``/``resolve_shape`` all derive from it, dispatch surfaces a
-``shape_violation`` for an off-topology action, and ``registry-doc`` renders it.
-These tests pin that contract:
+— mirroring the task-type registry. Adding a shape is now one JSON row with zero
+Python edits: ``SHAPES_VOCAB``/``nodes_for``/``verify_policy_for``/
+``resolve_shape`` all derive from it, dispatch surfaces a ``shape_violation``
+for an off-topology action, and ``registry-doc`` renders it. These tests pin
+that contract:
 
 - the registry data file exists and carries every shape's topology;
 - ``SHAPES_VOCAB``/``nodes_for``/``verify_policy_for``/``instruction_for`` flow;
@@ -15,7 +15,7 @@ These tests pin that contract:
 - ``resolve_shape`` fails open to ``default`` on unknown/absent;
 - the dispatch constraint surfaces a ``shape_violation`` off-topology.
 
-Mirrors ``test_verify_mode_profiles.py`` (overlay discipline + drift guard).
+Mirrors ``test_task_type_field.py`` (overlay discipline + drift guard).
 """
 import json
 import os
@@ -70,8 +70,8 @@ class RegistryShapeTests(TestCase):
         self.assertEqual(ws.verify_policy_for("research-first"), "none")
 
     def test_instruction_for_returns_registry_prose(self):
-        # instruction_for is the mirror of task-type workflow_for / verify-mode
-        # protocol_for: shape-level prose. ADVISORY TODAY — it is rendered by
+        # instruction_for is the mirror of task-type workflow_for: shape-level
+        # prose. ADVISORY TODAY — it is rendered by
         # registry-doc --shape for reference but NOT injected into the orchestrator
         # prompt, and dispatch does not reorder to honor it. Pin the honest
         # literals: the intent (explorer before planner) + the advisory caveat.
@@ -125,84 +125,6 @@ class VerifiersForTests(TestCase):
                           f"shape [{shape}] must declare its `verifiers`")
 
 
-class VerifiersForVerifyModesTests(TestCase):
-    """``verifiers_for(shape, verify_modes)`` — the per-phase dynamic seam.
-
-    A build-gated phase (directive contains ``none`` or ``compile``) wants the
-    BUILD verdict, not the suite verdict: ``test-runner`` is substituted for
-    ``compile-runner`` in place (when the shape fans out test-runner and doesn't
-    already fan out compile-runner). This is what routes a migration/deps phase
-    to compile-runner so the ``none`` mode's build floor has a verdict to read —
-    without persisting any state (the substitution is recomputed from the
-    re-parsed directive each call).
-    """
-
-    def test_no_verify_modes_is_unchanged(self):
-        # The opt-in kwarg defaults to None → byte-identical to the pre-B3 call.
-        self.assertEqual(ws.verifiers_for("default", None),
-                         ("ac-tracer", "test-runner"))
-        self.assertEqual(ws.verifiers_for("default", []),
-                         ("ac-tracer", "test-runner"))
-
-    def test_build_gated_mode_substitutes_compile_runner(self):
-        # none / compile → swap test-runner for compile-runner (build verdict).
-        self.assertEqual(ws.verifiers_for("default", ["none"]),
-                         ("ac-tracer", "compile-runner"))
-        self.assertEqual(ws.verifiers_for("default", ["compile"]),
-                         ("ac-tracer", "compile-runner"))
-
-    def test_suite_gated_mode_is_unchanged(self):
-        # test / adversarial / anchor / start alone → suite gate, no swap.
-        self.assertEqual(ws.verifiers_for("default", ["test"]),
-                         ("ac-tracer", "test-runner"))
-        self.assertEqual(ws.verifiers_for("default", ["anchor"]),
-                         ("ac-tracer", "test-runner"))
-
-    def test_compose_none_with_start_swaps(self):
-        # none,start → still build-gated (none present), start composes after.
-        r = ws.verifiers_for("default", ["none", "start"])
-        self.assertIn("compile-runner", r)
-        self.assertNotIn("test-runner", r)
-
-    def test_shape_already_declaring_compile_runner_left_alone(self):
-        # A custom shape that already fans out compile-runner is not duplicated.
-        proj = tempfile.mkdtemp()
-        self.addCleanup(lambda: __import__("shutil").rmtree(proj, ignore_errors=True))
-        Path(proj, "conductor", "workflow").mkdir(parents=True)
-        Path(proj, "conductor", "workflow", "workflow-shapes.json").write_text(
-            json.dumps({"shapes": {"build-only": {
-                "nodes": ["task-executor", "phase-checker"],
-                "verifiers": ["ac-tracer", "compile-runner"]}}}), encoding="utf-8")
-        os.environ["CLAUDE_PROJECT_DIR"] = proj
-        ws._load.cache_clear()
-        try:
-            r = ws.verifiers_for("build-only", ["none"])
-            self.assertEqual(r, ("ac-tracer", "compile-runner"))
-        finally:
-            os.environ.pop("CLAUDE_PROJECT_DIR", None)
-            ws._load.cache_clear()
-
-    def test_lint_only_shape_left_alone(self):
-        # A shape that declares neither test-runner nor compile-runner (e.g. a
-        # lint-only shape) is not mutated by the substitution (fail-open).
-        proj = tempfile.mkdtemp()
-        self.addCleanup(lambda: __import__("shutil").rmtree(proj, ignore_errors=True))
-        Path(proj, "conductor", "workflow").mkdir(parents=True)
-        Path(proj, "conductor", "workflow", "workflow-shapes.json").write_text(
-            json.dumps({"shapes": {"lint-only": {
-                "nodes": ["task-executor", "phase-checker"],
-                "verifiers": ["ac-tracer", "lint-runner"]}}}), encoding="utf-8")
-        os.environ["CLAUDE_PROJECT_DIR"] = proj
-        ws._load.cache_clear()
-        try:
-            # none directive, but test-runner isn't fanned out → no swap.
-            self.assertEqual(ws.verifiers_for("lint-only", ["none"]),
-                             ("ac-tracer", "lint-runner"))
-        finally:
-            os.environ.pop("CLAUDE_PROJECT_DIR", None)
-            ws._load.cache_clear()
-
-
 class ResolveShapeTests(TestCase):
     """resolve_shape is the fail-open chokepoint the dispatch spine reads."""
 
@@ -225,7 +147,7 @@ class OverrideLayerTests(TestCase):
     full pipeline with ZERO plugin edits — plugin baseline ⊕ project overlay,
     project wins conflicts.
 
-    Mirrors test_verify_mode_profiles.py::OverrideLayerTests.
+    Mirrors test_task_type_field.py::OverrideLayerTests.
     """
 
     def setUp(self):
@@ -384,11 +306,10 @@ class DispatchConstraintTests(TestCase):
 
 class SetWorkflowShapeTests(TestCase):
     """``cmd_set_workflow_shape`` mutates the topology declaration on an existing
-    track. Unlike ``task_type`` (re-derived from the name) and verify-mode
-    (re-parsed from the heading), ``workflow_shape`` is a declaration with no
-    upstream source — so it MUST be mutable, and via a validating command (not a
-    free JSON edit). Mirrors ``cmd_set_mode``: validate-then-mutate, emit
-    ``previous`` so the change is visible.
+    track. Unlike ``task_type`` (re-derived from the name), ``workflow_shape`` is
+    a declaration with no upstream source — so it MUST be mutable, and via a
+    validating command (not a free JSON edit). Mirrors the validate-then-mutate
+    pattern: validate-then-mutate, emit ``previous`` so the change is visible.
     """
 
     def _mk_track(self, shape="default"):

@@ -1,15 +1,14 @@
 """Tests for ``check-contract-registry-sync`` — the contract drift gate.
 
-The plan-format contract must carry NO hand-maintained tag/mode enumeration
-table: the vocabulary lives in the resolved registries (``task-type-profiles`` /
-``verify-mode-profiles`` — baseline ⊕ overlay) and is rendered by
-``track-state registry-doc``. A table in the contract is a third home for the
-vocab and the first to drift (a project overlay adds a tag/mode and the contract
-silently contradicts it). These tests pin the gate the way ``test_index_maps``
-pins ``check-index-maps``: end-to-end via subprocess, with a file-swap sandbox
-that restores the real contract after each drift case (``get_plugin_root`` is
-``__file__``-based, so the script always reads the real contract — the sandbox
-swaps its *content*, not its path).
+The plan-format contract must carry NO hand-maintained tag enumeration table:
+the vocabulary lives in the resolved registry (``task-type-profiles`` — baseline
+⊕ overlay) and is rendered by ``track-state registry-doc``. A table in the
+contract is a second home for the vocab and the first to drift (a project overlay
+adds a tag and the contract silently contradicts it). These tests pin the gate
+the way ``test_index_maps`` pins ``check-index-maps``: end-to-end via subprocess,
+with a file-swap sandbox that restores the real contract after each drift case
+(``get_plugin_root`` is ``__file__``-based, so the script always reads the real
+contract — the sandbox swaps its *content*, not its path).
 """
 import os
 import subprocess
@@ -66,7 +65,7 @@ class TagTableDriftTests(TestCase):
             m.append(
                 "\n| Tag | Meaning |\n|---|---|\n"
                 "| `[Explore]` | investigation |\n"
-                "| `[Migrate]` | migration |\n"
+                "| `[Refactor]` | extract |\n"
             )
             r = _run()
         # sys.exit(msg) writes the HALT message to stderr. The finding message
@@ -74,48 +73,15 @@ class TagTableDriftTests(TestCase):
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
         self.assertIn("enumerated as a table row", r.stderr)
         self.assertIn("[Explore]", r.stderr)
-        self.assertIn("[Migrate]", r.stderr)
-
-
-class ModeTableDriftTests(TestCase):
-    def test_mode_table_is_caught(self):
-        with _ContractSandbox() as m:
-            m.append(
-                "\n| Mode | Gate |\n|---|---|\n"
-                "| `compile` | build |\n"
-                "| anchor | frozen |\n"
-            )
-            r = _run()
-        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
-        self.assertIn("enumerated as a table row", r.stderr)
-        self.assertIn("compile", r.stderr)
-        self.assertIn("anchor", r.stderr)
-
-
-class VerifierTableDriftTests(TestCase):
-    def test_verifier_table_is_caught(self):
-        # A hand-maintained verifier enumeration table — every row whose first
-        # cell is a known verifier literal trips the gate (the fourth-axis
-        # drift the lint now polices).
-        with _ContractSandbox() as m:
-            m.append(
-                "\n| Verifier | Field set |\n|---|---|\n"
-                "| `ac-tracer` | TRACK_DIR, TRACK_ID |\n"
-                "| test-runner | + PHASE_INDEX |\n"
-            )
-            r = _run()
-        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
-        self.assertIn("enumerated as a table row", r.stderr)
-        self.assertIn("ac-tracer", r.stderr)
-        self.assertIn("test-runner", r.stderr)
+        self.assertIn("[Refactor]", r.stderr)
 
 
 class ProseExemptionTests(TestCase):
-    """Grammar/invariant text that MENTIONS a tag/mode is NOT a table → keep it.
+    """Grammar/invariant text that MENTIONS a tag is NOT a table → keep it.
 
-    The contract legitimately carries a Rule keyed on `[Manual]`, grammar
-    examples (`- [ ] [Migrate] …`), and directive examples (`<!-- verify: compile -->`).
-    Those are prose/grammar, not a vocab enumeration — the gate must not trip.
+    The contract legitimately carries a Rule keyed on `[Manual]` and grammar
+    examples (`- [ ] [Refactor] …`). Those are prose/grammar, not a vocab
+    enumeration — the gate must not trip.
     """
 
     def test_prose_tag_mention_is_not_caught(self):
@@ -123,17 +89,7 @@ class ProseExemptionTests(TestCase):
             m.append(
                 "\nTag the manual-verification task with `[Manual]` so the "
                 "orchestrator auto-defers it. A grammar example: "
-                "`- [ ] [Migrate] bump spring-boot`.\n"
-            )
-            r = _run()
-        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-
-    def test_directive_example_is_not_caught(self):
-        with _ContractSandbox() as m:
-            m.append(
-                "\nExample phase headings (NOT a table):\n"
-                "```\n## Phase 1: migrate deps <!-- verify: compile -->\n"
-                "## Phase N: boot <!-- verify: test,start -->\n```\n"
+                "`- [ ] [Refactor] extract the module`.\n"
             )
             r = _run()
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)

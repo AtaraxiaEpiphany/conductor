@@ -42,7 +42,7 @@ def _verify_tdd_gate(track_dir, sha, result_data):
         return "PASS"
     return ("NO_TESTS_FOUND — add a test file matching test*/, tests*/, "
             "spec*/, or *_test.*/*_spec.*/*.test.*/*.spec.* naming to the "
-            "commit (Step 3 Red), or tag the task [Explore]/[Migrate] if TDD-exempt.")
+            "commit (Step 3 Red), or tag the task [Explore] if TDD-exempt.")
 
 
 def _declared_tcs_for_task(track_dir, phase, task):
@@ -163,8 +163,8 @@ def _evaluate_gates(tags, result_data, sha, track_dir=None):
     strings, never fails the task. The real teeth stay at the commit-time F2
     ``ask`` gate (pre-command-check) and the F3 server-side coverage probe
     (on-batch-complete); this surfaces the signal in the finalize envelope so the
-    orchestrator/plan can see it. ``[Docs]``/``[Config]``/``[Chore]``/``[Manual]``/``[Migrate]``
-    tasks are exempt from coverage; ``[Explore]``/``[Migrate]`` are additionally TDD-exempt.
+    orchestrator/plan can see it. ``[Docs]``/``[Config]``/``[Chore]``/``[Manual]``
+    tasks are exempt from coverage; ``[Explore]`` is additionally TDD-exempt.
     """
     cov_pct = result_data.get("coverage_pct")
     coverage_gate = "PASS"
@@ -176,7 +176,7 @@ def _evaluate_gates(tags, result_data, sha, track_dir=None):
             coverage_gate = (
                 f"FAILED ({cov_pct}% < 80%) — add tests for uncovered lines "
                 f"to reach ≥80%, or tag the task [Docs]/[Config]/[Chore]/"
-                f"[Manual]/[Migrate] if it is coverage-exempt."
+                f"[Manual] if it is coverage-exempt."
             )
     tdd_gate = "PASS"
     if not _tag_exempt_from_tdd(tags):

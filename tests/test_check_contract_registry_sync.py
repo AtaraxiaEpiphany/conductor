@@ -4,14 +4,12 @@ and code for hand-maintained registry-vocab enumerations.
 Load-bearing invariants under test:
 
 - **Catches the confirmed drift bugs**: the F2/F3 exemption lists in
-  ``core-contract.md`` (omit ``[Migrate]``), the tag enumeration in
-  ``spec-reviewer.md`` (lists the tdd_exempt set), and the full mode enumeration
-  (``MODE_VOCAB: compile / test / …``).
+  ``core-contract.md``, the tag enumeration in ``spec-reviewer.md`` (lists the
+  tdd_exempt set).
 - **Does NOT fire on legitimate examples**: a grammar example
-  (``- [ ] [Migrate] bump spring-boot``), a directive example
-  (``emit verify: compile on … and verify: test,start on …``), or scattered
-  ``e.g.`` tag mentions (the anti-drift instruction in spec-planner.md:143) do
-  NOT form a tight list-run, and are exempt.
+  (``- [ ] [Refactor] extract the module``) or scattered ``e.g.`` tag mentions
+  (the anti-drift instruction in spec-planner.md) do NOT form a tight list-run,
+  and are exempt.
 - **Table-row detector still works**: a markdown table whose first cell is a
   vocab literal is flagged (the original detector).
 - **Code-literal assertion**: the Tier-1 code sites must reference their registry
@@ -43,8 +41,8 @@ class ProseClosedSetDetector(TestCase):
     """
 
     def test_bracketed_tag_run_flagged(self):
-        # The spec-reviewer.md:84 shape — a slash-separated run of 6 tag literals.
-        line = ("Tags (`[Explore]`/`[Docs]`/`[Config]`/`[Chore]`/`[Manual]`/`[Migrate]`) "
+        # The spec-reviewer.md:84 shape — a slash-separated run of tag literals.
+        line = ("Tags (`[Explore]`/`[Docs]`/`[Config]`/`[Chore]`/`[Manual]`/`[Refactor]`) "
                 "are TDD exemptions")
         literals = ccrs._vocab_literals()
         bracketed, _bare = ccrs._max_per_run(line, literals)
@@ -58,39 +56,19 @@ class ProseClosedSetDetector(TestCase):
         self.assertGreaterEqual(bracketed, 3)
         self.assertTrue(ccrs._is_closed_set_line(line))
 
-    def test_bare_mode_run_with_marker_flagged(self):
-        # The spec-reviewer.md:104 shape — "closed mode vocabulary … MODE_VOCAB:
-        # compile / test / start / …". Bare modes need BOTH ≥3 AND a marker.
-        line = ("the closed mode vocabulary is MODE_VOCAB: compile / test / start / "
-                "adversarial / anchor / none")
-        literals = ccrs._vocab_literals()
-        _bracketed, bare = ccrs._max_per_run(line, literals)
-        self.assertGreaterEqual(bare, 3)
-        self.assertTrue(ccrs._is_closed_set_line(line))
-
     def test_scattered_e_tags_not_flagged(self):
-        # The spec-planner.md:143 shape — 3 tag literals each in its OWN `e.g.`
+        # The spec-planner.md shape — 3 tag literals each in its OWN `e.g.`
         # clause, separated by `;` and prose. They do NOT form one tight run.
-        line = ("[Config] for a no-logic edit; [Migrate] for a version bump; "
+        line = ("[Config] for a no-logic edit; [Chore] for a dep bump; "
                 "[Refactor] is opt-in only")
         literals = ccrs._vocab_literals()
         bracketed, _bare = ccrs._max_per_run(line, literals)
         self.assertLess(bracketed, 3,
                         "scattered e.g. tags must not look like one list-run")
 
-    def test_scattered_directive_examples_not_flagged(self):
-        # Legitimate: directive examples in separate quoted clauses — no run.
-        line = ("emit `verify: compile` on an intermediate phase and "
-                "`verify: test,start` on the final phase, or `verify: none` for debt")
-        literals = ccrs._vocab_literals()
-        _bracketed, bare = ccrs._max_per_run(line, literals)
-        # `test,start` is a 2-mode run — under the ≥3 threshold, and no marker.
-        self.assertLess(bare, 3,
-                        "scattered directive examples must not look like a list-run")
-
     def test_single_grammar_example_not_flagged(self):
         # A task-line template carries exactly one tag literal — never a closed set.
-        line = "- [ ] [Migrate] bump the spring-boot parent <!-- AC-1 -->"
+        line = "- [ ] [Refactor] extract the module <!-- AC-1 -->"
         literals = ccrs._vocab_literals()
         bracketed, bare = ccrs._max_per_run(line, literals)
         self.assertLess(bracketed, 3)
@@ -113,68 +91,6 @@ def _scan_text(text):
         path.unlink()
 
 
-class BehavioralLadderDetector(TestCase):
-    """≥2 'On `<mode>` …' rungs restating per-mode behavior = drift.
-
-    Each mode's behavior lives in its registry ``protocol``; a prose ladder
-    restating it is the first thing to drift. This is the phase-checker §3 /
-    contract "Resolution" shape the flag migration collapsed.
-    """
-
-    def test_two_rungs_detected(self):
-        line = "On `compile` run BUILD; On `anchor` run the freeze check."
-        rungs = ccrs._behavioral_ladder_modes(line, ccrs._vocab_literals())
-        self.assertGreaterEqual(len(rungs), 2)
-        self.assertIn("compile", rungs)
-        self.assertIn("anchor", rungs)
-
-    def test_single_rung_not_a_ladder(self):
-        line = "On `compile` the build runs."
-        rungs = ccrs._behavioral_ladder_modes(line, ccrs._vocab_literals())
-        self.assertLess(len(rungs), 2)
-
-    def test_scan_flags_a_ladder(self):
-        findings = _scan_text(
-            "Run each: On `compile` do X; On `test` do Y; On `none` do Z.\n")
-        self.assertTrue(any("behavioral ladder" in m for _, m in findings),
-                        f"expected the ladder flagged; got {findings}")
-
-
-class TightModeEnumDetector(TestCase):
-    """≥3 modes joined tightly by ,// + a debt/gate marker = a restated mode set.
-
-    The registry flags (``closes_debt`` / ``carries_debt`` / ``build_gated``)
-    replace these restated sets, so naming the concept alongside a tight 3+ mode
-    run is the same drift shape as a closed-set marker.
-    """
-
-    def test_explicit_gates_compile_test_anchor_flagged(self):
-        # The pre-migration spec-reviewer shape — "explicit gates
-        # (compile/test/anchor)" restates the closes_debt set. Tight enum +
-        # "explicit gate" marker trips. (Supersedes the old assertion that this
-        # subset line was benign — the migration's whole point is that it isn't.)
-        findings = _scan_text(
-            "a none phase sitting among phases with explicit gates (compile/test/anchor)\n")
-        self.assertTrue(findings,
-                        f"expected the restated closes_debt set flagged; got {findings}")
-
-    def test_debt_closure_compile_test_start_flagged(self):
-        # "no later compile/test/start phase to close the debt" — tight enum +
-        # "close the debt" marker. The other pre-migration spec-reviewer shape.
-        findings = _scan_text(
-            "a none phase with no later compile/test/start phase to close the debt\n")
-        self.assertTrue(findings,
-                        f"expected the debt-closure set flagged; got {findings}")
-
-    def test_directive_examples_without_marker_not_flagged(self):
-        # Legitimate directive examples — modes in separate quoted clauses, no
-        # completeness/debt marker — must NOT trip.
-        findings = _scan_text(
-            "emit `verify: compile` on phase 1 and `verify: test,start` on phase 2\n")
-        self.assertFalse(findings,
-                         f"scattered directive examples must not trip: {findings}")
-
-
 class TableRowDetector(TestCase):
     """The original detector: a markdown table row keyed on a vocab literal."""
 
@@ -184,7 +100,7 @@ class TableRowDetector(TestCase):
         self.assertIn(cell, ccrs._vocab_literals())
 
     def test_non_table_line_returns_none(self):
-        self.assertIsNone(ccrs._first_cell("- [ ] [Migrate] bump spring-boot"))
+        self.assertIsNone(ccrs._first_cell("- [ ] [Refactor] extract the module"))
         self.assertIsNone(ccrs._first_cell("## Phase 1: Foo"))
 
     def test_separator_row_skipped(self):
@@ -210,7 +126,7 @@ class EndToEnd(TestCase):
                 Exempted task types ONLY: `[Docs]`, `[Config]`, `[Chore]`, `[Explore]`, `[Manual]`.
 
                 ## Phase 1: build the login form
-                - [ ] [Migrate] bump spring-boot <!-- AC-1 -->
+                - [ ] [Refactor] extract the module <!-- AC-1 -->
                 """))
             path = Path(f.name)
         try:
@@ -219,7 +135,7 @@ class EndToEnd(TestCase):
             self.assertTrue(any("Exempted" in msg or "closed-set" in msg
                                 for _, msg in findings),
                             f"expected the exemption line flagged; got {findings}")
-            self.assertFalse(any("[Migrate] bump spring-boot" in msg
+            self.assertFalse(any("[Refactor] extract the module" in msg
                                  for _, msg in findings),
                              "the single-tag task line must not be flagged")
         finally:

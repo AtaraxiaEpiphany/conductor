@@ -7,8 +7,8 @@ Conductor coordinates software construction by managing the full lifecycle of de
 ## Features
 
 - **Track-based project management** — Work is organized into tracks (feature / bugfix / chore / docs), each with spec, plan, state, and handoff files
-- **TDD enforcement** — Mandatory test-driven development with an 80 % coverage gate (server-side verification, not agent self-report), paired with a frozen-anchor counter-metric that an executing agent cannot game
-- **Registry-driven workflow** — The tag/mode/shape vocabulary that drives routing, gating, and topology is *data*, resolved as **plugin baseline ⊕ project overlay** (one JSON row to add a task type, a verify mode, or a workflow shape — zero plugin edits)
+- **TDD enforcement** — Mandatory test-driven development with an 80 % coverage gate (server-side verification, not agent self-report)
+- **Registry-driven workflow** — The tag/shape vocabulary that drives routing, gating, and topology is *data*, resolved as **plugin baseline ⊕ project overlay** (one JSON row to add a task type or a workflow shape — zero plugin edits)
 - **Subagent orchestration** — A main orchestrator dispatches 23 specialized AI agents for isolated, focused work
 - **State machine CLI** — `track-state` manages all state mutations atomically; `plan.md` stays in sync as the human-readable mirror
 - **Execution firewall** — Six mandatory pre-action checks (F1–F6) and eleven anti-patterns (V1–V11) prevent workflow violations
@@ -55,14 +55,13 @@ The `bin/track-state` command provides direct state management. Run `bin/track-s
 | Group | Representative subcommands |
 |-------|----------------------------|
 | **Lifecycle / setup** | `init-from-plan`, `start`, `set-mode`, `set-workflow-shape`, `finalize`, `archive`, `derive-name`, `resolve-track`, `check` (resolve + preflight), `preflight` |
-| **Task mutations** | `lock`, `complete`, `fail`, `skip`, `block`, `defer`, `reset`, `split`, `set-max-retries`, `set-contract` |
+| **Task mutations** | `lock`, `complete`, `fail`, `skip`, `block`, `defer`, `reset`, `split`, `set-max-retries` |
 | **Dispatch (Rail A)** | `next`, `dispatch-next`, `dispatch-prepare`, `dispatch-finalize`, `process-result`, `write-result` |
 | **Rail B-min spines** | `step`, `wave-step`, `post-loop-step`, `recover` |
 | **Wave parallelism** | `dispatch-wave`, `wave-status`, `wave-finalize`, `wave-abort` |
 | **Phase verification** | `phase-done`, `phase-verdict`, `phase-checkpoint-review`, `failure-analyst-verdict`, `skip-analyst-verdict`, `skip-refute-review` |
 | **Plan / spec sync** | `sync-plan`, `reconcile-plan`, `sync-handoff`, `add-checkpoint`, `compile-track-findings`, `harvest-candidates` |
-| **Frozen anchor** | `freeze`, `thaw`, `anchor-status` (run `--verify` for the counter-metric) |
-| **Registries (read-only)** | `registry-doc` (resolved task-type / verify-mode / workflow-shape tables) |
+| **Registries (read-only)** | `registry-doc` (resolved task-type / workflow-shape tables) |
 | **Observability (read-only)** | `indices`, `shas`, `log-path`, `subagent-log`, `quality-snapshot`, `spec-integrity`, `spec-anchors`, `spec-delta`, `deferred-report`, `post-loop-status` |
 | **Maintenance** | `validate` (`--fix` to persist repairs), `gc` |
 | **Resume markers** | `new-track-*`, `brief-*` (idempotent resume state for the skills) |
@@ -71,20 +70,19 @@ The `bin/track-state` command provides direct state management. Run `bin/track-s
 
 ## Registry-driven workflow
 
-The conductor's routing vocabulary is **data, not code.** Three registries, each an ordered JSON document, drive what was previously hardcoded Python sets and agent-prose `if/elif` ladders. Each resolves as **plugin baseline ⊕ project overlay** — a project drops any subset of the three JSON files at `conductor/workflow/` to add or override entries with **zero plugin edits** (opt-in by file presence; the project wins conflicts).
+The conductor's routing vocabulary is **data, not code.** Two registries, each an ordered JSON document, drive what was previously hardcoded Python sets and agent-prose `if/elif` ladders. Each resolves as **plugin baseline ⊕ project overlay** — a project drops any subset of the two JSON files at `conductor/workflow/` to add or override entries with **zero plugin edits** (opt-in by file presence; the project wins conflicts).
 
 | Axis | What it declares | Source of the *name* | Mutable? |
 |------|------------------|----------------------|----------|
 | **Task-type** (`task-type-profiles.json`) | What a tag *means* — route, TDD/coverage exemption, when-to-use hint, optional executor `workflow`, optional `refactor: true` (tactical-refactor opt-in) | Re-derived from the task name's leading tag | No (re-parsed at every read; `task_type` is a typed cache) |
-| **Phase-verify mode** (`verify-mode-profiles.json`) | What a gate *means* — which steps run, fix policy, the `protocol` prose `phase-checker` emits | Re-parsed from the phase heading's `<!-- verify: … -->` | No (advisory metadata, never persisted to state) |
 | **Workflow shape** (`workflow-shapes.json`) | The **topology** — which dispatch agents run, in what order, its stop condition | The `workflow_shape` field on `track-state.json` | **Yes** — the one declaration/knob axis (`set-workflow-shape`). Advisory today: declares intended topology and surfaces `shape_violation` drift, but does not reorder dispatch (both built-in shapes plan-first) |
 
-**Adding a task type / verify mode / workflow shape is one row in the registry.** Tag extraction, TDD-gating, dispatch routing, the `[Conductor Registry]` block injected into agents, and the `registry-doc` render all derive from it automatically.
+**Adding a task type or workflow shape is one row in the registry.** Tag extraction, TDD-gating, dispatch routing, the `[Conductor Registry]` block injected into agents, and the `registry-doc` render all derive from it automatically.
 
-- **Inspect the resolved registry** — `track-state registry-doc` prints the full resolved tables (baseline + your overlay); `registry-doc --tag <Name>` / `--mode <m>` / `--shape <s>` prints one row plus its prompt-shaping prose verbatim.
-- **Project overlay** — drop `conductor/workflow/task-type-profiles.json` (or the verify-mode / workflow-shape equivalent) next to the files `setup` scaffolds there. Absent = plugin defaults, no behavior change.
-- **Unknown values** — an unknown task tag is a **hard error** at `init-from-plan` (a wrong tag means wrong executor behavior); an unknown verify mode only **warns** ("no directive" is a valid state). `workflow_shape` reads **fail-open** to `default` but `set-workflow-shape` **hard-rejects** an unknown shape so a deliberate set never silently no-ops.
-- **Guardrails** — every optimization-shaped registry field pairs with an independent counter-metric (the frozen anchor's measured pass/drift rate vs. self-reported coverage), every cap is disclosed rather than silently enforced, and the "definition of done" is read-only to the executing agent. A drift-killer lint (`scripts/check-contract-registry-sync.py`) forbids a second hand-maintained vocabulary home in the contract.
+- **Inspect the resolved registry** — `track-state registry-doc` prints the full resolved tables (baseline + your overlay); `registry-doc --tag <Name>` / `--shape <s>` prints one row plus its prompt-shaping prose verbatim.
+- **Project overlay** — drop `conductor/workflow/task-type-profiles.json` (or the workflow-shape equivalent) next to the files `setup` scaffolds there. Absent = plugin defaults, no behavior change.
+- **Unknown values** — an unknown task tag is a **hard error** at `init-from-plan` (a wrong tag means wrong executor behavior). `workflow_shape` reads **fail-open** to `default` but `set-workflow-shape` **hard-rejects** an unknown shape so a deliberate set never silently no-ops.
+- **Guardrails** — every cap is disclosed rather than silently enforced, the "definition of done" is read-only to the executing agent, and a drift-killer lint (`scripts/check-contract-registry-sync.py`) forbids a second hand-maintained vocabulary home in the contract.
 
 The authoritative grammar and invariants live in `runtime/contracts/plan-format-contract.md` (the registries own the *vocabulary*; the contract owns the *rules*).
 
@@ -102,7 +100,7 @@ conductor-plugin/
 ├── agents/                 23 specialised agent definitions (.md)
 ├── bin/track-state         Shell wrapper for the state CLI
 ├── conductor/design/       Decision records (serial-execution, loop-heartbeat, rail-b step/wave …)
-├── hooks/hooks.json        9 hook event types, 21 matcher entries
+├── hooks/hooks.json        9 hook event types, 20 hook entries
 ├── runtime/                System prompt material injected into sessions
 │   ├── core-contract.md      Main-session contract (F1–F6, V1–V11)
 │   ├── subagent-firewall.md  Subagent safety floor (dispatch injection)
@@ -114,7 +112,7 @@ conductor-plugin/
 │   └── *.py                Hook scripts (session start/end, subagent-start, dispatch-dedupe, tripwire …)
 ├── skills/                 16 slash-command skills (implement, new-track, reconcile, re-spec, parallel, wiki …)
 ├── templates/
-│   ├── workflow/             The three registries: task-type / verify-mode / workflow-shape profiles (.json)
+│   ├── workflow/             The two registries: task-type / workflow-shape profiles (.json)
 │   ├── code-styleguides/     10 language style guides
 │   ├── dev-commands/         8 language dev-command templates
 │   └── testing/              Testing strategy template
@@ -131,7 +129,7 @@ conductor-plugin/
 | `spec-reviewer` | haiku | Interactive spec/plan review |
 | `strategy-writer` | sonnet | Project-specific testing/strategy.md from real test layout |
 | `project-analyzer` | sonnet | Brownfield project detection |
-| `phase-checker` | sonnet | Phase checkpoint synthesizer (mode-agnostic verify loop) |
+| `phase-checker` | sonnet | Phase checkpoint synthesizer (verify loop) |
 | `ac-tracer` | sonnet | AC-evidence-trace phase verification (read-only) |
 | `test-runner` | haiku | L1 verify-only phase tier — runs the suite once (read-only) |
 | `code-reviewer` | sonnet | Deep code review against spec/plan |

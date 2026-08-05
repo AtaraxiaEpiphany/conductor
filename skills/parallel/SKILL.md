@@ -198,7 +198,7 @@ If `phase_checkpoint_pending` was emitted by any `wave-finalize`, or after a wav
 track-state phase-done "<track_dir>" <phase>
 ```
 
-`complete=true` → run the phase-checkpoint fan-out+synthesize (`implement` §3.2: fan out `conductor:ac-tracer` + the second verifier named in the wave — `test-runner` on a suite-gated phase or `compile-runner` on a build-gated `compile`/`none` phase — then dispatch `conductor:phase-checker` with their verdicts), `PHASE=<phase>`, then → **§3.1**. FAILED → HALT. `complete=false` → **§3.1**.
+`complete=true` → run the phase-checkpoint fan-out+synthesize (`implement` §3.2: fan out `conductor:ac-tracer` + `conductor:test-runner`, then dispatch `conductor:phase-checker` with their verdicts), `PHASE=<phase>`, then → **§3.1**. FAILED → HALT. `complete=false` → **§3.1**.
 
 ---
 

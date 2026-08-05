@@ -4,10 +4,8 @@ generalization).
 Tactical refactor was opt-in by name-marker only — the ``[Refactor]`` inline
 marker or ``CONDUCTOR_TASK_REFACTOR=1`` env. The ``refactor`` field promotes it
 to a declarative task-type property: a row sets ``refactor: true`` and a whole
-class of tasks opts into the §3.6c tactical-refactor seam with zero plugin edits
-— mirroring exactly how the ``[Migrate]`` ``workflow`` field generalizes
-bespoke executor prose. The ``[Refactor]`` name marker and env remain as escape
-hatches.
+class of tasks opts into the §3.6c tactical-refactor seam with zero plugin edits.
+The ``[Refactor]`` name marker and env remain as escape hatches.
 
 These tests pin:
 - ``refactor_for`` resolves the field, inheriting the default (False);
@@ -35,10 +33,6 @@ class RefactorForAccessorTests(TestCase):
 
     def test_refactor_tag_is_true(self):
         self.assertTrue(tp.refactor_for("Refactor"))
-
-    def test_migrate_is_false(self):
-        # [Migrate] has a workflow but NOT refactor — disjoint concerns.
-        self.assertFalse(tp.refactor_for("Migrate"))
 
     def test_exempt_tags_inherit_default_false(self):
         # The TDD/coverage-exempt tags do NOT get a refactor pass — refactor
@@ -140,8 +134,8 @@ class RefactorOverlayTests(TestCase):
         )
         tp._load.cache_clear()
 
-        self.assertEqual(tp.route_for(["Migrate"]), "executor")  # built-in untouched
-        self.assertFalse(tp.refactor_for("Migrate"))
+        self.assertEqual(tp.route_for(["Chore"]), "executor")  # built-in untouched
+        self.assertFalse(tp.refactor_for("Chore"))
 
 
 if __name__ == "__main__":

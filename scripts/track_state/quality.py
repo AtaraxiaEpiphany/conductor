@@ -13,7 +13,7 @@ from .helpers import out, now_iso, conductor_dir, _reset_task, _resolve_conducto
 from .constants import EXECUTION_MODES
 from .handoff import _ensure_handoff_index
 from .validate import _parse_plan_structure
-from .plan_parse import parse_plan, to_plan_structure, inject_missing_directives
+from .plan_parse import parse_plan, to_plan_structure
 from .task_profiles import derive_task_type
 
 
@@ -332,39 +332,6 @@ def cmd_init_from_plan(track_dir, track_id, track_type, description,
         out(result)
         return
 
-    # --check is a pure read: it reports the directives as-authored on disk and
-    # never mutates plan.md. Directive injection happens only on the init path
-    # below, so an operator running ``init-from-plan --check`` sees exactly what
-    # the planner wrote (and what the resolver *would* inject, surfaced as
-    # ``would_inject``), not a half-mutated file.
-    injected = []
-    if not check:
-        # The spec-planner agent has no Bash, so it writes phase goals and MAY
-        # omit directives; this resolves them deterministically (explicit >
-        # goal-derived > tag-derived > full gate) and rewrites plan.md. A phase
-        # the planner already authored a directive for is left untouched.
-        # Re-parse so the structure written into track-state.json reflects the
-        # resolved directives (verifiers_for / phase-checker read these at dispatch).
-        injected = inject_missing_directives(plan_path, parsed)
-        if injected:
-            parsed = parse_plan(plan_path)
-            plan_warnings = list(parsed["warnings"])
-
-    # Advisory drift check on AUTHORED directives, composed by the single
-    # whole-plan conflict helper (``collect_plan_conflicts``) so init and the
-    # ``track-state check-conflicts`` CLI cannot drift. This loop surfaces ONLY
-    # the authored-under-gating warning — the historical init signal — because
-    # directive-less phases are the resolver's call (clean by construction) and
-    # the all-exempt / tag-conflict / none-closure signals reach the operator via
-    # the dedicated CLI (parsed already string-warns none-closure above). Advisory
-    # in both --check and init, never blocks (same posture as the parser's own
-    # verify warnings). Lazy import matches the other vmp sites.
-    from . import verify_mode_profiles as vmp
-    for conflict in vmp.collect_plan_conflicts(parsed):
-        if conflict["kind"] != "harmful_undergating":
-            continue
-        plan_warnings.append(conflict["detail"])
-
     structure = to_plan_structure(parsed)
     phase_count = len(structure["phases"])
     task_count = sum(len(p["tasks"]) for p in structure["phases"])
@@ -384,11 +351,6 @@ def cmd_init_from_plan(track_dir, track_id, track_type, description,
     # pass; the only advisory notes are plan-syntax warnings from parse_plan.
     if plan_warnings and result.get("ok"):
         result["plan_warnings"] = plan_warnings
-    if injected and result.get("ok"):
-        # Surface what the resolver added so the operator can audit/override by
-        # editing plan.md (the directive is advisory — the generator proposes,
-        # init-from-plan disposes, the operator can correct).
-        result["injected_directives"] = injected
     out(result)
 
 
@@ -445,9 +407,9 @@ def cmd_set_mode(track_dir, mode):
 def cmd_set_workflow_shape(track_dir, shape):
     """Set ``workflow_shape`` on an existing track (the topology declaration).
 
-    Unlike ``task_type`` (re-derived from the name) and verify-mode (re-parsed
-    from the phase heading), ``workflow_shape`` is a *declaration* with no
-    upstream source — so it lives in state and is mutable via this command.
+    Unlike ``task_type`` (re-derived from the name), ``workflow_shape`` is a
+    *declaration* with no upstream source — so it lives in state and is mutable
+    via this command.
     Mirrors :func:`cmd_set_mode`: validate against the resolved shape vocab,
     then load/set/save, emitting the previous value so the change is visible
     (no-silent-caps — dispatch reads this field as its node allowlist).

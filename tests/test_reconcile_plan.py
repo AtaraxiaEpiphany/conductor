@@ -224,9 +224,9 @@ class RenameKeepsSha(TestCase):
     def test_rename_to_untagged_rederives_default_task_type(self):
         # Renaming a tagged task to an untagged name yields task_type "default"
         # (the mirror of an untagged name), not a stale leftover tag.
-        task = {"name": "[Migrate] Old", "status": "completed",
+        task = {"name": "[Chore] Old", "status": "completed",
                 "commit_sha": "abc1234", "completed_at": "2026-07-01T00:00:00+00:00",
-                "task_type": "migrate"}
+                "task_type": "chore"}
         state = _make_state(phases=[{"name": "Phase 1", "status": "in_progress",
                                      "tasks": [task]}])
         plan = "# Plan\n\n## Phase 1: Build\n- [x] Plain New [abc1234]\n"
@@ -234,7 +234,7 @@ class RenameKeepsSha(TestCase):
         self.addCleanup(shutil.rmtree, d, ignore_errors=True)
 
         o = _run(cmd_reconcile_plan, d, apply=True,
-                 renames=["1:[Migrate] Old=Plain New"])
+                 renames=["1:[Chore] Old=Plain New"])
         self.assertTrue(o["ok"])
         renamed = load(d)["phases"][0]["tasks"][0]
         self.assertEqual(renamed["name"], "Plain New")

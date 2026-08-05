@@ -16,7 +16,7 @@ Invariants pinned here:
      verdict).
   4. Each agent family's block (task-executor / phase-checker / test-runner /
      ac-tracer) parses to a status-bearing dict; the ``report_field`` mirrors
-     the verify-mode registry (``BUILD``/``L1_VERIFY``/``START``/``ANCHOR``).
+     the agent family (``L1_VERIFY`` for test-runner, ``AC_TRACE`` for ac-tracer).
 """
 import sys
 import unittest
@@ -120,7 +120,7 @@ class ParseResultBlockTests(unittest.TestCase):
 
 class AgentFamilyParityTests(unittest.TestCase):
     """Each agent family's emitted block parses to a status-bearing verdict
-    whose ``report_field`` mirrors the verify-mode registry."""
+    whose ``report_field`` mirrors the agent family."""
 
     def test_task_executor_success(self):
         text = (
@@ -155,7 +155,7 @@ class AgentFamilyParityTests(unittest.TestCase):
             "STATUS: PASSED\n"
             "```json\n"
             '{"status": "PASSED", "checkpoint_sha": "abc1234", '
-            '"report": {"L1_VERIFY": "passed", "BUILD": "skipped"}}\n'
+            '"report": {"L1_VERIFY": "passed", "AC_TRACE": "passed"}}\n'
             "```\n"
             "---END RESULT---"
         )

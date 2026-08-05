@@ -10,7 +10,7 @@ silent-drift defect the user diagnosed:
    bracket (typo ``[Migration]``, invented ``[Springboot3]``) blocks
    ``init-from-plan`` instead of silently defaulting to TDD.
 3. **Registry-driven semantics** — adding a tag is one registry row; the test in
-   test_plan_format_contract_wiring + test_migrate_tag_wiring pin the parity.
+   test_plan_format_contract_wiring pins the parity.
 
 These tests use the canonical track-state harness (``_make_state`` /
 ``_make_track_dir`` / ``_out_captured`` from test_track_state) so init runs
@@ -40,7 +40,7 @@ _PLAN_OK = """# Plan
 
 ## Phase 1: Build
 
-- [ ] [Migrate] Add jakarta package <!-- AC-1, TC-1.1 -->
+- [ ] [Config] Wire the jakarta package <!-- AC-1, TC-1.1 -->
 - [ ] [Chore] Bump deps <!-- AC-2, TC-1.2 -->
 - [ ] Add a plain button <!-- AC-3, TC-1.3 -->
 - [ ] [Manual] verify it boots
@@ -49,7 +49,7 @@ _PLAN_OK = """# Plan
 
 class DeriveTaskTypeTests(TestCase):
     def test_tagged_lowercased(self):
-        self.assertEqual(derive_task_type("[Migrate] Add jakarta"), "migrate")
+        self.assertEqual(derive_task_type("[Config] Wire jakarta"), "config")
         self.assertEqual(derive_task_type("[Chore] Bump deps"), "chore")
         self.assertEqual(derive_task_type("[Docs] Write README"), "docs")
 
@@ -58,12 +58,12 @@ class DeriveTaskTypeTests(TestCase):
 
     def test_first_tag_wins(self):
         # A name carrying two tags derives from the first (extract_tags order).
-        self.assertEqual(derive_task_type("[Chore] [Migrate] bump"), "chore")
+        self.assertEqual(derive_task_type("[Chore] [Config] bump"), "chore")
 
 
 class UnknownTagHelperTests(TestCase):
     def test_typo_detected(self):
-        # [Migration] is the canonical typo for [Migrate].
+        # [Migration] is an unrecognized bracket token (not a registered tag).
         self.assertEqual(_find_unknown_tags("[Migration] Add jakarta"), ["[Migration]"])
 
     def test_invented_alphanumeric_tag_detected(self):
@@ -73,8 +73,8 @@ class UnknownTagHelperTests(TestCase):
         self.assertEqual(_find_unknown_tags("[K8sRollout] deploy"), ["[K8sRollout]"])
 
     def test_known_tags_pass(self):
-        for tag in ("[Migrate]", "[Manual]", "[Chore]", "[Docs]", "[Config]",
-                    "[Explore]", "[Refactor]", "[migrate]"):  # case-insensitive
+        for tag in ("[Manual]", "[Chore]", "[Docs]", "[Config]",
+                    "[Explore]", "[Refactor]", "[chore]"):  # case-insensitive
             self.assertEqual(_find_unknown_tags(f"{tag} do work"), [], f"{tag} should be known")
 
     def test_trailing_markers_not_flagged(self):
@@ -104,7 +104,7 @@ class InitTaskTypeFieldTests(TestCase):
 
     def test_field_present_and_derived(self):
         tasks = self.state["phases"][0]["tasks"]
-        self.assertEqual(tasks[0]["task_type"], "migrate")
+        self.assertEqual(tasks[0]["task_type"], "config")
         self.assertEqual(tasks[1]["task_type"], "chore")
         self.assertEqual(tasks[2]["task_type"], "default")  # untagged
         self.assertEqual(tasks[3]["task_type"], "manual")
@@ -169,13 +169,13 @@ class ResetPreservesTaskTypeTests(TestCase):
                          "task_type is structural; reset must preserve it")
 
         # And behaviorally: a reset task keeps its task_type.
-        task = {"name": "[Migrate] x", "status": "completed",
-                "task_type": "migrate", "commit_sha": "abcdef1",
+        task = {"name": "[Config] x", "status": "completed",
+                "task_type": "config", "commit_sha": "abcdef1",
                 "completed_at": "2026-01-01T00:00:00Z", "retry_count": 2}
         # _reset_task mutates in place and returns None; read the mutated dict.
         target = dict(task)
         _reset_task(target)
-        self.assertEqual(target.get("task_type"), "migrate")
+        self.assertEqual(target.get("task_type"), "config")
         # while progress fields ARE cleared:
         self.assertNotIn("commit_sha", target)
         self.assertNotIn("completed_at", target)
@@ -243,10 +243,10 @@ class OverrideLayerTests(TestCase):
             "route": "executor", "tdd_exempt": True, "coverage_exempt": True}}})
         self.tp._load.cache_clear()
 
-        self.assertIn("Migrate", self.tp.TAG_VOCAB())  # built-in still present
-        self.assertEqual(self.tp.route_for(["Migrate"]), "executor")
-        self.assertTrue(self.tp.is_tdd_exempt(["Migrate"]))
-        self.assertTrue(self.tp.is_coverage_exempt(["Migrate"]))
+        self.assertIn("Docs", self.tp.TAG_VOCAB())  # built-in still present
+        self.assertEqual(self.tp.route_for(["Docs"]), "executor")
+        self.assertTrue(self.tp.is_tdd_exempt(["Docs"]))
+        self.assertTrue(self.tp.is_coverage_exempt(["Docs"]))
 
     def test_project_overlay_overrides_builtin(self):
         # Project re-declares [Manual] with route:executor → project wins the conflict.
@@ -270,7 +270,7 @@ class OverrideLayerTests(TestCase):
 
         # No crash, built-in vocab intact, baseline routing restored.
         self.assertEqual(set(self.tp.TAG_VOCAB()),
-                         {"Explore", "Docs", "Config", "Chore", "Manual", "Migrate", "Refactor"})
+                         {"Explore", "Docs", "Config", "Chore", "Manual", "Refactor"})
         self.assertEqual(self.tp.route_for(["Manual"]), "manual")
 
     def test_malformed_shape_overlay_falls_back_to_baseline(self):
@@ -281,7 +281,7 @@ class OverrideLayerTests(TestCase):
         self.tp._load.cache_clear()
 
         self.assertEqual(set(self.tp.TAG_VOCAB()),
-                         {"Explore", "Docs", "Config", "Chore", "Manual", "Migrate", "Refactor"})
+                         {"Explore", "Docs", "Config", "Chore", "Manual", "Refactor"})
 
     def test_no_override_file_no_change(self):
         # CLAUDE_PROJECT_DIR set to a project tree with NO overlay file → baseline.
@@ -290,7 +290,7 @@ class OverrideLayerTests(TestCase):
         self.tp._load.cache_clear()
 
         self.assertEqual(set(self.tp.TAG_VOCAB()),
-                         {"Explore", "Docs", "Config", "Chore", "Manual", "Migrate", "Refactor"})
+                         {"Explore", "Docs", "Config", "Chore", "Manual", "Refactor"})
 
     def test_unknown_project_tag_blocks_init_then_passes_when_registered(self):
         # End-to-end: a project tag the validator rejects until the overlay registers it.

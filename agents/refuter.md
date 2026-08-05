@@ -56,10 +56,6 @@ Refute on:
     it must implement. The exemption is inappropriate — the task needs TDD and the
     coverage gate (F2/F3). Refute.
   - **Under-tagged**: a task that is genuinely config/docs/migration-shaped but carries **no tag** is *not* a refutation — no-tag is the safe default (full TDD), so an unnecessary Red cycle is the only cost; it does not break a safety net. Leave it; at most note it under `CHALLENGED_CLAIM` as advisory. Do NOT refute on under-tagging alone.
-  - A tag carrying `default_verify` (today `[Migrate]`) on work that has **no
-    existing test suite to serve as the safety net** (greenfield, or a module with
-    no tests) is wrong — the migration workflow (`§4.M`) assumes a suite that
-    starts red. Refute.
   - An **unknown** tag (outside the resolved vocab) routes nowhere — the parser
     ignores it — but this is a deterministic defect §2.3's format check already
     catches, so do NOT re-derive it here.

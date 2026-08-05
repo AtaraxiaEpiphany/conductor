@@ -1,15 +1,14 @@
 """Task-type registry — the single source of truth for task-type semantics.
 
-The tag *name* still lives in plan.md task names (e.g. ``[Migrate] Add X``) and
+The tag *name* still lives in plan.md task names (e.g. ``[Docs] Add X``) and
 is re-extracted at every read via :func:`helpers.extract_tags`. This module holds
 what the tag *means*: which dispatch category it routes to, whether it is exempt
 from the TDD / coverage gates, a one-line ``when_to_use`` hint (injected into
 spec-planner so its tag-decision guidance is data-driven), and — for tags whose
-executor behavior diverges from default TDD — a ``workflow`` field (the
-generalization of ``[Migrate]`` §4.M; injected into task-executor). It replaces
-the hardcoded exemption sets that used to live in ``helpers.py``
-(``_tag_exempt_from_tdd`` / ``_tag_exempt_from_coverage``) and the branch table in
-``dispatch._classify_task``.
+executor behavior diverges from default TDD — a ``workflow`` field (injected into
+task-executor). It replaces the hardcoded exemption sets that used to live in
+``helpers.py`` (``_tag_exempt_from_tdd`` / ``_tag_exempt_from_coverage``) and the
+branch table in ``dispatch._classify_task``.
 
 The registry resolves as **plugin baseline ⊕ project overlay**. The baseline is
 the JSON data file shipped at ``templates/workflow/task-type-profiles.json``. A
@@ -68,11 +67,6 @@ _FALLBACK = {
         "Manual":  {"route": "manual",   "tdd_exempt": True, "coverage_exempt": True,
                     "when_to_use": "Requires a HUMAN — UI walkthrough, cross-browser check, staging deploy.",
                     "signals": ["human", "manual", "walkthrough", "cross-browser", "staging deploy", "accessibility", "by hand", "visual check"]},
-        "Migrate": {"route": "executor", "tdd_exempt": True, "coverage_exempt": True,
-                    "default_verify": ["compile"],
-                    "when_to_use": "Framework/version migration, package rename, or major-dep bump where an EXISTING test suite is the safety net.",
-                    "signals": ["migration", "migrate", "upgrade", "bump", "rename", "javax", "jakarta", "framework version", "major dependency", "spring boot"],
-                    "workflow": "The existing suite's red state is the START, green is the GOAL. No Step 3 (Red); Step 4 (Green) is the whole task; commit fix(migrate): …; no Step 6 coverage gate."},
     },
 }
 
@@ -281,7 +275,7 @@ def is_tdd_exempt(tags: list[str]) -> bool:
 
     A task is exempt if ANY of its tags is tdd_exempt. An empty tag list uses the
     ``default`` profile (not exempt) — matching the pre-registry set
-    ``{Explore,Docs,Config,Chore,Manual,Migrate}`` (``[Refactor]`` is NOT exempt:
+    ``{Explore,Docs,Config,Chore,Manual}`` (``[Refactor]`` is NOT exempt:
     it still owes TDD/coverage, only the tactical-refactor flag is set).
     """
     if not tags:
@@ -294,7 +288,7 @@ def is_coverage_exempt(tags: list[str]) -> bool:
 
     A task is exempt if ANY of its tags is coverage_exempt. An empty tag list
     uses the ``default`` profile (not exempt) — matching the pre-registry set
-    ``{Docs,Config,Chore,Manual,Migrate}`` (Explore is deliberately NOT
+    ``{Docs,Config,Chore,Manual}`` (Explore is deliberately NOT
     coverage-exempt).
     """
     if not tags:
@@ -336,16 +330,15 @@ def derive_task_type(name: str) -> str:
 def workflow_for(tag: str) -> str:
     """The prompt-shaping ``workflow`` prose injected into task-executor for a tag.
 
-    This is the mirror of verify-mode :func:`verify_mode_profiles.protocol_for`:
-    prose that *used* to live inline as a branch in ``agents/task-executor.md``
-    (``[Migrate]`` §4.M) is lifted into the registry so the executor's §4.0 tag
-    branch can be tag-agnostic — it follows the ``workflow`` of its leading tag
-    rather than knowing each tag's behavior. Absent (the common case) = ``""`` =
-    default TDD; the executor runs the full Steps 3-8 cycle.
+    Prose that *used* to live inline as a branch in ``agents/task-executor.md``
+    is lifted into the registry so the executor's §4.0 tag branch can be
+    tag-agnostic — it follows the ``workflow`` of its leading tag rather than
+    knowing each tag's behavior. Absent (the common case) = ``""`` = default TDD;
+    the executor runs the full Steps 3-8 cycle.
 
     A project overlay may add a ``workflow`` for a project-specific tag (e.g.
     ``[K8sRollout]`` with bespoke rollout prose) and it flows to task-executor
-    at dispatch with zero plugin edits — the ``[Migrate]`` generalization.
+    at dispatch with zero plugin edits.
     """
     return _profile(tag).get("workflow", "")
 
@@ -373,38 +366,6 @@ def when_to_use_for(tag: str) -> str:
     "outside the closed set." Absent = ``""`` (no hint injected for that tag).
     """
     return _profile(tag).get("when_to_use", "")
-
-
-def default_verify_for(tag: str) -> list[str]:
-    """The verify-modes a phase of this tag defaults to when no directive is set.
-
-    The tag-driven source of a phase-verify directive's authoring-time default
-    (the goal-driven source is
-    :func:`verify_mode_profiles.derive_verify_modes`). Today only ``[Migrate]``
-    carries one (``["compile"]`` — a migration phase's suite is expected red, so
-    the build is the gate); a project overlay may set ``default_verify`` on a
-    project-specific tag and it flows through
-    :func:`verify_mode_profiles.default_verify_for_phase` to spec-planner with
-    zero plugin edits (the ``[Migrate]`` generalization).
-
-    Returns a **copy** (registry lists are shared module state; callers must not
-    mutate the returned list — see :func:`runs_for` for the same discipline).
-    Entries not in the resolved :func:`verify_mode_profiles.MODE_VOCAB` are
-    **dropped** (treated as absent), not raised on: a typo in a
-    ``default_verify`` row never crashes the loader — mirror of the fail-open
-    posture every registry field already follows. Absent row = ``[]``.
-    """
-    raw = _profile(tag).get("default_verify")
-    if not isinstance(raw, list):
-        return []
-    # Filter to known modes at read time (fail-open: an unknown mode is dropped,
-    # not raised on — the loader stays crash-free over a malformed row). Lazy
-    # import avoids a module-load cycle (verify_mode_profiles imports nothing
-    # from this module, but the lazy form keeps the dependency direction
-    # unambiguous and matches derive_task_type's pattern).
-    from .verify_mode_profiles import MODE_VOCAB
-    known = set(MODE_VOCAB())
-    return [str(m) for m in raw if str(m) in known]
 
 
 def _signals_for(tag: str) -> list[str]:
@@ -469,8 +430,6 @@ def derive_task_tag(description: str) -> str | None:
     - feature work (descriptions carrying a :data:`_FEATURE_MARKERS` term with no
       stronger exemption signal) returns ``None`` even if it incidentally
       matches an exemption tag's signals;
-    - ``[Migrate]`` requires a migration signal (``migration``/``bump``/
-      ``upgrade``/``rename``) — a plain "refactor" returns ``None``;
     - ``[Manual]`` requires a human-action signal;
     - an opt-in modifier tag (``refactor: true``, today ``[Refactor]``) is
       **never** auto-derived — it is skipped entirely (a modifier augments a

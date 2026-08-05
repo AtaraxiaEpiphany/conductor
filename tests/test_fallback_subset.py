@@ -1,13 +1,12 @@
-"""Drift guard for the four ``_FALLBACK`` fail-open floors.
+"""Drift guard for the two ``_FALLBACK`` fail-open floors.
 
-Each loader module (task_profiles, verify_mode_profiles, workflow_shapes,
-verifier_profiles) carries a hand-maintained ``_FALLBACK`` dict — a deliberately
-*trimmed* copy of the baseline JSON used only as the fail-open floor when the
-registry file is missing or unparseable. The drift lint
-(``check-contract-registry-sync.py``) polices the *contract file* for a second
-vocab home, but **not** these four constants — so a JSON edit that forgets the
-fallback diverges silently: a tag/mode/shape/verifier added to the registry has
-no fail-open entry, and a field dropped from a fallback row is invisible.
+Each loader module (task_profiles, workflow_shapes) carries a hand-maintained
+``_FALLBACK`` dict — a deliberately *trimmed* copy of the baseline JSON used only
+as the fail-open floor when the registry file is missing or unparseable. The drift
+lint (``check-contract-registry-sync.py``) polices the *contract file* for a second
+vocab home, but **not** these two constants — so a JSON edit that forgets the
+fallback diverges silently: a tag/shape added to the registry has no fail-open
+entry, and a field dropped from a fallback row is invisible.
 
 These tests pin the subset contract: the fallback's entity keys must be a subset
 of the resolved baseline's entity keys (same key set), and each fallback entity's
@@ -25,9 +24,7 @@ from contextlib import contextmanager
 
 from scripts.track_state import (
     task_profiles as tp,
-    verify_mode_profiles as vmp,
     workflow_shapes as ws,
-    verifier_profiles as vp,
 )
 
 
@@ -41,13 +38,13 @@ def _no_overlay():
     """
     prior = os.environ.pop("CLAUDE_PROJECT_DIR", None)
     try:
-        for mod in (tp, vmp, ws, vp):
+        for mod in (tp, ws):
             mod._load.cache_clear()
         yield
     finally:
         if prior is not None:
             os.environ["CLAUDE_PROJECT_DIR"] = prior
-        for mod in (tp, vmp, ws, vp):
+        for mod in (tp, ws):
             mod._load.cache_clear()
 
 
@@ -78,15 +75,6 @@ class FallbackSubsetTests(unittest.TestCase):
             self.assertIn(tag, resolved, f"fallback tag {tag!r} not in baseline")
             _assert_subset(self, f"task {tag}", frow, resolved[tag])
 
-    def test_verify_mode_profiles_fallback_subset_of_baseline(self):
-        with _no_overlay():
-            fallback = vmp._FALLBACK.get("modes", {})
-            resolved = vmp._load().get("modes", {})
-        self.assertTrue(fallback, "verify-mode _FALLBACK has no 'modes' entities")
-        for mode, frow in fallback.items():
-            self.assertIn(mode, resolved, f"fallback mode {mode!r} not in baseline")
-            _assert_subset(self, f"mode {mode}", frow, resolved[mode])
-
     def test_workflow_shapes_fallback_subset_of_baseline(self):
         with _no_overlay():
             fallback = ws._FALLBACK.get("shapes", {})
@@ -95,18 +83,6 @@ class FallbackSubsetTests(unittest.TestCase):
         for shape, frow in fallback.items():
             self.assertIn(shape, resolved, f"fallback shape {shape!r} not in baseline")
             _assert_subset(self, f"shape {shape}", frow, resolved[shape])
-
-    def test_verifier_profiles_fallback_subset_of_baseline(self):
-        # The verifier _FALLBACK is flat (top-level keys ARE the verifier names),
-        # unlike the other three registries which nest under tags/modes/shapes;
-        # _load() wraps it as {"verifiers": _FALLBACK}.
-        with _no_overlay():
-            fallback = vp._FALLBACK
-            resolved = vp._load().get("verifiers", {})
-        self.assertTrue(fallback, "verifier _FALLBACK is empty")
-        for name, frow in fallback.items():
-            self.assertIn(name, resolved, f"fallback verifier {name!r} not in baseline")
-            _assert_subset(self, f"verifier {name}", frow, resolved[name])
 
 
 if __name__ == "__main__":

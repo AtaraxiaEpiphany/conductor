@@ -10,7 +10,6 @@ from .helpers import (
     out, emit, now_iso, extract_tags, _inherit_tags,
     conductor_dir, _store_evidence, _last_subtask_sha, _any_phase_needs_checkpoint,
     flag, _normalize_sha, target, _extract_tags_for_task, _resolve_conductor_root,
-    _terminal_gate_group_members,
 )
 from .constants import (AUTO_COMPLETE_OK, MAX_RETRIES, task_max_retries,
                         MAX_ANALYSIS_ROUNDS)
@@ -205,12 +204,11 @@ def cmd_dispatch_next(track_dir, compact=True):
             # context (not yet on disk) — `_build_phase_checker` rebuilds that
             # exact field set; the `step` spine pre-assembles the synth too.
             #
-            # resolve_phase_gate composes the gate plan once (verifier set +
-            # verify-mode directive + gate-group membership) — the single
-            # dispatch-side chokepoint for the three checkpoint-relevant axes.
+            # resolve_phase_gate composes the gate plan once (verifier set) — the
+            # single dispatch-side chokepoint for the checkpoint-relevant axis.
             # Threading verifiers through avoids a double-resolve in the wave
-            # builder; the modes/group are the #6 composition contract (read by
-            # phase-checker's binding branches via the heading, not this envelope).
+            # builder; the verifier set is the composition contract phase-checker
+            # consumes (read from this envelope, not the heading).
             gate_plan = resolve_phase_gate(track_dir, state, cp)
             wave = _build_verifier_wave(track_dir, state, cp,
                                         verifiers=gate_plan["verifiers"])
@@ -1272,90 +1270,22 @@ def _build_executor(track_dir, pre, attempt):
     return "task-executor", "\n".join(lines)
 
 
-def _resolve_phase_verify_modes(track_dir, phase):
-    """Re-parse a phase's ``<!-- verify: <modes> -->`` directive from plan.md.
-
-    The single source for the directive at dispatch time (resolve_phase_gate AND
-    _build_verifier_wave's None branch both need it). verify_modes is advisory
-    metadata re-parsed at every read, NOT persisted (the plan_parse contract) —
-    so any dispatch path that resolves verifiers per-phase must re-parse it here
-    to feed verifiers_for's build-gated substitution. Returns ``[]`` on any miss
-    (no plan.md, no heading, no directive) — fail-open, never raises.
-    """
-    from . import plan_parse
-    try:
-        plan_text = (Path(track_dir) / "plan.md").read_text(encoding="utf-8")
-        m = re.search(rf"^##\s+Phase\s+{phase}\b.*$",
-                      plan_text, re.MULTILINE)
-        if m:
-            # _extract_verify scans the whole heading for the verify comment and
-            # ignores stray `verify` inside AC/TC comments.
-            modes, _has, _fails = plan_parse._extract_verify(m.group(0))
-            return modes
-    except (OSError, UnicodeDecodeError):
-        pass
-    return []
-
-
 def resolve_phase_gate(track_dir, state, phase):
     """The single dispatch-side composition of a phase's checkpoint gate plan.
 
-    The checkpoint decision consults three otherwise-scattered sources — the
-    verifier set (#4, the workflow-shape axis joined to the verifier axis), the
-    phase-verify directive (``plan_parse._extract_verify``, the verify-mode
-    axis), and gate-group membership (``helpers._phase_gate_group_membership``,
-    the cross-phase gate-groups axis). This composes them into one return so the
-    dispatch checkpoint branch (and any future consumer) reads ONE chokepoint
-    instead of three lookups tied together by prose.
-
     Returns a dict::
 
-        {
-          "verifiers":   ("ac-tracer", "test-runner", ...),  # the fan-out set
-          "verify_modes": ["compile", ...] | [],              # directive modes
-          "gate_group":   {"name": str|None, "is_terminal": bool},
-        }
+        {"verifiers": ("ac-tracer", "test-runner", ...)}  # the fan-out set
 
-    Pure and fail-open: any lookup miss degrades to the safe default
-    (standard pair / no directive / no group) rather than raising — dispatch
-    must never deadlock over a malformed plan.md or registry. This is the
-    *code* that was previously implicit in the checkpoint branch + prose in
-    phase-checker.md; the agent's BINDING precedence prose (directive >
-    gate-group terminal > migration branch, which governs *verdict handling*)
-    is unchanged — this function governs *dispatch composition*, not verdicts.
+    The verifier set is the resolved workflow-shape's declared ``verifiers``
+    list (fail-open to the standard ``[ac-tracer, test-runner]`` pair). Pure and
+    fail-open: any lookup miss degrades to the safe default rather than raising
+    — dispatch must never deadlock over a malformed plan.md or registry.
     """
     from .workflow_shapes import resolve_shape, verifiers_for
-    from .helpers import _phase_gate_group_membership, phase_task_tags
-    from .verify_mode_profiles import default_verify_for_phase
 
     shape = resolve_shape(state.get("workflow_shape"))
-    # Re-derive the directive from the raw heading (the plan_parse contract —
-    # verify_modes is advisory metadata re-parsed at every read, NOT persisted).
-    verify_modes = _resolve_phase_verify_modes(track_dir, phase)
-    # Tag-derived fallback (explicit directive wins): a phase heading with NO
-    # <!-- verify: --> directive but composed of all-[Migrate] tasks (or any tag
-    # set whose default_verify agrees) resolves to that mode set — so the fan-out
-    # gates on the build, not the expected-red suite. Activates
-    # default_verify_for_phase, previously dead code (no production callers).
-    # Precedence is now: explicit directive > tag-derived default > full gate
-    # (the goal-derived derive_verify_modes is authoring-time only). Fail-open:
-    # no contributing tag → [] → full gate. Passing verify_modes into
-    # verifiers_for means the build-gated substitution (test-runner →
-    # compile-runner) fires automatically for a tag-derived ["compile"].
-    if not verify_modes:
-        verify_modes = default_verify_for_phase(phase_task_tags(state, phase))
-    # Resolve verifiers AFTER verify_modes so the per-phase substitution in
-    # verifiers_for sees the directive (a build-gated compile/none phase swaps
-    # test-runner for compile-runner). The order flip is load-bearing: resolving
-    # verifiers first would fan out test-runner on a `none` phase and the build
-    # floor in the none protocol would degrade to NO_GATE: skipped.
-    verifiers = verifiers_for(shape, verify_modes)
-    gname, is_terminal = _phase_gate_group_membership(track_dir, phase)
-    return {
-        "verifiers": verifiers,
-        "verify_modes": verify_modes,
-        "gate_group": {"name": gname, "is_terminal": is_terminal},
-    }
+    return {"verifiers": verifiers_for(shape)}
 
 
 def _build_verifier_wave(track_dir, state, phase, verifiers=None):
@@ -1364,106 +1294,49 @@ def _build_verifier_wave(track_dir, state, phase, verifiers=None):
 
     The single source for both rails (``cmd_dispatch_next`` and
     ``_step_emit_dispatch_batch``): the verifier set comes from
-    :func:`workflow_shapes.verifiers_for` (the third and fourth axes joined at
-    the checkpoint — a project shape omitting ``test-runner`` simply doesn't fan
-    it out), and each member's ``prompt`` is built by
-    :func:`build_dispatch_prompt` / :func:`_build_verifier` (registry-driven
-    field-set). Byte-identical to the pre-#4 hardcoded
+    :func:`workflow_shapes.verifiers_for` (the shape's declared ``verifiers``
+    list; a project shape omitting ``test-runner`` simply doesn't fan it out),
+    and each member's ``prompt`` is built by :func:`build_dispatch_prompt` /
+    :func:`_build_verifier`. Byte-identical to the hardcoded
     ``[ac-tracer, test-runner]`` pair for both shipped shapes (they declare that
     pair); a custom shape controls the set.
 
     ``verifiers`` lets a caller that already resolved the gate plan via
     :func:`resolve_phase_gate` pass the tuple through (avoids a double-resolve);
-    when ``None`` it is resolved here — **phase-aware**, re-parsing the phase's
-    directive (via :func:`_resolve_phase_verify_modes`) so the Rail-B ``step``
-    spine (which calls without ``verifiers=``) gets the same build-gated
-    substitution the Rail-A ``cmd_dispatch_next`` path gets via
-    :func:`resolve_phase_gate`. Byte-for-byte parity between the two rails on a
-    ``none``/``compile`` phase is the point: both fan out compile-runner.
-
-    Read-only verifiers run on the main checkout (no worktree pinning, unlike
-    wave members). ``name`` mirrors the wave member shape (a display label).
+    when ``None`` it is resolved here. Read-only verifiers run on the main
+    checkout (no worktree pinning, unlike wave members). ``name`` mirrors the
+    wave member shape (a display label).
     """
     from .workflow_shapes import resolve_shape, verifiers_for
-    from .verifier_profiles import agent_for
-    from .helpers import phase_task_tags
-    from .verify_mode_profiles import default_verify_for_phase
     if verifiers is None:
         shape = resolve_shape(state.get("workflow_shape"))
-        # Phase-aware: a build-gated phase swaps test-runner for compile-runner.
-        # Both rails resolve the same way; this None branch is the step-spine
-        # path that did not pre-resolve via resolve_phase_gate.
-        verify_modes = _resolve_phase_verify_modes(track_dir, phase)
-        # Parity mirror of resolve_phase_gate's tag-fallback: an all-[Migrate]
-        # phase with NO directive fans out compile-runner here too, not
-        # test-runner. The step-spine (Rail B) must reach the same gate plan as
-        # cmd_dispatch_next (Rail A) — byte-for-byte — pinned by
-        # test_none_branch_is_phase_aware_when_verifiers_omitted.
-        if not verify_modes:
-            verify_modes = default_verify_for_phase(phase_task_tags(state, phase))
-        verifiers = verifiers_for(shape, verify_modes)
+        verifiers = verifiers_for(shape)
     members = []
     for verifier in verifiers:
-        agent = agent_for(verifier)
         members.append({
-            "agent": agent,
+            "agent": verifier,
             "name": verifier,
             "prompt": build_dispatch_prompt(
                 "dispatch_batch", track_dir, state=state, phase=phase,
-                agent=agent)[1],
+                agent=verifier)[1],
         })
     return members
 
 
 def _build_verifier(track_dir, state, phase, agent):
     """``dispatch_batch`` member envelope body for a read-only phase verifier
-    (``ac-tracer`` / ``test-runner`` — or any verifier the resolved shape fans
-    out via :func:`workflow_shapes.verifiers_for`).
+    (``ac-tracer`` / ``test-runner``).
 
-    Registry-driven: the field-set each verifier needs is read from the
-    verifier registry (:func:`verifier_profiles.field_set_for`) — NOT a
-    hardcoded ``if agent == "test-runner"`` branch. Each token in the
-    verifier's ``field_set`` resolves to one ``KEY=value`` line: ``TRACK_DIR``
-    and ``TRACK_ID`` (the floor every registered verifier declares), and
-    ``PHASE_INDEX`` (the checkpoint phase number — reporting-only, never a state
-    index, per agents/test-runner.md §2.0). An unknown token is dropped
-    (fail-open). An unknown VERIFIER (empty ``field_set``) falls back to the
-    ``TRACK_DIR``+``TRACK_ID`` floor so dispatch never emits a bodyless envelope.
+    Emits the ``TRACK_DIR`` + ``TRACK_ID`` floor every verifier gets, plus
+    ``PHASE_INDEX`` for ``test-runner`` (the checkpoint phase number —
+    reporting-only, never a state index, per agents/test-runner.md §2.0).
     Read-only verifiers run on the main checkout (no worktree pinning, unlike
     wave members).
     """
     td = str(track_dir)
-    track_id = state.get("track_id", "")
-    # The floor every verifier gets; emitted as a fallback for an unknown
-    # verifier (empty field_set) and as the leading lines when the registry
-    # field_set omits them.
-    floor = [f"TRACK_DIR={td}", f"TRACK_ID={track_id}"]
-    # Lazy import: verifier_profiles imports nothing from dispatch at module
-    # load, but lazy keeps the boundary explicit and avoids any load-order
-    # surprise in the hook-script import fan-out.
-    from .verifier_profiles import field_set_for
-    field_set = field_set_for(agent)
-    if not field_set:
-        return "\n".join(floor)
-    lines, seen = [], set()
-    for token in field_set:
-        if token == "TRACK_DIR":
-            value = f"TRACK_DIR={td}"
-        elif token == "TRACK_ID":
-            value = f"TRACK_ID={track_id}"
-        elif token == "PHASE_INDEX":
-            value = f"PHASE_INDEX={phase}"
-        else:
-            continue  # unknown token dropped (fail-open)
-        if value not in seen:  # de-dup a registry row that lists a token twice
-            seen.add(value)
-            lines.append(value)
-    # Guarantee the TRACK_DIR/TRACK_ID floor even if the registry row omitted it
-    # (a verifier always needs to know where it runs).
-    if not any(ln.startswith("TRACK_DIR=") for ln in lines):
-        lines = [floor[0]] + lines
-    if not any(ln.startswith("TRACK_ID=") for ln in lines):
-        lines = [floor[1]] + lines
+    lines = [f"TRACK_DIR={td}", f"TRACK_ID={state.get('track_id', '')}"]
+    if agent == "test-runner":
+        lines.append(f"PHASE_INDEX={phase}")
     return "\n".join(lines)
 
 
@@ -1493,14 +1366,6 @@ def _build_phase_checker(track_dir, state, phase, marker):
     lines.append(f"L1_VERIFY_STATUS={marker.get('l1_status', '')}")
     if marker.get("l1_command"):
         lines.append(f"L1_VERIFY_COMMAND={marker['l1_command']}")
-    # Build verdict — present ONLY when compile-runner was fanned out (a
-    # build-gated compile/none phase). The none mode's build floor reads this;
-    # its absence is the backward-compat signal (test-runner ran instead) and the
-    # floor degrades to NO_GATE: skipped.
-    if marker.get("build_status"):
-        lines.append(f"BUILD_VERIFY_STATUS={marker['build_status']}")
-    if marker.get("build_command"):
-        lines.append(f"BUILD_VERIFY_COMMAND={marker['build_command']}")
     return "\n".join(lines)
 
 
@@ -1527,15 +1392,7 @@ def build_dispatch_prompt(action, track_dir, *, pre=None, state=None, phase=None
                              f"action {action!r}")
         return _build_executor(track_dir, pre, attempt)
     if action == "dispatch_batch":
-        # The agent must be a registered verifier. Widen to the resolved vocab
-        # (ac-tracer/test-runner + any project-overlay verifier); a name outside
-        # it is a programming error at the call site (a shape fanning out an
-        # undeclared verifier), so raise rather than silently emit garbage.
-        from .verifier_profiles import VERIFIER_VOCAB
-        if agent not in VERIFIER_VOCAB():
-            raise ValueError("build_dispatch_prompt: 'agent' must be a "
-                             "registered verifier "
-                             f"({', '.join(VERIFIER_VOCAB())}) for dispatch_batch")
+        # The agent must be a known read-only verifier (ac-tracer / test-runner).
         return agent, _build_verifier(track_dir, state, phase, agent)
     if action == "dispatch_phase_checker":
         if marker is None:
@@ -2503,27 +2360,14 @@ _L1_STATUSES = ("passed", "failed", "error")
 
 
 def cmd_phase_verdict(track_dir, ac_verdict, ac_gate, ac_n_ungrounded,
-                      l1_status=None, l1_command=None, build_status=None,
-                      build_command=None):
+                      l1_status=None, l1_command=None):
     """Transcribe the fanned verifier verdicts to the checkpoint marker (WM2-2).
 
     After ``dispatch_batch`` fans the checkpoint verifiers, the teleoperator parses
     the RESULT blocks and runs this with ``VERDICT``/``GATE``/``N_UNGROUNDED``
-    (ac-tracer), ``STATUS``/``COMMAND`` (test-runner, when fanned out), and
-    ``STATUS``/``COMMAND`` from compile-runner's ``---BUILD VERIFY RESULT---``
-    (when the phase is build-gated and compile-runner was fanned out instead of
-    test-runner — see :func:`workflow_shapes.verifiers_for`'s per-phase
-    substitution). Writes ``stage=synth_pending`` so the next ``step`` emits the
-    phase-checker synth dispatch (pre-assembled from the stored verdicts) instead
-    of re-fanning.
-
-    ``l1_status``/``l1_command`` and ``build_status``/``build_command`` are each
-    optional pairs: exactly one is present depending on which second verifier ran.
-    A suite-gated phase (test-runner) passes the L1 pair and omits build; a
-    build-gated ``compile``/``none`` phase (compile-runner) passes the build pair
-    and omits L1. The ``none`` protocol reads ``BUILD_VERIFY_STATUS`` when present
-    and degrades to ``NO_GATE: skipped`` when absent; the suite is always ignored
-    on a none/compile phase regardless.
+    (ac-tracer) and ``STATUS``/``COMMAND`` (test-runner). Writes
+    ``stage=synth_pending`` so the next ``step`` emits the phase-checker synth
+    dispatch (pre-assembled from the stored verdicts) instead of re-fanning.
 
     Validates the verdict enums (a code guard: a transcription typo HALTs with a
     clear error rather than handing the synthesizer garbage) and confirms a
@@ -2535,17 +2379,10 @@ def cmd_phase_verdict(track_dir, ac_verdict, ac_gate, ac_n_ungrounded,
         out(dict(error=f"unrecognized ac-verdict: {ac_verdict!r}", track_dir=td,
                  hint=f"one of: {', '.join(_AC_VERDICTS)} (from ---AC TRACE RESULT--- VERDICT)"))
         return
-    # l1_status optional: a build-gated phase fanned out compile-runner, not
-    # test-runner, so there is no L1 verdict to transcribe. When present it must
-    # be a known token.
+    # l1_status optional: present when test-runner was fanned out.
     if l1_status and l1_status not in _L1_STATUSES:
         out(dict(error=f"unrecognized l1-status: {l1_status!r}", track_dir=td,
                  hint=f"one of: {', '.join(_L1_STATUSES)} (from ---L1 VERIFY RESULT--- STATUS)"))
-        return
-    # build_status is optional — a suite-gated phase has no build verdict.
-    if build_status and build_status not in _L1_STATUSES:
-        out(dict(error=f"unrecognized build-status: {build_status!r}", track_dir=td,
-                 hint=f"one of: {', '.join(_L1_STATUSES)} (from ---BUILD VERIFY RESULT--- STATUS)"))
         return
     state, _fixes, verrors = ensure_healthy(track_dir)
     if state is None:
@@ -2564,8 +2401,6 @@ def cmd_phase_verdict(track_dir, ac_verdict, ac_gate, ac_n_ungrounded,
         "ac_n_ungrounded": ac_n_ungrounded,
         "l1_status": l1_status,
         "l1_command": l1_command or None,
-        "build_status": build_status or None,
-        "build_command": build_command or None,
     }
     _phase_cp_write_marker(track_dir, marker)
     out(dict(ok=True, phase=cp, stage="synth_pending", track_dir=td))
@@ -2602,29 +2437,6 @@ def cmd_phase_checkpoint_review(track_dir, status, sha, reason):
             out(dict(error="PASSED requires a valid --sha (7 hex)",
                      track_dir=td, hint="CHECKPOINT_SHA from ---CHECKPOINT RESULT---"))
             return
-        # Gate-group terminal gate (plan-format-contract.md §"Phase Gate Groups"):
-        # if ``cp`` is the terminal member of a gate_group, its PASS resolves the
-        # whole group's accumulated diff — so every member phase gets the real
-        # SHA stamp (trading its ``[checkpoint: deferred <group>]`` marker for a
-        # real one). Non-terminal members would otherwise carry a deferred marker
-        # forever despite the group being green. ``cp`` can only be the terminal
-        # member here: non-terminal members defer in _phase_needs_checkpoint and
-        # never surface as the pending checkpoint.
-        stamped_phases = [cp]
-        group_members = _terminal_gate_group_members(track_dir, cp)
-        for member in group_members:
-            if member == cp:
-                continue  # cp stamped below as the authoritative result
-            mr = _stamp_checkpoint_in_plan(track_dir, member, sha)
-            if "error" in mr:
-                # Advisory — never block the terminal advance on a member stamp
-                # failure (the terminal stamp is the load-bearing one). The
-                # member keeps its deferred marker; operator can re-stamp.
-                sys.stderr.write(
-                    f"gate_group member Phase {member} stamp failed (advisory): "
-                    f"{mr['error']}\n")
-            else:
-                stamped_phases.append(member)
         result = _stamp_checkpoint_in_plan(track_dir, cp, sha)
         if "error" in result:
             out(dict(error=result["error"], track_dir=td))
@@ -2637,9 +2449,7 @@ def cmd_phase_checkpoint_review(track_dir, status, sha, reason):
             compile_track_findings(track_dir, current_phase=cp)
         except Exception as exc:  # noqa: BLE001 — advisory, never fatal
             sys.stderr.write(f"track-findings compile skipped (advisory): {exc}\n")
-        out(dict(ok=True, stamped=True, phase=cp, sha=sha, track_dir=td,
-                 gate_group_members=(sorted(stamped_phases)
-                                      if len(stamped_phases) > 1 else None)))
+        out(dict(ok=True, stamped=True, phase=cp, sha=sha, track_dir=td))
     elif verdict == "FAILED":
         _phase_cp_clear_marker(track_dir)
         out(dict(ok=True, stamped=False, phase=cp, track_dir=td,

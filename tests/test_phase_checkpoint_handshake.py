@@ -57,55 +57,22 @@ class PhaseVerdictTests(TestCase):
         self.assertEqual(m["l1_status"], "passed")
         self.assertEqual(m["l1_command"], "pytest -q")
         self.assertIsNone(m["ac_gate"])
-        # Build verdict absent on a suite-gated phase (test-runner fanned out,
-        # not compile-runner) — the none floor degrades to NO_GATE: skipped.
-        self.assertIsNone(m["build_status"])
-        self.assertIsNone(m["build_command"])
-
-    def test_build_verdict_threaded_when_compile_runner_ran(self):
-        # A build-gated phase (compile/none) fans out compile-runner; the
-        # teleoperator transcribes its BUILD verdict via --build-status/--build-command.
-        # These thread into the marker and on into _build_phase_checker's assignment.
-        d = _phase_complete_track()
-        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
-        o = _run(cmd_phase_verdict, d, "passed", None, None, "passed", "pytest -q",
-                 "failed", "mvn -q compile")
-        self.assertTrue(o["ok"])
-        m = _phase_cp_read_marker(d)
-        self.assertEqual(m["build_status"], "failed")
-        self.assertEqual(m["build_command"], "mvn -q compile")
-
-    def test_unknown_build_status_errors(self):
-        # A transcription typo on the build verdict must HALT (code guard), not
-        # hand the synthesizer a garbage BUILD_VERIFY_STATUS.
-        d = _phase_complete_track()
-        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
-        o = _run(cmd_phase_verdict, d, "passed", None, None, "passed", "pytest -q",
-                 "bogus", "mvn -q compile")
-        self.assertIn("error", o)
-        self.assertFalse(_phase_cp_marker_path(d).exists())
 
     def test_build_verdict_threads_into_phase_checker_assignment(self):
-        # _build_phase_checker emits BUILD_VERIFY_STATUS/COMMAND only when the
-        # marker carries them (compile-runner was fanned out). Absent on a
-        # suite-gated phase → the none floor degrades to NO_GATE: skipped.
+        # _build_phase_checker emits the L1_VERIFY_STATUS/COMMAND lines the
+        # phase-checker consumes from the marker. Every phase fans out the
+        # standard ac-tracer + test-runner pair now, so the assignment always
+        # carries the L1 verdict and never any BUILD lines.
         from scripts.track_state.dispatch import _build_phase_checker
         d = _phase_complete_track()
         self.addCleanup(shutil.rmtree, d, ignore_errors=True)
         state = {"track_id": "t", "execution_mode": "interactive"}
-        # Suite-gated phase: no build verdict in the marker → no BUILD lines.
         _run(cmd_phase_verdict, d, "passed", None, None, "passed", "pytest -q")
         m = _phase_cp_read_marker(d)
         body = _build_phase_checker(d, state, 1, m)
         self.assertIn("L1_VERIFY_STATUS=passed", body)
+        self.assertIn("L1_VERIFY_COMMAND=pytest -q", body)
         self.assertNotIn("BUILD_VERIFY_STATUS", body)
-        # Build-gated phase: build verdict present → BUILD lines emitted.
-        _run(cmd_phase_verdict, d, "passed", None, None, "passed", "pytest -q",
-             "failed", "mvn -q compile")
-        m = _phase_cp_read_marker(d)
-        body = _build_phase_checker(d, state, 1, m)
-        self.assertIn("BUILD_VERIFY_STATUS=failed", body)
-        self.assertIn("BUILD_VERIFY_COMMAND=mvn -q compile", body)
 
     def test_unknown_ac_verdict_errors(self):
         d = _phase_complete_track()
@@ -242,19 +209,6 @@ class CliWiringTests(TestCase):
         self._invoke(["phase-verdict", d, "--ac-verdict", "passed",
                       "--l1-status", "passed", "--l1-command", "pytest -q"])
         self.assertTrue(_phase_cp_marker_path(d).exists())
-
-    def test_phase_verdict_cli_threads_build_flags(self):
-        # The CLI parses the optional --build-status/--build-command flags
-        # (present only on a build-gated phase) and threads them to cmd_phase_verdict.
-        d = _phase_complete_track()
-        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
-        self._invoke(["phase-verdict", d, "--ac-verdict", "passed",
-                      "--l1-status", "passed", "--l1-command", "pytest -q",
-                      "--build-status", "failed", "--build-command",
-                      "mvn -q compile"])
-        m = _phase_cp_read_marker(d)
-        self.assertEqual(m["build_status"], "failed")
-        self.assertEqual(m["build_command"], "mvn -q compile")
 
     def test_phase_checkpoint_review_resolves_via_cli(self):
         d = _phase_complete_track()

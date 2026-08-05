@@ -98,11 +98,6 @@ STDOUT_BLOCK_AGENTS = {
         "STATUS: error with a one-line REASON if the test command could not run at all "
         "(a failing suite is STATUS: failed, NOT error)."
     ),
-    "compile-runner": (
-        "IMMEDIATELY print the ---BUILD VERIFY RESULT--- block (Section 5.0). Report "
-        "STATUS: error with a one-line REASON if the build command could not run at all "
-        "(a failing build is STATUS: failed, NOT error)."
-    ),
     "spec-planner": (
         "IMMEDIATELY print the ---SPEC PLAN RESULT--- block (Section 5.0). Report "
         "STATUS: FAILURE with a one-line SUMMARY if generation could not complete."

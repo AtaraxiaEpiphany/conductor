@@ -418,27 +418,6 @@ def _extract_tags_for_task(state, phase_str, task_str):
         return []
 
 
-def phase_task_tags(state, phase):
-    """All dispatch tags across a phase's top-level tasks (order-preserving, with dups).
-
-    The cheapest in-process tag source for ``resolve_phase_gate``'s tag-fallback: reads
-    ``state['phases'][phase-1]['tasks'][*]['name']`` via :func:`extract_tags` — no file
-    I/O. Duplicates are kept (``default_verify_for_phase``'s set-based agreement check
-    treats ``['Migrate','Migrate']`` as agreement, not conflict). Fail-open to ``[]`` on
-    any miss so a malformed/absent ``phases`` structure degrades to the full gate rather
-    than crashing dispatch.
-    """
-    try:
-        tasks = state["phases"][phase - 1]["tasks"]
-    except (IndexError, KeyError, TypeError):
-        return []
-    tags = []
-    for t in tasks:
-        tags.extend(extract_tags(t.get("name", "")))
-    return tags
-
-
-
 def _tag_exempt_from_coverage(tags):
     """Tags that don't require coverage gate enforcement."""
     from .task_profiles import is_coverage_exempt
@@ -452,96 +431,10 @@ def _tag_exempt_from_tdd(tags):
     return is_tdd_exempt(tags)
 
 
-
-def _resolve_gate_groups(plan_path):
-    """Re-parse plan.md headings → ``{group_name: [phase_numbers_in_order]}``.
-
-    Cross-phase gate groups (``<!-- gate_group: <name> -->`` on a ``## Phase N:``
-    heading) are advisory metadata re-parsed at every read — NOT persisted to
-    track-state.json (see plan_parse._extract_gate_group). This helper is the
-    re-parse-on-read that replaces persistence: the checkpoint gate and the
-    terminal-gate stamp path both call it to learn a phase's group membership.
-
-    Returns ``{}`` when plan.md is missing/unreadable (fail-open = no groups =
-    every phase gates itself normally). Group names are lowercased by the
-    parser, so keys are lowercase. Member phase numbers are in declaration order
-    (which equals ascending order for a valid contiguous group; the parser's
-    ``validate_gate_groups`` warns on non-contiguity separately).
-
-    The **terminal** member of a group is ``members[-1]``.
-    """
-    groups = {}
-    try:
-        text = Path(plan_path).read_text()
-    except (FileNotFoundError, PermissionError, UnicodeDecodeError):
-        return groups
-    # Mirror plan_parse._extract_gate_group: a comment whose body starts with
-    # ``gate_group:`` carries a lowercased single-token name. We re-parse here
-    # (rather than import plan_parse's extractor) to stay decoupled from the
-    # full parse and to read only the heading lines we need.
-    for m in re.finditer(r"^##\s+Phase\s+(\d+)\b.*$", text, re.MULTILINE):
-        heading = m.group(0)
-        pnum = int(m.group(1))
-        for cm in re.finditer(r"<!--(.*?)-->", heading, re.DOTALL):
-            body = cm.group(1)
-            if not re.match(r"^\s*gate_group\s*:", body, re.IGNORECASE):
-                continue
-            payload = re.sub(r"^\s*gate_group\s*:", "", body, count=1,
-                             flags=re.IGNORECASE)
-            tokens = [t for t in payload.split() if t]
-            if len(tokens) == 1:
-                groups.setdefault(tokens[0].lower(), []).append(pnum)
-    return groups
-
-
-def _phase_gate_group_membership(track_dir, phase_index):
-    """Return ``(group_name, is_terminal_member)`` for a phase, or ``(None, False)``.
-
-    Resolves gate groups from plan.md and reports whether ``phase_index`` is a
-    member of any group, and if so whether it is that group's terminal (last)
-    member. Used by ``_phase_needs_checkpoint`` to decide deferral:
-    - non-terminal member → defer (the terminal member gates the group).
-    - terminal member     → gate normally (it gates the whole group's diff).
-    - not in any group    → normal per-phase gate (the default).
-    """
-    plan_path = Path(track_dir) / "plan.md"
-    groups = _resolve_gate_groups(plan_path)
-    for gname, members in groups.items():
-        if phase_index in members:
-            return gname, (members[-1] == phase_index)
-    return None, False
-
-
-def _terminal_gate_group_members(track_dir, phase_index):
-    """Return the member phase numbers of ``phase_index``'s gate_group if it is
-    the terminal member, else ``[]``.
-
-    Called by ``cmd_phase_checkpoint_review`` on a terminal PASS to stamp every
-    member (non-terminal members carry a ``[checkpoint: deferred <group>]``
-    marker that must trade for a real SHA). Returns ``[]`` for a non-terminal
-    member or an ungrouped phase — the caller then stamps only ``phase_index``.
-    """
-    plan_path = Path(track_dir) / "plan.md"
-    groups = _resolve_gate_groups(plan_path)
-    for _gname, members in groups.items():
-        if phase_index in members and members[-1] == phase_index:
-            return list(members)
-    return []
-
-
 def _phase_needs_checkpoint(track_dir, state, phase_index):
     """Check if a phase needs a checkpoint (all tasks done, no checkpoint in plan.md).
 
     Returns phase index if checkpoint is needed, None otherwise.
-
-    Cross-phase gate groups (plan-format-contract.md §"Phase Gate Groups"):
-    a NON-TERMINAL member of a gate_group defers — its tasks may be terminal
-    but the phase is intentionally red (a later phase closes the debt), so it
-    must NOT gate or fan out verifiers. The deferral is recorded by a
-    ``[checkpoint: deferred <group>]`` stamp so the marker is visible and this
-    function reads as "checkpoint present" on re-read (idempotent). The
-    terminal member gates normally and, on PASS, stamps every member with a
-    real SHA (dispatch.cmd_phase_checkpoint_review).
     """
     # Skip invalid phase indices
     if phase_index < 1:
@@ -571,31 +464,13 @@ def _phase_needs_checkpoint(track_dir, state, phase_index):
     except (FileNotFoundError, PermissionError, UnicodeDecodeError):
         return phase_index
 
-    # Check for a checkpoint marker on this phase's heading. Two kinds now
-    # coexist, both of which read as "checkpoint present" (skip the gate):
-    #   [checkpoint: <sha>]            — a real PASSED stamp
-    #   [checkpoint: deferred <group>] — a gate_group member deferring to its
-    #                                    terminal member (still red-on-purpose)
-    pattern = rf"^##\s+Phase\s+{phase_index}\b.*\[checkpoint:\s+(?:deferred\s+\S+|[0-9a-f]+)\]"
+    # A real PASSED checkpoint stamp on this phase's heading reads as
+    # "checkpoint present" (skip the gate).
+    pattern = rf"^##\s+Phase\s+{phase_index}\b.*\[checkpoint:\s+[0-9a-f]+\]"
     if re.search(pattern, content, re.MULTILINE):
-        return None  # Checkpoint (real or deferred) exists
+        return None  # Checkpoint exists
 
-    # Gate-group deferral: a non-terminal member whose tasks are all terminal
-    # defers — it's red on purpose and a later phase gates the group. Stamp the
-    # deferral so the marker is visible and this function stays idempotent on
-    # re-read (the regex above then skips it). The terminal member falls through
-    # to the normal "needs checkpoint" return below.
-    group_name, is_terminal = _phase_gate_group_membership(track_dir, phase_index)
-    if group_name is not None and not is_terminal:
-        # Lazy import: misc.py imports helpers.py at module load, so a top-level
-        # ``from .misc import ...`` here would create a circular import. The
-        # stamp is a misc concern (plan.md file mutation); the deferral *decision*
-        # is a helpers concern. Resolving at call time keeps both true.
-        from .misc import _stamp_deferred_checkpoint_in_plan
-        _stamp_deferred_checkpoint_in_plan(track_dir, phase_index, group_name)
-        return None  # deferred — no gate, no verifier fan-out
-
-    return phase_index  # Phase done but no checkpoint (terminal member or ungrouped)
+    return phase_index  # Phase done but no checkpoint
 
 
 def _any_phase_needs_checkpoint(track_dir, state):

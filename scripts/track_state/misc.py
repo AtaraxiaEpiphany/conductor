@@ -171,7 +171,7 @@ def cmd_quality_snapshot(track_dir):
     spec-deviation count, computed on demand. No persistence format is baked
     in — a future ledger can append this JSON, or skills/the orchestrator read
     it directly. Coverage is aggregated only over completed non-exempt tasks
-    ([Docs]/[Config]/[Chore]/[Manual]/[Migrate] are excluded), from each task's
+    ([Docs]/[Config]/[Chore]/[Manual] are excluded), from each task's
     ``evidence.coverage_pct`` written by process-result/dispatch-finalize.
     """
     state = load(track_dir)
@@ -216,16 +216,6 @@ def cmd_quality_snapshot(track_dir):
     # AC integrity rates + advisory gate (None/"N/A" when no spec.md or no ACs).
     ac = compute_ac_integrity(track_dir)
 
-    # Goodhart counter-metric (Piece 3): the antagonistic pair to coverage.
-    # Structural-only here (run=False: drift+skip) — this snapshot runs in
-    # finalize paths and must not spawn subprocesses. ``anchor-status --verify``
-    # runs the full pass/fall measurement on demand. None when no frozen list.
-    from .anchor import compute_frozen_anchor_rate
-    try:
-        anchor = compute_frozen_anchor_rate(track_dir, run=False)
-    except Exception:
-        anchor = None
-
     out(dict(
         track_id=state.get("track_id"),
         total_units=total,
@@ -244,9 +234,6 @@ def cmd_quality_snapshot(track_dir):
         ac_integrity_reason=ac["ac_integrity_reason"],
         ears_warnings=ac["ears_warnings"],
         ears_gate=ac["ears_gate"],
-        frozen_anchor_pass_rate=(anchor or {}).get("frozen_anchor_pass_rate"),
-        frozen_anchor_skip_rate=(anchor or {}).get("frozen_anchor_skip_rate"),
-        frozen_anchor_drift_rate=(anchor or {}).get("frozen_anchor_drift_rate"),
     ))
 
 
@@ -1029,12 +1016,9 @@ def _stamp_checkpoint_in_plan(track_dir, p, sha):
     for line in lines:
         stripped = line.rstrip("\n")
         if re.match(rf"^##\s+Phase\s+{phase_num}\b", stripped):
-            # Remove an existing checkpoint before re-stamping — either kind:
-            # a real SHA ``[checkpoint: <sha>]`` or a deferred marker
-            # ``[checkpoint: deferred <group>]`` (a gate_group member that was
-            # red-on-purpose and is now resolving into a real PASS).
+            # Remove an existing checkpoint SHA before re-stamping.
             base = re.sub(
-                r"\s+\[checkpoint:\s+(?:deferred\s+\S+|[0-9a-f]+)\]$", "", stripped)
+                r"\s+\[checkpoint:\s+[0-9a-f]+\]$", "", stripped)
             result.append(f"{base} [checkpoint: {sha}]")
             found = True
         else:
@@ -1047,64 +1031,6 @@ def _stamp_checkpoint_in_plan(track_dir, p, sha):
         if result and not result[-1].endswith("\n"):
             f.write("\n")
     return dict(ok=True, phase=p, sha=sha)
-
-
-def _stamp_deferred_checkpoint_in_plan(track_dir, p, group):
-    """Stamp ``[checkpoint: deferred <group>]`` on Phase <p>'s heading.
-
-    A non-terminal gate_group member whose tasks go terminal defers rather than
-    gates (it is intentionally red — a later phase closes the debt, per
-    plan-format-contract.md §"Phase Gate Groups"). This stamp is the visible
-    record of that deferral and makes ``_phase_needs_checkpoint`` idempotent on
-    re-read (its checkpoint-present regex matches both ``deferred <group>`` and
-    a real SHA). On terminal-gate PASS, ``cmd_phase_checkpoint_review`` trades
-    this marker for a real SHA on every member via ``_stamp_checkpoint_in_plan``.
-
-    Idempotent: a heading already carrying a deferred marker (or a real SHA) is
-    left untouched — the strip-before-stamp path is skipped entirely when no
-    trailing ``[checkpoint: ...]`` is absent. Returns ``ok`` (idempotent or
-    fresh), ``noop`` (already stamped/real-checkpoint present), or ``error``."""
-    plan_path = Path(track_dir) / "plan.md"
-    if not plan_path.exists():
-        return dict(error="plan.md not found")
-    if not group or not re.match(r"^[A-Za-z0-9_.-]+$", group):
-        return dict(error=f"Invalid group name: {group!r}")
-
-    with open(plan_path) as f:
-        lines = f.readlines()
-
-    phase_num = int(p)
-    group_lower = group.lower()
-    result = []
-    found = False
-    stamped = False
-    for line in lines:
-        stripped = line.rstrip("\n")
-        if re.match(rf"^##\s+Phase\s+{phase_num}\b", stripped):
-            found = True
-            # Already carrying a checkpoint (real SHA or a deferred marker)?
-            # Leave it — idempotent. A real SHA means the terminal gate already
-            # passed and stamped this member; never clobber it back to deferred.
-            if re.search(r"\[checkpoint:\s+(?:deferred\s+\S+|[0-9a-f]+)\]\s*$",
-                         stripped):
-                result.append(stripped)
-                continue
-            base = re.sub(r"\s+\[checkpoint:\s+(?:deferred\s+\S+|[0-9a-f]+)\]$",
-                          "", stripped)
-            result.append(f"{base} [checkpoint: deferred {group_lower}]")
-            stamped = True
-        else:
-            result.append(stripped)
-    if not found:
-        return dict(error=f"Phase {phase_num} heading not found in plan.md")
-
-    if stamped:
-        with open(plan_path, "w") as f:
-            f.write("\n".join(result))
-            if result and not result[-1].endswith("\n"):
-                f.write("\n")
-        return dict(ok=True, phase=p, group=group_lower, deferred=True)
-    return dict(ok=True, phase=p, group=group_lower, noop=True)
 
 
 def cmd_add_checkpoint(track_dir, p, sha):
@@ -1284,20 +1210,18 @@ def cmd_registry_add(track_dir, tracks_md_path=None):
              line=line, registry=str(reg)))
 
 
-def cmd_registry_doc(tag=None, mode=None, shape=None, verifier=None):
-    """Render the RESOLVED task-type + verify-mode + workflow-shape + verifier
-    registries (baseline ⊕ overlay) — the live-data view complementing the
-    grammar-only contract. Four on-demand filters: ``--tag`` / ``--mode`` /
-    ``--shape`` / ``--verifier`` render one entity's row plus its prompt-shaping
-    prose verbatim. Strictly read-only; fail-open everywhere.
+def cmd_registry_doc(tag=None, shape=None):
+    """Render the RESOLVED task-type + workflow-shape registries
+    (baseline ⊕ overlay) — the live-data view complementing the grammar-only
+    contract. Two on-demand filters: ``--tag`` / ``--shape`` render one entity's
+    row plus its prompt-shaping prose verbatim. Strictly read-only; fail-open
+    everywhere.
     """
     # Local import: these modules are read by the phase-checker/dispatch paths and
     # resolve the overlay via the project root; importing here (not at module top)
     # keeps the render self-contained and avoids any import-order coupling.
     from . import task_profiles as tp
-    from . import verify_mode_profiles as vmp
     from . import workflow_shapes as ws
-    from . import verifier_profiles as vfp
 
     def _yesno(b):
         return "yes" if b else "no"
@@ -1316,13 +1240,6 @@ def cmd_registry_doc(tag=None, mode=None, shape=None, verifier=None):
         marker = f" *({', '.join(markers)})*" if markers else ""
         return f"| `{tag}` | `{route}` | {tdd} | {cov} | {when}{marker} |"
 
-    def _mode_row(mode):
-        """One registry-derived table row for a verify-mode (reused by full + filtered)."""
-        runs = ", ".join(vmp.runs_for(mode))
-        fix = vmp.fix_policy_for(mode)
-        when = vmp.when_to_use_for(mode).strip().replace("\n", " ")
-        return f"| `{mode}` | {runs} | `{fix}` | {when} |"
-
     def _shape_row(shape):
         """One registry-derived table row for a workflow-shape (reused by full + filtered)."""
         nodes = " → ".join(ws.nodes_for(shape))
@@ -1330,13 +1247,6 @@ def cmd_registry_doc(tag=None, mode=None, shape=None, verifier=None):
         policy = ws.verify_policy_for(shape)
         stop = ws.stop_condition_for(shape)
         return f"| `{shape}` | {nodes} | {verifiers} | `{policy}` | `{stop}` |"
-
-    def _verifier_row(verifier):
-        """One registry-derived table row for a checkpoint verifier (reused by
-        full + filtered)."""
-        agent = vfp.agent_for(verifier)
-        field_set = ", ".join(vfp.field_set_for(verifier))
-        return f"| `{verifier}` | `{agent}` | {field_set} |"
 
     # --- filtered payloads ---------------------------------------------------
     # The on-demand path: one entity's row + its prompt-shaping prose verbatim.
@@ -1379,30 +1289,6 @@ def cmd_registry_doc(tag=None, mode=None, shape=None, verifier=None):
                   f"`conductor/workflow/task-type-profiles.json` to add it.")
         return
 
-    if mode is not None:
-        if mode in vmp.MODE_VOCAB():
-            print(f"# Verify Mode `{mode}` (resolved: plugin baseline ⊕ project overlay)")
-            print()
-            print("| Mode | Runs | Fix policy | When to use |")
-            print("|---|---|---|---|")
-            print(_mode_row(mode))
-            print()
-            proto = vmp.protocol_for(mode)
-            if proto:
-                print(f"## `protocol` for `{mode}` (the prose phase-checker emits)")
-                print()
-                print(proto)
-            else:
-                print(f"_(no `protocol` for `{mode}` → default Step-3 suite gate)_")
-        else:
-            print(f"# Verify Mode `{mode}` — UNKNOWN to the resolved registry")
-            print()
-            print(f"`{mode}` is not in the resolved mode vocabulary "
-                  f"({', '.join(vmp.MODE_VOCAB())}). `init-from-plan --check` "
-                  f"warns (advisory) on an unknown mode; register it in "
-                  f"`conductor/workflow/verify-mode-profiles.json` to add it.")
-        return
-
     if shape is not None:
         if shape in ws.SHAPES_VOCAB():
             print(f"# Workflow Shape `{shape}` "
@@ -1428,36 +1314,11 @@ def cmd_registry_doc(tag=None, mode=None, shape=None, verifier=None):
                   f"`conductor/workflow/workflow-shapes.json` to add it.")
         return
 
-    if verifier is not None:
-        if verifier in vfp.VERIFIER_VOCAB():
-            print(f"# Verifier `{verifier}` "
-                  f"(resolved: plugin baseline ⊕ project overlay)")
-            print()
-            print("| Verifier | Agent | Field set |")
-            print("|---|---|---|")
-            print(_verifier_row(verifier))
-            print()
-            when = vfp.when_to_use_for(verifier)
-            if when:
-                print(f"## `when_to_use` for `{verifier}`")
-                print()
-                print(when)
-            else:
-                print(f"_(no `when_to_use` for `{verifier}`)_")
-        else:
-            print(f"# Verifier `{verifier}` — UNKNOWN to the resolved registry")
-            print()
-            print(f"`{verifier}` is not in the resolved verifier vocabulary "
-                  f"({', '.join(vfp.VERIFIER_VOCAB())}). A shape fanning it out "
-                  f"would drop it at the checkpoint (fail-open); register it in "
-                  f"`conductor/workflow/verifier-profiles.json` to add it.")
-        return
-
     # --- full overview (no filter) -------------------------------------------
     print("# Conductor Registry (resolved: plugin baseline ⊕ project overlay)")
     print()
-    print("Source: conductor/workflow/{task-type,verify-mode,workflow-shape,"
-          "verifier}-profiles.json (project overlay) over the plugin baseline.")
+    print("Source: conductor/workflow/{task-type,workflow-shape}-profiles.json "
+          "(project overlay) over the plugin baseline.")
     print()
 
     # --- Task types -----------------------------------------------------------
@@ -1476,21 +1337,7 @@ def cmd_registry_doc(tag=None, mode=None, shape=None, verifier=None):
           "routes to explorer; task-executor REFUSES it.")
     print()
 
-    # --- Verify modes ---------------------------------------------------------
-    modes = vmp.MODE_VOCAB()
-    print(f"## Verify Modes ({len(modes)})")
-    print()
-    print("| Mode | Runs | Fix policy | When to use |")
-    print("|---|---|---|---|")
-    for mode in modes:
-        print(_mode_row(mode))
-    print()
-    print("`(no directive)` = the default full gate (suite → L2 → L4 manual).")
-    print("`anchor` is a no-op on an unfrozen track (run `track-state freeze` to ")
-    print("activate).")
-    print()
-
-    # --- Workflow shapes (third axis: the node sequence) ---------------------
+    # --- Workflow shapes (the node sequence) ---------------------------------
     shapes = ws.SHAPES_VOCAB()
     print(f"## Workflow Shapes ({len(shapes)})")
     print()
@@ -1499,8 +1346,7 @@ def cmd_registry_doc(tag=None, mode=None, shape=None, verifier=None):
     for shape in shapes:
         print(_shape_row(shape))
     print()
-    print("The third axis: what each node *says* lives in Task Types above; what "
-          "each gate *means* lives in Verify Modes above; the **node sequence** "
+    print("What each node *says* lives in Task Types above; the **node sequence** "
           "lives here. A track-state.json `workflow_shape` selects the topology; "
           "an off-topology dispatch surfaces a `shape_violation` (advisory, "
           "no-silent-caps). The **Verifiers** column is load-bearing — it names "
@@ -1508,188 +1354,6 @@ def cmd_registry_doc(tag=None, mode=None, shape=None, verifier=None):
           "`test-runner` simply doesn't fan it out). `default` is the loop the "
           "conductor has always run, now declared rather than hardcoded.")
     print()
-
-    # --- Verifiers (fourth axis: the checkpoint fan-out set) ------------------
-    verifiers = vfp.VERIFIER_VOCAB()
-    print(f"## Verifiers ({len(verifiers)})")
-    print()
-    print("| Verifier | Agent | Field set |")
-    print("|---|---|---|")
-    for verifier in verifiers:
-        print(_verifier_row(verifier))
-    print()
-    print("The fourth axis: the read-only checkpoint verifiers a workflow fans "
-          "out (named by each shape's `Verifiers` column above). `_build_verifier` "
-          "reads each row's `field_set` to emit its assignment (registry-driven, "
-          "not a hardcoded per-agent branch). A project overlay may add a "
-          "verifier (e.g. `lint-runner`, `e2e-runner`) and name it in a shape's "
-          "`verifiers` list — zero plugin edits beyond the agent definition.")
-
-
-def cmd_resolve_phase_verify(goal=None, tags=None, explicit=None):
-    """Resolve a phase-verify directive from free-text inputs the planner has.
-
-    The deterministic, registry-aware replacement for the prose ladder the
-    ``spec-planner`` used to re-encode by hand. This is a thin stdin/stdout
-    adapter over :func:`verify_mode_profiles.resolve_phase_verify_modes`, which
-    composes the EXACT precedence the contract states (no new resolution logic
-    is invented here — only exposed):
-
-    1. **Explicit wins** — an operator-authored directive carried verbatim across
-       a retry is passed straight through (``--explicit``).
-    2. **Goal-derived default** — :func:`derive_verify_modes(goal)` classifies the
-       phase goal text (boots → test,start; refactor+frozen anchor → anchor; a
-       pure deps bump → none; migration that compiles → compile; else []).
-    3. **Tag-derived default** — only when the goal classifier returned [] do we
-       fall back to :func:`default_verify_for_phase(tags)` (the task-type's
-       ``default_verify`` field, e.g. Migrate → compile).
-    4. **Full gate** — no modes resolved → no directive (the default full gate).
-
-    Both resolution seams — this CLI and ``init-from-plan``'s missing-directive
-    injector — call that shared core, so the precedence lives in exactly one
-    place and cannot drift between them. The core is pure and fail-open (any
-    error → ``[]``); this wrapper adds only a final belt-and-braces ``except``.
-
-    Strictly read-only — no track-dir, no writes (same posture as
-    :func:`cmd_registry_doc`). Consumed by ``track-state resolve-phase-verify``.
-    """
-    try:
-        from . import verify_mode_profiles as vmp
-        tag_list = None
-        if tags:
-            tag_list = [t.strip() for t in tags.split(",") if t.strip()]
-        modes, _src = vmp.resolve_phase_verify_modes(goal=goal, tags=tag_list, explicit=explicit)
-        if modes:
-            print("verify: " + ",".join(modes))
-        else:
-            print("(no directive — default full gate)")
-    except Exception:
-        # Fail-open: any error → the safe full gate, never a raised exception
-        # into the planner's one-shot CLI call.
-        print("(no directive — default full gate)")
-
-
-def cmd_derive_task_type(description=None):
-    """Derive a task's leading dispatch tag from its free-text description.
-
-    The task-type half of the same deterministic, registry-aware seam
-    :func:`cmd_resolve_phase_verify` closes for phase-verify modes. This is a
-    thin stdin/stdout adapter over :func:`task_profiles.derive_task_tag`, which
-    signal-matches each registered tag's ``signals`` set against the description
-    (no new classification logic is invented here — only exposed). Emits JSON
-    ``{"tag": <tag>}`` where ``<tag>`` is the derived tag or ``null`` — ``null``
-    IS the default full-TDD path (the safe failure mode and the correct outcome
-    for most tasks: a wrongly-untagged task costs one Red cycle, a wrongly-tagged
-    one silently skips TDD and the coverage gate).
-
-    Strictly read-only — no track-dir, no writes (same posture as
-    :func:`cmd_resolve_phase_verify` / :func:`cmd_registry_doc`). Consumed by
-    ``track-state derive-task-type``. The spec-planner has no Bash, so it does
-    NOT call this — its tag input is the injected ``[Conductor Registry]``
-    ``signals`` plus the plan-init validator; the consumers are Bash-having
-    agents (brief, discover, task-executor) that want a deterministic tag for a
-    description without re-encoding the matcher as prose.
-    """
-    try:
-        from .task_profiles import derive_task_tag
-        out(dict(tag=derive_task_tag(description or "")))
-    except Exception:
-        # Fail-open: any error → null (default TDD), never a raised exception
-        # into the caller's one-shot CLI call.
-        out(dict(tag=None))
-
-
-def cmd_plan_profile(track_dir):
-    """Emit the resolved phase-verify profile for a track's plan.md (read-only).
-
-    The whole-plan view of what :func:`cmd_resolve_phase_verify` answers one
-    phase at a time: parses ``<track-dir>/plan.md`` once and, per phase, shows
-    the modes the resolver WOULD inject (the same
-    :func:`verify_mode_profiles.resolve_phase_verify_modes` ``init-from-plan``
-    calls — so this CLI and init cannot drift), the resolution ``source``
-    (``explicit``/``goal``/``tag``/``full_gate``), the authored directive if any,
-    and per-task the extracted leading tag plus the signal-derived tag. This is
-    the structured surface a planner or reviewer reads to see, at a glance, every
-    phase's gate and where each comes from — the input ``check-conflicts`` then
-    audits for drift.
-
-    Takes a ``<track-dir>`` positional (reads ``plan.md`` from it); read-only, no
-    writes. Consumed by ``track-state plan-profile``. Fail-open: any error →
-    ``{"ok": false, "error": ...}``, never a raised exception into the caller.
-    """
-    try:
-        from .plan_parse import parse_plan
-        from .task_profiles import derive_task_tag
-        from .helpers import phase_task_tags
-        from . import verify_mode_profiles as vmp
-
-        plan_path = Path(track_dir) / "plan.md"
-        if not plan_path.exists():
-            out({"ok": False, "error": f"no plan.md at {plan_path}"})
-            return
-        parsed = parse_plan(plan_path)
-        phases_out = []
-        for ph in parsed.get("phases", []):
-            number = ph.get("number")
-            # goal = heading prose with any verify-directive comment stripped
-            # (the directive is captured separately as authored_directive).
-            goal = re.sub(r"<!-- verify:.*?-->", "", ph.get("name", "")).strip()
-            has_comment = ph.get("verify_has_comment")
-            authored_modes = list(ph.get("verify_modes") or []) if has_comment else None
-            tags = phase_task_tags(parsed, number)
-            modes, source = vmp.resolve_phase_verify_modes(
-                goal=goal, tags=tags, explicit=authored_modes)
-            tasks_out = []
-            for t in ph.get("tasks", []):
-                tname = t.get("name", "")
-                ttags = extract_tags(tname)
-                tasks_out.append({
-                    "name": tname,
-                    "tag": ttags[0] if ttags else None,
-                    "derived": derive_task_tag(tname),
-                })
-            phases_out.append({
-                "phase": number,
-                "goal": goal,
-                "tags": tags,
-                "verify_modes": modes,
-                "source": source,
-                "authored_directive": ",".join(authored_modes) if authored_modes else None,
-                "tasks": tasks_out,
-            })
-        out({"ok": True, "phases": phases_out})
-    except Exception as e:
-        out({"ok": False, "error": str(e)})
-
-
-def cmd_check_conflicts(track_dir):
-    """Emit the structured conflict set for a track's plan.md (read-only).
-
-    The clean gate surface a hook or skill reads to decide whether a generated
-    plan needs another pass: parses ``<track-dir>/plan.md`` and runs
-    :func:`verify_mode_profiles.collect_plan_conflicts` — the single whole-plan
-    composer ``init-from-plan``'s advisory drift check also calls (so the init
-    path and this CLI cannot drift). ``conflicts`` non-empty ⇒ revise (the
-    planner re-phrases a goal, drops a harmful directive, or adds the one
-    legitimate ``adversarial`` directive). Every conflict is advisory — none
-    blocks init/load.
-
-    Takes a ``<track-dir>`` positional (reads ``plan.md`` from it); read-only, no
-    writes. Consumed by ``track-state check-conflicts``. Fail-open: any error →
-    ``{"ok": false, "error": ...}``.
-    """
-    try:
-        from .plan_parse import parse_plan
-        from . import verify_mode_profiles as vmp
-
-        plan_path = Path(track_dir) / "plan.md"
-        if not plan_path.exists():
-            out({"ok": False, "error": f"no plan.md at {plan_path}"})
-            return
-        parsed = parse_plan(plan_path)
-        out({"ok": True, "conflicts": vmp.collect_plan_conflicts(parsed)})
-    except Exception as e:
-        out({"ok": False, "error": str(e)})
 
 
 def cmd_record_summary(track_dir):

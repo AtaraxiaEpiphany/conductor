@@ -68,7 +68,6 @@ AGENT_REMINDERS = {
     "phase-checker": "[Conductor] Result format: ---CHECKPOINT RESULT--- ... ---END RESULT---",
     "ac-tracer": "[Conductor] Result format: ---AC TRACE RESULT--- ... ---END RESULT---",
     "test-runner": "[Conductor] Result format: ---L1 VERIFY RESULT--- ... ---END RESULT---",
-    "compile-runner": "[Conductor] Result format: ---BUILD VERIFY RESULT--- ... ---END RESULT---",
     "corpus-writer": "[Conductor] Result format: ---DOC SYNC RESULT--- ... ---END RESULT---",
     "wiki-synthesizer": "[Conductor] Result format: ---DOC SYNC RESULT--- ... ---END RESULT---",
     "doc-linter": "[Conductor] Result format: ---DOC LINT RESULT--- ... ---END RESULT---",
@@ -95,24 +94,21 @@ AGENT_REMINDERS = {
 # dispatch would mislead. Add here if another agent gains retry semantics.
 _RETRY_AGENTS = {"task-executor"}
 
-# Agents that receive the resolved registry-vocab block (task-type + verify-mode).
-# This is how a project overlay's tags/modes flow end-to-end to the agent-prose
-# layer: spec-planner and task-executor are data-driven by injection here (the
-# same registry phase-checker already reads directly). phase-checker is included
-# belt-and-suspenders so a project-added mode is visible even before its loop
-# reads it. spec-reviewer and refuter AUDIT tag/mode membership — they receive
-# the vocab WITH the review flags (over_tag_risk / closes_debt / carries_debt /
-# build_gated) so their prose can defer to the flags instead of restating which
-# tags/modes carry them (a restated set is the first thing to drift). Add here if
-# another agent should see the resolved vocab at dispatch.
-_REGISTRY_AGENTS = {"spec-planner", "task-executor", "phase-checker", "spec-reviewer", "refuter"}
+# Agents that receive the resolved registry-vocab block (task-type tags).
+# This is how a project overlay's tags flow end-to-end to the agent-prose
+# layer: spec-planner and task-executor are data-driven by injection here.
+# spec-reviewer and refuter AUDIT tag membership — they receive the vocab WITH
+# the review flags (over_tag_risk) so their prose can defer to the flags
+# instead of restating which tags carry them (a restated set is the first thing
+# to drift). Add here if another agent should see the resolved vocab at dispatch.
+_REGISTRY_AGENTS = {"spec-planner", "task-executor", "spec-reviewer", "refuter"}
 
 _REGISTRY_LEAD = (
-    "[Conductor Registry] The closed task-type tag set and verify-mode "
-    "vocabulary below are resolved at dispatch (plugin baseline ⊕ project "
-    "overlay). This is authoritative: emit/use any tag or mode listed here, and "
-    "refuse none that are registered — including project-overlay tags. The "
-    "closed set is what the registry resolved to, not a hardcoded list."
+    "[Conductor Registry] The closed task-type tag set below is resolved at "
+    "dispatch (plugin baseline ⊕ project overlay). This is authoritative: "
+    "emit/use any tag listed here, and refuse none that are registered — "
+    "including project-overlay tags. The closed set is what the registry "
+    "resolved to, not a hardcoded list."
 )
 
 _RETRY_LEAD = (
@@ -238,7 +234,7 @@ def _resolve_locked_task_type(cwd):
     1-based coordinates (it's a typed mirror of the name's tag, derived once at
     construction by :func:`task_profiles.derive_task_type`). That field is
     **lowercased** (``derive_task_type`` lowercases), but the registry keys are
-    Title-case (``Migrate``), so the resolved value is matched case-insensitively
+    Title-case (``Refactor``), so the resolved value is matched case-insensitively
     against :func:`TAG_VOCAB` and the registry-cased form is returned — so the
     downstream profile/workflow lookup hits the right row. Best-effort: any
     resolution/read/shape error → ``None`` (the block falls back to the generic
@@ -292,9 +288,6 @@ def _tag_summary_rows():
             flags.append("coverage-exempt")
         if prof.get("over_tag_risk"):
             flags.append("over-tag")
-        dv = prof.get("default_verify")
-        if isinstance(dv, list) and dv:
-            flags.append(f"default-verify={'+'.join(str(m) for m in dv)}")
         hint = tp.when_to_use_for(tag)
         flagstr = f" [{', '.join(flags)}]" if flags else ""
         hintstr = f" — {hint}" if hint else ""
@@ -313,51 +306,13 @@ def _tag_summary_rows():
     return rows
 
 
-def _mode_summary_lines():
-    """One summary line per registered verify-mode: ``mode: runs -> report_field``.
-
-    Each line also carries the mode's one-line ``when_to_use`` hint (mirrors the
-    tag side) so the rare hand-authoring case picks correctly, and surfaces the
-    ``max_fix_attempts`` cap alongside ``fix-and-retry`` so the cap is visible at
-    dispatch (no-silent-caps: a stop-on-budget or retry cap is disclosed, never
-    silently applied — mirrors the wave scheduler's ``ineligible`` disclosure
-    pattern).
-    """
-    from track_state import verify_mode_profiles as vmp
-    lines = []
-    for mode in vmp.MODE_VOCAB():
-        prof = vmp._profile(mode)  # noqa: SLF001
-        runs = "+".join(prof.get("runs", []))
-        field = prof.get("report_field", "")
-        fix = prof.get("fix_policy", "")
-        fieldstr = f" -> {field}" if field else ""
-        cap = prof.get("max_fix_attempts")
-        fixstr = f" ({fix}" + (f", cap={cap}" if fix == "fix-and-retry" and cap else "") + ")" \
-            if fix else ""
-        mflags = []
-        if prof.get("build_gated"):
-            mflags.append("build-gated")
-        if prof.get("closes_debt"):
-            mflags.append("closes-debt")
-        if prof.get("carries_debt"):
-            mflags.append("carries-debt")
-        mflagstr = f" [{', '.join(mflags)}]" if mflags else ""
-        # Surface the mode's one-line `when_to_use` so the (now-rare) hand-authoring
-        # case — adversarial, the one mode a goal cannot signal — picks correctly.
-        # Mirrors the tag side's `when_to_use_for(tag)` hint above.
-        hint = vmp.when_to_use_for(mode)
-        hintstr = f" — {hint}" if hint else ""
-        lines.append(f"  - {mode}: {runs}{fieldstr}{fixstr}{mflagstr}{hintstr}")
-    return lines
-
-
 def reviewer_block_flags():
     """``{canonical flag-name: kebab token the block emits}`` for surfaced flags.
 
     The drift lint (``check-contract-registry-sync.py``) asserts that every flag
     name a watched agent's prose references is a key here, and that the block
     emits the key's value — so prose that defers to a flag (``over_tag_risk``,
-    ``closes_debt``, …) is guaranteed the data it names. The mapping is EXPLICIT,
+    ``tdd_exempt``, …) is guaranteed the data it names. The mapping is EXPLICIT,
     not ``name.replace('_', '-')``, because one flag shortens in the block:
     ``over_tag_risk`` -> ``over-tag`` (the renderer's compact token). A unit test
     asserts each value IS emitted by the renderers, so this declaration can't
@@ -368,10 +323,6 @@ def reviewer_block_flags():
         "tdd_exempt": "tdd-exempt",
         "coverage_exempt": "coverage-exempt",
         "over_tag_risk": "over-tag",
-        "default_verify": "default-verify",
-        "build_gated": "build-gated",
-        "closes_debt": "closes-debt",
-        "carries_debt": "carries-debt",
     }
 
 
@@ -379,14 +330,12 @@ def _registry_context(agent_type, cwd):
     """The resolved registry-vocab block for an agent, or ``None``.
 
     This is the injection that data-drives the agent-prose layer the way the CLI
-    layer already is: spec-planner and task-executor read the closed tag/mode
+    layer already is: spec-planner and task-executor read the closed tag
     vocabulary from here rather than from hardcoded prose, so a project overlay
-    flows end-to-end with zero plugin edits. phase-checker already reads the
-    registry directly (its loop is mode-agnostic); its block here is a lightweight
-    belt-and-suspenders so a project-added mode is visible at dispatch too.
-    spec-reviewer and refuter audit tag/mode membership — they get the same vocab
-    with the review flags surfaced (:func:`_registry_for_reviewer`), so their
-    audit prose points at flag names instead of restated literal sets.
+    flows end-to-end with zero plugin edits. spec-reviewer and refuter audit tag
+    membership — they get the same vocab with the review flags surfaced
+    (:func:`_registry_for_reviewer`), so their audit prose points at flag names
+    instead of restated literal sets.
 
     Fail-safe: any error → ``None``. This block is advisory and must NEVER break
     the floor/reminder/retry injection that is the hook's primary contract — a
@@ -400,8 +349,6 @@ def _registry_context(agent_type, cwd):
     try:
         if agent_type == "spec-planner":
             return _registry_for_planner()
-        if agent_type == "phase-checker":
-            return _registry_for_phase_checker()
         if agent_type == "task-executor":
             return _registry_for_executor(cwd)
         if agent_type in ("spec-reviewer", "refuter"):
@@ -412,53 +359,33 @@ def _registry_context(agent_type, cwd):
 
 
 def _registry_for_planner():
-    """spec-planner: the full tag vocab (with when-to-use hints) + mode vocab.
+    """spec-planner: the full tag vocab (with when-to-use hints).
 
-    The planner authors plan.md — it must emit any registered tag/mode and refuse
+    The planner authors plan.md — it must emit any registered tag and refuse
     none. The injected vocab IS the closed set it validates against (the registry
     resolves baseline ⊕ overlay), so it no longer hardcodes the 7-tag decision
     rule: it matches a task to a registered tag by the injected when-to-use hints.
     """
     lines = [f"{_REGISTRY_LEAD}", "", "RESOLVED TASK-TYPE TAG VOCAB (emit any; refuse none):"]
     lines.extend(f"  - {r}" for r in _tag_summary_rows())
-    lines.append("")
-    lines.append("RESOLVED VERIFY-MODE VOCAB (phase headings; emit any; refuse none):")
-    lines.extend(_mode_summary_lines())
     return "\n".join(lines)
 
 
 def _registry_for_reviewer():
-    """spec-reviewer + refuter: full tag + mode vocab with the review flags.
+    """spec-reviewer + refuter: full tag vocab with the review flags.
 
-    The reviewers audit tag/mode MEMBERSHIP — an over-tag (``over_tag_risk``)
-    exemption applied to business logic, an unclosed debt mode (``carries_debt``
-    with no later ``closes_debt``), a build-gated mode (``build_gated``). They
-    reason over the same flags the dispatch layer reads, so the block surfaces
-    those flags per row (the tag row carries ``over-tag``/``default-verify``; the
-    mode row carries ``build-gated``/``closes-debt``/``carries-debt``). The
-    reviewer's prose then points at the flag NAME rather than restating which
-    tags/modes carry it — a restated literal set is the first thing to drift, and
-    the producer side of the adversarial pair must read the same ground truth as
-    the verifier. See :data:`reviewer_block_flags` for the lint-facing contract.
+    The reviewers audit tag MEMBERSHIP — an over-tag (``over_tag_risk``)
+    exemption applied to business logic. They reason over the same flags the
+    dispatch layer reads, so the block surfaces those flags per row (the tag row
+    carries ``over-tag``). The reviewer's prose then points at the flag NAME
+    rather than restating which tags carry it — a restated literal set is the
+    first thing to drift, and the producer side of the adversarial pair must read
+    the same ground truth as the verifier. See :data:`reviewer_block_flags` for
+    the lint-facing contract.
     """
     lines = [f"{_REGISTRY_LEAD}", "",
              "RESOLVED TASK-TYPE TAG VOCAB (audit membership; flags name the risk):"]
     lines.extend(f"  - {r}" for r in _tag_summary_rows())
-    lines.append("")
-    lines.append("RESOLVED VERIFY-MODE VOCAB (audit directives; flags name the debt/gate posture):")
-    lines.extend(_mode_summary_lines())
-    return "\n".join(lines)
-
-
-def _registry_for_phase_checker():
-    """phase-checker: the resolved mode vocab (it already reads the registry).
-
-    phase-checker's Step-3 directive loop reads each mode's profile directly from
-    the registry; this block is a lightweight view of the resolved vocab so a
-    project-added mode is visible at dispatch even before the loop reads it.
-    """
-    lines = [f"{_REGISTRY_LEAD}", "", "RESOLVED VERIFY-MODE VOCAB:"]
-    lines.extend(_mode_summary_lines())
     return "\n".join(lines)
 
 
@@ -471,12 +398,11 @@ def _registry_for_executor(cwd):
     is read on demand: when the profile carries a ``workflow``, emit a one-line
     POINTER telling the executor to fetch it via
     ``track-state registry-doc --tag <Tag>`` (tier B, not tier A — see the
-    three-tier context model). This is the ``[Migrate]`` generalization: a
-    project overlay tag with a bespoke ``workflow`` flows to the executor here
-    (the pointer names it; the prose is fetched, never inlined). If no
-    task/type resolves, emits the resolved exemption summary derived from
-    TAG_VOCAB (so the executor still sees the closed set rather than a
-    hardcoded enumeration).
+    three-tier context model). A project overlay tag with a bespoke ``workflow``
+    flows to the executor here (the pointer names it; the prose is fetched,
+    never inlined). If no task/type resolves, emits the resolved exemption
+    summary derived from TAG_VOCAB (so the executor still sees the closed set
+    rather than a hardcoded enumeration).
     """
     from track_state import task_profiles as tp
     lines = [f"{_REGISTRY_LEAD}"]

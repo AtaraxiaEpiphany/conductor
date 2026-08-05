@@ -1,25 +1,25 @@
 """Wiring tests for the SubagentStart registry-vocab injection.
 
 The deterministic layer (CLI, plan parser, dispatch router, F2/F3 gates) is
-data-driven via the task-type and verify-mode registries (baseline ⊕ project
-overlay). This file pins the bridge that data-drives the *agent-prose* layer too:
-the SubagentStart hook injects a ``[Conductor Registry]`` block into
-spec-planner, task-executor, and phase-checker, so a project overlay's tags/modes
-flow end-to-end to the agents with zero plugin edits (mirrors how phase-checker
-already reads the registry directly).
+data-driven via the task-type registry (baseline ⊕ project overlay). This file
+pins the bridge that data-drives the *agent-prose* layer too: the SubagentStart
+hook injects a ``[Conductor Registry]`` block into spec-planner, task-executor,
+spec-reviewer, and refuter, so a project overlay's tags flow end-to-end to the
+agents with zero plugin edits.
 
 These are the load-bearing guards that:
-- spec-planner sees the full resolved TAG_VOCAB + MODE_VOCAB (emit any, refuse none).
-- task-executor sees this task's leading-tag profile (+ its `workflow` when the
-  tag is Migrate) and the resolved exemption sets.
+- spec-planner sees the full resolved TAG_VOCAB (emit any, refuse none).
+- task-executor sees this task's leading-tag profile (and its on-demand
+  `workflow` pointer when the tag carries one) and the resolved exemption sets.
 - the registry block is ordered between the reminder and any retry block.
 - fail-open: a malformed/missing registry never breaks the floor/reminder.
-- the headline end-to-end proof: a synthetic project overlay adding a tag/mode
+- the headline end-to-end proof: a synthetic project overlay adding a tag
   appears in the injected vocab.
 """
 import contextlib
 import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -33,23 +33,21 @@ _HOOK = _scripts / "on-subagent-start.py"
 _CLI = _scripts / "track-state"
 
 
-def _run_cli(tag=None):
+def _run_cli(tag=None, env=None):
     """Run ``track-state registry-doc [--tag <Name>]`` → (rc, stdout)."""
     cmd = [sys.executable, "-B", str(_CLI), "registry-doc"]
     if tag is not None:
         cmd += ["--tag", tag]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True, env=env)
     return proc.returncode, proc.stdout
 
 from track_state import task_profiles as tp  # noqa: E402
-from track_state import verify_mode_profiles as vmp  # noqa: E402
 
 
 def _run(agent_type: str, cwd: str = None, env=None) -> dict:
     payload = {"agent_type": agent_type}
     if cwd:
         payload["cwd"] = cwd
-    import os
     full_env = dict(os.environ)
     if env:
         full_env.update(env)
@@ -61,7 +59,7 @@ def _run(agent_type: str, cwd: str = None, env=None) -> dict:
     return json.loads(proc.stdout) if proc.stdout.strip() else {}
 
 
-def _flat_state(name="[Migrate] bump spring-boot", task_type="migrate"):
+def _flat_state(name="[Config] tweak timeout", task_type="config"):
     """One phase, one in_progress task whose task_type mirrors the leading tag."""
     return {
         "current_phase_index": 1,
@@ -107,7 +105,7 @@ class PlannerInjectionTests(TestCase):
     def test_planner_sees_when_to_use_hints(self):
         ctx = _run("spec-planner").get("hookSpecificOutput", {}).get("additionalContext", "")
         # The injected block carries each tag's when-to-use hint, data-driven.
-        self.assertIn(tp.when_to_use_for("Migrate"), ctx)
+        self.assertIn(tp.when_to_use_for("Config"), ctx)
 
     def test_planner_sees_explicit_signals_keywords(self):
         # The matcher DATA (tier-A): each tag that explicitly declares `signals`
@@ -141,26 +139,13 @@ class PlannerInjectionTests(TestCase):
         else:
             self.fail("[Refactor] row not found in planner injection")
 
-    def test_planner_sees_every_mode(self):
-        ctx = _run("spec-planner").get("hookSpecificOutput", {}).get("additionalContext", "")
-        for mode in vmp.MODE_VOCAB():
-            self.assertIn(mode, ctx, f"planner injection missing verify-mode {mode!r}")
-
-
-class PhaseCheckerInjectionTests(TestCase):
-    def test_phase_checker_receives_modes(self):
-        ctx = _run("phase-checker").get("hookSpecificOutput", {}).get("additionalContext", "")
-        self.assertIn("[Conductor Registry]", ctx)
-        for mode in vmp.MODE_VOCAB():
-            self.assertIn(mode, ctx)
-
 
 class ReviewerInjectionTests(TestCase):
-    """spec-reviewer + refuter AUDIT tag/mode membership, so they receive the
-    resolved vocab WITH the review flags (over_tag_risk / closes_debt /
-    carries_debt / build_gated) per row — letting their prose defer to the flag
-    names instead of restating which tags/modes carry them (a restated set is the
-    first thing to drift; the producer side of the adversarial pair must read the
+    """spec-reviewer + refuter AUDIT tag membership, so they receive the
+    resolved vocab WITH the review flags (over_tag_risk / tdd_exempt /
+    coverage_exempt) per row — letting their prose defer to the flag names
+    instead of restating which tags carry them (a restated set is the first
+    thing to drift; the producer side of the adversarial pair must read the
     same ground truth as the verifier)."""
 
     _REVIEWERS = ("spec-reviewer", "refuter")
@@ -170,28 +155,25 @@ class ReviewerInjectionTests(TestCase):
             ctx = _run(agent).get("hookSpecificOutput", {}).get("additionalContext", "")
             self.assertIn("[Conductor Registry]", ctx, f"{agent} missing the block")
             # The reviewer-framed lead names the audit role (distinct from the
-            # planner/executor/phase-checker leads).
+            # planner/executor leads).
             self.assertIn("audit membership", ctx, f"{agent} missing reviewer lead")
 
-    def test_reviewers_see_every_tag_and_mode(self):
+    def test_reviewers_see_every_tag(self):
         # Reviewers audit the full resolved membership, so the whole vocab flows.
         for agent in self._REVIEWERS:
             ctx = _run(agent).get("hookSpecificOutput", {}).get("additionalContext", "")
             for tag in tp.TAG_VOCAB():
                 self.assertIn(f"[{tag}]", ctx, f"{agent} missing tag {tag!r}")
-            for mode in vmp.MODE_VOCAB():
-                self.assertIn(mode, ctx, f"{agent} missing mode {mode!r}")
 
     def test_reviewers_see_the_review_flags_per_row(self):
         # The block surfaces the flag tokens the reviewers' prose names — the
         # data the lint's flag-coverage assertion guarantees. Pinned on the
-        # baseline tags/modes that carry each flag so a dropped emission is
-        # caught (over-tag from Docs; default-verify from Migrate; build-gated
-        # from compile; closes-debt from test; carries-debt from none).
+        # baseline tags that carry each flag so a dropped emission is caught
+        # (over-tag from Docs/Config/Chore; tdd-exempt + coverage-exempt from
+        # the exempt tags).
         for agent in self._REVIEWERS:
             ctx = _run(agent).get("hookSpecificOutput", {}).get("additionalContext", "")
-            for token in ("over-tag", "default-verify=compile",
-                          "build-gated", "closes-debt", "carries-debt"):
+            for token in ("over-tag", "tdd-exempt", "coverage-exempt"):
                 self.assertIn(token, ctx, f"{agent} missing flag token {token!r}")
 
     def test_reviewer_block_flags_map_is_honest(self):
@@ -209,60 +191,33 @@ class ReviewerInjectionTests(TestCase):
                    if tok not in block}
         self.assertFalse(missing, f"declared flags not emitted: {missing}")
 
-    def test_overlay_tag_and_mode_flags_reach_the_reviewer(self):
-        # Headline end-to-end: a project overlay adds a tag carrying over_tag_risk
-        # and a mode carrying carries_debt. Both must surface in spec-reviewer's
-        # injected block WITH their flags — so the reviewer's prose (which defers
-        # to the flag names) reads the SAME resolved ground truth the dispatch
-        # layer does, with zero plugin edits. Mirrors OverlayEndToEndTests for the
-        # reviewer path; the overlay chokepoint (_load, baseline ⊕ project) is
-        # shared by tags and modes, so exercising both proves the reviewer is
-        # overlay-aware end-to-end.
+    def test_overlay_tag_flags_reach_the_reviewer(self):
+        # Headline end-to-end: a project overlay adds a tag carrying over_tag_risk.
+        # It must surface in spec-reviewer's injected block WITH its flag — so the
+        # reviewer's prose (which defers to the flag names) reads the SAME
+        # resolved ground truth the dispatch layer does, with zero plugin edits.
+        # The overlay chokepoint (_load, baseline ⊕ project) is exercised for
+        # tags; the reviewer is overlay-aware end-to-end.
         overlay_tag = {"tags": {"AcmeRollout": {
             "route": "manual", "tdd_exempt": True, "coverage_exempt": True,
             "over_tag_risk": True, "when_to_use": "Project rollout tag.",
-        }}}
-        overlay_mode = {"modes": {"acme-debt": {
-            "runs": [], "when_to_use": "Project debt-carrying mode.",
-            "report_field": "NO_GATE", "carries_debt": True,
         }}}
         with tempfile.TemporaryDirectory() as d:
             proj = Path(d)
             (proj / "conductor" / "workflow").mkdir(parents=True)
             (proj / "conductor" / "workflow" / "task-type-profiles.json").write_text(
                 json.dumps(overlay_tag))
-            (proj / "conductor" / "workflow" / "verify-mode-profiles.json").write_text(
-                json.dumps(overlay_mode))
             ctx = _run("spec-reviewer", env={"CLAUDE_PROJECT_DIR": str(proj)}).get(
                 "hookSpecificOutput", {}
             ).get("additionalContext", "")
         self.assertIn("[AcmeRollout]", ctx, "overlay tag did not reach spec-reviewer")
         self.assertIn("over-tag", ctx, "overlay tag's over_tag_risk flag did not surface")
-        self.assertIn("acme-debt", ctx, "overlay mode did not reach spec-reviewer")
-        self.assertIn("carries-debt", ctx, "overlay mode's carries_debt flag did not surface")
 
 
 class ExecutorInjectionTests(TestCase):
-    def test_executor_with_migrate_task_gets_workflow(self):
-        with _track(_flat_state()) as cwd:
-            ctx = _run("task-executor", cwd=cwd).get("hookSpecificOutput", {}).get("additionalContext", "")
-        self.assertIn("[Conductor Registry]", ctx)
-        self.assertIn("RESOLVED PROFILE for this task's leading tag [Migrate]", ctx)
-        self.assertIn("tdd_exempt: True", ctx)
-        self.assertIn("coverage_exempt: True", ctx)
-        # The [Migrate] workflow is large + conditional → read-on-demand, not
-        # inlined. The block carries the POINTER (the fetch command naming the
-        # tag), and the prose itself must NOT be injected.
-        self.assertIn("workflow: present", ctx)
-        self.assertIn("track-state registry-doc --tag Migrate", ctx)
-        wf = tp.workflow_for("Migrate")
-        # The workflow prose is NOT inlined into the dispatch — it is fetched.
-        self.assertNotIn(wf.split(".")[0], ctx)
-
     def test_executor_with_refactor_task_gets_refactor_flag(self):
         # The [Refactor] tag's refactor: true surfaces in the injected block so
         # §3.6c can fire on SUCCESS without a [Refactor] name marker or env.
-        # Mirrors how [Migrate]'s workflow pointer surfaces.
         with _track(_flat_state(name="[Refactor] extract the helper",
                                 task_type="refactor")) as cwd:
             ctx = _run("task-executor", cwd=cwd).get("hookSpecificOutput", {}).get("additionalContext", "")
@@ -296,8 +251,8 @@ class ExecutorInjectionTests(TestCase):
         self.assertIn("[Conductor Registry]", ctx)
         self.assertIn("RESOLVED EXEMPTION SETS", ctx)
         # The exemption sets are the data-driven replacement for the old hardcoded
-        # "Exempted: [Docs], [Config], [Chore], [Migrate]" enumeration.
-        for cov in ("Docs", "Config", "Chore", "Manual", "Migrate"):
+        # "Exempted: [Docs], [Config], [Chore]" enumeration.
+        for cov in ("Docs", "Config", "Chore", "Manual"):
             self.assertIn(f"[{cov}]", ctx)
         self.assertIn("[Explore]", ctx)
 
@@ -330,8 +285,8 @@ class FailOpenTests(TestCase):
         self.assertIn("REVIEW RESULT", ctx)
 
     def test_executor_registry_survives_alongside_retry(self):
-        # With both a Migrate task and a failure handoff, registry + retry both
-        # inject and the floor still leads — none of the three blocks dropped.
+        # With both a task and a failure handoff, registry + retry both inject
+        # and the floor still leads — none of the three blocks dropped.
         with _track(_flat_state(), _FAILURE_HANDOFF) as cwd:
             ctx = _run("task-executor", cwd=cwd).get("hookSpecificOutput", {}).get("additionalContext", "")
         self.assertIn("Validate every tool call", ctx)
@@ -340,7 +295,7 @@ class FailOpenTests(TestCase):
 
 
 class OverlayEndToEndTests(TestCase):
-    """The headline proof: a project overlay's tag/mode flows to the agents."""
+    """The headline proof: a project overlay's tag flows to the agents."""
 
     def test_overlay_tag_appears_in_planner_injection(self):
         # A project drops conductor/workflow/task-type-profiles.json adding a
@@ -388,9 +343,10 @@ class OverlayEndToEndTests(TestCase):
 
     def test_overlay_workflow_flows_to_executor(self):
         # A project tag WITH a bespoke workflow must surface as an on-demand
-        # POINTER in the executor when that tag is the locked task's leading tag
-        # — the [Migrate] generalization. The pointer names the overlay tag;
-        # the prose itself is fetched (NOT inlined).
+        # POINTER in the executor when that tag is the locked task's leading tag.
+        # The pointer names the overlay tag; the prose itself is fetched (NOT
+        # inlined) — no baseline tag carries a `workflow`, so this overlay path
+        # is the only one that exercises the on-demand pointer.
         overlay = {
             "tags": {
                 "CustomProc": {
@@ -435,18 +391,32 @@ class RegistryDocOnDemandTests(TestCase):
     """
 
     def test_registry_doc_tag_filter_renders_workflow(self):
-        # The --tag Migrate filter must emit the workflow prose verbatim — this
-        # is the payload the executor fetches on demand instead of having it
-        # always injected into every dispatch.
-        rc, out = _run_cli(tag="Migrate")
-        self.assertEqual(rc, 0, f"registry-doc --tag Migrate failed:\n{out}")
-        self.assertIn("# Task Type `Migrate`", out)
-        wf = tp.workflow_for("Migrate")
-        # The full workflow prose (every sentence, not just the first) renders.
-        for sentence in wf.split("."):
-            stripped = sentence.strip()
-            if stripped:
-                self.assertIn(stripped, out)
+        # No baseline tag carries a `workflow` (the field is a project-overlay
+        # escape hatch), so exercise the on-demand fetch via an overlay tag:
+        # ``registry-doc --tag CustomProc`` must emit that tag's workflow prose
+        # verbatim — the payload the executor fetches on demand instead of
+        # having it always injected into every dispatch.
+        overlay = {
+            "tags": {
+                "CustomProc": {
+                    "route": "executor", "tdd_exempt": True, "coverage_exempt": True,
+                    "when_to_use": "Project-specific procedure.",
+                    "workflow": "PROJECT CUSTOM WORKFLOW: do the bespoke dance.",
+                }
+            }
+        }
+        with tempfile.TemporaryDirectory() as d:
+            proj = Path(d)
+            (proj / "conductor" / "workflow").mkdir(parents=True)
+            (proj / "conductor" / "workflow" / "task-type-profiles.json").write_text(
+                json.dumps(overlay)
+            )
+            env = {**os.environ, "CLAUDE_PROJECT_DIR": str(proj)}
+            rc, out = _run_cli(tag="CustomProc", env=env)
+        self.assertEqual(rc, 0, f"registry-doc --tag CustomProc failed:\n{out}")
+        self.assertIn("# Task Type `CustomProc`", out)
+        # The full workflow prose renders verbatim (not just the pointer).
+        self.assertIn("PROJECT CUSTOM WORKFLOW: do the bespoke dance.", out)
 
     def test_registry_doc_tag_filter_unknown_fail_open(self):
         # An unknown tag must fail open (surface + exit 0), never raise —

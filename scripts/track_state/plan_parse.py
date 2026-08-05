@@ -79,8 +79,7 @@ _KNOWN_BRACKET_TOKEN = re.compile(
 )
 
 # An unrecognized tag-shaped bracket token in a task NAME — e.g. ``[Migration]``
-# (typo for ``[Migrate]``), ``[Springboot3]`` (an unregistered tag), or
-# ``[K8sRollout]``. These are the silent-drift defect: ``extract_tags`` drops
+# (an unregistered tag), ``[Springboot3]``, or ``[K8sRollout]``. These are the silent-drift defect: ``extract_tags`` drops
 # them and the task silently falls back to default TDD, with wrong executor
 # behavior and no error. This matches any bracket whose content has ≥2 chars and
 # starts with a letter — so it catches alphanumeric invented tags too. Pure-hex
@@ -111,46 +110,6 @@ _TC_REF = re.compile(r"TC-\d+\.\d+")
 # names the exact unit the orchestrator addresses internally.
 _DEPS_COMMENT = re.compile(r"^\s*deps\s*:", re.IGNORECASE)
 _DEPS_REF = re.compile(r"P(\d+)\.T(\d+)")
-
-# Per-phase verify directive, inside a ``<!-- verify: compile -->`` comment on
-# the ``## Phase N:`` heading line (plan-format-contract.md §"Phase Verify
-# Directives"). A phase whose goal is "compiles" (a mid-migration phase where
-# the test suite is expected red) declares ``verify: compile``; the final
-# integration phase may declare ``verify: test,start``. A phase whose safety net
-# is the frozen anchor declares ``verify: anchor`` (or ``test,anchor``). Absent
-# = full gate (the default, backward-compatible). Like ac_refs/deps_refs this is
-# advisory metadata parsed for validation surface and the phase-checker's direct
-# read of plan.md — NOT persisted into track-state.json (to_plan_structure drops
-# it).
-_VERIFY_COMMENT = re.compile(r"^\s*verify\s*:", re.IGNORECASE)
-# Closed mode vocabulary — now sourced from the registry at
-# templates/workflow/verify-mode-profiles.json (the single source of truth,
-# surfaced via verify_mode_profiles.MODE_VOCAB), exactly as the dispatch-tag
-# vocabulary above is sourced from task_profiles.TAG_VOCAB. ``compile`` gates on
-# a green build (not the suite); ``test`` gates on the suite (the default);
-# ``start`` adds a one-shot app-boot smoke check; ``anchor`` additionally gates
-# on the frozen test subset passing (the Goodhart counter-anchor — see
-# anchor.py). Comma-separated, order-free.
-#
-# RESOLVED LIVE, not frozen at import. ``_extract_verify`` and the diagnostics
-# below call ``_mode_vocab()`` per use (a one-shot per phase, not a hot loop),
-# so a project-overlay mode registered post-import (e.g. a ``verify: lint`` row
-# added mid-session) is recognized immediately — mirroring the per-call rebuild
-# ``helpers.extract_tags`` does for the tag regex (a frozen snapshot here would
-# silently drop the overlay mode, the asymmetry the tag side was already fixed
-# to avoid). See memory: extract-tags-per-call-rebuild-is-intentional.
-from .verify_mode_profiles import MODE_VOCAB as _mode_vocab
-
-# Cross-phase gate group, inside a ``<!-- gate_group: spring3 -->`` comment on
-# the ``## Phase N:`` heading line (plan-format-contract.md §"Phase Gate
-# Groups"). Phases that share a group name defer their own checkpoint and gate
-# TOGETHER at the terminal (last contiguous) member — the cross-phase "red now,
-# fixed in a later phase" case (e.g. a migration where P1 bumps the dep, P2
-# does the rename, P3 wires it up). Same species as verify_modes: advisory
-# metadata re-parsed at every read, NOT persisted into track-state.json
-# (to_plan_structure drops it). Group names are free-form (like deps refs), not
-# a closed vocabulary — so this directive has no registry counterpart.
-_GATE_GROUP_COMMENT = re.compile(r"^\s*gate_group\s*:", re.IGNORECASE)
 
 _VALID_MARKERS = set(MARKER_MAP.values())
 
@@ -262,88 +221,6 @@ def _extract_deps(rest):
     return deps_refs, has_deps_comment, failures
 
 
-def _extract_verify(rest):
-    """Pull the per-phase verify modes from a ``<!-- verify: ... -->`` comment.
-
-    Returns ``(verify_modes, has_verify_comment, failures)``:
-    - verify_modes: de-duped lowercased modes from the closed vocabulary
-      (``compile``/``test``/``start``/``anchor``), first-seen order.
-    - has_verify_comment: True iff a ``<!-- verify: ... -->`` comment was
-      present, so a comment that yielded no valid mode (likely a typo) can be
-      flagged.
-    - failures: tokens inside a verify comment that did not match a known mode
-      (e.g. ``buil``), surfaced as parse warnings.
-
-    Only a comment whose body starts with ``verify:`` is treated as a verify
-    directive — a stray ``verify`` inside an AC/TC comment cannot trigger this.
-    """
-    # Resolve the live registry vocab per call (not a module-level snapshot) so
-    # a project-overlay mode added post-import is recognized — see the note by
-    # ``_mode_vocab`` above. One-shot per phase, so this is free.
-    modes_vocab = _mode_vocab()
-    modes, seen = [], set()
-    has_verify_comment = False
-    failures = []
-    for m in _HTML_COMMENT.finditer(rest):
-        body = m.group(1)
-        if not _VERIFY_COMMENT.match(body):
-            continue
-        has_verify_comment = True
-        payload = _VERIFY_COMMENT.sub("", body, count=1)
-        for tok in re.split(r"[,\s]+", payload):
-            if not tok:
-                continue
-            low = tok.lower()
-            if low in modes_vocab and low not in seen:
-                seen.add(low)
-                modes.append(low)
-            elif low not in modes_vocab:
-                failures.append(tok)
-    return modes, has_verify_comment, failures
-
-
-def _extract_gate_group(rest):
-    """Pull the cross-phase gate group name from a ``<!-- gate_group: ... -->``.
-
-    Returns ``(gate_group, has_comment, failures)``:
-    - gate_group: the lowercased group name string (e.g. ``"spring3"``), or
-      ``None`` if no directive / the comment body was empty.
-    - has_comment: True iff a ``<!-- gate_group: ... -->`` comment was present,
-      so an empty body (``<!-- gate_group: -->``) can be flagged.
-    - failures: a garbage token (one that didn't parse as a clean name)
-      surfaced as a parse warning. Today the only failure case is an empty body
-      (the last non-whitespace token wins); a future grammar tightening could
-      reject name characters here without changing the call shape.
-
-    Group names are free-form identifiers (like deps refs), NOT a closed
-    vocabulary, so this is a string extraction rather than a vocab membership
-    check. Only a comment whose body starts with ``gate_group:`` is treated as
-    a gate-group directive.
-    """
-    gate_group = None
-    has_comment = False
-    failures = []
-    for m in _HTML_COMMENT.finditer(rest):
-        body = m.group(1)
-        if not _GATE_GROUP_COMMENT.match(body):
-            continue
-        has_comment = True
-        payload = _GATE_GROUP_COMMENT.sub("", body, count=1)
-        # Collapse whitespace, lowercase — group identity is case-insensitive
-        # (``spring3`` == ``Spring3``). Whitespace inside a name is not allowed;
-        # the last whitespace-free token wins so ``<!-- gate_group: a b -->``
-        # surfaces as a failure rather than silently picking ``b``.
-        tokens = [t for t in re.split(r"\s+", payload) if t]
-        if not tokens:
-            failures.append(payload.strip() or "<empty>")
-            continue
-        if len(tokens) > 1:
-            failures.append(" ".join(tokens))
-            continue
-        gate_group = tokens[0].lower()
-    return gate_group, has_comment, failures
-
-
 def parse_plan(plan_path):
     """Parse plan.md → {"phases": [...], "errors": [...], "warnings": [...]}.
 
@@ -374,11 +251,6 @@ def parse_plan(plan_path):
         if pm:
             num = int(pm.group(1))
             raw_name = pm.group(2) or ""
-            # Extract the verify + gate_group directives from the RAW heading
-            # remainder (before _CHECKPOINT.sub / _clean_name strip the comment)
-            # — same capture-before-strip discipline as task ac_refs/tc_refs.
-            verify_modes, has_verify, verify_failures = _extract_verify(raw_name)
-            gate_group, has_gg, gg_failures = _extract_gate_group(raw_name)
             name = _CHECKPOINT.sub("", raw_name).strip()
             if num in seen_phase_numbers:
                 errors.append(f"line {lineno}: duplicate phase number {num}")
@@ -390,12 +262,6 @@ def parse_plan(plan_path):
             expected_next = num + 1
             current_phase = {
                 "name": name, "number": num, "line": lineno, "tasks": [],
-                "verify_modes": verify_modes,
-                "verify_has_comment": has_verify,
-                "verify_failures": verify_failures,
-                "gate_group": gate_group,
-                "gate_group_has_comment": has_gg,
-                "gate_group_failures": gg_failures,
             }
             phases.append(current_phase)
             current_task = None
@@ -538,113 +404,7 @@ def parse_plan(plan_path):
             f"{issue['at']}: dependency annotation issue ({issue['kind']}) "
             f"— {issue['detail']}")
 
-    # Per-phase verify-directive validation (plan-format-contract.md §"Phase
-    # Verify Directives"). Advisory — the directive is read directly from
-    # plan.md by phase-checker, so an unknown mode warns at init but does not
-    # block (same posture as deps). A typo'd mode would otherwise be silently
-    # ignored at checkpoint, leaving the phase on the (safe) full gate — so the
-    # warning is the operator's only signal their directive didn't take.
-    modes_vocab = _mode_vocab()  # live (overlay-aware) for the diagnostic strings
-    for ph in phases:
-        label = f"Phase {ph['number']}" + (f" '{ph['name']}'" if ph["name"] else "")
-        if ph.get("verify_has_comment") and not ph.get("verify_modes"):
-            warnings.append(
-                f"{label}: <!-- verify: --> comment has no valid mode "
-                f"(expected one or more of: {', '.join(modes_vocab)})")
-        for tok in ph.get("verify_failures", []) or []:
-            warnings.append(
-                f"{label}: unrecognized verify mode '{tok}' "
-                f"(expected one or more of: {', '.join(modes_vocab)})")
-
-    # Cross-phase gate-group validation (plan-format-contract.md §"Phase Gate
-    # Groups"). Advisory — the directive is read directly from plan.md by the
-    # checkpoint gate (helpers._phase_needs_checkpoint / dispatch review), so a
-    # malformed group warns at init but does not block (same posture as
-    # verify_modes/deps). A bad group would otherwise silently no-op the
-    # deferral, leaving member phases on their normal per-phase gate (the safe
-    # fallback) — so the warning is the operator's only signal their group
-    # declaration didn't take the deferral effect.
-    for issue in validate_gate_groups({"phases": phases}):
-        warnings.append(
-            f"{issue['at']}: gate-group annotation issue ({issue['kind']}) "
-            f"— {issue['detail']}")
-
-    # verify: none closure validation (plan-format-contract.md §"Phase Verify
-    # Directives"). Advisory — a debt-carrying ``none`` phase must be closed by a
-    # later compile/test/start phase; otherwise the staged debt is never
-    # exercised at any gate. Same posture as gate-groups/verify_modes: warns at
-    # init, never blocks. Directive-only — it cannot verify the closing phase
-    # fixes the *same* debt (operator responsibility).
-    for issue in validate_verify_none_closure({"phases": phases}):
-        warnings.append(
-            f"{issue['at']}: verify: none closure issue ({issue['kind']}) "
-            f"— {issue['detail']}")
-
     return {"phases": phases, "errors": errors, "warnings": warnings}
-
-
-def inject_missing_directives(plan_path, parsed):
-    """Resolve and write any phase-verify directives the planner left absent.
-
-    The ``spec-planner`` agent has no Bash (``tools: Read, Write, Grep, Glob,
-    Edit``), so it cannot run the deterministic resolver itself. Rather than grant
-    it Bash or have it re-encode the resolution as a prose ladder, ``init-from-plan``
-    calls this on the **init path only** (not ``--check``): for every phase whose
-    heading carries NO ``<!-- verify: … -->`` comment, it resolves the directive via
-    :func:`verify_mode_profiles.resolve_phase_verify_modes` (explicit > goal-derived
-    > tag-derived > full gate) and appends the directive to that heading line in
-    plan.md. Phases the planner already authored a directive for are left untouched
-    (explicit wins).
-
-    Idempotent: a re-run finds every phase already carrying a comment and writes
-    nothing. The full-gate outcome (no directive) writes nothing either — the
-    absence of a directive IS the full-gate signal, so emitting an empty directive
-    would be noise. Returns the list of injections (for advisory logging) — each
-    ``{"phase": int, "line": int, "modes": [..], "source": str}``.
-
-    Pure resolution is delegated to the shared composer, so this injector and the
-    ``track-state resolve-phase-verify`` CLI cannot drift on precedence.
-    """
-    from . import verify_mode_profiles as vmp
-    from .helpers import phase_task_tags
-
-    text = Path(plan_path).read_text()
-    lines = text.splitlines()
-    injections = []
-    changed = False
-
-    for ph in parsed["phases"]:
-        # A phase the planner already authored a directive for is explicit — skip.
-        if ph.get("verify_has_comment"):
-            continue
-        goal = ph.get("name") or ""
-        tags = phase_task_tags(parsed, ph["number"])
-        modes, source = vmp.resolve_phase_verify_modes(goal=goal, tags=tags)
-        if not modes:
-            # Full gate — the absence of a directive is the signal; write nothing.
-            continue
-        lineno = ph["line"]
-        # Defensive: the parsed line number must land on the heading we recorded.
-        if not (1 <= lineno <= len(lines)):
-            continue
-        directive = f" <!-- verify: {','.join(modes)} -->"
-        # Guard against a malformed plan where the heading moved between parse and
-        # write (shouldn't happen in one shot, but never corrupt a line silently).
-        if directive in lines[lineno - 1]:
-            continue
-        lines[lineno - 1] = lines[lineno - 1].rstrip() + directive
-        injections.append({"phase": ph["number"], "line": lineno,
-                           "modes": list(modes), "source": source})
-        changed = True
-
-    if changed:
-        # Preserve the trailing newline shape read_text() saw.
-        new_text = "\n".join(lines)
-        if text.endswith("\n"):
-            new_text += "\n"
-        Path(plan_path).write_text(new_text)
-
-    return injections
 
 
 def to_plan_structure(parsed):
@@ -780,139 +540,6 @@ def _detect_dep_cycles(edges):
     for node in list(edges):
         if color.get(node, WHITE) == WHITE:
             dfs(node, [node])
-    return issues
-
-
-def validate_gate_groups(parsed):
-    """Validate ``<!-- gate_group: ... -->`` declarations across the plan.
-
-    Returns a list of advisory issue dicts mirroring validate_deps' shape. Gate
-    groups are cross-phase declarations (plan-format-contract.md §"Phase Gate
-    Groups") — the terminal (last contiguous) member gates the group's
-    accumulated diff and on PASS stamps every member; non-terminal members
-    defer. So the validation rules are structural:
-
-    Issue kinds:
-    - ``single_member``: a group with only 1 member — pointless (a group needs
-      ≥2 phases to express "red now, fixed later"); the lone phase gates itself
-      already.
-    - ``non_contiguous``: a group's member phases are not a contiguous run of
-      phase numbers — the terminal is defined as ``members[-1]`` in declaration
-      order, but a gap means an unrelated phase sits *inside* the group's span
-      and would be skipped by the terminal-gate accumulated-diff range.
-    - ``empty``:     a ``<!-- gate_group: -->`` comment with no name.
-    - ``unparsed``:  a garbage token inside the comment (e.g. whitespace in the
-      name).
-
-    Each issue: ``{"kind": str, "at": "Phase {n}", "detail": str}``. Advisory —
-    the directive is read directly from plan.md at checkpoint time, so a bad
-    group warns at init but does not block (same posture as verify_modes/deps).
-    A malformed group would otherwise silently no-op the deferral, leaving the
-    member phases on their normal per-phase gate (the safe fallback).
-    """
-    issues = []
-    phases = parsed.get("phases", [])
-
-    # Map group name -> [phase numbers] in declaration order.
-    groups = {}
-    for ph in phases:
-        name = ph.get("gate_group")
-        if name:
-            groups.setdefault(name, []).append(ph["number"])
-
-    for gname, members in groups.items():
-        # Per-phase failures (empty / unparsed) are surfaced separately below;
-        # this loop only validates whole-group structure.
-        if len(members) < 2:
-            issues.append({
-                "kind": "single_member", "at": f"Phase {members[0]}",
-                "detail": f"gate_group '{gname}' has only 1 member "
-                          f"(needs ≥2 to defer — a lone phase gates itself)"})
-            continue
-        # Contiguity: members must be a run of consecutive phase numbers in
-        # declaration order. A gap is a non-contiguous group (an unrelated phase
-        # sits inside the terminal's accumulated-diff range).
-        nums = sorted(members)
-        contiguous = all(b == a + 1 for a, b in zip(nums, nums[1:]))
-        if not contiguous:
-            issues.append({
-                "kind": "non_contiguous", "at": f"Phase {members[-1]}",
-                "detail": f"gate_group '{gname}' members {sorted(members)} "
-                          f"are not contiguous (terminal gates the run's "
-                          f"accumulated diff — an intervening phase would be "
-                          f"skipped)"})
-
-    # Per-phase comment-body failures.
-    for ph in phases:
-        at = f"Phase {ph['number']}"
-        if ph.get("gate_group_has_comment") and not ph.get("gate_group"):
-            for tok in ph.get("gate_group_failures", []) or ["<empty>"]:
-                issues.append({
-                    "kind": "empty", "at": at,
-                    "detail": f"<!-- gate_group: --> comment body did not parse "
-                              f"('{tok}') — expected a single identifier"})
-                break  # one warning per phase is enough
-        for tok in ph.get("gate_group_failures", []) or []:
-            if ph.get("gate_group"):
-                # A parsed name coexists with a failure token only when the body
-                # had multiple tokens (whitespace in the name) — flag those.
-                issues.append({
-                    "kind": "unparsed", "at": at,
-                    "detail": f"unparsed gate_group token '{tok}' "
-                              f"(expected a single identifier)"})
-    return issues
-
-
-def validate_verify_none_closure(parsed):
-    """Validate that every ``<!-- verify: none -->`` phase is closed by a later
-    gating phase (plan-format-contract.md §"Phase Verify Directives").
-
-    A ``none`` phase is debt-carrying — it intentionally skips the build/test
-    gate because the work it stages will not compile or pass until a *later*
-    phase finishes the migration. The contract therefore requires a subsequent
-    phase whose gate actually exercises that debt (a mode in {compile, test,
-    start}) to close it. This validator surfaces the two failure shapes:
-
-    Issue kinds:
-    - ``none_unclosed_terminal``: a ``none`` phase is the plan's last phase — no
-      later phase can close the debt.
-    - ``none_unclosed_run``: a ``none`` phase is followed only by other ``none``
-      phases until the end of the plan — the run never re-enables the gate.
-
-    Each issue: ``{"kind": str, "at": "Phase {n}", "detail": str}``. Advisory
-    and directive-only — it cannot verify the closing phase actually fixes the
-    *same* debt (operator responsibility). Same posture as validate_gate_groups
-    / validate_deps: warns at init, never blocks.
-    """
-    issues = []
-    phases = parsed.get("phases", [])
-    # Closing/debt mode sets are read from the registry, not bare literals, so
-    # an overlay mode that closes debt (or carries it) joins this guard with
-    # zero code edits. Falls back to the empty set if the registry is absent
-    # (no closing/debt modes => the guard never fires, matching fail-open).
-    from . import verify_mode_profiles as vmp
-    CLOSING_MODES = set(vmp.closing_modes())
-    DEBT_MODES = set(vmp.debt_modes())
-
-    for i, ph in enumerate(phases):
-        if not (set(ph.get("verify_modes") or []) & DEBT_MODES):
-            continue
-        # Does any strictly-later phase carry a closing gate?
-        later_modes = [set(p.get("verify_modes") or []) for p in phases[i + 1:]]
-        if not any(CLOSING_MODES & modes for modes in later_modes):
-            kind = ("none_unclosed_terminal" if not later_modes
-                    else "none_unclosed_run")
-            hint = ("it is the last phase"
-                    if kind == "none_unclosed_terminal"
-                    else "every later phase is also verify: none")
-            # Name the concrete closing modes for the operator; fall back to the
-            # generic phrase if the registry's set is somehow empty.
-            closing_names = "/".join(sorted(CLOSING_MODES)) or "a debt-closing"
-            issues.append({
-                "kind": kind, "at": f"Phase {ph['number']}",
-                "detail": f"verify: none phase is never closed by a later "
-                          f"{closing_names} phase ({hint}) — the debt it "
-                          f"stages would never be exercised at a gate"})
     return issues
 
 

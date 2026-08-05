@@ -1,12 +1,11 @@
-"""Workflow-shape registry — the third axis (the node SEQUENCE).
+"""Workflow-shape registry — the node SEQUENCE axis.
 
 The task-type registry (:mod:`task_profiles`) says what each node *says*
-(routing + workflow prose). The verify-mode registry
-(:mod:`verify_mode_profiles`) says what each phase gate *means*. This module
-says the node *sequence*: which dispatch agents a workflow runs, in what order,
-its verify policy, and its stop condition. The conductor's fixed state machine
-topology (planner → executor → checker) becomes *declared* here, so a project
-ships a custom shape (e.g. ``research-first``) with zero plugin edits.
+(routing + workflow prose). This module says the node *sequence*: which dispatch
+agents a workflow runs, in what order, its verify policy, and its stop
+condition. The conductor's fixed state machine topology (planner → executor →
+checker) becomes *declared* here, so a project ships a custom shape (e.g.
+``research-first``) with zero plugin edits.
 
 The registry resolves as **plugin baseline ⊕ project overlay**, exactly
 mirroring :mod:`task_profiles`. The baseline is the JSON data file at
@@ -22,7 +21,7 @@ baseline alone — dispatch must never crash over a malformed registry.
 
 **Shape is PARTIALLY load-bearing.** The ``verifiers`` field IS load-bearing:
 the dispatch checkpoint fan-out (``cmd_dispatch_next`` / ``_step_emit_dispatch_batch``)
-iterates :func:`verifiers_for` — the third and fourth axes joined at the checkpoint
+iterates :func:`verifiers_for` — the shape's declared verifier set
 — so a shape controlling which verifiers run is one registry row, not code. The
 ``nodes`` topology stays ADVISORY: the single ``nodes``-consumer is
 :func:`shape_allows`, and its result is **never** used to block or reroute — when
@@ -268,59 +267,30 @@ def nodes_for(shape: str) -> tuple[str, ...]:
     return tuple(_shape(shape).get("nodes", ()))
 
 
-def verifiers_for(shape: str, verify_modes=None) -> tuple[str, ...]:
+def verifiers_for(shape: str) -> tuple[str, ...]:
     """The ordered checkpoint-VERIFIER list a shape's checkpoint fans out.
 
     This is the **load-bearing** seam where the workflow-shape axis meets the
-    verifier axis: the dispatch fan-out (``dispatch.cmd_dispatch_next`` /
+    verifier fan-out: the dispatch fan-out (``dispatch.cmd_dispatch_next`` /
     ``dispatch._step_emit_dispatch_batch``) iterates this tuple and emits one
-    wave member per verifier (built by :func:`dispatch._build_verifier`, which
-    reads each verifier's ``field_set`` from :mod:`verifier_profiles`). So a
+    wave member per verifier (built by :func:`dispatch._build_verifier`). So a
     project shape omitting ``test-runner`` simply doesn't fan it out — the shape
     controls WHICH verifiers its checkpoint runs.
 
     Distinct from :func:`nodes_for` (the spine topology): verifiers are
     checkpoint *children*, never spine nodes. Absent/empty/malformed → the
-    standard ``("ac-tracer", "test-runner")`` pair (fail-open to the pre-registry
-    behavior, mirroring :func:`nodes_for`'s fail-open to default). Unknown shape
-    → the default shape's verifiers. Returns a tuple for stable membership.
-
-    **Per-phase substitution (the dynamic seam).** When ``verify_modes`` is
-    passed (the phase's resolved directive modes, e.g. ``["none"]`` or
-    ``["compile"]``) and contains a build-gated mode (``"none"`` or
-    ``"compile"``), a phase wants the **build** verdict, not the suite verdict.
-    If the declared set fans out ``test-runner`` but NOT ``compile-runner``,
-    substitute ``test-runner → compile-runner`` in place (preserving order). This
-    is what routes a migration/deps phase to fan out the build verifier so the
-    ``none`` mode's build floor has a verdict to read — without persisting any new
-    state (the substitution is recomputed from the re-parsed directive each call,
-    true to the six reasons ``verify_modes`` is not persisted). Idempotent: a
-    shape that already declares ``compile-runner`` is left alone; a shape that
-    declares neither test-runner nor compile-runner is left alone (fail-open).
+    standard ``("ac-tracer", "test-runner")`` pair (fail-open, mirroring
+    :func:`nodes_for`'s fail-open to default). Unknown shape → the default
+    shape's verifiers. Returns a tuple for stable membership.
     """
     raw = _shape(shape).get("verifiers")
     if not isinstance(raw, list) or not raw:
         return tuple(_shape("default").get("verifiers") or
                      ("ac-tracer", "test-runner"))
     # Drop non-str / empty entries defensively (a malformed row never crashes
-    # the fan-out) — the verifier registry's vocab check happens at dispatch.
-    declared = tuple(str(v) for v in raw if isinstance(v, str) and v) or \
+    # the fan-out).
+    return tuple(str(v) for v in raw if isinstance(v, str) and v) or \
         ("ac-tracer", "test-runner")
-    if not verify_modes:
-        return declared
-    # Dynamic substitution: a build-gated phase wants compile-runner, not
-    # test-runner. Substitute only when test-runner is fanned out AND
-    # compile-runner is not already present (don't duplicate). Leave shapes that
-    # declare neither alone (fail-open — a lint-only shape is not our concern).
-    # build-gated-ness is read from the registry (is_build_gated), not a bare
-    # 'none'/'compile' literal, so an overlay mode that also gates on a build
-    # floor joins the substitution with zero code edits.
-    from . import verify_mode_profiles as vmp
-    if any(vmp.is_build_gated(m) for m in verify_modes) and \
-            "test-runner" in declared and "compile-runner" not in declared:
-        return tuple("compile-runner" if v == "test-runner" else v
-                     for v in declared)
-    return declared
 
 
 def verify_policy_for(shape: str) -> str:
@@ -341,8 +311,8 @@ def stop_condition_for(shape: str) -> str:
 
 def instruction_for(shape: str) -> str:
     """The optional prompt-shaping prose for the orchestrator when this shape is
-    active (mirrors task-type ``workflow`` + verify-mode ``protocol``). Absent
-    (the common case) = ``""`` = the default §3.0 dispatch loop.
+    active (mirrors task-type ``workflow``). Absent (the common case) = ``""`` =
+    the default §3.0 dispatch loop.
     """
     return _shape(shape).get("instruction", "")
 

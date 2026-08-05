@@ -9,7 +9,6 @@ from .constants import EXECUTION_MODES
 from .helpers import out, flag, flags_all
 from .mutations import cmd_lock, cmd_fail, cmd_skip, cmd_block, cmd_defer, cmd_set_max_retries, cmd_split
 from .cmd_complete import cmd_complete
-from .anchor import cmd_freeze, cmd_thaw, cmd_set_contract, cmd_anchor_status
 from .dispatch import (
     cmd_next, cmd_dispatch_next, cmd_dispatch_prepare, cmd_dispatch_finalize,
     cmd_recover, cmd_step, cmd_post_loop_step, cmd_post_loop_review,
@@ -24,9 +23,6 @@ from .misc import (
     cmd_reset, cmd_indices, cmd_shas, cmd_add_checkpoint,
     cmd_deferred_report, cmd_phase_done, cmd_registry_update, cmd_registry_add,
     cmd_registry_doc,
-    cmd_resolve_phase_verify,
-    cmd_derive_task_type,
-    cmd_plan_profile, cmd_check_conflicts,
     cmd_record_summary, cmd_preflight, cmd_quality_snapshot,
     cmd_spec_integrity, cmd_derive_name, cmd_post_loop_status,
     cmd_resolve_track, cmd_check, _resolve_track_dir_or_halt,
@@ -264,34 +260,8 @@ COMMAND_HELP = {
                         "Update track entry in Tracks Registry (tracks.md)"),
     "registry-add": ("registry-add <track-dir> [<tracks-md-path>]",
                      "Append the canonical entry for a track to tracks.md (idempotent; auto-locates registry)"),
-    "registry-doc": ("registry-doc [--tag <Name>] [--mode <name>] [--shape <name>] [--verifier <name>]",
-                     "Render the resolved task-type + verify-mode + workflow-shape + verifier registries (baseline ⊕ overlay) as tables. Read-only — no track-dir, no writes. --tag/--mode/--shape/--verifier render ONE entity's row plus its workflow/protocol/instruction/when-to-use prose (the on-demand payload agents fetch)."),
-    "resolve-phase-verify": ("resolve-phase-verify --goal '<phase goal text>' [--tags <Tag>,<Tag>] [--explicit '<existing directive>'",
-                             "Resolve a phase-verify directive (the `verify: <modes>` a phase heading should "
-                             "carry) from free-text inputs. Read-only — no track-dir, no writes. Composes the "
-                             "exact contract precedence (explicit > goal-derived > tag-derived > full gate) by "
-                             "calling the existing resolver functions — the deterministic replacement for the "
-                             "planner's hand-written prose ladder. Emits `verify: <modes>` or the full-gate line; "
-                             "the planner emits the directive verbatim or emits nothing on the full-gate line."),
-    "derive-task-type": ("derive-task-type --description '<task description text>'",
-                         "Derive a task's leading dispatch tag from its free-text description. Read-only — no "
-                         "track-dir, no writes. Signal-matches each registered tag's `signals` set via the existing "
-                         "`derive_task_tag` (the deterministic replacement for a hand-written tag ladder). Emits "
-                         "JSON `{\"tag\": <tag>}`; `null` IS the correct default full-TDD outcome (no exemption), "
-                         "not an error."),
-    "plan-profile": ("plan-profile <track-dir>",
-                     "Emit the resolved phase-verify profile for a track's plan.md. Read-only. Per phase: the modes "
-                     "the resolver WOULD inject (same `resolve_phase_verify_modes` init-from-plan calls — so this CLI "
-                     "and init cannot drift), the resolution source (explicit/goal/tag/full_gate), the authored "
-                     "directive if any, and per-task the extracted leading tag plus the signal-derived tag. Emits "
-                     "JSON {\"ok\": true, \"phases\": [...]}."),
-    "check-conflicts": ("check-conflicts <track-dir>",
-                        "Emit the structured conflict set for a track's plan.md. Read-only. Runs the single "
-                        "whole-plan conflict composer (`collect_plan_conflicts`) that init-from-plan's advisory drift "
-                        "check also calls — so init and this CLI cannot drift. Kinds: harmful_undergating (authored "
-                        "directive gates a build/debt phase on the red suite), all_exempt_suite_gated (every task "
-                        "suite-exempt yet suite-gated), tag_mode_conflict, none_unclosed_*. Emits JSON "
-                        "{\"ok\": true, \"conflicts\": [...]}; conflicts non-empty ⇒ revise."),
+    "registry-doc": ("registry-doc [--tag <Name>] [--shape <name>]",
+                     "Render the resolved task-type + workflow-shape registries (baseline ⊕ overlay) as tables. Read-only — no track-dir, no writes. --tag/--shape render ONE entity's row plus its workflow/protocol/instruction prose (the on-demand payload agents fetch)."),
     "write-result": ("write-result <track-dir> --status success|failure --commit-sha <sha>\n"
                      "                                --summary <text> --coverage-pct <n> ...\n"
                      "                  <track-dir> [--data '<json>']   (or pipe JSON on stdin)",
@@ -317,14 +287,11 @@ COMMAND_HELP = {
                          "gate-advance in code, not teleoperator prose."),
     "phase-verdict": ("phase-verdict <track-dir> --ac-verdict <passed|warn|skipped|FAILED|ERROR> "
                       "[--ac-gate <gate>] [--ac-n-ungrounded <N>] "
-                      "[--l1-status <passed|failed|error> --l1-command <cmd>] "
-                      "[--build-status <passed|failed|error> --build-command <cmd>]",
+                      "[--l1-status <passed|failed|error> --l1-command <cmd>]",
                       "Transcribe the fanned verifier verdicts to the checkpoint marker "
                       "(stage=synth_pending); the next `step` emits the phase-checker synth dispatch. "
-                      "Pass the L1 pair (--l1-*) when test-runner ran (a suite-gated phase) OR the "
-                      "build pair (--build-*) when compile-runner ran (a build-gated compile/none phase) "
-                      "— exactly one second-verifier ran, so exactly one pair is present. Owns the "
-                      "§3.2 parse→assemble step in code, not teleoperator prose."),
+                      "Pass the L1 pair (--l1-*) — test-runner is the sole second verifier (test-runner ran "
+                      "on a suite-gated phase). Owns the §3.2 parse→assemble step in code, not teleoperator prose."),
     "phase-checkpoint-review": ("phase-checkpoint-review <track-dir> --status <PASSED|FAILED> [--sha <7-hex>] [--reason <text>]",
                                 "Stamp the phase checkpoint from phase-checker's STATUS (PASSED stamps + clears; "
                                 "FAILED clears → halt). Owns the §3.7 stamp/halt step in code, not teleoperator prose."),
@@ -388,23 +355,6 @@ COMMAND_HELP = {
                      "Read-only structural check: are the English machine anchors present in spec.md "
                      "(## Acceptance Criteria + '- AC-N:' bullets + ## Test Scenarios '| TC-N.M | AC-N |' table)? "
                      "Language-agnostic — checks anchor tokens, not prose. ok:false + named errors if missing."),
-    "freeze": ("freeze <track-dir> [--force]",
-               "Freeze the Goodhart anchor (feature-list.json) from the spec's AC/TC inventory + measured "
-               "grounding tests. The exogenous baseline the coverage gate is anchored against — the executor "
-               "may flip only `passes`, never the assertion_contract/locators. Refuses an existing list "
-               "without --force (re-freezing would launder a weakened spec into the anchor)."),
-    "thaw": ("thaw <track-dir> (--locator <path::test> | --feature <F-AC-n>) --reason <why>",
-             "Governed removal of one frozen feature (recorded in audit — target changes are never silent). "
-             "The feature is marked thawed, not deleted, so the audit graph stays complete. "
-             "Required to amend a frozen test the write-guard otherwise denies."),
-    "set-contract": ("set-contract <track-dir> (--feature <F-AC-n> | --locator <path::test>) --text <contract>",
-                     "Set a frozen feature's assertion_contract — the exogenous-judgment field freeze leaves blank "
-                     "(the semantic check the AC requires; the measured AC twin can't see it). Sanctioned way to fill "
-                     "it post-freeze without thawing or tripping the write-guard. Use --text \"\" to clear."),
-    "anchor-status": ("anchor-status <track-dir> [--verify]",
-                      "Read-only view of the frozen anchor (features, grounded/ungrounded, thawed, audit). "
-                      "--verify runs the Goodhart counter-metric: executes the frozen subset and reports "
-                      "pass/skip/drift rates — the antagonistic pair to coverage_pct (Piece 3 of the anchor design)."),
     "spec-delta": ("spec-delta <track-dir> [--before <path>]",
                    "Read-only diff of current spec.md vs a prior version (default: git show HEAD~1:spec.md). "
                    "Reports changed/added/removed ACs+FRs+NFRs and, the headline, at_risk_tasks: completed tasks "
@@ -459,11 +409,7 @@ _COMMAND_GROUPS = [
     ("State Mutations", ["lock", "complete", "fail", "skip", "defer", "block", "reset",
                          "set-max-retries", "split"]),
     ("Sync & Registry", ["sync-plan", "reconcile-plan", "sync-handoff",
-                         "registry-update", "registry-add", "registry-doc",
-                         # Read-only registry-backed resolvers — map a goal /
-                         # description to the directive / tag the planner emits.
-                         # No track-dir, no writes (same posture as registry-doc).
-                         "resolve-phase-verify", "derive-task-type"]),
+                         "registry-update", "registry-add", "registry-doc"]),
     ("Handoff", ["get-handoff", "append-handoff", "harvest-candidates",
                  "compile-track-findings"]),
     ("Result Processing", ["write-result", "process-result"]),
@@ -479,13 +425,7 @@ _COMMAND_GROUPS = [
     ("Brief", ["brief-resume", "brief-init", "brief-finalize", "brief-grill-done"]),
     ("Diagnostics", ["validate", "gc", "shas", "post-loop-status", "checklist-verify",
                      "deferred-report", "phase-done", "add-checkpoint", "preflight",
-                     "quality-snapshot", "spec-integrity", "spec-anchors", "spec-delta",
-                     "anchor-status",
-                     # Read-only plan-audit CLIs — emit the resolved phase-verify
-                     # profile / the structured conflict set for a track's plan.md.
-                     # Take a <track-dir>; no writes (same posture as validate).
-                     "plan-profile", "check-conflicts"]),
-    ("Anchor", ["freeze", "thaw", "set-contract"]),
+                     "quality-snapshot", "spec-integrity", "spec-anchors", "spec-delta"]),
     ("Logs", ["log-path", "subagent-log"]),
 ]
 
@@ -527,11 +467,6 @@ _NO_TRACK_DIR_COMMANDS = frozenset({
     "resolve-track", "check", "setup", "new-track-resume",
     "log-path", "subagent-log", "brief-resume",
     "registry-doc",
-    # resolve-phase-verify: its inputs are --goal/--tags/--explicit flags (a
-    # phase goal text, not a path) — same no-track-dir posture as registry-doc.
-    "resolve-phase-verify",
-    # derive-task-type: input is a --description flag (task text, not a path).
-    "derive-task-type",
 })
 
 
@@ -665,38 +600,17 @@ def main():
             # new-track skill never hand-computes the path.
             cmd_registry_add(track_dir, pos[0] if pos else None)
         elif cmd == "registry-doc":
-            # Read-only render of the resolved task-type + verify-mode +
-            # workflow-shape + verifier registries (baseline ⊕ overlay). No
-            # track-dir, no writes. Optional --tag/--mode/--shape/--verifier
-            # filters render ONE entity's row plus its workflow/protocol/
-            # instruction/when-to-use prose verbatim — the on-demand payload
-            # agents fetch instead of having it always injected (e.g. the
-            # [Migrate] workflow).
+            # Read-only render of the resolved task-type + workflow-shape
+            # registries (baseline ⊕ overlay). No track-dir, no writes. Optional
+            # --tag/--shape filters render ONE entity's row plus its workflow/
+            # protocol/instruction prose verbatim — the on-demand payload agents
+            # fetch instead of having it always injected.
             #
             # registry-doc takes NO track-dir, so its flags start at argv[2] —
             # scan the full remainder, not the post-track-dir ``args`` slice
             # (which would eat the first flag as a phantom track-dir).
             rest = sys.argv[2:]
-            cmd_registry_doc(tag=flag(rest, "--tag"), mode=flag(rest, "--mode"),
-                             shape=flag(rest, "--shape"),
-                             verifier=flag(rest, "--verifier"))
-        elif cmd == "resolve-phase-verify":
-            # Read-only resolver: maps a phase goal (+optional tags, +optional
-            # explicit override) to the verify directive the planner should emit.
-            # No track-dir, no writes — same posture as registry-doc, so its
-            # flags start at argv[2] via the same flag() scan (see the note above
-            # on why the post-track-dir ``args`` slice can't be used here).
-            rest = sys.argv[2:]
-            cmd_resolve_phase_verify(goal=flag(rest, "--goal"),
-                                     tags=flag(rest, "--tags"),
-                                     explicit=flag(rest, "--explicit"))
-        elif cmd == "derive-task-type":
-            # Read-only task-type resolver: maps a task description to its
-            # leading dispatch tag (or null = default full-TDD). Same no-track-dir,
-            # no-writes posture as resolve-phase-verify / registry-doc, so its
-            # --description flag starts at argv[2] via the same flag() scan.
-            rest = sys.argv[2:]
-            cmd_derive_task_type(description=flag(rest, "--description"))
+            cmd_registry_doc(tag=flag(rest, "--tag"), shape=flag(rest, "--shape"))
         elif cmd == "start":
             cmd_start(track_dir)
         elif cmd == "set-mode":
@@ -707,14 +621,6 @@ def main():
             cmd_indices(track_dir)
         elif cmd == "validate":
             cmd_validate(track_dir, fix="--fix" in args)
-        elif cmd == "plan-profile":
-            # Read-only plan audit: emit the resolved phase-verify profile.
-            # Takes a <track-dir> (like validate), no writes.
-            cmd_plan_profile(track_dir)
-        elif cmd == "check-conflicts":
-            # Read-only plan audit: emit the structured conflict set. Takes a
-            # <track-dir> (like validate), no writes.
-            cmd_check_conflicts(track_dir)
         elif cmd == "phase-done":
             cmd_phase_done(track_dir, pos[0])
         elif cmd == "shas":
@@ -727,24 +633,6 @@ def main():
             cmd_spec_integrity(track_dir)
         elif cmd == "spec-anchors":
             cmd_spec_anchors(track_dir)
-        elif cmd == "freeze":
-            cmd_freeze(track_dir, force="--force" in args)
-        elif cmd == "thaw":
-            cmd_thaw(
-                track_dir,
-                locator=flag(args, "--locator"),
-                feature=flag(args, "--feature"),
-                reason=flag(args, "--reason"),
-            )
-        elif cmd == "set-contract":
-            cmd_set_contract(
-                track_dir,
-                feature=flag(args, "--feature"),
-                locator=flag(args, "--locator"),
-                text=flag(args, "--text"),
-            )
-        elif cmd == "anchor-status":
-            cmd_anchor_status(track_dir, verify="--verify" in args)
         elif cmd == "spec-delta":
             # before defaults to `git show HEAD~1:spec.md` inside the cmd; an
             # explicit --before <path> overrides (used by re-spec when the edit
@@ -792,9 +680,7 @@ def main():
                 flag(args, "--ac-gate"),
                 flag(args, "--ac-n-ungrounded"),
                 flag(args, "--l1-status"),
-                flag(args, "--l1-command"),
-                build_status=flag(args, "--build-status"),
-                build_command=flag(args, "--build-command"))
+                flag(args, "--l1-command"))
         elif cmd == "phase-checkpoint-review":
             cmd_phase_checkpoint_review(
                 track_dir, flag(args, "--status"),

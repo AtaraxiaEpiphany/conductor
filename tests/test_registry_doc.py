@@ -4,7 +4,7 @@
 teaching tables in ``runtime/contracts/plan-format-contract.md`` (the contract
 prose is richer than a registry string can hold; this render is always-current).
 It renders the RESOLVED registry (plugin baseline ⊕ project overlay) as the
-tag/mode tables on stdout.
+task-type and workflow-shape tables on stdout.
 
 Load-bearing invariants under test:
 
@@ -12,9 +12,11 @@ Load-bearing invariants under test:
   writes anywhere. This is what lets ``registry-doc`` sit in the sanctioned
   subcommand set (a read-only render can never be the catastrophic op the broad
   rm/mv scan guards against). The test confirms no file is touched.
-- **Coverage**: stdout contains every ``TAG_VOCAB()`` member AND every
-  ``MODE_VOCAB()`` member — the render is a faithful view of the resolved vocab.
-- **Overlay-aware**: a project overlay's tag/mode appears in the render.
+- **Coverage**: stdout contains every ``TAG_VOCAB()`` member — the render is a
+  faithful view of the resolved vocab.
+- **Shape Verifiers column**: the shape table carries a load-bearing ``Verifiers``
+  column naming which checkpoint verifiers a shape fans out.
+- **Overlay-aware**: a project overlay's tag appears in the render.
 - **Sanctioned**: ``registry-doc`` is in ``_SANCTIONED_TS_SUBCOMMANDS`` (else the
   pre-command-check broad-verb scan would false-positive on it).
 """
@@ -31,7 +33,6 @@ sys.path.insert(0, str(_scripts))
 _CLI = _scripts / "track-state"
 
 from track_state import task_profiles as tp  # noqa: E402
-from track_state import verify_mode_profiles as vmp  # noqa: E402
 
 # pre-command-check.py is a standalone script (not under the track_state package),
 # so import it as a source file rather than a module.
@@ -68,39 +69,23 @@ class RegistryDocRender(TestCase):
         for tag in tp.TAG_VOCAB():
             self.assertIn(tag, out, f"registry-doc stdout missing tag {tag!r}")
 
-    def test_renders_every_verify_mode(self):
-        env = {**os.environ}
-        env.pop("CLAUDE_PROJECT_DIR", None)
-        rc, out, _ = _run_cli(env=env)
-        for mode in vmp.MODE_VOCAB():
-            self.assertIn(mode, out, f"registry-doc stdout missing mode {mode!r}")
-
-    def test_renders_every_verifier(self):
-        # The fourth axis: every baseline verifier appears in the render.
-        from scripts.track_state import verifier_profiles as vfp
-        env = {**os.environ}
-        env.pop("CLAUDE_PROJECT_DIR", None)
-        rc, out, _ = _run_cli(env=env)
-        for verifier in vfp.VERIFIER_VOCAB():
-            self.assertIn(verifier, out,
-                          f"registry-doc stdout missing verifier {verifier!r}")
-
     def test_renders_section_headings(self):
         env = {**os.environ}
         env.pop("CLAUDE_PROJECT_DIR", None)
         rc, out, _ = _run_cli(env=env)
         self.assertIn("## Task Types", out)
-        self.assertIn("## Verify Modes", out)
-        self.assertIn("## Verifiers", out)  # the fourth-axis section
+        self.assertIn("## Workflow Shapes", out)
         self.assertIn("resolved", out.lower())  # the "(resolved: baseline ⊕ overlay)" banner
 
     def test_shape_table_carries_verifiers_column(self):
-        # The Verifiers column is load-bearing (#4) — it must render in the
-        # shape table, naming which checkpoint verifiers a shape fans out.
+        # The shape-table Verifiers column is load-bearing — it must render,
+        # naming which checkpoint verifiers a shape fans out (ac-tracer + test-runner).
         env = {**os.environ}
         env.pop("CLAUDE_PROJECT_DIR", None)
         rc, out, _ = _run_cli(env=env)
         self.assertIn("Verifiers", out)
+        self.assertIn("ac-tracer", out)
+        self.assertIn("test-runner", out)
 
 
 class RegistryDocReadOnly(TestCase):
@@ -130,7 +115,7 @@ class RegistryDocReadOnly(TestCase):
 
 
 class RegistryDocOverlay(TestCase):
-    """A project overlay's tag + mode appear in the resolved render."""
+    """A project overlay's tag appears in the resolved render."""
 
     def setUp(self):
         self._prior_proj = os.environ.get("CLAUDE_PROJECT_DIR")
@@ -141,7 +126,7 @@ class RegistryDocOverlay(TestCase):
         else:
             os.environ["CLAUDE_PROJECT_DIR"] = self._prior_proj
 
-    def test_overlay_tag_and_mode_appear(self):
+    def test_overlay_tag_appears(self):
         with tempfile.TemporaryDirectory() as proj:
             Path(proj, "conductor", "tracks").mkdir(parents=True)
             Path(proj, "conductor", "workflow").mkdir(parents=True)
@@ -152,21 +137,12 @@ class RegistryDocOverlay(TestCase):
                     "signals": ["k8s", "kubectl", "helm", "rollout"],
                 }},
             }))
-            Path(proj, "conductor", "workflow", "verify-mode-profiles.json").write_text(json.dumps({
-                "modes": {"smoke": {
-                    "runs": ["boot-smoke"], "fix_policy": "none",
-                    "when_to_use": "Post-deploy smoke against a live endpoint.",
-                    "protocol": "Hit /healthz; gate on 200 OK.",
-                }},
-            }))
             env = {**os.environ, "CLAUDE_PROJECT_DIR": proj}
             rc, out, err = _run_cli(env=env)
             self.assertEqual(rc, 0, f"overlay render failed: {err}")
             self.assertIn("K8sRollout", out)  # overlay tag rendered
-            self.assertIn("smoke", out)       # overlay mode rendered
-            # Built-ins survive the overlay merge (render shows both).
-            self.assertIn("Migrate", out)
-            self.assertIn("compile", out)
+            # A built-in tag survives the overlay merge (render shows both).
+            self.assertIn("Refactor", out)
 
 
 class RegistryDocSanctioned(TestCase):

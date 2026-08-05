@@ -8,9 +8,8 @@ hook ``cwd`` (the agent's working dir = repo root), and may carry redundant
 (no such file on disk), so a filesystem resolve is unreliable. This is the
 string-only, filesystem-free equivalent.
 
-Factored out of ``on-category-write-guard._resolve_rel`` and
-``on-anchor-write-guard._resolve_rel`` (which were byte-identical) so a
-normalization edge case is fixed in one place.
+Factored out of ``on-category-write-guard._resolve_rel`` so a normalization
+edge case is fixed in one place.
 """
 
 from __future__ import annotations
