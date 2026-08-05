@@ -123,9 +123,15 @@ class SurfacingTests(TestCase):
         _seed_track(root, "t1_20260629",
                     findings=[_finding("High", title=f"f{i}") for i in range(5)])
         out = get_loop_digest(root)
-        self.assertIn("f0", out)
-        self.assertIn("f2", out)
-        self.assertNotIn("f3", out)       # only first 3
+        # Findings render as "- <title> (<file>:<lines>)" bullets; check THOSE,
+        # not the whole output — the drill-down path carries the tmp-dir segment
+        # (e.g. /tmp/tmpf3q1kx4k/...) which can contain these substrings and
+        # false-trip a plain assertNotIn on "f3"/"f4".
+        finding_lines = [ln for ln in out.splitlines() if ln.startswith("- ")]
+        self.assertEqual(len(finding_lines), 3)      # capped at 3
+        self.assertTrue(any("f0" in ln for ln in finding_lines))
+        self.assertTrue(any("f2" in ln for ln in finding_lines))
+        self.assertFalse(any("f3" in ln or "f4" in ln for ln in finding_lines))
         self.assertIn("(+2 more)", out)
 
     def test_missing_severity_skipped(self):
