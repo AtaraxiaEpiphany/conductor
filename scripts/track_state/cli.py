@@ -43,6 +43,8 @@ from .new_track import (
 )
 from .brief import cmd_brief_init, cmd_brief_finalize, cmd_brief_resume, cmd_brief_grill_done
 from .logs_read import cmd_log_path, cmd_subagent_log
+from .registry_studio import cmd_registry_json, cmd_registry_save
+from .shape_studio import cmd_shape_studio
 
 
 _BOOL_FLAGS = {"--full", "--fix", "--check", "--force", "--verify"}
@@ -263,6 +265,21 @@ COMMAND_HELP = {
                      "Append the canonical entry for a track to tracks.md (idempotent; auto-locates registry)"),
     "registry-doc": ("registry-doc [--tag <Name>] [--shape <name>]",
                      "Render the resolved task-type + workflow-shape registries (baseline ⊕ overlay) as tables. Read-only — no track-dir, no writes. --tag/--shape render ONE entity's row plus its workflow/protocol/instruction prose (the on-demand payload agents fetch)."),
+    "shape-studio": ("shape-studio [--port <n>] [--host <addr>] [--project-dir <dir>]\n"
+                     "             [--baseline] [--no-browser]",
+                     "Launch the read/write workflow-registry visualizer — a local stdlib web UI "
+                     "(127.0.0.1 only, zero deps). See both registries as baseline ⊕ overlay with "
+                     "origin badges + a live resolved-graph preview, edit rows through validating "
+                     "dropdowns, and bind a track to a shape on demand. --baseline flips the default "
+                     "save target to the plugin baseline (an advanced, ships-to-every-project edit)."),
+    "registry-json": ("registry-json --which <shapes|task-types> [--project-dir <dir>]",
+                      "Emit the baseline ⊕ overlay registry snapshot WITH per-row origin attribution "
+                      "(baseline|overlay) — the read-only data layer the studio renders. No track-dir."),
+    "registry-save": ("registry-save --which <shapes|task-types> --target <overlay|baseline>\n"
+                      "             [--project-dir <dir>]   (registry doc read from stdin)",
+                      "Validate + atomically write a registry document from stdin. Rejects unknown "
+                      "vocab / bad structure / a merge that loses the fail-open default (the strict "
+                      "write gate; fail-open is read-only behavior). Keeps a .bak; clears the read cache."),
     "write-result": ("write-result <track-dir> --status success|failure --commit-sha <sha>\n"
                      "                                --summary <text> --coverage-pct <n> ...\n"
                      "                  <track-dir> [--data '<json>']   (or pipe JSON on stdin)",
@@ -441,6 +458,7 @@ _COMMAND_GROUPS = [
                      "deferred-report", "phase-done", "add-checkpoint", "preflight",
                      "quality-snapshot", "spec-integrity", "spec-anchors", "spec-delta",
                      "task-context", "view", "status"]),
+    ("Workflow Studio", ["shape-studio", "registry-json", "registry-save"]),
     ("Logs", ["log-path", "subagent-log"]),
 ]
 
@@ -482,6 +500,7 @@ _NO_TRACK_DIR_COMMANDS = frozenset({
     "resolve-track", "check", "setup", "new-track-resume",
     "log-path", "subagent-log", "brief-resume",
     "registry-doc", "status",
+    "shape-studio", "registry-json", "registry-save",
 })
 
 
@@ -626,6 +645,21 @@ def main():
             # (which would eat the first flag as a phantom track-dir).
             rest = sys.argv[2:]
             cmd_registry_doc(tag=flag(rest, "--tag"), shape=flag(rest, "--shape"))
+        elif cmd == "shape-studio":
+            # No track-dir: flags start at argv[2] (see registry-doc). Serves a
+            # local stdlib web UI for the two registries (127.0.0.1 only).
+            cmd_shape_studio(sys.argv[2:])
+        elif cmd == "registry-json":
+            rest = sys.argv[2:]
+            cmd_registry_json(which=flag(rest, "--which"),
+                              project_dir=flag(rest, "--project-dir"))
+        elif cmd == "registry-save":
+            # The strict write gate over stdin (registry doc). --which/--target
+            # name the registry + file; --project-dir pins the project overlay.
+            rest = sys.argv[2:]
+            cmd_registry_save(which=flag(rest, "--which"),
+                              target=flag(rest, "--target"),
+                              project_dir=flag(rest, "--project-dir"))
         elif cmd == "start":
             cmd_start(track_dir)
         elif cmd == "set-mode":
