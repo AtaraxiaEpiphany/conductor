@@ -5,7 +5,10 @@ correctness contract the plan locked:
 
 - **127.0.0.1 binding** (never 0.0.0.0).
 - **GET** paths: ``/`` (HTML), ``/api/registry``, ``/api/resolve?shape=``,
-  ``/api/resolve?track=``, ``/api/tracks``, ``/api/state``.
+  ``/api/resolve?track=`` (carries a studio-only ``studio.task_cards``
+  enrichment the dashboard ignores), ``/api/tracks``, ``/api/nodes`` (the
+  6-agent legend), ``/api/task-profile?tag=`` (one tag's resolved profile,
+  fail-soft on unknown), ``/api/state`` (carries ``default_target`` + ``theme``).
 - **POST** paths: ``/api/registry/save`` (valid → ok, invalid → 400 + writes
   nothing), ``/api/track/shape`` (valid → ok, bad/traversal track_dir → 400).
 - A save round-trips: after a valid overlay save, ``/api/registry`` reflects it
@@ -141,6 +144,7 @@ class GetPaths(TestCase):
         status, body = _get_json(self.srv.base, "/api/state")
         self.assertEqual(status, 200)
         self.assertEqual(body["default_target"], "overlay")
+        self.assertEqual(body["theme"], "system")
 
 
 class ResolveTrack(TestCase):
@@ -162,6 +166,42 @@ class ResolveTrack(TestCase):
                                      "/api/resolve?track=" +
                                      str(Path(tmp, "conductor", "tracks", "nope")))
             self.assertEqual(status, 400)
+
+    def test_track_resolve_carries_studio_task_cards(self):
+        # The studio-only enrichment: every task carries its leading tag's
+        # resolved profile (workflow prose + exemptions) inline, so the
+        # whole-track map renders without a per-task round-trip.
+        tmp = tempfile.mkdtemp()
+        tdir = Path(tmp, "conductor", "tracks", "auth")
+        tdir.mkdir(parents=True)
+        state = {
+            "track_id": "auth", "type": "feature", "status": "in_progress",
+            "workflow_shape": "migration", "current_phase_index": 1,
+            "current_task_index": 1,
+            "phases": [{"name": "Phase 1", "status": "in_progress", "tasks": [
+                {"name": "[Migrate] Rename foo to bar", "status": "in_progress"},
+                {"name": "Plain untagged task", "status": "pending"},
+            ]}],
+        }
+        save(str(tdir), state)
+        with _Server(tmp) as srv:
+            status, env = _get_json(srv.base,
+                                    "/api/resolve?track=" + str(tdir))
+            self.assertEqual(status, 200)
+            cards = env["studio"]["task_cards"]
+            self.assertEqual(len(cards), 2)
+            migrate = cards[0]
+            self.assertEqual(migrate["tag"], "Migrate")
+            self.assertTrue(migrate["known"])
+            self.assertTrue(migrate["workflow"].startswith("You are MIGRATING"))
+            self.assertFalse(migrate["coverage_exempt"])
+            self.assertEqual(migrate["phase"], 1)
+            self.assertEqual(migrate["task"], 1)
+            self.assertIsNone(migrate["subtask"])
+            plain = cards[1]
+            self.assertIsNone(plain["tag"])          # no brackets → no tag
+            self.assertFalse(plain["known"])
+            self.assertEqual(plain["workflow"], "")   # default TDD
 
 
 class SaveEndpoint(TestCase):
@@ -248,6 +288,68 @@ class TrackShapeBinding(TestCase):
         status, res = _post(self.srv.base, "/api/track/shape",
                             {"track_dir": str(odir), "shape": "default"})
         self.assertEqual(status, 400)
+
+
+class NodesEndpoint(TestCase):
+    """``/api/nodes`` — the 6-agent legend (display prose only)."""
+
+    def setUp(self):
+        self.srv = _Server(tempfile.mkdtemp())
+
+    def tearDown(self):
+        self.srv.stop()
+
+    def test_returns_all_six_agents(self):
+        status, body = _get_json(self.srv.base, "/api/nodes")
+        self.assertEqual(status, 200)
+        nodes = body["nodes"]
+        self.assertEqual(set(nodes), {"spec-planner", "explorer",
+                                      "task-executor", "phase-checker",
+                                      "ac-tracer", "test-runner"})
+        for name, d in nodes.items():
+            self.assertIn(d["kind"], ("spine", "verifier"), name)
+            self.assertTrue(d["role"], name)
+            self.assertTrue(d["produces"], name)
+        # the four spine nodes are kind=spine; the two verifiers are kind=verifier
+        self.assertEqual(sorted(n for n, d in nodes.items() if d["kind"] == "spine"),
+                         ["explorer", "phase-checker", "spec-planner", "task-executor"])
+        self.assertEqual(sorted(n for n, d in nodes.items() if d["kind"] == "verifier"),
+                         ["ac-tracer", "test-runner"])
+
+
+class TaskProfileEndpoint(TestCase):
+    """``/api/task-profile?tag=`` — one tag's resolved profile, fail-soft."""
+
+    def setUp(self):
+        self.srv = _Server(tempfile.mkdtemp())
+
+    def tearDown(self):
+        self.srv.stop()
+
+    def test_known_tag_migrate_resolves(self):
+        status, prof = _get_json(self.srv.base, "/api/task-profile?tag=Migrate")
+        self.assertEqual(status, 200)
+        self.assertTrue(prof["known"])
+        self.assertEqual(prof["route"], "executor")
+        self.assertFalse(prof["tdd_exempt"])
+        self.assertFalse(prof["coverage_exempt"])
+        self.assertTrue(prof["workflow"].startswith("You are MIGRATING"))
+        # [Migrate] is opt-in (authored, never goal-detected).
+        self.assertFalse(prof["auto_propose"])
+
+    def test_unknown_tag_fails_soft_not_500(self):
+        status, prof = _get_json(self.srv.base,
+                                 "/api/task-profile?tag=NoSuchTag")
+        self.assertEqual(status, 200)            # fail-soft, never a 500
+        self.assertFalse(prof["known"])
+        self.assertEqual(prof["workflow"], "")   # default fallback → no prose
+        self.assertEqual(prof["route"], "executor")
+
+    def test_blank_tag_fails_soft(self):
+        status, prof = _get_json(self.srv.base, "/api/task-profile?tag=")
+        self.assertEqual(status, 200)
+        self.assertFalse(prof["known"])
+        self.assertEqual(prof["workflow"], "")
 
 
 if __name__ == "__main__":
