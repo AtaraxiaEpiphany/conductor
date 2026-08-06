@@ -24,7 +24,7 @@ from .misc import (
     cmd_deferred_report, cmd_phase_done, cmd_registry_update, cmd_registry_add,
     cmd_registry_doc,
     cmd_record_summary, cmd_preflight, cmd_quality_snapshot,
-    cmd_spec_integrity, cmd_derive_name, cmd_post_loop_status,
+    cmd_spec_integrity, cmd_view, cmd_derive_name, cmd_post_loop_status,
     cmd_resolve_track, cmd_check, _resolve_track_dir_or_halt,
 )
 from .spec_integrity import cmd_spec_anchors
@@ -350,6 +350,10 @@ COMMAND_HELP = {
                   "Verify core track files (spec/plan/track-state.json) exist and load; ok:false if not"),
     "quality-snapshot": ("quality-snapshot <track-dir>",
                          "Read-only aggregate quality grades: completion, coverage, evidence gaps"),
+    "view": ("view <track-dir> [--render]",
+             "Read-only resolved-workflow + task-tree snapshot (JSON; --render = Unicode dashboard). "
+             "The one code-owned join the dashboard/status skills render from — surfaces the shape, "
+             "nodes, verifier fan-out, gates, and current position, never a second parser of state."),
     "spec-integrity": ("spec-integrity <track-dir>",
                        "Read-only AC coverage rates (TC/plan/verification) + advisory gate; FR/NFR counts"),
     "spec-anchors": ("spec-anchors <track-dir>",
@@ -431,7 +435,7 @@ _COMMAND_GROUPS = [
     ("Diagnostics", ["validate", "gc", "shas", "post-loop-status", "checklist-verify",
                      "deferred-report", "phase-done", "add-checkpoint", "preflight",
                      "quality-snapshot", "spec-integrity", "spec-anchors", "spec-delta",
-                     "task-context"]),
+                     "task-context", "view"]),
     ("Logs", ["log-path", "subagent-log"]),
 ]
 
@@ -635,6 +639,8 @@ def main():
             cmd_post_loop_status(track_dir)
         elif cmd == "quality-snapshot":
             cmd_quality_snapshot(track_dir)
+        elif cmd == "view":
+            cmd_view(track_dir, render="--render" in args)
         elif cmd == "spec-integrity":
             cmd_spec_integrity(track_dir)
         elif cmd == "spec-anchors":

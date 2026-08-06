@@ -105,7 +105,7 @@ _SANCTIONED_TS_SUBCOMMANDS = {
     "record-summary", "recover", "reconcile-plan", "registry-add", "registry-doc", "registry-update", "reset",
     "resolve-track", "set-max-retries", "set-mode", "set-workflow-shape", "setup", "shas", "skip",
     "skip-analyst-verdict", "skip-refute-review", "spec-anchors", "spec-delta",
-    "spec-integrity", "subagent-log", "log-path",
+    "spec-integrity", "subagent-log", "log-path", "view",
     "brief-init", "brief-finalize", "brief-grill-done", "brief-resume",
     "split", "start", "step", "sync-handoff", "sync-plan", "task-context", "validate", "wave-abort",
     "wave-finalize", "wave-status", "wave-step", "write-result",

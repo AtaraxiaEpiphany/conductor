@@ -353,6 +353,159 @@ def cmd_indices(track_dir):
 
     out(dict(indices=result))
 
+
+def _resolve_position(state):
+    """Where the active task is — the ``►`` marker's source on the dashboard.
+
+    Mirrors :func:`dispatch._find_next_task` Pass 1 (an ``in_progress`` task is
+    a recovery / mid-dispatch continuation), then falls back to the cursor
+    fields for a fresh or finalized track (no active task). Returns a small dict
+    the renderer consumes — never persisted, never re-derives dispatch routing.
+    """
+    phases = state.get("phases") or []
+    for pi, ph in enumerate(phases, 1):
+        for ti, tk in enumerate(ph.get("tasks") or [], 1):
+            if tk.get("status") == "in_progress":
+                subs = tk.get("subtasks") or []
+                for si, sub in enumerate(subs, 1):
+                    if sub.get("status") in ("in_progress", "pending"):
+                        return dict(phase=pi, task=ti, subtask=si,
+                                    name=sub.get("name"), kind="subtask")
+                return dict(phase=pi, task=ti, subtask=None,
+                            name=tk.get("name"), kind="task")
+    cpi = state.get("current_phase_index")
+    cti = state.get("current_task_index")
+    if isinstance(cpi, int) and isinstance(cti, int) and 1 <= cpi <= len(phases):
+        tasks = phases[cpi - 1].get("tasks") or []
+        if 1 <= cti <= len(tasks):
+            tk = tasks[cti - 1]
+            csi = state.get("current_subtask_index")
+            subs = tk.get("subtasks") or []
+            if isinstance(csi, int) and 1 <= csi <= len(subs):
+                return dict(phase=cpi, task=cti, subtask=csi,
+                            name=subs[csi - 1].get("name"), kind="cursor")
+            return dict(phase=cpi, task=cti, subtask=None,
+                        name=tk.get("name"), kind="cursor")
+    return dict(phase=None, task=None, subtask=None, name=None, kind="empty")
+
+
+def _view_unit(index, unit):
+    """One task/subtask row for the dashboard task tree (read-only projection)."""
+    ev = unit.get("evidence") or {}
+    return dict(
+        index=index,
+        name=unit.get("name"),
+        status=unit.get("status", "pending"),
+        commit_sha=unit.get("commit_sha"),
+        retry_count=unit.get("retry_count", 0),
+        max_retries=unit.get("max_retries"),
+        task_type=unit.get("task_type"),
+        coverage_pct=ev.get("coverage_pct"),
+    )
+
+
+def _view_task_tree(state):
+    """Phase → task → subtask walk for the dashboard (mirrors :func:`cmd_indices`
+    with the extra per-unit fields the tree view annotates: SHA, retry budget,
+    tag, coverage)."""
+    result = []
+    for pi, ph in enumerate(state.get("phases") or [], 1):
+        phase_info = dict(index=pi, name=ph.get("name"),
+                          status=ph.get("status"), tasks=[])
+        for ti, tk in enumerate(ph.get("tasks") or [], 1):
+            task_info = _view_unit(ti, tk)
+            task_info["subtasks"] = [
+                _view_unit(si, sub)
+                for si, sub in enumerate(tk.get("subtasks") or [], 1)
+            ]
+            phase_info["tasks"].append(task_info)
+        result.append(phase_info)
+    return result
+
+
+def _view_quality(state, track_dir):
+    """The few quality metrics v1 surfaces (completion, mean coverage,
+    AC-integrity gate). Same unit model + exemption predicate as
+    :func:`cmd_quality_snapshot`, inlined rather than factored so the dashboard's
+    minimal slice stays independent of the richer snapshot's shape."""
+    units = []
+    for ph in state.get("phases") or []:
+        for tk in ph.get("tasks") or []:
+            units.append(tk)
+            units.extend(tk.get("subtasks") or [])
+    total = len(units)
+    completed = sum(1 for u in units if u.get("status") == "completed")
+    completion_pct = round(100 * completed / total, 1) if total else 0.0
+    cov_vals = []
+    for u in units:
+        if u.get("status") != "completed":
+            continue
+        if _tag_exempt_from_coverage(extract_tags(u.get("name") or "")):
+            continue
+        cov = _to_number((u.get("evidence") or {}).get("coverage_pct"))
+        if cov is not None:
+            cov_vals.append(cov)
+    coverage_pct = round(sum(cov_vals) / len(cov_vals), 1) if cov_vals else None
+    ac = compute_ac_integrity(track_dir)
+    return dict(
+        completion_pct=completion_pct,
+        coverage_pct=coverage_pct,
+        ac_integrity=ac.get("ac_integrity_gate"),
+    )
+
+
+def cmd_view(track_dir, render=False):
+    """Read-only resolved-workflow + task-tree snapshot — the dashboard backend.
+
+    The ONE code-owned join a dashboard/status skill renders from (never a
+    second parser of ``track-state.json``). Assembles the envelope from the
+    EXISTING registry accessors — :mod:`workflow_shapes` for the node topology /
+    gates / verifier fan-out, :mod:`task_profiles` for the phase-composition
+    verifier narrowing — so a project overlay (new shape, new gate set, new
+    code-free phase) renders for free with zero Python edits. ``render=True``
+    prints a Unicode dashboard (:func:`dashboard_render.render`); the default
+    prints the JSON envelope. Read-only — no firewall exposure.
+    """
+    from . import workflow_shapes as ws
+    from . import task_profiles as tp
+
+    state = load(track_dir)
+    shape = ws.resolve_shape(state.get("workflow_shape"))
+    verifiers = list(ws.verifiers_for(shape))
+    current_phase = state.get("current_phase_index")
+    if isinstance(current_phase, int) and tp.phase_is_code_free(state, current_phase):
+        # Phase-composition narrowing — a code-free current phase drops test-runner
+        # from the checkpoint fan-out (mirrors dispatch._build_verifier_wave).
+        verifiers = [v for v in verifiers if v != "test-runner"]
+
+    envelope = dict(
+        track=dict(
+            track_id=state.get("track_id"),
+            type=state.get("type"),
+            status=state.get("status"),
+            execution_mode=state.get("execution_mode"),
+            shape=shape,
+            description=state.get("description"),
+        ),
+        resolved_workflow=dict(
+            shape=shape,
+            nodes=list(ws.nodes_for(shape)),
+            verifiers=verifiers,
+            gates=list(ws.gates_for(shape)),
+            verify_policy=ws.verify_policy_for(shape),
+            position=_resolve_position(state),
+        ),
+        task_tree=_view_task_tree(state),
+        quality=_view_quality(state, track_dir),
+    )
+
+    if render:
+        from . import dashboard_render
+        print(dashboard_render.render(envelope))
+        return
+    out(envelope)
+
+
 def cmd_derive_name(shortname):
     """Derive the canonical track_id and track_dir for a shortname, today.
 
