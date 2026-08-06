@@ -454,17 +454,17 @@ def _view_quality(state, track_dir):
     )
 
 
-def cmd_view(track_dir, render=False):
-    """Read-only resolved-workflow + task-tree snapshot — the dashboard backend.
+def build_view_envelope(track_dir):
+    """Compute the resolved-workflow + task-tree envelope — no emit.
 
-    The ONE code-owned join a dashboard/status skill renders from (never a
-    second parser of ``track-state.json``). Assembles the envelope from the
-    EXISTING registry accessors — :mod:`workflow_shapes` for the node topology /
-    gates / verifier fan-out, :mod:`task_profiles` for the phase-composition
-    verifier narrowing — so a project overlay (new shape, new gate set, new
-    code-free phase) renders for free with zero Python edits. ``render=True``
-    prints a Unicode dashboard (:func:`dashboard_render.render`); the default
-    prints the JSON envelope. Read-only — no firewall exposure.
+    The ONE code-owned join a dashboard / status / studio renders from (never a
+    second parser of ``track-state.json``). Extracted from :func:`cmd_view` so
+    the shape-studio server's track-bound resolve endpoint reuses the exact same
+    join — position tracking, phase-composition verifier narrowing, and quality
+    gauges all flow through here, so a studio preview of a bound track is
+    byte-identical to what ``/conductor:dashboard`` renders. Assembled from the
+    EXISTING registry accessors (:mod:`workflow_shapes` + :mod:`task_profiles`),
+    so a project overlay renders for free with zero Python edits.
     """
     from . import workflow_shapes as ws
     from . import task_profiles as tp
@@ -478,7 +478,7 @@ def cmd_view(track_dir, render=False):
         # from the checkpoint fan-out (mirrors dispatch._build_verifier_wave).
         verifiers = [v for v in verifiers if v != "test-runner"]
 
-    envelope = dict(
+    return dict(
         track=dict(
             track_id=state.get("track_id"),
             type=state.get("type"),
@@ -499,6 +499,24 @@ def cmd_view(track_dir, render=False):
         quality=_view_quality(state, track_dir),
     )
 
+
+def cmd_view(track_dir, render=False):
+    """Read-only resolved-workflow + task-tree snapshot — the dashboard backend.
+
+    The ONE code-owned join a dashboard/status skill renders from (never a
+    second parser of ``track-state.json``). Assembles the envelope from the
+    EXISTING registry accessors — :mod:`workflow_shapes` for the node topology /
+    gates / verifier fan-out, :mod:`task_profiles` for the phase-composition
+    verifier narrowing — so a project overlay (new shape, new gate set, new
+    code-free phase) renders for free with zero Python edits. ``render=True``
+    prints a Unicode dashboard (:func:`dashboard_render.render`); the default
+    prints the JSON envelope. Read-only — no firewall exposure.
+
+    The envelope itself is built by :func:`build_view_envelope` (shared with the
+    shape-studio server's track-bound resolve); this command adds only the
+    emit/render choice.
+    """
+    envelope = build_view_envelope(track_dir)
     if render:
         from . import dashboard_render
         print(dashboard_render.render(envelope))
