@@ -24,7 +24,7 @@ from .misc import (
     cmd_deferred_report, cmd_phase_done, cmd_registry_update, cmd_registry_add,
     cmd_registry_doc,
     cmd_record_summary, cmd_preflight, cmd_quality_snapshot,
-    cmd_spec_integrity, cmd_view, cmd_derive_name, cmd_post_loop_status,
+    cmd_spec_integrity, cmd_view, cmd_status, cmd_derive_name, cmd_post_loop_status,
     cmd_resolve_track, cmd_check, _resolve_track_dir_or_halt,
 )
 from .spec_integrity import cmd_spec_anchors
@@ -354,6 +354,11 @@ COMMAND_HELP = {
              "Read-only resolved-workflow + task-tree snapshot (JSON; --render = Unicode dashboard). "
              "The one code-owned join the dashboard/status skills render from — surfaces the shape, "
              "nodes, verifier fan-out, gates, and current position, never a second parser of state."),
+    "status": ("status [<track-id-or-dir>]",
+               "Read-only status-report envelope (the /conductor:status backend). No arg = ALL tracks "
+               "(loadable/uninit/missing/ghost); a query = one track. Code-owned computation: statuses "
+               "are the authoritative STORED values (never re-derived), summary/issues/deferred computed "
+               "here. Always exits 0 — switch on ok/reason."),
     "spec-integrity": ("spec-integrity <track-dir>",
                        "Read-only AC coverage rates (TC/plan/verification) + advisory gate; FR/NFR counts"),
     "spec-anchors": ("spec-anchors <track-dir>",
@@ -435,7 +440,7 @@ _COMMAND_GROUPS = [
     ("Diagnostics", ["validate", "gc", "shas", "post-loop-status", "checklist-verify",
                      "deferred-report", "phase-done", "add-checkpoint", "preflight",
                      "quality-snapshot", "spec-integrity", "spec-anchors", "spec-delta",
-                     "task-context", "view"]),
+                     "task-context", "view", "status"]),
     ("Logs", ["log-path", "subagent-log"]),
 ]
 
@@ -476,7 +481,7 @@ def cmd_help(command=None):
 _NO_TRACK_DIR_COMMANDS = frozenset({
     "resolve-track", "check", "setup", "new-track-resume",
     "log-path", "subagent-log", "brief-resume",
-    "registry-doc",
+    "registry-doc", "status",
 })
 
 
@@ -796,16 +801,18 @@ def main():
             cmd_brief_grill_done(track_dir)
         elif cmd == "brief-resume":
             cmd_brief_resume()
-        elif cmd in ("resolve-track", "check", "setup"):
+        elif cmd in ("resolve-track", "check", "setup", "status"):
             # Re-derive from argv[2:] (not the shared track_dir/args split):
             # `check --registry X` would otherwise eat the flag name into the
-            # track_dir slot. All three share the query/flag shape; ``setup`` is
-            # the pre-rename alias routed to the same ``cmd_check``.
+            # track_dir slot. All four share the query/flag shape; ``setup`` is
+            # the pre-rename alias routed to the same ``cmd_check``; ``status``
+            # takes the same optional <query> + ``--registry`` (no arg = all).
             raw = sys.argv[2:]
             query = None if (not raw or raw[0].startswith("--")) else raw[0]
-            _CHECK_FNS = {"resolve-track": cmd_resolve_track,
-                          "check": cmd_check, "setup": cmd_check}
-            _CHECK_FNS[cmd](query=query, registry_path=flag(raw, "--registry"))
+            _QUERY_FNS = {"resolve-track": cmd_resolve_track,
+                          "check": cmd_check, "setup": cmd_check,
+                          "status": cmd_status}
+            _QUERY_FNS[cmd](query=query, registry_path=flag(raw, "--registry"))
         else:
             print(f"Unknown command: {cmd}", file=sys.stderr)
             sys.exit(1)

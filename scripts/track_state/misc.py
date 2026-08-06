@@ -506,6 +506,173 @@ def cmd_view(track_dir, render=False):
     out(envelope)
 
 
+def _status_unit(index, unit):
+    """:func:`_view_unit` plus the reason fields the Issues/Deferred sections
+    surface — ``last_failure_summary``, ``skip_analysis``, ``defer_reason``
+    (all strings on the task per the schema; the structured analyst verdicts
+    live in transient sidecars, not on the task, so this is the real data)."""
+    u = _view_unit(index, unit)
+    u["last_failure_summary"] = unit.get("last_failure_summary")
+    u["skip_analysis"] = unit.get("skip_analysis")
+    u["defer_reason"] = unit.get("defer_reason")
+    return u
+
+
+def _status_phases(state):
+    """Phase → task → subtask walk for the status report. Carries the STORED
+    phase/task statuses — the conductor writes them authoritatively (and the
+    validator autofixes phase status); this does NOT re-derive them."""
+    result = []
+    for pi, ph in enumerate(state.get("phases") or [], 1):
+        phase_info = dict(index=pi, name=ph.get("name"),
+                          status=ph.get("status"), tasks=[])
+        for ti, tk in enumerate(ph.get("tasks") or [], 1):
+            task_info = _status_unit(ti, tk)
+            task_info["subtasks"] = [
+                _status_unit(si, sub)
+                for si, sub in enumerate(tk.get("subtasks") or [], 1)
+            ]
+            phase_info["tasks"].append(task_info)
+        result.append(phase_info)
+    return result
+
+
+def _collect_status_unit(u, pi, ti, si, issues, deferred):
+    st = u.get("status")
+    if st in ("failed", "blocked"):
+        issues.append(dict(phase=pi, task=ti, subtask=si, name=u.get("name"),
+                           kind=st, retry_count=u.get("retry_count", 0),
+                           max_retries=u.get("max_retries"),
+                           last_failure_summary=u.get("last_failure_summary"),
+                           skip_analysis=u.get("skip_analysis")))
+    elif st == "deferred":
+        deferred.append(dict(phase=pi, task=ti, subtask=si, name=u.get("name"),
+                             reason=u.get("defer_reason")))
+
+
+def _status_issues_deferred(state):
+    """Collect failed/blocked (issues) and deferred units with their reason
+    fields. Walks tasks + subtasks — the aggregation the skill used to do in
+    prose, now in code."""
+    issues, deferred = [], []
+    for pi, ph in enumerate(state.get("phases") or [], 1):
+        for ti, tk in enumerate(ph.get("tasks") or [], 1):
+            _collect_status_unit(tk, pi, ti, None, issues, deferred)
+            for si, sub in enumerate(tk.get("subtasks") or [], 1):
+                _collect_status_unit(sub, pi, ti, si, issues, deferred)
+    return issues, deferred
+
+
+def _status_progress(state):
+    """Completed/total unit count (tasks + subtasks) for overall progress."""
+    units = []
+    for ph in state.get("phases") or []:
+        for tk in ph.get("tasks") or []:
+            units.append(tk)
+            units.extend(tk.get("subtasks") or [])
+    total = len(units)
+    completed = sum(1 for u in units if u.get("status") == "completed")
+    return dict(completed=completed, total=total)
+
+
+def _status_track(entry):
+    """One track's status envelope from a classified registry entry.
+
+    ``status`` is the authoritative STORED value (loadable) or the registry-
+    marker projection (uninit/missing/ghost) — NEVER re-derived from tasks.
+    That first-match-wins re-derivation was the /conductor:status skill's drift;
+    retiring it means trusting the status the conductor's lifecycle commands
+    (start / finalize / archive) maintain, consistent with every other
+    diagnostic (``view``, ``post-loop-status``, ``quality-snapshot``).
+    """
+    from . import workflow_shapes as ws
+    td = entry.get("track_dir")
+    state_val = entry.get("state")
+    base = dict(track_id=entry.get("track_id"), track_dir=td, state=state_val,
+                status=entry.get("status"), marker=entry.get("marker"))
+    if state_val != "loadable" or not td:
+        return dict(base, type=None, description=None, shape=None,
+                    execution_mode=None,
+                    position=dict(phase=None, task=None, subtask=None,
+                                  name=None, kind="empty"),
+                    phases=[], issues=[], deferred=[],
+                    progress=dict(completed=0, total=0))
+    s = load(td)
+    issues, deferred = _status_issues_deferred(s)
+    base.update(type=s.get("type"), description=s.get("description"),
+                shape=ws.resolve_shape(s.get("workflow_shape")),
+                execution_mode=s.get("execution_mode"),
+                position=_resolve_position(s), phases=_status_phases(s),
+                issues=issues, deferred=deferred, progress=_status_progress(s))
+    return base
+
+
+def _status_summary(tracks):
+    """All-tracks summary computed in code (the skill used to count this in prose)."""
+    by_status = {}
+    for t in tracks:
+        st = t.get("status") or "unknown"
+        by_status[st] = by_status.get(st, 0) + 1
+    tot_completed = sum(t["progress"]["completed"] for t in tracks)
+    tot_total = sum(t["progress"]["total"] for t in tracks)
+    return dict(
+        total_tracks=len(tracks),
+        by_status=by_status,
+        overall_progress=dict(
+            completed=tot_completed, total=tot_total,
+            pct=round(100 * tot_completed / tot_total, 1) if tot_total else 0.0),
+        deferred_count=sum(len(t["deferred"]) for t in tracks),
+    )
+
+
+def cmd_status(query=None, registry_path=None):
+    """Read-only status-report envelope — the code-owned backend
+    /conductor:status renders from.
+
+    Retires the skill's hand-parse + prose-aggregation drift: track/phase status
+    are the authoritative STORED values (never re-derived — that derivation WAS
+    the drift), and summary counts / issues / deferred / position are computed
+    here, never by the model. With ``query``: one track (resolved through the
+    same :func:`_resolve_core` machinery as ``check``; a direct dir path is
+    accepted too). Without: every registry entry, classified
+    loadable/uninit/missing/ghost. ALWAYS exits 0 — the outcome is in the JSON
+    (``ok``/``reason``), never the exit code, mirroring ``resolve-track``/``check``.
+    """
+    reg = _resolve_registry(registry_path)
+    resolved = _classify_registry(reg)
+    if resolved is None:
+        out(dict(ok=False, reason="no_registry",
+                 hint="Run /conductor:setup (no conductor/tracks.md found)."))
+        return
+
+    q = (query or "").strip()
+    if q and Path(q).is_dir():
+        # Direct track-dir path (e.g. handed from `check`'s td) — report it even
+        # if it isn't a registry entry. Determine loadability so _status_track
+        # knows whether to build the rich envelope.
+        state_val, status = "loadable", None
+        try:
+            status = load(q).get("status")
+        except Exception:
+            state_val = "uninit"
+        entry = dict(track_id=Path(q).name, track_dir=q, state=state_val,
+                     status=status, marker=None)
+        tracks = [_status_track(entry)]
+    elif q:
+        core = _resolve_core(reg, query)
+        if not core.get("ok"):
+            out(dict(ok=False, reason=core.get("reason", "no_match"), query=query,
+                     hint=core.get("hint"),
+                     candidates=core.get("candidates", [])))
+            return
+        tid = core.get("track_id")
+        tracks = [_status_track(r) for r in resolved if r.get("track_id") == tid]
+    else:
+        tracks = [_status_track(r) for r in resolved]
+
+    out(dict(ok=True, tracks=tracks, summary=_status_summary(tracks)))
+
+
 def cmd_derive_name(shortname):
     """Derive the canonical track_id and track_dir for a shortname, today.
 
@@ -711,6 +878,40 @@ def _iter_registry_entries(text, conductor_root):
     return deduped
 
 
+def _classify_registry(reg):
+    """Read the tracks registry and classify every entry by liveness state.
+
+    The single source for the entry → ``{track_id, track_dir, status, marker,
+    state}`` classification, shared by :func:`_resolve_core` (single-track
+    selection) and :func:`cmd_status` (all-tracks enumeration). ``state`` is the
+    liveness key — ``loadable`` (state read OK, ``status`` authoritative),
+    ``uninit`` (dir exists but state won't load), ``missing`` (dir absent),
+    ``ghost`` (no dir resolved). Returns ``None`` when there is no registry, so
+    each caller surfaces its own ``no_registry`` envelope.
+    """
+    if reg is None or not reg.is_file():
+        return None
+    conductor_root = reg.parent
+    entries = _iter_registry_entries(reg.read_text(), conductor_root)
+    resolved = []
+    for e in entries:
+        td = e.get("track_dir")
+        status = e.get("status_str")
+        state = "ghost"
+        if td:
+            if Path(td).is_dir():
+                try:
+                    status = load(td).get("status") or status
+                    state = "loadable"
+                except Exception:
+                    state = "uninit"  # dir exists, state unreadable -> needs init
+            else:
+                state = "missing"  # derived/linked dir doesn't exist
+        resolved.append(dict(track_id=e.get("track_id"), track_dir=td,
+                             status=status, marker=e.get("marker"), state=state))
+    return resolved
+
+
 def _resolve_core(reg, query):
     """Resolve ``query -> track_dir`` and return the outcome dict (no ``out()``).
 
@@ -740,28 +941,10 @@ def _resolve_core(reg, query):
     if reg is None or not reg.is_file():
         return dict(ok=False, reason="no_registry",
                     hint="Run /conductor:setup (no conductor/tracks.md found).")
-    conductor_root = reg.parent
-    entries = _iter_registry_entries(reg.read_text(), conductor_root)
-
-    # Classify each entry. ``state`` is the selection key; ``status`` is
-    # authoritative when loadable, else the registry-marker projection (kept
-    # for display only — it never drives selection of an uninit/missing entry).
-    resolved = []
-    for e in entries:
-        td = e.get("track_dir")
-        status = e.get("status_str")
-        state = "ghost"
-        if td:
-            if Path(td).is_dir():
-                try:
-                    status = load(td).get("status") or status
-                    state = "loadable"
-                except Exception:
-                    state = "uninit"  # dir exists, state unreadable -> needs init
-            else:
-                state = "missing"  # derived/linked dir doesn't exist
-        resolved.append(dict(track_id=e.get("track_id"), track_dir=td,
-                             status=status, marker=e.get("marker"), state=state))
+    resolved = _classify_registry(reg)
+    if resolved is None:
+        return dict(ok=False, reason="no_registry",
+                    hint="Run /conductor:setup (no conductor/tracks.md found).")
 
     q = (query or "").strip()
     if q.lower() in ("$arguments", "${arguments}"):

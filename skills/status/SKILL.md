@@ -1,161 +1,97 @@
 ---
 name: status
-description: Displays project progress by reading track-state.json as the authoritative source
-when_to_use: User wants to see track progress, check task status, or get a project overview
-argument-hint: "[track_name]"
-allowed-tools: Read, Grep, Glob
-model: haiku
+description: Project status overview — renders the code-owned track-state status backend (authoritative statuses, summary, issues, deferred). Read-only.
+when_to_use: User wants track progress / a project overview. The runtime task-progress report. Distinct from /conductor:dashboard (the resolved-workflow DAG + gates view) — status is "where are the tasks", dashboard is "what is the workflow".
+argument-hint: "[track_name] [--health]"
+allowed-tools: Bash, Read
+model: sonnet
 ---
 
-# Conductor Status
+# Conductor Status — Thin Renderer
 
-## 1.0 SYSTEM DIRECTIVE
+You are a **thin renderer**. `track-state status` computes everything in code — track/phase **statuses are the authoritative stored values** (never re-derived), and the summary counts, issues, deferred list, and current position are all computed by the backend. Your ONLY job is to render its JSON envelope into the report below.
 
-You are an AI agent. Your primary function is to provide a status overview of all tracks by reading `track-state.json` files as the authoritative source of truth. You derive track and phase status from computed task statuses.
+**Discipline (this is the whole point of the refactor):**
+- Every value in your report comes **verbatim from the envelope**. You do NOT read `track-state.json`, and you do NOT compute, aggregate, count, or derive anything — that prose computation was the drift this refactor retires.
+- If a field is `null` / absent / a section is empty, **omit** that line or section. Never invent values, SHAs, counts, or statuses.
+- Render **every** track in `tracks`; do not summarize multiple tracks into one.
 
-**Core Protocols:** File paths resolved via project CLAUDE.md TOC.
+## 1.0 FETCH (once)
 
-CRITICAL: You must validate the success of every tool call. If any tool call fails, halt immediately, announce the failure, and await instructions.
+```bash
+track-state status "$ARGUMENTS"
+```
 
----
+Empty `$ARGUMENTS` → all tracks; a track id / shortname / dir → that one track. Switch on the JSON:
+- `ok: false, reason: "no_registry"` → print `hint`; STOP.
+- `ok: false, reason: "no_match"` (or `ambiguous`) → print `hint` (and list `candidates` track_ids if present); STOP.
+- `ok: true` → render §2.0 from `tracks` (a list) + `summary`.
 
-## 1.1 SETUP CHECK
+## 2.0 RENDER — from the envelope only
 
-**PROTOCOL: Verify that the Conductor environment is properly set up.**
+### Status → marker map (apply to every task/subtask `status`)
 
-1. **Locate Tracks Registry:** Resolve via project CLAUDE.md TOC.
-2. **Read Track Index:** For each track listed in the registry, read `<track_dir>/index.md`.
-3. **Verify Core Context:** Confirm Product Definition and Tech Stack exist (resolve from track's `index.md` Project Context section).
-4. **Handle Failure:** If ANY are missing, halt immediately: "Conductor environment incomplete — missing: <files>. Please run `/conductor:setup`."
+`pending`→`[ ]` · `in_progress`→`[~]` · `completed`→`[x]` · `failed`→`[!]` · `skipped`→`[>]` · `deferred`→`[d]` · `blocked`→`[#]` · `cancelled`→`[-]` · `archived`→`[x]`
 
----
-
-## 2.0 STATUS OVERVIEW PROTOCOL
-
-### 2.1 Read Track States
-
-1. **Resolve Arguments:** Check `$ARGUMENTS` for an optional track name filter.
-2. **Locate Tracks Registry:** Resolve via project CLAUDE.md TOC.
-3. **Parse Track Entries:** Extract all track descriptions, status markers, and folder links.
-4. **Filter Tracks:**
-   - **If a track name was provided in `$ARGUMENTS`:** Perform exact, case-insensitive match. Only show status for that track.
-   - **If no track name provided:** Show status for ALL tracks (default behavior).
-5. **For Each Track (filtered):**
-   - Resolve the track folder path.
-   - Read `<track_folder>/track-state.json`.
-   - If `track-state.json` does not exist: note as "legacy track — no state file".
-
-### 2.2 Compute Status
-
-For each track with a state file, compute status from task aggregation:
-
-**Track-Level Status (computed, first match wins):**
-
-| Condition | Track Status |
-|---|---|
-| `track-state.json` has `status: "archived"` | `archived` |
-| All tasks `cancelled` | `cancelled` |
-| Any task `blocked` and no `in_progress`/`failed` | `blocked` |
-| Any task `in_progress` or `failed` | `in_progress` |
-| All tasks `completed`, `skipped`, or `deferred` | `completed` |
-| All tasks `pending` | `new` |
-
-**Phase-Level Status:** Same logic applied per-phase.
-
-### 2.3 Present Status Overview
-
-Output the status report in this format:
+### Summary
 
 ```
 # Project Status Report
-Generated: <current timestamp>
 
 ## Summary
-- Total Tracks: <n>
-- Completed: <n> | In Progress: <n> | Blocked: <n> | New: <n> | Archived: <n>
-- Overall Progress: <completed_tasks>/<total_tasks> (<percentage>%)
-- Deferred: <deferred_count> tasks awaiting manual verification
-
-## Active Tracks
-[... track details for non-archived tracks ...]
-
-## Archived Tracks
-[... track names + archived_at timestamps, grouped at bottom ...]
+- Total Tracks: <summary.total_tracks>
+- <one "Status: N" clause per non-zero key in summary.by_status, e.g. "Completed: 3 | In Progress: 1 | Blocked: 1">
+- Overall Progress: <summary.overall_progress.completed>/<summary.overall_progress.total> (<summary.overall_progress.pct>%)
+- Deferred: <summary.deferred_count> tasks
 ```
 
----
+### Per-track block — render ONE block per track in `tracks`
 
+Split tracks into **Active** (status != `archived`) then **Archived** (status == `archived`); render archived blocks under a single `## Archived Tracks` heading (track_id + status only).
+
+For each **active** track:
+
+```
 ## Track: <track_id> — <description>
-Status: <computed_status>
-Type: <type>
-Current: Phase <n> — Task <m>: <task_name>
-Progress: <completed>/<total> tasks (<percentage>%)
+Status: <status> · Type: <type> · Shape: <shape>
+Current: Phase <position.phase> · Task <position.task>[.<position.subtask>]: <position.name>
+Progress: <progress.completed>/<progress.total> tasks
 
-Phase 1: <name> [completed]
-  [x] Task 1.1: <name> [a1b2c3d]
-  [>] Task 1.2: <name> [skipped]
-
-Phase 2: <name> [in_progress]
-  [x] Task 2.1: <name> [d4e5f6g]
-  [~] Task 2.2: <name> [in_progress]
-    [~] Subtask 2.2.1: <name> [active]
-    [ ] Subtask 2.2.2: <name> [pending]
-  [ ] Task 2.3: <name> [pending]
-  [d] Task 2.4: [Manual] <name> [deferred]
-
-Phase 3: <name> [pending]
-  [ ] Task 3.1: <name> [pending]
-
----
+Phase <phases[].index>: <phases[].name> [<phases[].status>]
+  <marker> <phases[].tasks[].index>: <name>[  <commit_sha first 7>][  retry <retry_count>/<max_retries>]
+    <marker> <subtasks[].index>: <name>[  <commit_sha first 7>]
 ```
 
-### 2.4 Highlight Issues
+- For `state != "loadable"` tracks (`uninit` / `missing` / `ghost`), render the header line only with a note: `Status: <status> (state: <state> — no loadable state)`. Omit Current/Progress/phases.
+- Omit `Current:` when `position.phase` is null. Omit `retry n/m` when `retry_count` is 0 or `max_retries` is null. Omit the SHA token when `commit_sha` is null.
 
-If any track has tasks in `failed` or `blocked` state, add an **Issues** section:
+### Issues (only if any track has a non-empty `issues` list)
 
 ```
 ## Issues Requiring Attention
-
 ### Track: <track_id>
-- **Blocked**: Task '<name>' (Phase <n>) — <skip_analysis.recommendation>
-  - Impact: <skip_analysis.impact>
-  - Reasoning: <skip_analysis.reasoning>
-
-- **Failed**: Task '<name>' (Phase <n>) — attempt <retry_count>/<max_retries>
-  - Last failure: <last_failure_summary>
+- **<Failed|Blocked>**: Task '<issues[].name>' (Phase <issues[].phase>) — attempt <retry_count>/<max_retries>
+  - Last failure: <last_failure_summary>      # only if kind == failed and field present
+  - Skip analysis: <skip_analysis>            # only if kind == blocked and field present
 ```
 
-If any track has deferred tasks, add a **Deferred Verification** section:
+### Deferred (only if any track has a non-empty `deferred` list)
 
 ```
 ## Deferred Tasks (awaiting manual verification)
-
-### Track: <track_id> — <deferred_count> deferred
-- [ ] <task_name> (Phase <n>) — <defer_reason>
+### Track: <track_id>
+- [ ] <deferred[].name> (Phase <deferred[].phase>) — <reason>
 ```
 
-### 2.5 Next Actions
+### Next Actions (recommend from `summary.by_status` only)
 
-Recommend the next action based on current state:
+One line, picked by first match: any `in_progress`/`failed`/`blocked` → "Run `/conductor:implement` to continue; resolve failed/blocked tasks first." · all `completed` (no active) → "All tracks complete. Run `/conductor:review` or `/conductor:new-track`." · else → "Run `/conductor:implement` to start."
 
-- If tracks are `in_progress`: "Run `/conductor:implement` to continue."
-- If tracks are `blocked`: "Resolve blocked tasks before continuing."
-- If all tracks `completed`: "All tracks complete. Run `/conductor:review` or create new tracks."
-- If tracks are `archived`: "No action needed. Archived tracks are kept for reference."
-- If tracks are `new`: "Run `/conductor:implement` to start."
+## 3.0 HEALTH CHECK (only if `$ARGUMENTS` contains `--health` or `--gc`)
 
-### 2.6 Health Check
-
-If `$ARGUMENTS` contains `--health` or `--gc`, run a health check:
-
-1. Run `track-state gc "<track_dir>"` for each active track to clean orphaned artifacts.
-2. Scan for stale `in_progress` tasks across all tracks (state updated >24h ago).
-3. Count orphaned `.conductor/result.json` files.
-4. Report:
+After the report, for each **loadable** track run `track-state gc "<track_dir>"` (the `track_dir` field) and append:
 
 ```
 ## Health Check
-- Orphaned artifacts cleaned: <n>
-- Stale in_progress tasks: <n> (across <n> tracks)
-- Active tracks with warnings: <n>
+- <track_id>: cleaned <gc.cleaned or 0> orphaned artifacts
 ```
