@@ -404,6 +404,34 @@ def cmd_set_mode(track_dir, mode):
     out(dict(ok=True, execution_mode=mode, previous=previous))
 
 
+def set_workflow_shape(track_dir, shape):
+    """Compute+save half of ``set-workflow-shape`` — returns the result dict, no emit.
+
+    The strict ``validate-against-vocab then mutate`` contract: hard-reject an
+    unknown shape (a deliberate *set* must not silently become a no-op, even
+    though reads fail open to ``default`` on the *read* path). Extracted so the
+    shape-studio server (:mod:`registry_studio.set_workflow_shape`) binds a
+    track to a shape in-process through the same gate — one definition of
+    "set a track's shape" for the CLI, the server, and the tests.
+    """
+    # Local import: workflow_shapes is read by the dispatch path and resolves
+    # the overlay via the project root; importing here (not at module top)
+    # keeps the fail-open boundary tight (a set must never crash over registry
+    # resolution — a missing shape vocab rejects cleanly below).
+    from .workflow_shapes import SHAPES_VOCAB
+    vocab = SHAPES_VOCAB()
+    if shape not in vocab:
+        return dict(ok=False,
+                    error=f"unknown workflow_shape {shape!r}",
+                    hint=f"known shapes: {', '.join(vocab)}")
+    state = load(track_dir)
+    previous = state.get("workflow_shape", "default")
+    state["workflow_shape"] = shape
+    state["updated_at"] = now_iso()
+    save(track_dir, state)
+    return dict(ok=True, workflow_shape=shape, previous=previous)
+
+
 def cmd_set_workflow_shape(track_dir, shape):
     """Set ``workflow_shape`` on an existing track (the topology declaration).
 
@@ -417,25 +445,10 @@ def cmd_set_workflow_shape(track_dir, shape):
     Hard-rejects an unknown shape. This is deliberate: ``resolve_shape`` fails
     open to ``default`` on *reads* (a typo must never block dispatch), but a
     deliberate *set* must not silently become a no-op — validate before mutate,
-    so the source of truth is never left holding an unrecognized name.
+    so the source of truth is never left holding an unrecognized name. The
+    compute half is :func:`set_workflow_shape` (shared with the studio server).
     """
-    # Local import: workflow_shapes is read by the dispatch path and resolves
-    # the overlay via the project root; importing here (not at module top)
-    # keeps the fail-open boundary tight (a set must never crash over registry
-    # resolution — a missing shape vocab rejects cleanly below).
-    from .workflow_shapes import SHAPES_VOCAB
-    vocab = SHAPES_VOCAB()
-    if shape not in vocab:
-        out(dict(ok=False,
-                 error=f"unknown workflow_shape {shape!r}",
-                 hint=f"known shapes: {', '.join(vocab)}"))
-        return
-    state = load(track_dir)
-    previous = state.get("workflow_shape", "default")
-    state["workflow_shape"] = shape
-    state["updated_at"] = now_iso()
-    save(track_dir, state)
-    out(dict(ok=True, workflow_shape=shape, previous=previous))
+    out(set_workflow_shape(track_dir, shape))
 
 
 # Statuses that are acceptable end-states for a COMPLETED track (finalize).
