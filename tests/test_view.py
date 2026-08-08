@@ -81,6 +81,11 @@ class TestViewDefaultShape(TestCase):
         self.assertEqual(rw["verifiers"], ["ac-tracer", "test-runner"])
         self.assertEqual(rw["gates"], ["tdd", "coverage", "checkpoint"])
         self.assertEqual(rw["verify_policy"], "checkpoint")
+        # Track C4: the envelope carries the load-bearing verification paradigm
+        # so a dashboard renders it from ONE join (never a 2nd parser). Default
+        # shape = run + test (the code-track defaults).
+        self.assertEqual(rw["checkpoint_policy"], "run")
+        self.assertEqual(rw["ac_grounding"], "test")
         self.assertEqual(env["track"]["shape"], "default")
 
     def test_track_block_carries_identity(self):
@@ -105,6 +110,20 @@ class TestViewMigrationShape(TestCase):
         self.assertNotIn("coverage", rw["gates"])
         # Migration is NOT a code-free shape — test-runner still fans out.
         self.assertIn("test-runner", rw["verifiers"])
+
+
+class TestViewDeliverableShape(TestCase):
+    def test_deliverable_envelope_carries_review_grounding(self):
+        # Track C4: the envelope surfaces the load-bearing verification paradigm.
+        # A deliverable is review-grounded (ac_grounding=review) and runs its
+        # checkpoint by default (checkpoint_policy=run, inherited).
+        env = _out_captured(
+            cmd_view, _make_track_dir(_make_state(workflow_shape="deliverable")))
+        rw = env["resolved_workflow"]
+        self.assertEqual(rw["ac_grounding"], "review")
+        self.assertEqual(rw["checkpoint_policy"], "run")
+        # ac-tracer only (test-runner dropped — no tests on a deliverable).
+        self.assertEqual(rw["verifiers"], ["ac-tracer"])
 
 
 class TestViewCodeFreePhase(TestCase):
@@ -257,6 +276,19 @@ class TestViewRender(TestCase):
         # F5 checkpoint on; F2/F3 off for migration.
         self.assertIn("F5", rendered)
         self.assertIn("▢", rendered)
+
+    def test_render_surfaces_nondefault_paradigm_not_default(self):
+        # Track C4: the dashboard graph surfaces a NON-default verification
+        # paradigm (so a review-grounded track is visible) but does NOT clutter a
+        # standard code track (no paradigm line when both fields are default).
+        deliverable = _str_captured(
+            cmd_view, _make_track_dir(_make_state(workflow_shape="deliverable")),
+            render=True)
+        self.assertIn("ac_grounding: review", deliverable)
+        default = _str_captured(
+            cmd_view, _make_track_dir(_make_state()), render=True)
+        self.assertNotIn("ac_grounding:", default)
+        self.assertNotIn("checkpoint_policy:", default)
 
 
 if __name__ == "__main__":

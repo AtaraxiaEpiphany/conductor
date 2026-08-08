@@ -15,7 +15,8 @@ from unittest import TestCase, main
 from scripts.track_state.core import save
 from scripts.track_state.spec_integrity import (
     compute_ac_integrity, _ac_integrity_gate, _measured_tcs,
-    _measured_tcs_with_locations, compute_ac_evidence_map)
+    _measured_tcs_with_locations, compute_ac_evidence_map,
+    _attested_acs, compute_review_ac_evidence_map)
 from scripts.track_state.misc import cmd_spec_integrity
 
 
@@ -628,6 +629,169 @@ class EarsLintTests(TestCase):
                 r1 = compute_ac_integrity(d)
         self.assertEqual(r1["ears_gate"], "PASS")
         self.assertEqual(r1["ears_warnings"], [])
+
+
+# --- Track B2: review-grounded (deliverable) integrity -------------------------
+# A non-code shape grounds ACs by artifact anchors + review attestations, not
+# test_TC_* functions. Rate 1 = AC→anchor coverage; Rate 3 = AC→attestation
+# (positive verdict in evidence.review_attestations). Rate 2 (plan traceability)
+# is shared. Grounding is shape-driven when state exists; spec-inferred (##
+# Artifact Anchors present) when state is absent (planning time). All test-grounded
+# fixtures above (no workflow_shape, no anchors) stay on the test branch unchanged.
+
+_SPEC_REVIEW = """\
+# Specification: Design Doc
+## Requirements
+### Functional Requirements
+- FR-1: The system shall document the API.
+## Acceptance Criteria
+- AC-1: API design doc covers all endpoints
+- AC-2: Migration runbook includes rollback
+## Artifact Anchors
+| AC Ref | Artifact | Location |
+| ------ | -------- | -------- |
+| AC-1   | API design doc | docs/api.md |
+| AC-2   | migration runbook | docs/run.md |
+"""
+
+_PLAN_REVIEW = """\
+# Implementation Plan: Design Doc
+## Phase 1: Author
+- [ ] Task: write API doc <!-- AC-1 -->
+- [ ] Task: write runbook <!-- AC-2 -->
+"""
+
+
+def _review_state(tasks):
+    return {"track_id": "t", "workflow_shape": "deliverable", "phases": [
+        {"name": "Phase 1", "status": "in_progress", "tasks": tasks},
+    ]}
+
+
+def _attest(ac, verdict="pass", by="spec-reviewer", anchor="docs/x.md"):
+    """A completed task whose evidence carries a review attestation for ``ac``."""
+    return {"name": f"deliver {ac}", "status": "completed",
+            "evidence": {"review_attestations": {
+                ac: {"anchor": anchor, "attested_by": by, "verdict": verdict}}}}
+
+
+class ReviewGroundingTests(TestCase):
+    def test_review_spec_passes_when_anchored_traced_attested(self):
+        d = _track(_SPEC_REVIEW, _PLAN_REVIEW, _review_state([
+            _attest("AC-1"), _attest("AC-2")]))
+        r = compute_ac_integrity(d)
+        self.assertEqual(r["ac_grounding"], "review")
+        self.assertEqual(r["ac_tc_coverage_rate"], 100.0)   # every AC anchored
+        self.assertEqual(r["ac_traceability_rate"], 100.0)  # every AC traced
+        self.assertEqual(r["ac_verification_rate"], 100.0)  # every AC attested
+        self.assertIsNone(r["ac_verification_measured_rate"])  # no measured twin
+        self.assertEqual(r["anchor_count"], 2)
+        self.assertEqual(r["tc_count"], 0)  # literal TC count (review spec has none)
+        self.assertEqual(r["orphan_acs"], [])
+        self.assertEqual(r["ac_integrity_gate"], "PASS")
+
+    def test_review_orphan_ac_without_anchor_fails_gate(self):
+        spec = _SPEC_REVIEW.replace(
+            "- AC-2: Migration runbook includes rollback\n",
+            "- AC-2: Migration runbook includes rollback\n- AC-3: glossary\n")
+        # Plan traces AC-3 so only the anchor rate fails (mirrors the test-branch
+        # orphan test, but on the anchor axis).
+        plan = _PLAN_REVIEW.replace("<!-- AC-2 -->", "<!-- AC-2, AC-3 -->")
+        d = _track(spec, plan, _review_state([_attest("AC-1"), _attest("AC-2")]))
+        r = compute_ac_integrity(d)
+        self.assertEqual(r["orphan_acs"], ["AC-3"])
+        self.assertEqual(r["ac_tc_coverage_rate"], 66.7)
+        self.assertIn("without an artifact anchor", r["ac_integrity_gate"])
+
+    def test_review_untraced_ac_fails_traceability(self):
+        # Plan traces AC-1 only; AC-2 untraced (grounding-agnostic Rate 2).
+        plan = "# Implementation Plan\n## Phase 1\n- [ ] Task: a <!-- AC-1 -->\n"
+        d = _track(_SPEC_REVIEW, plan, _review_state([_attest("AC-1")]))
+        r = compute_ac_integrity(d)
+        self.assertEqual(r["untraced_acs"], ["AC-2"])
+        self.assertEqual(r["ac_traceability_rate"], 50.0)
+        self.assertIn("untraced in plan", r["ac_integrity_gate"])
+
+    def test_review_attestation_rate_not_gated(self):
+        # Only AC-1 attested → verification 50%, but the gate is Rate 1/2 only.
+        d = _track(_SPEC_REVIEW, _PLAN_REVIEW, _review_state([_attest("AC-1")]))
+        r = compute_ac_integrity(d)
+        self.assertEqual(r["ac_verification_rate"], 50.0)
+        self.assertEqual(r["unverified_acs"], ["AC-2"])
+        self.assertEqual(r["ac_integrity_gate"], "PASS")
+
+    def test_review_ac_evidence_shape(self):
+        d = _track(_SPEC_REVIEW, _PLAN_REVIEW, _review_state([_attest("AC-1")]))
+        r = compute_ac_integrity(d)
+        by_ac = {e["ac"]: e for e in r["ac_evidence"]}
+        self.assertEqual(by_ac["AC-1"]["status"], "attested")
+        self.assertEqual(by_ac["AC-1"]["anchor"], "API design doc")
+        self.assertEqual(by_ac["AC-1"]["location"], "docs/api.md")
+        self.assertEqual(by_ac["AC-2"]["status"], "unattested")  # anchor, no attest
+        self.assertEqual(by_ac["AC-2"]["anchor"], "migration runbook")
+
+    def test_review_orphan_ac_evidence_status(self):
+        # An AC with no anchor carries status "orphan" in the evidence trace.
+        spec = _SPEC_REVIEW.replace(
+            "- AC-2: Migration runbook includes rollback\n",
+            "- AC-2: Migration runbook includes rollback\n- AC-3: glossary\n")
+        d = _track(spec, _PLAN_REVIEW, _review_state([_attest("AC-1")]))
+        r = compute_ac_integrity(d)
+        by_ac = {e["ac"]: e for e in r["ac_evidence"]}
+        self.assertEqual(by_ac["AC-3"]["status"], "orphan")
+        self.assertEqual(by_ac["AC-3"]["anchor"], "")
+
+    def test_review_grounding_spec_inferred_when_no_state(self):
+        # Planning time (new-track §2.3): no track-state.json yet. A spec with
+        # ## Artifact Anchors is recognized as review-grounded even with no state
+        # to read the shape from — the chicken-and-egg that would otherwise force
+        # a deliverable spec through the test branch (and fail it for "no TCs").
+        d = _track(_SPEC_REVIEW, _PLAN_REVIEW)  # NO state=
+        r = compute_ac_integrity(d)
+        self.assertEqual(r["ac_grounding"], "review")
+        self.assertEqual(r["ac_tc_coverage_rate"], 100.0)
+        self.assertEqual(r["ac_integrity_gate"], "PASS")
+
+    def test_shape_driven_grounding_wins_over_spec_when_state_exists(self):
+        # State declares workflow_shape=default (test) but the spec carries
+        # anchors. Shape-driven resolution wins → test branch → the anchors are
+        # irrelevant and (with no TCs) every AC is a TC-orphan. Pins that the
+        # declaration is authoritative, not the spec structure, once state exists.
+        state = {"track_id": "t", "workflow_shape": "default", "phases": [
+            {"name": "P1", "status": "in_progress",
+             "tasks": [{"name": "x", "status": "pending"}]}]}
+        d = _track(_SPEC_REVIEW, _PLAN_REVIEW, state)
+        r = compute_ac_integrity(d)
+        self.assertEqual(r["ac_grounding"], "test")
+        # Test branch: AC-1/AC-2 have no TCs → both orphan.
+        self.assertEqual(r["orphan_acs"], ["AC-1", "AC-2"])
+        self.assertIn("without a TC", r["ac_integrity_gate"])
+
+    def test_no_state_no_anchors_is_test_grounding(self):
+        # The fail-open default: no state + a test-grounded spec (no anchors) →
+        # test branch, byte-identical to a legacy track.
+        d = _track(_SPEC_2AC, _PLAN_2AC)  # NO state=
+        r = compute_ac_integrity(d)
+        self.assertEqual(r["ac_grounding"], "test")
+        self.assertEqual(r["ac_integrity_gate"], "PASS")
+
+    def test_attested_acs_reads_positive_verdicts_from_evidence(self):
+        # _attested_acs (the review twin of _covered_tcs): only positive verdicts
+        # count; a "fail" verdict does not attest the AC.
+        state = _review_state([
+            {"name": "a", "status": "completed", "evidence": {"review_attestations": {
+                "AC-1": {"verdict": "pass"}, "AC-2": {"verdict": "fail"}}}},
+            {"name": "b", "status": "pending", "evidence": {"review_attestations": {
+                "AC-2": {"verdict": "pass"}}}},  # pending task — ignored
+        ])
+        self.assertEqual(_attested_acs(state), {"AC-1"})
+
+    def test_review_ac_evidence_map_pure_function(self):
+        anchors = [{"ac": "AC-1", "artifact": "doc", "location": "d.md"}]
+        emap = compute_review_ac_evidence_map(["AC-1", "AC-2"], anchors, {"AC-1"})
+        by_ac = {e["ac"]: e for e in emap}
+        self.assertEqual(by_ac["AC-1"]["status"], "attested")
+        self.assertEqual(by_ac["AC-2"]["status"], "orphan")  # no anchor declared
 
 
 if __name__ == "__main__":

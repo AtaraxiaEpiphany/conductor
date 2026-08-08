@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 from .core import load
-from .constants import EXECUTION_MODES
+from .constants import EXECUTION_MODES, RECOVERY_POLICIES
 from .helpers import out, flag, flags_all
 from .mutations import cmd_lock, cmd_fail, cmd_skip, cmd_block, cmd_defer, cmd_set_max_retries, cmd_split
 from .cmd_complete import cmd_complete
@@ -15,10 +15,12 @@ from .dispatch import (
     cmd_phase_verdict, cmd_phase_checkpoint_review,
     cmd_skip_analyst_verdict, cmd_skip_refute_review,
     cmd_failure_analyst_verdict,
+    cmd_amend_apply, cmd_amend_clear,
+    cmd_review_attest,
 )
 from .result import cmd_process_result, cmd_write_result
 from .validate import cmd_validate
-from .quality import cmd_init_from_plan, cmd_start, cmd_set_mode, cmd_set_workflow_shape, cmd_finalize, cmd_archive, cmd_gc, cmd_checklist_verify
+from .quality import cmd_init_from_plan, cmd_start, cmd_set_mode, cmd_set_recovery_policy, cmd_set_workflow_shape, cmd_finalize, cmd_archive, cmd_gc, cmd_checklist_verify
 from .misc import (
     cmd_reset, cmd_indices, cmd_shas, cmd_add_checkpoint,
     cmd_deferred_report, cmd_phase_done, cmd_registry_update, cmd_registry_add,
@@ -179,6 +181,8 @@ def resolve_indices(pos, args):
 
 # Rendered once from EXECUTION_MODES so help text can't drift from the enum.
 _EXEC_MODE_CHOICES = "|".join(EXECUTION_MODES)
+# Rendered once from RECOVERY_POLICIES for the same reason.
+_RECOVERY_POLICY_CHOICES = "|".join(RECOVERY_POLICIES)
 
 COMMAND_HELP = {
     "init-from-plan": ("init-from-plan <track-dir> --track-id <id>\n"
@@ -189,6 +193,11 @@ COMMAND_HELP = {
               "Transition track from 'new' to 'in_progress'"),
     "set-mode": (f"set-mode <track-dir> --mode <{_EXEC_MODE_CHOICES}>",
                  "Switch execution_mode on an existing track (no re-init)"),
+    "set-recovery-policy": (f"set-recovery-policy <track-dir> --policy <{_RECOVERY_POLICY_CHOICES}>",
+                            "Switch recovery_policy on an existing track (no re-init). "
+                            "'ask' surfaces a Retry/Skip/Block ask on a failed+exhausted "
+                            "task; 'auto' routes straight to skip-analyst — independent "
+                            "of execution_mode."),
     "set-workflow-shape": ("set-workflow-shape <track-dir> --shape <name>",
                            "Declare the track's workflow topology (the dispatch "
                            "node allowlist: default | research-first | a project "
@@ -322,10 +331,24 @@ COMMAND_HELP = {
                            "routes (REFUTED/FAILURE→skip+advance; SUSTAINED→halt). Owns the §3.6 skip-refute in code."),
     "failure-analyst-verdict": ("failure-analyst-verdict <track-dir> --category <deterministic_bug|spec_plan_defect|context_budget|environmental|stuck> "
                                 "--recommendation <retry_modified|replan|decompose|escalate> "
-                                "[--root-cause <text>] [--modification <text>] [--what-was-done <text>]",
+                                "[--root-cause <text>] [--modification <text>] [--what-was-done <text>] "
+                                "[--ac-superseded <AC-N>] [--ac-prime-text <text>] [--affected-tasks <a,b,c>]",
                                 "Transcribe failure-analyst's verdict to the failure-analysis marker (stage=analyzed); the next "
-                                "`step` routes (retry_modified→inject+redispatch task-executor; replan/decompose/escalate→halt). "
-                                "Owns the failure-analyze route in code. --modification is required for retry_modified."),
+                                "`step` routes (retry_modified→inject+redispatch; replan+AC details→stage amendment ask; "
+                                "decompose→split ask; escalate/replan-without-details→halt). "
+                                "--modification is required for retry_modified; --ac-superseded + --ac-prime-text enable the replan amendment."),
+    "amend-apply": ("amend-apply <track-dir>",
+                    "Apply a staged replan amendment: append ## Amendment N to spec.md (original AC kept), "
+                    "reactivate the failing task, inject [Conductor Amendment], commit. The Apply arm of the replan ask."),
+    "amend-clear": ("amend-clear <track-dir>",
+                    "Abandon a staged replan amendment (the Edit-manually arm): clears the staged marker so the next "
+                    "`step` resumes. Does NOT touch spec.md — the human owns that edit."),
+    "review-attest": ("review-attest <track-dir> --phase <p> --task <t> --ac <AC-N> --verdict <pass|fail> "
+                      "[--anchor <text>] [--attested-by <who>] [--subtask <s>]",
+                      "Record a review attestation on a task's evidence (review-grounded Rate-3 channel). Writes "
+                      "evidence.review_attestations[AC-N]={anchor,attested_by,verdict} after spec-reviewer "
+                      "(REVIEW_MODE:attest) attests a deliverable's artifact against its AC. Read by spec-integrity "
+                      "_attested_acs; advisory (not gated). Idempotent — re-attest overwrites."),
     "record-summary": ("record-summary <track-dir>",
                        "Record compact task summary (stdin JSON) for post-compaction recovery"),
     "dispatch-wave": ("dispatch-wave <track-dir> [--full]",
@@ -435,7 +458,7 @@ COMMAND_HELP = {
 }
 
 _COMMAND_GROUPS = [
-    ("Lifecycle", ["init-from-plan", "start", "set-mode", "set-workflow-shape", "finalize", "archive"]),
+    ("Lifecycle", ["init-from-plan", "start", "set-mode", "set-recovery-policy", "set-workflow-shape", "finalize", "archive"]),
     ("Navigation", ["next", "dispatch-next", "recover", "indices"]),
     ("State Mutations", ["lock", "complete", "fail", "skip", "defer", "block", "reset",
                          "set-max-retries", "split"]),
@@ -448,7 +471,8 @@ _COMMAND_GROUPS = [
     ("Rail B-min Spines", ["step", "post-loop-step", "post-loop-review",
                            "phase-verdict", "phase-checkpoint-review",
                            "skip-analyst-verdict", "skip-refute-review",
-                           "failure-analyst-verdict"]),
+                           "failure-analyst-verdict", "amend-apply", "amend-clear",
+                           "review-attest"]),
     ("Wave Parallelism", ["dispatch-wave", "wave-status", "wave-finalize", "wave-abort", "wave-step"]),
     ("Naming", ["derive-name", "resolve-track", "check"]),
     ("New-Track Resume", ["new-track-resume", "new-track-init", "new-track-step",
@@ -664,6 +688,8 @@ def main():
             cmd_start(track_dir)
         elif cmd == "set-mode":
             cmd_set_mode(track_dir, flag(args, "--mode"))
+        elif cmd == "set-recovery-policy":
+            cmd_set_recovery_policy(track_dir, flag(args, "--policy"))
         elif cmd == "set-workflow-shape":
             cmd_set_workflow_shape(track_dir, flag(args, "--shape"))
         elif cmd == "indices":
@@ -757,7 +783,21 @@ def main():
             cmd_failure_analyst_verdict(
                 track_dir, flag(args, "--category"),
                 flag(args, "--recommendation"), flag(args, "--root-cause"),
-                flag(args, "--modification"), flag(args, "--what-was-done"))
+                flag(args, "--modification"), flag(args, "--what-was-done"),
+                flag(args, "--ac-superseded"), flag(args, "--ac-prime-text"),
+                flag(args, "--affected-tasks"))
+        elif cmd == "amend-apply":
+            cmd_amend_apply(track_dir)
+        elif cmd == "amend-clear":
+            cmd_amend_clear(track_dir)
+        elif cmd == "review-attest":
+            p, t, s = resolve_indices(pos, args)
+            if p is None or t is None:
+                out(dict(error="review-attest requires --phase and --task"))
+                sys.exit(1)
+            cmd_review_attest(
+                track_dir, p, t, flag(args, "--ac"), flag(args, "--verdict"),
+                flag(args, "--anchor"), flag(args, "--attested-by"), s)
         elif cmd == "record-summary":
             cmd_record_summary(track_dir)
         elif cmd == "dispatch-wave":

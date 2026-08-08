@@ -63,6 +63,12 @@
 
 ## Test Scenarios
 
+> **Emit this section when `AC_GROUNDING=test`** (the default — `default`/`migration`
+> shapes, tested code). When `AC_GROUNDING=review` (the `deliverable` shape — a
+> non-code artifact), emit `## Artifact Anchors` (next section) INSTEAD; a
+> review-grounded spec carries NO Test Scenarios. One or the other is mandatory —
+> `track-state spec-anchors` rejects a spec with ACs but neither substrate.
+
 Map each AC to concrete test scenarios. These guide the conductor:task-executor's TDD Step 3 (Red phase).
 
 | ID     | AC Ref | Scenario                     | Expected Outcome  |
@@ -70,6 +76,25 @@ Map each AC to concrete test scenarios. These guide the conductor:task-executor'
 | TC-1.1 | AC-1   | [test scenario description]  | [expected result] |
 | TC-1.2 | AC-1   | [edge case / error scenario] | [expected result] |
 | TC-2.1 | AC-2   | [test scenario description]  | [expected result] |
+
+## Artifact Anchors
+
+> **Emit this section INSTEAD OF `## Test Scenarios` when `AC_GROUNDING=review`**
+> (the `deliverable` shape — a non-code deliverable: a doc, design, report,
+> runbook, spec, or data file). A review-grounded spec carries `## Artifact
+> Anchors` and NO `## Test Scenarios` — each AC is grounded by its anchor
+> existing AND a review attesting it satisfies the criterion, not by a test.
+> `spec-integrity` measures AC→anchor coverage on this branch (Rate 1) and
+> AC→attestation (Rate 3); there are no TCs and no `test_TC_*` functions. When
+> `AC_GROUNDING=test`, omit this section entirely and use Test Scenarios above.
+
+Map each AC to the concrete deliverable artifact that grounds it — what the
+deliverable IS, and where it lives (path / section ref). One row per AC.
+
+| AC Ref | Artifact                   | Location           |
+| ------ | -------------------------- | ------------------ |
+| AC-1   | [the deliverable artifact] | [path/section ref] |
+| AC-2   | [the deliverable artifact] | [path/section ref] |
 
 ## Constraints
 - [technical or business constraints]

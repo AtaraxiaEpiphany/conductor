@@ -103,6 +103,62 @@ class FailureAnalystVerdictTests(TestCase):
         self.assertFalse(_failure_analysis_marker_path(d).exists())
 
 
+class NoveltyBookkeepingTests(TestCase):
+    """``cmd_failure_analyst_verdict`` computes loop-until-dry bookkeeping:
+    ``seen_root_causes`` + ``consecutive_empty_rounds`` (the dry signal the router
+    stops on). A novel root_cause resets the dry counter; a repeat or empty one
+    increments it."""
+
+    def _verdict(self, d, root_cause, modification="m"):
+        return _run(cmd_failure_analyst_verdict, d, "deterministic_bug",
+                    "retry_modified", root_cause, modification)
+
+    def test_first_verdict_records_novel_root_cause(self):
+        d = _failed_exhausted_track()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        o = self._verdict(d, "null deref in foo()")
+        self.assertEqual(o["analysis_rounds"], 1)
+        self.assertEqual(o["consecutive_empty_rounds"], 0)
+        m = _failure_analysis_read_marker(d)
+        self.assertEqual(m["seen_root_causes"], ["null deref in foo()"])
+        self.assertEqual(m["consecutive_empty_rounds"], 0)
+
+    def test_repeat_root_cause_increments_dry_counter(self):
+        d = _failed_exhausted_track()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        self._verdict(d, "null deref in foo()")
+        o = self._verdict(d, "null deref in foo()")  # SAME root cause
+        self.assertEqual(o["analysis_rounds"], 2)
+        self.assertEqual(o["consecutive_empty_rounds"], 1)
+        m = _failure_analysis_read_marker(d)
+        # seen_root_causes does not duplicate the repeat.
+        self.assertEqual(m["seen_root_causes"], ["null deref in foo()"])
+
+    def test_novel_root_cause_resets_dry_counter(self):
+        d = _failed_exhausted_track()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        self._verdict(d, "null deref in foo()")
+        self._verdict(d, "null deref in foo()")  # dry=1
+        o = self._verdict(d, "race condition in bar()")  # NOVEL → reset
+        self.assertEqual(o["analysis_rounds"], 3)
+        self.assertEqual(o["consecutive_empty_rounds"], 0)
+        m = _failure_analysis_read_marker(d)
+        self.assertEqual(m["seen_root_causes"],
+                         ["null deref in foo()", "race condition in bar()"])
+
+    def test_empty_root_cause_counts_as_dry(self):
+        # A missing/blank root_cause is treated as non-novel (defensive — the
+        # analyst should always return one, but a blank must not reset the dry
+        # counter and pretend progress).
+        d = _failed_exhausted_track()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        self._verdict(d, "null deref in foo()")
+        o = self._verdict(d, "   ")  # blank → non-novel
+        self.assertEqual(o["consecutive_empty_rounds"], 1)
+        self.assertEqual(_failure_analysis_read_marker(d)["seen_root_causes"],
+                         ["null deref in foo()"])
+
+
 class FailureAnalysisRoutingTests(TestCase):
     """``_step_route_failure_analysis`` routes the verdict from the on-disk marker."""
 
@@ -111,7 +167,8 @@ class FailureAnalysisRoutingTests(TestCase):
                 "stage": "analyzed", "category": "deterministic_bug",
                 "recommendation": "retry_modified",
                 "root_cause": "r", "modification": "add a None guard",
-                "what_was_done": None, "analysis_rounds": 1}
+                "what_was_done": None, "analysis_rounds": 1,
+                "seen_root_causes": [], "consecutive_empty_rounds": 0}
         base.update(fields)
         _failure_analysis_write_marker(track_dir, base)
 
@@ -188,27 +245,57 @@ class FailureAnalysisRoutingTests(TestCase):
         self.assertEqual(o["reason"], "escalate")
         self.assertIn("Manual escalation", o["recovery"])
 
-    def test_cap_overrun_escalates_instead_of_redispatching(self):
-        # Past MAX_ANALYSIS_ROUNDS, retry_modified must fall through to escalate,
-        # not re-dispatch (the analyze→retry→fail loop bound).
-        from scripts.track_state.constants import MAX_ANALYSIS_ROUNDS
+    def test_dry_backstop_escalates_on_no_novel_root_cause(self):
+        # Loop-until-dry: RECOVERY_DRY_K consecutive rounds with no NEW root_cause
+        # → the analyst has nothing novel → escalate, not re-dispatch.
+        from scripts.track_state.constants import RECOVERY_DRY_K
         d = _failed_exhausted_track()
         self.addCleanup(shutil.rmtree, d, ignore_errors=True)
         self._marker(d, recommendation="retry_modified",
-                     analysis_rounds=MAX_ANALYSIS_ROUNDS + 1)
+                     consecutive_empty_rounds=RECOVERY_DRY_K,
+                     seen_root_causes=["same old cause"],
+                     root_cause="same old cause")
         o = _step(d)
         self.assertEqual(o["action"], "halt")
         self.assertEqual(o["reason"], "escalate")
 
-    def test_within_cap_still_redispatches(self):
-        # With MAX_ANALYSIS_ROUNDS=2, round 2 is still under the cap → the analyst
-        # gets its one refinement round (reactivate + re-dispatch), not escalate.
-        from scripts.track_state.constants import MAX_ANALYSIS_ROUNDS
-        self.assertGreaterEqual(MAX_ANALYSIS_ROUNDS, 2)
+    def test_novel_root_cause_below_dry_threshold_still_redispatches(self):
+        # consecutive_empty_rounds < RECOVERY_DRY_K → still room for the analyst;
+        # redispatch the modified retry (loop-until-dry has NOT converged).
+        from scripts.track_state.constants import RECOVERY_DRY_K
+        self.assertGreaterEqual(RECOVERY_DRY_K, 2)
         d = _failed_exhausted_track()
         self.addCleanup(shutil.rmtree, d, ignore_errors=True)
         self._marker(d, recommendation="retry_modified",
-                     modification="different approach", analysis_rounds=2)
+                     modification="different approach",
+                     consecutive_empty_rounds=RECOVERY_DRY_K - 1)
+        o = _step(d)
+        self.assertEqual(o["action"], "dispatch")
+        self.assertEqual(o["agent"], "task-executor")
+
+    def test_budget_backstop_escalates_past_hard_ceiling(self):
+        # Hard budget: total analysis_rounds over MAX_RECOVERY_ROUNDS → escalate
+        # regardless of novelty (distinct-but-wrong diagnoses can't loop forever).
+        from scripts.track_state.constants import MAX_RECOVERY_ROUNDS
+        d = _failed_exhausted_track()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        self._marker(d, recommendation="retry_modified",
+                     analysis_rounds=MAX_RECOVERY_ROUNDS + 1,
+                     consecutive_empty_rounds=0)  # still novel, but over budget
+        o = _step(d)
+        self.assertEqual(o["action"], "halt")
+        self.assertEqual(o["reason"], "escalate")
+
+    def test_within_budget_and_novel_redispatches(self):
+        # rounds well under the ceiling, novel root cause → redispatch (the
+        # common path: the analyst prescribed a fresh modification).
+        from scripts.track_state.constants import MAX_RECOVERY_ROUNDS
+        self.assertGreaterEqual(MAX_RECOVERY_ROUNDS, 2)
+        d = _failed_exhausted_track()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        self._marker(d, recommendation="retry_modified",
+                     modification="different approach", analysis_rounds=2,
+                     consecutive_empty_rounds=0)
         o = _step(d)
         self.assertEqual(o["action"], "dispatch")
         self.assertEqual(o["agent"], "task-executor")

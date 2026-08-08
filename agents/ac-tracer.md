@@ -16,7 +16,7 @@ the **AC-evidence-trace** tier of the phase checkpoint. You are fanned out by th
 orchestrator (`implement` §3.2 / `parallel` §4.2) **in parallel with
 `conductor:test-runner`** before `conductor:phase-checker` (the synthesizer) runs.
 
-Your single job: has every Acceptance Criterion in `{TRACK_DIR}/spec.md` been grounded by a real named test? L1 tests pass and L2 browser E2E passes, yet an individual AC was never traced to evidence — that is the silent drop you catch.  The substrate is `track-state spec-integrity` (`scripts/track_state/spec_integrity.py`).
+Your single job: has every Acceptance Criterion in `{TRACK_DIR}/spec.md` been grounded? L1 tests pass and L2 browser E2E passes, yet an individual AC was never traced to evidence — that is the silent drop you catch. **Grounding is shape-driven** (`ac_grounding` in the integrity JSON): for a `test`-grounded track an AC is grounded by a real named `test_TC_*` function; for a `review`-grounded track (a `deliverable` — a non-code artifact) an AC is grounded by a declared artifact anchor + a positive review attestation. Either way you catch the AC nothing grounds. The substrate is `track-state spec-integrity` (`scripts/track_state/spec_integrity.py`).
 
 **Your contract:**
 - You are READ-ONLY. You run one CLI command and parse its JSON. You do NOT edit
@@ -57,7 +57,10 @@ Your single job: has every Acceptance Criterion in `{TRACK_DIR}/spec.md` been gr
 
 1. **Gate verdict.** If `ac_integrity_gate` starts with `FAILED` → this is a **spec/plan authoring defect, not a code defect**. Emit `VERDICT: FAILED` and paste the gate string **verbatim** as `GATE`. It self-documents the offending AC IDs and the exact authoring fix (e.g. "add a `TC-{n}.{m} | AC-{n} | ...` row", "annotate the implementing task in plan.md with a `<!-- AC-n -->`").  Stop. (Do NOT attempt to fix it — you are read-only, and the fix is editing `spec.md` / `plan.md`, then re-running the phase, not a `task-executor` retry.)
 
-2. **Evidence grounding.** From the `ac_evidence` list, count TCs whose `status` is `claimed` (in a completed task's `evidence.tc_coverage` but no named `def test_TC_*`) or `missing` (neither). Call that count `N_ungrounded`.  - `N_ungrounded == 0` → `VERDICT: passed` (every AC's TCs grounded by real named tests).  - `N_ungrounded > 0` → `VERDICT: warn` with `N_UNGROUNDED: <N>`. This is advisory by default (the gate is WARN-only); `phase-checker` carries the signal as the §8.0 `AC_TRACE` line. (The `CONDUCTOR_AC_VERIFY_STRICT=1` strictness escalation is `phase-checker`'s call to act on, not yours — you report the warn regardless; you do not read that env var.)
+2. **Evidence grounding — branch on `ac_grounding`** (the integrity JSON carries it). From the `ac_evidence` list, count the UNGROUNDED entries (`N_ungrounded`):
+   - **`test`** (default): count TCs whose `status` is `claimed` (in a completed task's `evidence.tc_coverage` but no named `def test_TC_*`) or `missing` (neither). A review-grounded track has NO TCs — that is correct for it, not a gap; do not count here.
+   - **`review`** (a `deliverable` — ACs grounded by artifact anchor + review attestation, not tests): count ACs whose `status` is `unattested` (a declared anchor exists but no positive review attestation has been recorded yet) or `orphan` (no declared anchor at all). There are no test functions to look for — the anchor + attestation IS the grounding.
+   - `N_ungrounded == 0` → `VERDICT: passed` (every AC grounded — by a real test for `test`, by an attested anchor for `review`).  - `N_ungrounded > 0` → `VERDICT: warn` with `N_UNGROUNDED: <N>`. This is advisory by default (the gate is WARN-only); `phase-checker` carries the signal as the §8.0 `AC_TRACE` line. (The `CONDUCTOR_AC_VERIFY_STRICT=1` strictness escalation is `phase-checker`'s call to act on, not yours — you report the warn regardless; you do not read that env var.)
 
 3. Also count total ACs (`N_ACS`) from `ac_evidence` for the report.
 

@@ -38,12 +38,22 @@ _AC = re.compile(r"^-\s+AC-(\d+)\b[\s:\-]*([^\n]*)")
 # numbers, group(3)=the AC number it traces to.
 _TC_ROW = re.compile(r"^\|\s*TC-(\d+)\.(\d+)\s*\|\s*AC-(\d+)\s*\|")
 
-# The four headings that own collectable IDs. Anything else ends the section.
+# Artifact-anchor table row (review-grounded specs): ``| AC-1 | <artifact> |
+# <location> |``. group(1)=the AC number; group(2)=the artifact (what the
+# deliverable IS — a doc/report/data file); group(3)=its location (path/section
+# ref, possibly empty). The review-grounding twin of ``_TC_ROW``: where a
+# test-grounded spec traces an AC to a TC, a review-grounded spec anchors it to a
+# concrete deliverable a reviewer attests. The header (``| AC Ref | …``) and the
+# separator (``| ----- | …``) rows do not match (no ``AC-<digit>``).
+_ANCHOR_ROW = re.compile(r"^\|\s*AC-(\d+)\s*\|\s*([^|\n]+?)\s*\|\s*([^|\n]*?)\s*\|")
+
+# The headings that own collectable IDs. Anything else ends the section.
 _SECTION_HEADINGS = {
     "functional requirements": "fr",
     "non-functional requirements": "nfr",
     "acceptance criteria": "ac",
     "test scenarios": "tc",
+    "artifact anchors": "anchor",
 }
 
 
@@ -58,11 +68,14 @@ def parse_spec(spec_path):
          "ac_items": [{"id": "AC-1", "text": "<body>"}, ...],
          "tcs": [{"id": "TC-1.1", "ac": "AC-1"}, ...],
          "tc_to_ac": {"TC-1.1": "AC-1", ...},
+         "anchors": [{"ac": "AC-1", "artifact": "<what>", "location": "<where>"}, ...],
          "errors": [...], "warnings": [...]}
 
     IDs are returned in document order (duplicates not deduped — callers that
     need a universe normalize via ``set``). ``errors`` block nothing here (the
-    parser is best-effort); ``warnings`` are advisory.
+    parser is best-effort); ``warnings`` are advisory. ``anchors`` is empty for a
+    test-grounded spec (no ``## Artifact Anchors`` section) — the review
+    substrate, present only when the spec declares it.
     """
     return parse_spec_text(Path(spec_path).read_text())
 
@@ -79,8 +92,9 @@ def parse_spec_text(text):
     fr_items, nfr_items, ac_items = [], [], []
     tcs = []
     tc_to_ac = {}
+    anchors = []
 
-    section = None  # one of "fr" / "nfr" / "ac" / "tc" / None
+    section = None  # one of "fr" / "nfr" / "ac" / "tc" / "anchor" / None
     for lineno, raw in enumerate(text.splitlines(), 1):
         line = raw.rstrip()
         hm = _HEADING.match(line)
@@ -114,6 +128,14 @@ def parse_spec_text(text):
                 ac_ref = f"AC-{m.group(3)}"
                 tcs.append({"id": tc_id, "ac": ac_ref})
                 tc_to_ac[tc_id] = ac_ref
+        elif section == "anchor":
+            m = _ANCHOR_ROW.match(line)
+            if m:
+                anchors.append({
+                    "ac": f"AC-{m.group(1)}",
+                    "artifact": m.group(2).strip(),
+                    "location": m.group(3).strip(),
+                })
 
     if not (frs or nfrs or acs):
         warnings.append("spec.md has no FR/NFR/AC entries")
@@ -127,6 +149,7 @@ def parse_spec_text(text):
         "ac_items": ac_items,
         "tcs": tcs,
         "tc_to_ac": tc_to_ac,
+        "anchors": anchors,
         "errors": errors,
         "warnings": warnings,
     }

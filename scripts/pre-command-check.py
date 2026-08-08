@@ -93,7 +93,7 @@ _SANCTIONED_TS_SUBCOMMANDS = {
     # files, and the one catastrophic op (mutating track-state.json itself) is
     # already caught by is_direct_track_state_modification(). Keep in sync with
     # _COMMAND_GROUPS — the test suite asserts this set covers it.
-    "add-checkpoint", "append-handoff", "archive", "block", "check",
+    "add-checkpoint", "amend-apply", "amend-clear", "append-handoff", "archive", "block", "check",
     "checklist-verify", "complete", "compile-track-findings", "defer", "deferred-report", "derive-name",
     "dispatch-finalize", "dispatch-next", "dispatch-prepare", "dispatch-wave",
     "fail", "failure-analyst-verdict", "finalize", "gc", "get-handoff", "harvest-candidates", "help",
@@ -104,7 +104,7 @@ _SANCTIONED_TS_SUBCOMMANDS = {
     "post-loop-step", "preflight", "process-result", "quality-snapshot",
     "record-summary", "recover", "reconcile-plan", "registry-add", "registry-doc", "registry-json",
     "registry-save", "registry-update", "reset",
-    "resolve-track", "set-max-retries", "set-mode", "set-workflow-shape", "setup", "shas",
+    "resolve-track", "review-attest", "set-max-retries", "set-mode", "set-recovery-policy", "set-workflow-shape", "setup", "shas",
     "shape-studio", "skip", "status",
     "skip-analyst-verdict", "skip-refute-review", "spec-anchors", "spec-delta",
     "spec-integrity", "subagent-log", "log-path", "view",

@@ -24,6 +24,11 @@
       "enum": ["interactive", "continuous"],
       "description": "Execution mode for implement skill. Interactive pauses at checkpoints; continuous auto-proceeds."
     },
+    "recovery_policy": {
+      "type": "string",
+      "enum": ["ask", "auto"],
+      "description": "Failed-task recovery decision, decoupled from execution_mode. 'ask' (legacy) surfaces a Retry/Skip/Block ask on a failed+exhausted interactive track; 'auto' routes straight to the skip-analyst handshake regardless of execution_mode. Absent (existing tracks) reads as 'ask'; new tracks default to 'auto'."
+    },
     "workflow_shape": {
       "type": "string",
       "description": "The declared workflow topology this track runs (third-axis registry). 'default' = planner→executor→checker. Resolved via workflow_shapes.resolve_shape; absent/unknown → 'default' (fail-open). A shape_violation is surfaced when a dispatch agent is off-topology."
@@ -112,7 +117,23 @@
           "properties": {
             "coverage_pct": { "type": ["number", "null"] },
             "tc_coverage": { "type": "string" },
-            "deviations": { "type": "integer", "minimum": 0 }
+            "deviations": { "type": "integer", "minimum": 0 },
+            "review_attestations": {
+              "type": ["object", "null"],
+              "description": "Review-grounded (deliverable) tracks only: per-AC attestation {AC-N: {anchor, attested_by, verdict}} written by a review pass (spec-reviewer review mode via track-state review-attest). Read by spec_integrity._attested_acs as the Rate-3 verification channel for review-grounded ACs (advisory — not gated, mirroring test-grounded tc_coverage).",
+              "additionalProperties": false,
+              "patternProperties": {
+                "^AC-\\d+$": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "anchor": { "type": "string" },
+                    "attested_by": { "type": "string" },
+                    "verdict": { "type": "string" }
+                  }
+                }
+              }
+            }
           }
         },
         "subtasks": {

@@ -48,7 +48,17 @@ VERIFY_POLICIES = ("checkpoint", "none")
 STOP_CONDITIONS = ("all_nodes_done",)
 
 #: How acceptance criteria are grounded (`ac_grounding` field).
-AC_GROUNDINGS = ("test",)
+#: ``test`` → ACs grounded by ``test_TC_*`` functions; ``review`` → ACs grounded
+#: by an artifact anchor + a review attestation (non-code deliverable shapes).
+AC_GROUNDINGS = ("test", "review")
+
+#: Whether a shape's checkpoint phase runs (`checkpoint_policy` field).
+#: ``run`` (default) → the phase-checker checkpoint fans out as normal.
+#: ``skip-if-declared`` → short-circuit the checkpoint, but ONLY when the shape
+#: declares an integrity substitute (e.g. ``ac_grounding="review"`` → the review
+#: attestation); a ``skip-if-declared`` shape with no substitute fails hard
+#: (never a silent skip — the "attach a guarantee to every freedom" invariant).
+CHECKPOINT_POLICIES = ("run", "skip-if-declared")
 
 #: Dispatch category for a task type (`route` field).
 ROUTES = ("manual", "explore", "executor")
@@ -57,7 +67,7 @@ ROUTES = ("manual", "explore", "executor")
 # Known per-row fields (everything else on a row is a typo → error).
 _KNOWN_SHAPE_FIELDS = frozenset({
     "nodes", "verifiers", "gates", "verify_policy", "stop_condition",
-    "ac_grounding", "instruction", "when_to_use", "requires",
+    "ac_grounding", "checkpoint_policy", "instruction", "when_to_use", "requires",
 })
 _KNOWN_TAG_FIELDS = frozenset({
     "route", "tdd_exempt", "coverage_exempt", "when_to_use",
@@ -70,7 +80,8 @@ _TAG_BOOL_FIELDS = ("tdd_exempt", "coverage_exempt", "refactor",
 
 # Shape field → its closed vocabulary (for the list-valued and scalar-valued
 # vocab fields). `nodes`/`verifiers`/`gates` are lists whose members must be in
-# the vocab; `verify_policy`/`stop_condition`/`ac_grounding` are scalars in it.
+# the vocab; `verify_policy`/`stop_condition`/`ac_grounding`/`checkpoint_policy`
+# are scalars in it.
 _SHAPE_VOCAB = {
     "nodes": SPINE_NODES,
     "verifiers": VERIFIERS,
@@ -78,9 +89,11 @@ _SHAPE_VOCAB = {
     "verify_policy": VERIFY_POLICIES,
     "stop_condition": STOP_CONDITIONS,
     "ac_grounding": AC_GROUNDINGS,
+    "checkpoint_policy": CHECKPOINT_POLICIES,
 }
 _SHAPE_VOCAB_LIST_FIELDS = ("nodes", "verifiers", "gates")
-_SHAPE_VOCAB_SCALAR_FIELDS = ("verify_policy", "stop_condition", "ac_grounding")
+_SHAPE_VOCAB_SCALAR_FIELDS = (
+    "verify_policy", "stop_condition", "ac_grounding", "checkpoint_policy")
 _SHAPE_STR_FIELDS = ("instruction", "when_to_use")
 
 
@@ -234,6 +247,35 @@ def validate_merged_shapes(merged) -> list[str]:
         errs.append(
             "merged shapes registry must declare a top-level 'default' object "
             "(the fail-open fallback target)")
+    # Track C2 cross-field invariant: a shape declaring
+    # ``checkpoint_policy: skip-if-declared`` MUST declare an integrity
+    # substitute (``ac_grounding: review``) — the "attach a guarantee to every
+    # freedom" rule. A checkpoint skip with no verification substitute would
+    # break the "verified against AC-N" stamp. This save-time guard is the
+    # PRIMARY catch (the strict-write gate refuses the misconfiguration);
+    # dispatch's runtime ``checkpoint_skip_decision`` is defense-in-depth for a
+    # hand-edited/legacy registry. Judged on the default-INHERITED value (a row
+    # may inherit ``ac_grounding`` from ``default``), mirroring runtime exactly.
+    if isinstance(merged, dict):
+        default_grounding = (merged.get("default") or {}).get(
+            "ac_grounding", "test") if isinstance(merged.get("default"), dict) \
+            else "test"
+        shapes = merged.get("shapes")
+        if isinstance(shapes, dict):
+            for name, row in shapes.items():
+                if not isinstance(row, dict):
+                    continue
+                if row.get("checkpoint_policy", "run") == "skip-if-declared":
+                    grounding = row.get("ac_grounding", default_grounding)
+                    if grounding != "review":
+                        errs.append(
+                            f"shape {name!r}: checkpoint_policy "
+                            f"'skip-if-declared' requires an integrity "
+                            f"substitute (ac_grounding='review'); found "
+                            f"ac_grounding={grounding!r}. A checkpoint skip "
+                            f"without a verification substitute breaks the "
+                            f"AC-verification guarantee — set "
+                            f"ac_grounding='review' or checkpoint_policy='run'.")
     return errs
 
 

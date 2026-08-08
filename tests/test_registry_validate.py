@@ -46,7 +46,8 @@ class VocabConstants(TestCase):
 
     def test_policies_groundings_routes(self):
         self.assertEqual(rv.VERIFY_POLICIES, ("checkpoint", "none"))
-        self.assertEqual(rv.AC_GROUNDINGS, ("test",))
+        self.assertEqual(rv.AC_GROUNDINGS, ("test", "review"))
+        self.assertEqual(rv.CHECKPOINT_POLICIES, ("run", "skip-if-declared"))
         self.assertEqual(rv.ROUTES, ("manual", "explore", "executor"))
 
 
@@ -104,6 +105,21 @@ class ShapeValidation(TestCase):
         doc["default"]["verify_policy"] = "always"
         errs = rv.validate_shapes(doc)
         self.assertTrue(any("verify_policy" in e for e in errs), errs)
+
+    def test_good_checkpoint_policy_accepted(self):
+        # checkpoint_policy is an optional scalar vocab field; both values valid.
+        doc = self._base()
+        doc["default"]["checkpoint_policy"] = "run"
+        self.assertEqual(rv.validate_shapes(doc), [])
+        doc["default"]["checkpoint_policy"] = "skip-if-declared"
+        self.assertEqual(rv.validate_shapes(doc), [])
+
+    def test_bad_checkpoint_policy_rejected(self):
+        doc = self._base()
+        doc["default"]["checkpoint_policy"] = "sometimes"
+        errs = rv.validate_shapes(doc)
+        self.assertTrue(
+            any("checkpoint_policy" in e and "sometimes" in e for e in errs), errs)
 
     def test_unknown_field_rejected(self):
         doc = self._base()

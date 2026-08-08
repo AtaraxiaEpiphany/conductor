@@ -7,7 +7,8 @@
     "verify_policy": "how this shape gates progress: checkpoint (the default — phase-checker stamps a checkpoint gate) | none (no checkpoint gate — research/exploration shapes that produce no committable artifact).",
     "stop_condition": "what makes the shape DONE: all_nodes_done (every node in `nodes` has run) | a structured pass_condition. The fixed spine's default is all_nodes_done.",
     "gates": "the quality gates this shape enforces at the TRACK level — the ON/OFF each gate composes with the per-task exemption (a gate fires for a task iff (gate in gates) AND (not task_exempt)). Members: tdd (F2 red/green/refactor) | coverage (F3 >=80%) | checkpoint (F5 — the phase-checker checkpoint GATES progress; distinct from verify_policy, which is whether a checkpoint phase runs AT ALL). Absent/empty => the default shape's gates => the full set (today's behavior). The seam that lets a non-code shape drop F2/F3 at the track level while keeping the checkpoint.",
-    "ac_grounding": "how acceptance criteria are GROUNDED for this shape. test (default) => ACs are grounded by test_TC_* functions (the basis of spec_integrity's grounding scan). A shape whose ACs ground another way declares it here so the grounding scan does not insist on test-grounding a non-test shape. Absent => test.",
+    "ac_grounding": "how acceptance criteria are GROUNDED for this shape. test (default) => ACs are grounded by test_TC_* functions (the basis of spec_integrity's grounding scan). review => ACs are grounded by an artifact anchor + a review attestation (a non-code deliverable shape — docs, design, research, a data deliverable), so the grounding scan reads anchors/attestations instead of test functions. A shape whose ACs ground another way declares it here so the grounding scan does not insist on test-grounding a non-test shape. Absent => test.",
+    "checkpoint_policy": "whether this shape's checkpoint phase actually RUNS. run (default) => the phase-checker checkpoint fans out as normal (every shipped shape). skip-if-declared => short-circuit the checkpoint emit, but ONLY when the shape declares an integrity substitute (ac_grounding=review => the review attestation is the substitute); a skip-if-declared shape with NO declared substitute FAILS HARD (a shape_violation halt), never a silent skip. This is the 3rd load-bearing drives-dispatch field (after verifiers + gates); absent => run (today's behavior). The 'attach a guarantee to every freedom' invariant: checkpoint_policy must not become a second advisory nodes.",
     "instruction": "optional prompt-shaping prose for the orchestrator when this shape is active (mirrors the task-type `workflow` field). Absent => the orchestrator follows the default §3.0 dispatch loop."
   },
   "default": {
@@ -16,6 +17,7 @@
     "gates": ["tdd", "coverage", "checkpoint"],
     "ac_grounding": "test",
     "verify_policy": "checkpoint",
+    "checkpoint_policy": "run",
     "stop_condition": "all_nodes_done"
   },
   "shapes": {
@@ -25,6 +27,7 @@
       "gates": ["tdd", "coverage", "checkpoint"],
       "ac_grounding": "test",
       "verify_policy": "checkpoint",
+      "checkpoint_policy": "run",
       "stop_condition": "all_nodes_done",
       "instruction": "The standard implement loop: spec-planner decomposes the brief into a plan, task-executor implements each task under the TDD/coverage gates, phase-checker verifies each phase and stamps the checkpoint. This is the shape the conductor has always run — declared here so it is data-driven, not hardcoded."
     },
@@ -45,6 +48,16 @@
       "stop_condition": "all_nodes_done",
       "when_to_use": "A behavior-PRESERVATION track — migrating code (framework upgrade, API rename, refactor across module boundaries) where correctness is witnessed by the EXISTING test suite, not new tests. The shape drops the tdd/coverage gates at the track level (gates=[checkpoint]): tasks owe a green existing suite at the checkpoint, not new tests or >=80% coverage. Pair with the [Migrate] task-type tag, whose `workflow` prose the executor fetches instead of TDD — the tag carries the executor guidance, the shape carries the gate paradigm (the conductor's two-registry separation: task-types own node behavior, shapes own topology + gates).",
       "instruction": "The migration loop: spec-planner decomposes the migration into ordered, behavior-preserving tasks (each [Migrate]-tagged); task-executor implements each under the [Migrate] workflow (no new tests — keep the existing suite green); phase-checker fans out ac-tracer + test-runner at the checkpoint, where the existing suite is the behavior-preservation signal. This is the first non-code shape: the conductor's planner→executor→checker spine is unchanged — only the gates it enforces differ (tdd/coverage off, checkpoint on). Rendered by `registry-doc --shape migration`; the executor's per-task prose comes from `registry-doc --tag Migrate` (the tag, not this shape)."
+    },
+    "deliverable": {
+      "nodes": ["spec-planner", "task-executor", "phase-checker"],
+      "verifiers": ["ac-tracer"],
+      "gates": ["checkpoint"],
+      "ac_grounding": "review",
+      "verify_policy": "checkpoint",
+      "stop_condition": "all_nodes_done",
+      "when_to_use": "A non-code DELIVERABLE track — producing an artifact that is NOT a tested code change (a design doc, a research report, a spec, a runbook, a data deliverable) where correctness is witnessed by an artifact anchor + a review attestation, not by automated tests. The shape drops the test-runner verifier (no tests to run — ac-tracer alone fans out at the checkpoint) and grounds ACs by review (ac_grounding=review), so each AC maps to a concrete deliverable anchor a reviewer attests rather than a test_TC_* function. Pair with a task-type tag whose `workflow` prose carries the executor guidance for producing the deliverable (the conductor's two-registry separation: task-types own node behavior, shapes own topology + grounding) — the tag carries the executor prose, the shape carries the verifier set + the grounding paradigm.",
+      "instruction": "The deliverable loop: spec-planner decomposes the deliverable into ordered tasks, each carrying an artifact anchor mapping its ACs to a concrete artifact (a doc section, a report chapter, a data file); task-executor produces each artifact under review-grounding (no tests — the AC is met by the anchor existing AND a review attesting it satisfies the criterion); phase-checker fans out ac-tracer ONLY (test-runner is dropped — there are no tests) at the checkpoint, where ac-tracer witnesses the declared AC anchors. The planner→executor→checker spine is unchanged from the default — only the verifier set (test-runner dropped) and the AC grounding (review not test) differ. Rendered by `registry-doc --shape deliverable`; the executor's per-task prose comes from the task-type tag (the tag, not this shape). A deliverable task still produces a real commit (a docs(conductor)/chore commit) so the F4 non-empty-commit_sha rule stays satisfied — the artifact is the commit's content."
     }
   }
 }

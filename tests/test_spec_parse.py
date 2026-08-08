@@ -118,5 +118,70 @@ class RequirementBodyTests(TestCase):
         self.assertEqual(inv["nfr_items"], [])
 
 
+class AnchorParseTests(TestCase):
+    """The review-grounding substrate: a ``## Artifact Anchors`` table maps each
+    AC to a concrete deliverable (artifact + location) a reviewer attests. The
+    twin of the Test Scenarios table for non-code shapes (Track B2)."""
+
+    _ANCHOR_SPEC = """\
+# Specification: Demo
+## Acceptance Criteria
+- AC-1: API design documented
+- AC-2: Migration runbook delivered
+## Artifact Anchors
+| AC Ref | Artifact | Location |
+| ------ | -------- | -------- |
+| AC-1   | API design doc | docs/api.md |
+| AC-2   | migration runbook | docs/run.md |
+"""
+
+    def test_extracts_anchors_with_artifact_and_location(self):
+        inv = parse_spec(_write(self._ANCHOR_SPEC))
+        self.assertEqual([a["ac"] for a in inv["anchors"]], ["AC-1", "AC-2"])
+        by_ac = {a["ac"]: a for a in inv["anchors"]}
+        self.assertEqual(by_ac["AC-1"]["artifact"], "API design doc")
+        self.assertEqual(by_ac["AC-1"]["location"], "docs/api.md")
+        self.assertEqual(by_ac["AC-2"]["artifact"], "migration runbook")
+
+    def test_test_grounded_spec_has_no_anchors(self):
+        # _SPEC (Test Scenarios) parses with an empty anchors list — the review
+        # substrate is absent, so a test-grounded spec is untouched.
+        inv = parse_spec(_write(_SPEC))
+        self.assertEqual(inv["anchors"], [])
+        # and the TC inventory still flows unchanged.
+        self.assertEqual(len(inv["tcs"]), 3)
+
+    def test_anchor_with_empty_location_cell(self):
+        spec = ("# Specification\n## Acceptance Criteria\n- AC-1: crit\n"
+                "## Artifact Anchors\n"
+                "| AC Ref | Artifact | Location |\n| ------ | -------- | -------- |\n"
+                "| AC-1 | design doc |  |\n")
+        inv = parse_spec(_write(spec))
+        self.assertEqual(inv["anchors"], [{"ac": "AC-1",
+                                           "artifact": "design doc",
+                                           "location": ""}])
+
+    def test_anchor_section_scoping(self):
+        # An anchor-shaped row OUTSIDE ## Artifact Anchors is not captured
+        # (section-scoped, like TC/AC/FR/NFR).
+        spec = ("# Specification\n## Overview\n| AC-1 | not an anchor | x |\n"
+                "## Acceptance Criteria\n- AC-1: crit\n"
+                "## Artifact Anchors\n"
+                "| AC Ref | Artifact | Location |\n| -- | -- | -- |\n"
+                "| AC-1 | real | docs/a.md |\n")
+        inv = parse_spec(_write(spec))
+        self.assertEqual([a["ac"] for a in inv["anchors"]], ["AC-1"])
+        self.assertEqual(inv["anchors"][0]["artifact"], "real")
+
+    def test_header_and_separator_rows_not_captured(self):
+        # The header (| AC Ref | …) and separator (| ----- | …) lack AC-<digit>,
+        # so neither matches _ANCHOR_ROW.
+        spec = ("# Specification\n## Acceptance Criteria\n- AC-1: crit\n"
+                "## Artifact Anchors\n"
+                "| AC Ref | Artifact | Location |\n| ------ | -------- | -------- |\n")
+        inv = parse_spec(_write(spec))
+        self.assertEqual(inv["anchors"], [])
+
+
 if __name__ == "__main__":
     main()

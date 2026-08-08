@@ -35,6 +35,8 @@ The orchestrator supplies these parameters:
 | `USER_ANSWERS`      | Collected answers from the no-brief interactive Q&A (or empty / `N/A` when a Brief is present). |
 | `RELATED_DOCS`      | Paths to semantically related documents found during context discovery |
 | `USER_CONTEXT`      | Optional. `brief` signals a Brief is present (read §3.0 first); `N/A` otherwise. |
+| `WORKFLOW_SHAPE`    | The track's workflow shape (`default` / `migration` / `deliverable` / a project overlay shape). Defaults to `default` when absent. Determines AC grounding (below) + the verifier fan-out; the substrate you emit in §4.1 keys off `AC_GROUNDING`, not this name directly. |
+| `AC_GROUNDING`      | How ACs are grounded: `test` (default — `test_TC_*` functions) or `review` (a non-code deliverable — artifact anchors + review attestations). Derived from `WORKFLOW_SHAPE` by the orchestrator. **§4.1 branches on this:** `review` → emit `## Artifact Anchors`; `test` → emit `## Test Scenarios`. |
 | `PREVIOUS_ERRORS`   | **Retry only.** Format errors from `init-from-plan --check` on a prior attempt (absent on a fresh generation). If present, the previous `plan.md` violated `plan-format-contract.md` — re-read the contract and regenerate a **conforming** `plan.md` (every task/subtask line begins with `- [ ]`; every phase begins with `## Phase N:`) before emitting SUCCESS. Context discovery (§3) can be skipped on retry — only the format is broken. |
 
 ---
@@ -97,11 +99,15 @@ Synthesize:
 
 Read `${CLAUDE_PLUGIN_ROOT}/templates/spec-scaffold.md` and **fill its skeleton** — every section, in the track's chosen language.
 
-**Machine anchors stay ASCII.** The headings (`## Acceptance Criteria`, `## Test Scenarios`, …) and ID tokens (`FR-N`, `NFR-N`, `AC-N`, `TC-N.M`, the table `|`-syntax) are machine anchors the parser keys on — keep them in English/ASCII even when the prose is another language. Fill only the body text, in any language. **A `spec.md` missing `## Acceptance Criteria` (with `- AC-N:` bullets) or the `## Test Scenarios` table (with `| TC-N.M | AC-N |` rows) is rejected by `track-state spec-anchors`** — do not localize the anchors, localize only the body.
+**AC grounding branches on `AC_GROUNDING`** (derived from `WORKFLOW_SHAPE`):
+- **`test`** (default — `default`/`migration` shapes): emit the `## Test Scenarios` table. Every AC maps to ≥1 TC (`TC-{AC_NUMBER}.{SCENARIO_INDEX}`) that a `test_TC_*` function will ground. The standard code-track substrate.
+- **`review`** (`deliverable` shape — a non-code artifact): emit `## Artifact Anchors` **instead of** `## Test Scenarios`. Every AC maps to a concrete deliverable anchor — a `| AC-N | <artifact> | <location> |` row naming what the deliverable IS (a doc section, report chapter, data file) and where it lives. There are **no** TCs and no `test_TC_*` functions; the AC is grounded by the anchor existing AND a review attesting it satisfies the criterion (the spec-reviewer writes the attestation at the checkpoint). The ac-tracer still runs — ACs are still declared and traced to tasks; only the grounding substrate differs.
+
+**Machine anchors stay ASCII.** The headings (`## Acceptance Criteria`, `## Test Scenarios` / `## Artifact Anchors`, …) and ID tokens (`FR-N`, `NFR-N`, `AC-N`, `TC-N.M`, the table `|`-syntax) are machine anchors the parser keys on — keep them in English/ASCII even when the prose is another language. Fill only the body text, in any language. **A `spec.md` missing `## Acceptance Criteria` (with `- AC-N:` bullets) OR missing its grounding substrate (`## Test Scenarios` for test-grounded, `## Artifact Anchors` for review-grounded) is rejected by `track-state spec-anchors`** — do not localize the anchors, localize only the body.
 
 **Rules:**
 - EARS syntax for every FR/NFR — mandatory `shall` (or a localized equivalent: `doit`/`muss`/`应`/`すること`…; extend via `CONDUCTOR_EARS_VERBS`); one requirement per statement; prefer positive recovery over `shall not`. The `spec-integrity` EARS lint surfaces violations as a WARN.
-- Test Scenarios cover every AC (happy path + ≥1 edge case); TC IDs follow `TC-{AC_NUMBER}.{SCENARIO_INDEX}`.
+- The grounding substrate covers every AC: test-grounded → Test Scenarios cover every AC (happy path + ≥1 edge case; TC IDs `TC-{AC_NUMBER}.{SCENARIO_INDEX}`); review-grounded → Artifact Anchors cover every AC (one concrete deliverable anchor per AC).
 - Measurable, testable ACs; atomic FRs. Markdown links for references (group when 3+). Paths relative to project root.
 
 ### 4.2 Generate `plan.md`

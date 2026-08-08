@@ -156,6 +156,32 @@ def _modified_guidance_block(track_dir, p, t, s):
         return None
 
 
+def _amendment_guidance_block(track_dir, p, t, s):
+    """The [Conductor Amendment] block for this task, or ``None`` (A3).
+
+    Reads the per-task amendment-guidance marker (written by ``cmd_amend_apply``
+    when a failure-analyst ``replan`` verdict amended spec.md). The lead text is
+    baked into the file at write time (it lives in dispatch.py), so this just
+    reads + CONSUMES (deletes) the marker — it applies to exactly one re-dispatch
+    and doesn't leak. Best-effort: any I/O error → ``None`` (advisory; must not
+    break the floor/reminder/modified-retry injection). Checked independent of
+    the modified-guidance block — a replan retry can carry both an amendment AND
+    a modification.
+    """
+    try:
+        sub = f"-{s}" if s is not None else ""
+        path = Path(track_dir) / ".conductor" / f".amendment-guidance-{p}-{t}{sub}.md"
+        if not path.exists():
+            return None
+        text = path.read_text(encoding="utf-8").strip()
+        path.unlink()  # consume-on-read
+        if not text:
+            return None
+        return text
+    except Exception:
+        return None
+
+
 def _latest_failure_attempt(content):
     """Verbatim text of the most recent ``### Attempt ... ❌`` block, or None.
 
@@ -214,6 +240,13 @@ def _retry_context(cwd, agent_type):
         modified = _modified_guidance_block(track_dir, p, t, s)
         if modified:
             parts.append(modified)
+
+        # (1a) The [Conductor Amendment] block, if a replan verdict amended
+        # spec.md before this retry (A3). Independent of the modification — a
+        # replan retry may carry both. Tells the executor an AC was superseded.
+        amendment = _amendment_guidance_block(track_dir, p, t, s)
+        if amendment:
+            parts.append(amendment)
 
         # (2) The latest ### Attempt ❌ handoff record (the plain retry nudge).
         from track_state.handoff import get_handoff_content

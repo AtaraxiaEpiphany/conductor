@@ -493,6 +493,8 @@ def build_view_envelope(track_dir):
             verifiers=verifiers,
             gates=list(ws.gates_for(shape)),
             verify_policy=ws.verify_policy_for(shape),
+            checkpoint_policy=ws.checkpoint_policy_for(shape),
+            ac_grounding=ws.ac_grounding_for(shape),
             position=_resolve_position(state),
         ),
         task_tree=_view_task_tree(state),
@@ -1703,7 +1705,13 @@ def cmd_registry_doc(tag=None, shape=None):
                   f"`tdd`=F2, `coverage`=F3, `checkpoint`=F5.")
             print(f"- **ac_grounding**: `{ws.ac_grounding_for(shape)}` — how "
                   f"acceptance criteria are grounded (`test` = by `test_TC_*` "
-                  f"functions).")
+                  f"functions; `review` = by an artifact anchor + a review "
+                  f"attestation).")
+            print(f"- **checkpoint_policy**: `{ws.checkpoint_policy_for(shape)}` — "
+                  f"whether the checkpoint phase runs (`run` = the phase-checker "
+                  f"checkpoint fans out; `skip-if-declared` = short-circuited, "
+                  f"only when the shape declares a substitute — see "
+                  f"`ac_grounding`).")
         else:
             print(f"# Workflow Shape `{shape}` — UNKNOWN to the resolved registry")
             print()

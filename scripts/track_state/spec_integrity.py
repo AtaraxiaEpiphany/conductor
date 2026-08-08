@@ -28,6 +28,7 @@ from .core import load
 from .helpers import out
 from .spec_parse import parse_spec
 from .plan_parse import parse_plan, collect_ac_refs
+from .workflow_shapes import resolve_shape, ac_grounding_for
 
 # A tc_coverage evidence string holds TC IDs in any separator (space/comma/newline).
 _TC_ID = re.compile(r"TC-\d+\.\d+")
@@ -144,6 +145,76 @@ def _covered_tcs(state):
             for sub in task.get("subtasks", []):
                 collect(sub)
     return covered
+
+
+def _resolve_grounding(spec, state):
+    """How ACs are grounded for this track: ``"test"`` or ``"review"``.
+
+    Shape-driven when ``track-state.json`` exists (the authoritative
+    declaration): the resolved shape's ``ac_grounding`` field. Spec-inferred
+    when state is absent (planning time — new-track §2.3 runs
+    :func:`compute_ac_integrity` BEFORE §2.6 creates state): a spec carrying
+    ``## Artifact Anchors`` rows is review-grounded, else test. Both paths
+    fail-open to ``"test"`` (today's behavior) so a legacy track, a typo'd
+    shape, or a pre-review spec never blocks. ``state`` is ``None`` when
+    track-state.json is absent (the caller loads once and passes ``None``).
+    """
+    if state is not None:
+        return ac_grounding_for(resolve_shape(state.get("workflow_shape")))
+    return "review" if spec.get("anchors") else "test"
+
+
+def _plan_traceability(track_dir, acs):
+    """Rate 2: AC → plan traceability (grounding-agnostic).
+
+    Every AC referenced by a task's ``<!-- AC-n -->`` annotation in plan.md.
+    Shared by the test-grounded and review-grounded branches — plan↔spec
+    traceability is orthogonal to HOW an AC is grounded (test vs review).
+    Returns ``(ac_traceability_rate, untraced_acs, dangling_ac_refs)``; the rate
+    is ``None`` when plan.md is absent (unmeasured, never 0%). Dangling refs are
+    plan AC refs absent from ``acs`` (a plan that names an AC the spec doesn't).
+    """
+    plan_path = Path(track_dir) / "plan.md"
+    if not plan_path.exists():
+        return None, [], []
+    plan_acs = set(collect_ac_refs(parse_plan(plan_path)))
+    untraced = [a for a in acs if a not in plan_acs]
+    rate = round(100 * (len(acs) - len(untraced)) / len(acs), 1)
+    dangling = sorted(r for r in plan_acs if r not in set(acs))
+    return rate, untraced, dangling
+
+
+def _attested_acs(state):
+    """Set of AC IDs with a POSITIVE review attestation in completed-task evidence.
+
+    The review-grounding twin of :func:`_covered_tcs`: instead of
+    ``evidence.tc_coverage`` it reads ``evidence.review_attestations``
+    (``{AC-N: {"anchor", "attested_by", "verdict"}}`` — written by the review
+    verifier). An AC counts as attested iff a completed task carries it with a
+    positive verdict (``pass``/``passed``/…). Absent/empty/non-dict ⇒ ``set()``
+    (no ACs attested yet — correct for a fresh track; the gate never uses Rate 3,
+    so a deliverable track is gated on anchor coverage + plan traceability, not
+    on a review it hasn't had a chance to run yet).
+    """
+    attested = set()
+
+    def collect(unit):
+        if unit.get("status") != "completed":
+            return
+        raw = (unit.get("evidence") or {}).get("review_attestations")
+        if not isinstance(raw, dict):
+            return
+        for ac, entry in raw.items():
+            if isinstance(entry, dict) and \
+                    str(entry.get("verdict", "")).lower().startswith("pass"):
+                attested.add(ac)
+
+    for phase in state.get("phases", []):
+        for task in phase.get("tasks", []):
+            collect(task)
+            for sub in task.get("subtasks", []):
+                collect(sub)
+    return attested
 
 
 def _measured_tcs_with_locations(track_dir):
@@ -269,6 +340,41 @@ def compute_ac_evidence_map(acs, tc_to_ac, covered, measured_map):
     return out
 
 
+def compute_review_ac_evidence_map(acs, anchors, attested):
+    """Per-AC evidence trace for REVIEW grounding (the review twin of
+    :func:`compute_ac_evidence_map`). Each AC carries its declared artifact
+    anchor + an attestation status:
+
+      * ``attested`` — a completed task's evidence carries a POSITIVE review
+        attestation for this AC (the grounding artifact — written by the review
+        verifier, B4).
+      * ``unattested`` — the AC has a declared anchor but no positive
+        attestation yet (the deliverable exists; the review hasn't signed off).
+      * ``orphan`` — the AC has no declared anchor at all (a Rate-1 orphan).
+
+    Pure function over its inputs (no FS) so it is unit-testable without a track
+    dir. ``attested`` is the set of AC IDs with a positive attestation
+    (:func:`_attested_acs`). Used by ``compute_ac_integrity`` (review branch) to
+    enrich the result with the additive ``ac_evidence`` key; the gate is
+    unchanged.
+    """
+    anchor_by_ac = {a["ac"]: a for a in anchors}
+    out = []
+    for ac in acs:
+        if ac in anchor_by_ac:
+            a = anchor_by_ac[ac]
+            out.append({
+                "ac": ac,
+                "anchor": a.get("artifact", ""),
+                "location": a.get("location", ""),
+                "status": "attested" if ac in attested else "unattested",
+            })
+        else:
+            out.append({"ac": ac, "anchor": "", "location": "",
+                        "status": "orphan"})
+    return out
+
+
 def _empty(fr_count=0, nfr_count=0, reason=None):
     """Degraded result: no ACs to rate (no spec.md, or spec has no ACs).
 
@@ -282,8 +388,10 @@ def _empty(fr_count=0, nfr_count=0, reason=None):
     return {
         "ac_count": 0,
         "tc_count": 0,
+        "anchor_count": 0,
         "fr_count": fr_count,
         "nfr_count": nfr_count,
+        "ac_grounding": "test",
         "ac_tc_coverage_rate": None,
         "ac_traceability_rate": None,
         "ac_verification_rate": None,
@@ -303,22 +411,30 @@ def _empty(fr_count=0, nfr_count=0, reason=None):
 
 
 def _gate(ac_tc_coverage_rate, orphan_acs, ac_traceability_rate, untraced_acs,
-          dangling_ac_refs):
-    """PASS iff every AC has a TC, every AC is traced to a task, and no plan AC
-    ref dangles (references an AC absent from spec). Verification is reported
-    separately and NOT gated on — evidence.tc_coverage is best-effort.
+          dangling_ac_refs, grounding="test"):
+    """PASS iff every AC has a grounding substrate (a TC for test shapes, an
+    artifact anchor for review shapes), every AC is traced to a task, and no
+    plan AC ref dangles (references an AC absent from spec). Verification is
+    reported separately and NOT gated on — evidence is best-effort.
 
     The FAILED string names the offending AC IDs and appends a per-problem fix
     clause, so the message closes the feedback loop on its own (verdict + fix in
     one string — the contract the blocking hooks already use). The verdict
-    prefix and the "without a TC"/"untraced in plan"/"dangling" substrings are
-    preserved for prefix/substring matching."""
+    prefix and the "without a TC"/"without an artifact anchor"/"untraced in
+    plan"/"dangling" substrings are preserved for prefix/substring matching. The
+    coverage fix clause branches on ``grounding`` (Test Scenarios vs Artifact
+    Anchors); traceability + dangling are grounding-agnostic."""
     problems = []
     fixes = []
     if ac_tc_coverage_rate is not None and ac_tc_coverage_rate < 100.0:
-        problems.append(f"{len(orphan_acs)} AC(s) without a TC: {', '.join(orphan_acs)}")
-        fixes.append("add a `TC-{n}.{m} | AC-{n} | ...` row under ## Test "
-                     "Scenarios in spec.md for each orphan AC")
+        if grounding == "review":
+            problems.append(f"{len(orphan_acs)} AC(s) without an artifact anchor: {', '.join(orphan_acs)}")
+            fixes.append("add an `AC-{n} | <artifact> | <location>` row under "
+                         "## Artifact Anchors in spec.md for each orphan AC")
+        else:
+            problems.append(f"{len(orphan_acs)} AC(s) without a TC: {', '.join(orphan_acs)}")
+            fixes.append("add a `TC-{n}.{m} | AC-{n} | ...` row under ## Test "
+                         "Scenarios in spec.md for each orphan AC")
     if ac_traceability_rate is not None and ac_traceability_rate < 100.0:
         problems.append(f"{len(untraced_acs)} AC(s) untraced in plan: {', '.join(untraced_acs)}")
         fixes.append("annotate the implementing task in plan.md with a "
@@ -391,7 +507,6 @@ def compute_ac_integrity(track_dir):
     # independent of AC coverage, so computed even when the spec has no ACs.
     ears_warn = _ears_warnings(spec["fr_items"] + spec["nfr_items"])
     acs = sorted(set(spec["acs"]))
-    tc_to_ac = spec["tc_to_ac"]
     if not acs:
         base = _empty(fr_count=len(set(spec["frs"])),
                       nfr_count=len(set(spec["nfrs"])),
@@ -400,34 +515,42 @@ def compute_ac_integrity(track_dir):
         base["ears_gate"] = _ears_gate_str(ears_warn)
         return base
 
-    # --- Rate 1: AC → TC coverage (every AC has ≥1 TC in the Test Scenarios table)
+    # Load state once (None when track-state.json is absent — planning time:
+    # new-track §2.3 runs this BEFORE §2.6 creates state). Reused for grounding
+    # resolution AND Rate 3, so there is no second read of track-state.json.
+    try:
+        state = load(track_dir)
+    except FileNotFoundError:
+        state = None
+
+    # How ACs are grounded: shape-driven when state exists (the authoritative
+    # declaration); spec-inferred (## Artifact Anchors rows present) when state
+    # is absent. Fail-open to "test" so a legacy track / a typo / a pre-review
+    # spec never blocks. The review branch is its own computation; everything
+    # below is the test-grounded path today's tracks run unchanged.
+    grounding = _resolve_grounding(spec, state)
+    if grounding == "review":
+        return _compute_review_integrity(track_dir, spec, acs, ears_warn, state)
+
+    tc_to_ac = spec["tc_to_ac"]
+    # --- Rate 1 (test grounding): AC → TC coverage (every AC has ≥1 TC in the
+    # Test Scenarios table)
     acs_with_tc = {a for a in tc_to_ac.values()}
     orphan_acs = [a for a in acs if a not in acs_with_tc]
     ac_tc_coverage_rate = round(100 * (len(acs) - len(orphan_acs)) / len(acs), 1)
 
-    # --- Rate 2: AC → plan traceability (every AC referenced by a task's comment)
-    plan_path = Path(track_dir) / "plan.md"
-    ac_traceability_rate = None
-    untraced_acs = []
-    dangling_ac_refs = []
-    if plan_path.exists():
-        plan_acs = set(collect_ac_refs(parse_plan(plan_path)))
-        untraced_acs = [a for a in acs if a not in plan_acs]
-        ac_traceability_rate = round(
-            100 * (len(acs) - len(untraced_acs)) / len(acs), 1)
-        dangling_ac_refs = sorted(r for r in plan_acs if r not in set(acs))
+    # --- Rate 2: AC → plan traceability (grounding-agnostic — shared with the
+    # review branch via _plan_traceability).
+    ac_traceability_rate, untraced_acs, dangling_ac_refs = _plan_traceability(
+        track_dir, acs)
 
     # --- Rate 3 (self-report): AC verification (all its TCs in completed-task
-    # evidence.tc_coverage — what the agent CLAIMS). Reported, NOT gated.
-    # track-state.json may not exist yet at planning time (new-track §2.3 runs
-    # this BEFORE §2.6 creates state). No state ⇒ no completed-task evidence ⇒
-    # an empty covered set (Rate 3 self-report is 0%, which is correct — the
-    # gate uses only Rate 1/2, so a fresh track is gated on AC→TC + AC→plan
-    # traceability, not on verification it hasn't had a chance to do yet).
-    try:
-        covered = _covered_tcs(load(track_dir))
-    except FileNotFoundError:
-        covered = set()
+    # evidence.tc_coverage — what the agent CLAIMS). Reported, NOT gated. No
+    # state (planning time) ⇒ no completed-task evidence ⇒ an empty covered set
+    # (Rate 3 self-report is 0%, which is correct — the gate uses only Rate 1/2,
+    # so a fresh track is gated on AC→TC + AC→plan traceability, not on
+    # verification it hasn't had a chance to do yet).
+    covered = _covered_tcs(state or {})
     verified, partial, unverified = _verified_acs(acs, tc_to_ac, covered)
     ac_verification_rate = round(100 * len(verified) / len(acs), 1)
 
@@ -456,8 +579,10 @@ def compute_ac_integrity(track_dir):
     return {
         "ac_count": len(acs),
         "tc_count": len(tc_to_ac),
+        "anchor_count": len(spec["anchors"]),
         "fr_count": len(set(spec["frs"])),
         "nfr_count": len(set(spec["nfrs"])),
+        "ac_grounding": "test",
         "ac_tc_coverage_rate": ac_tc_coverage_rate,
         "ac_traceability_rate": ac_traceability_rate,
         "ac_verification_rate": ac_verification_rate,
@@ -470,7 +595,69 @@ def compute_ac_integrity(track_dir):
         "spec_errors": spec.get("errors", []),
         "ac_integrity_gate": _gate(
             ac_tc_coverage_rate, orphan_acs, ac_traceability_rate,
-            untraced_acs, dangling_ac_refs),
+            untraced_acs, dangling_ac_refs, grounding="test"),
+        "ac_integrity_reason": None,
+        "ac_evidence": ac_evidence,
+        "ears_warnings": ears_warn,
+        "ears_gate": _ears_gate_str(ears_warn),
+    }
+
+
+def _compute_review_integrity(track_dir, spec, acs, ears_warn, state):
+    """Review-grounded AC integrity (the deliverable-shape branch).
+
+    ACs are grounded by an **artifact anchor + a review attestation**, not by
+    test functions. So Rate 1 becomes AC→anchor coverage (every AC has a
+    ``## Artifact Anchors`` row), and Rate 3 becomes AC→attestation (a positive
+    verdict in a completed task's ``evidence.review_attestations``). Rate 2 (plan
+    traceability) is grounding-agnostic — shared with the test branch via
+    :func:`_plan_traceability`. There is no measured twin in review mode: the
+    attestation IS the grounding artifact (there is no "claimed vs real test"
+    gap — a review either attested the AC or it didn't), so
+    ``ac_verification_measured_rate`` is ``None``.
+
+    ``state`` is the already-loaded track state (``None`` at planning time) —
+    passed in by :func:`compute_ac_integrity` so this never re-reads
+    track-state.json. The rate keys reuse the test-branch names (``ac_tc_*``)
+    so consumers stay schema-identical; ``ac_grounding: "review"`` is the honest
+    signal that the "tc coverage" rate is anchor coverage.
+    """
+    anchors = spec["anchors"]
+    acs_with_anchor = {a["ac"] for a in anchors}
+    orphan_acs = [a for a in acs if a not in acs_with_anchor]
+    ac_tc_coverage_rate = round(100 * (len(acs) - len(orphan_acs)) / len(acs), 1)
+
+    ac_traceability_rate, untraced_acs, dangling_ac_refs = _plan_traceability(
+        track_dir, acs)
+
+    attested = _attested_acs(state or {})
+    verified = [a for a in acs if a in attested]
+    unverified = [a for a in acs if a not in attested]
+    ac_verification_rate = round(100 * len(verified) / len(acs), 1)
+    ac_verification_measured_rate = None  # no measured twin in review mode
+
+    ac_evidence = compute_review_ac_evidence_map(acs, anchors, attested)
+
+    return {
+        "ac_count": len(acs),
+        "tc_count": len(spec["tcs"]),  # 0 for a review spec (literal, not anchors)
+        "anchor_count": len(anchors),
+        "fr_count": len(set(spec["frs"])),
+        "nfr_count": len(set(spec["nfrs"])),
+        "ac_grounding": "review",
+        "ac_tc_coverage_rate": ac_tc_coverage_rate,
+        "ac_traceability_rate": ac_traceability_rate,
+        "ac_verification_rate": ac_verification_rate,
+        "ac_verification_measured_rate": ac_verification_measured_rate,
+        "orphan_acs": orphan_acs,
+        "untraced_acs": untraced_acs,
+        "dangling_ac_refs": dangling_ac_refs,
+        "unverified_acs": unverified,
+        "partial_acs": [],
+        "spec_errors": spec.get("errors", []),
+        "ac_integrity_gate": _gate(
+            ac_tc_coverage_rate, orphan_acs, ac_traceability_rate,
+            untraced_acs, dangling_ac_refs, grounding="review"),
         "ac_integrity_reason": None,
         "ac_evidence": ac_evidence,
         "ears_warnings": ears_warn,
@@ -483,12 +670,14 @@ def cmd_spec_anchors(track_dir):
 
     Guards the weak-model failure where ``spec.md`` is written as free-form
     narrative (often in another language) with no ``## Acceptance Criteria``
-    section or ``## Test Scenarios`` table — so ``compute_ac_integrity``
-    degrades to ``N/A`` and the new-track §2.3 loop blesses it as clean. This
-    check asserts the *structure* the parser needs, reusing ``parse_spec``
-    (no parallel scan): every spec a planner produces MUST carry ``- AC-N:``
-    bullets under ``## Acceptance Criteria`` and ``| TC-N.M | AC-N |`` rows
-    under ``## Test Scenarios``.
+    section or grounding substrate — so ``compute_ac_integrity`` degrades to
+    ``N/A`` and the new-track §2.3 loop blesses it as clean. This check asserts
+    the *structure* the parser needs, reusing ``parse_spec`` (no parallel scan):
+    every spec a planner produces MUST carry ``- AC-N:`` bullets under ``##
+    Acceptance Criteria`` AND a grounding substrate — either ``| TC-N.M | AC-N
+    |`` rows under ``## Test Scenarios`` (test-grounded) OR ``| AC-N | … |`` rows
+    under ``## Artifact Anchors`` (review-grounded, non-code). Either substrate
+    satisfies the check; a spec with ACs but NEITHER fails.
 
     Language-agnostic by design: it checks English anchor *tokens*, not prose.
     A fully-Chinese-prose spec with the headings + ``AC-N``/``TC-N.M`` IDs
@@ -511,14 +700,17 @@ def cmd_spec_anchors(track_dir):
             "missing '## Acceptance Criteria' section (or no '- AC-N:' bullets) "
             "— the heading and AC IDs are machine anchors; keep them in English "
             "even when the prose is another language")
-    if spec["acs"] and not spec["tcs"]:
+    if spec["acs"] and not (spec["tcs"] or spec["anchors"]):
         errors.append(
             "missing '## Test Scenarios' table (or no '| TC-N.M | AC-N |' rows) "
-            "— these IDs are machine anchors; keep them in English even when the "
-            "prose is another language")
+            "OR '## Artifact Anchors' table (or no '| AC-N | … |' rows) — a "
+            "test-grounded spec carries Test Scenarios; a review-grounded "
+            "(non-code) spec carries Artifact Anchors in their place. Both are "
+            "machine anchors; keep the IDs in English even when the prose is "
+            "another language")
     out(dict(ok=not errors, check=True, source=str(spec_path),
              ac_count=len(spec["acs"]), tc_count=len(spec["tcs"]),
-             errors=errors))
+             anchor_count=len(spec["anchors"]), errors=errors))
 
 
 def _ac_integrity_gates(track_dir):

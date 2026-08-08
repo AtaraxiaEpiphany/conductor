@@ -78,6 +78,20 @@ def _graph(envelope):
         glyph = "▣" if key in gates else "▢"
         gate_cells.append(f"{glyph} {fid} {label}")
     out.append("│    gates:  " + "   ".join(gate_cells))
+    # Surface a non-default verification paradigm so a waived checkpoint or a
+    # review-grounded track is visible at a glance (the "no silent skip" spirit
+    # — `checkpoint_policy: skip-if-declared` / `ac_grounding: review` only show
+    # when they depart from the code-track default, so a standard track is
+    # uncluttered). Read from the envelope's resolved_workflow join.
+    paradigm = []
+    ag = rw.get("ac_grounding")
+    if ag and ag != "test":
+        paradigm.append(f"ac_grounding: {ag}")
+    cp = rw.get("checkpoint_policy")
+    if cp and cp != "run":
+        paradigm.append(f"checkpoint_policy: {cp}")
+    if paradigm:
+        out.append("│    " + "   ".join(paradigm))
     out.append("│    " + _position_line(rw.get("position")))
     return out
 

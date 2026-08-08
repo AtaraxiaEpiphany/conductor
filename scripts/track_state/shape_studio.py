@@ -57,35 +57,31 @@ from .misc import build_view_envelope
 # if an agent's role changes, update its .md first and keep these one-liners in
 # rough sync. A second home for *display* semantics is low-drift (mirrors how
 # `instruction`/`when_to_use` are display prose), so long as no dispatch path
-# ever reads this — and none does.
+# ever reads this — and none does. The spine/verifier ``kind`` is NOT stored
+# here — it is derived from ``rv.SPINE_NODES``/``rv.VERIFIERS`` at the
+# ``/api/nodes`` handler, so the partition has one source.
 NODE_DOCS = {
     "spec-planner": {
-        "kind": "spine",
         "role": "Decomposes the brief into an ordered task tree every other node works from.",
         "produces": "spec.md, plan.md",
     },
     "explorer": {
-        "kind": "spine",
         "role": "Read-only codebase mapping before planning; records Layer-0 findings for the executor.",
         "produces": "Exploration Notes (handoff)",
     },
     "task-executor": {
-        "kind": "spine",
         "role": "Implements one task via the TDD loop (red/green/refactor, Steps 3-8); self-loads all context.",
         "produces": "code + tests + result",
     },
     "phase-checker": {
-        "kind": "spine",
         "role": "Checkpoint synthesizer — fans out the verifiers, owns fix-and-retry, stamps the checkpoint commit.",
         "produces": "checkpoint commit",
     },
     "ac-tracer": {
-        "kind": "verifier",
         "role": "AC-evidence trace — verifies each acceptance criterion is grounded by tests (read-only).",
         "produces": "per-AC verdict",
     },
     "test-runner": {
-        "kind": "verifier",
         "role": "L1 verify-only — resolves the test command and runs it ONCE, no fix, no edit (read-only).",
         "produces": "pass / fail",
     },
@@ -98,6 +94,7 @@ NODE_DOCS = {
 _SHAPE_FIELD_EFFECTS = {
     "verifiers": ("drives", "The checkpoint fans out exactly these verifiers. Drop test-runner here and it will not run at the checkpoint."),
     "gates": ("drives", "These track-level quality gates fire, composed with each task's per-tag exemptions. Drop tdd/coverage for a non-code shape."),
+    "checkpoint_policy": ("drives", "Whether the checkpoint phase actually RUNS. run (default) fans it out; skip-if-declared short-circuits it — but ONLY with a declared integrity substitute (ac_grounding=review), else the studio's save gate rejects it (a skip without a substitute breaks the AC-verification guarantee)."),
     "nodes": ("intent", "Declares the intended spine topology. ADVISORY: dispatch order is fixed (planner→executor→checker); this records intent and surfaces a shape_violation when reality drifts. It does NOT reorder execution."),
     "verify_policy": ("display", "Whether a checkpoint phase runs at all (checkpoint vs none). Read by registry-doc; not injected into any prompt."),
     "stop_condition": ("display", "What marks the shape done. Display-only today."),
@@ -147,13 +144,14 @@ def _vocab():
                 "verify_policy": list(rv.VERIFY_POLICIES),
                 "stop_condition": list(rv.STOP_CONDITIONS),
                 "ac_grounding": list(rv.AC_GROUNDINGS),
+                "checkpoint_policy": list(rv.CHECKPOINT_POLICIES),
             },
             "text_fields": ["instruction", "when_to_use"],
-            # `nodes` is ADVISORY; `verifiers`/`gates` are LOAD-BEARING — the UI
-            # surfaces the distinction so an editor knows editing nodes does not
-            # reorder dispatch (non-negotiable #8).
-            "load_bearing": ["verifiers", "gates"],
-            "advisory": ["nodes"],
+            # LOAD-BEARING (drives dispatch) vs ADVISORY (records intent only) is
+            # derived from _SHAPE_FIELD_EFFECTS so the badge, the field guide, and
+            # these lists share one taxonomy and can't drift apart.
+            "load_bearing": [f for f, (cls, _) in _SHAPE_FIELD_EFFECTS.items() if cls == "drives"],
+            "advisory": [f for f, (cls, _) in _SHAPE_FIELD_EFFECTS.items() if cls == "intent"],
             # Per-field "what does editing this do?" with a drives|intent|display
             # class — the honest signal. Single source; the Field Guide + each
             # field's inline badge both read this (never re-typed in the frontend).
@@ -180,6 +178,7 @@ def _shape_graph(shape):
         "verify_policy": ws.verify_policy_for(shape),
         "stop_condition": ws.stop_condition_for(shape),
         "ac_grounding": ws.ac_grounding_for(shape),
+        "checkpoint_policy": ws.checkpoint_policy_for(shape),
     }
 
 
@@ -193,7 +192,7 @@ def _task_profile(tag):
     rather than silently rendering ``default`` as if it were the real answer).
     """
     known = bool(tag) and tag in tp.TAG_VOCAB()
-    prof = tp._profile(tag) if tag else {}
+    prof = tp._profile(tag) if tag else {}  # noqa: SLF001 — registry-internal profile lookup
     return {
         "tag": tag,
         "known": known,
@@ -223,11 +222,15 @@ def _task_card(phase_index, unit, parent_task=None):
     if tag is None:
         cached = unit.get("task_type")
         if cached and cached != "default":
-            # ``task_type`` is the lowercased leading tag; re-capitalize to match
-            # the registry's capitalized keys so _profile resolves it.
-            tag = str(cached).capitalize()
+            # ``task_type`` is the lowercased leading tag; resolve it against the
+            # live (capitalized) registry keys case-insensitively — the same
+            # approach the dispatch path uses, and it survives multi-capital tags
+            # (.capitalize() would mangle e.g. [OAuth2] → Oauth2 → unresolved).
+            low = str(cached).lower()
+            tag = next((k for k in tp.TAG_VOCAB() if k.lower() == low), None)
+    prof = _task_profile(tag)
     is_subtask = parent_task is not None
-    card = {
+    return {
         "phase": phase_index,
         "task": parent_task if is_subtask else unit.get("index"),
         "subtask": unit.get("index") if is_subtask else None,
@@ -236,18 +239,14 @@ def _task_card(phase_index, unit, parent_task=None):
         "commit_sha": unit.get("commit_sha"),
         "tag": tag,
         "coverage_pct": unit.get("coverage_pct"),
+        "known": prof["known"],
+        "route": prof["route"],
+        "workflow": prof["workflow"],
+        "when_to_use": prof["when_to_use"],
+        "tdd_exempt": prof["tdd_exempt"],
+        "coverage_exempt": prof["coverage_exempt"],
+        "refactor": prof["refactor"],
     }
-    prof = _task_profile(tag)
-    card.update(
-        known=prof["known"],
-        route=prof["route"],
-        workflow=prof["workflow"],
-        when_to_use=prof["when_to_use"],
-        tdd_exempt=prof["tdd_exempt"],
-        coverage_exempt=prof["coverage_exempt"],
-        refactor=prof["refactor"],
-    )
-    return card
 
 
 def _task_cards(env):
@@ -420,7 +419,11 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             return
         if path == "/api/nodes":
             # The node/verifier legend — display prose grounded in agents/*.md.
-            _json_response(self, {"nodes": NODE_DOCS})
+            # ``kind`` (spine vs verifier) is derived from the registry's single
+            # source (rv.SPINE_NODES/VERIFIERS), not hand-duplicated per entry.
+            nodes = {n: {"kind": "spine" if n in rv.SPINE_NODES else "verifier", **doc}
+                     for n, doc in NODE_DOCS.items()}
+            _json_response(self, {"nodes": nodes})
             return
         if path == "/api/task-profile":
             # One tag's resolved profile, fail-soft on an unknown/blank tag.
@@ -684,6 +687,7 @@ _PAGE = r"""<!doctype html>
   .graph-wrap { background:linear-gradient(180deg,var(--panel-2),var(--bg)); border:1px solid var(--bd);
                 border-radius:12px; padding:14px; overflow:hidden; }
   .pill { font-size:11px; padding:3px 8px; border-radius:11px; background:var(--elev); border:1px solid var(--bd); color:var(--fg-dim); }
+  .pill.sm { padding:2px 7px; }
   .note { font-size:11px; color:var(--muted); font-style:italic; }
   details { background:var(--panel-2); border:1px solid var(--bd); border-radius:11px; padding:2px 12px; margin:8px 0; }
   details[open] { padding-bottom:8px; }
@@ -739,7 +743,6 @@ _PAGE = r"""<!doctype html>
      presentation attributes strings, so we use classes). */
   .sg-spine { fill:var(--acc); fill-opacity:.15; stroke:var(--acc); stroke-width:1.5; }
   .sg-spine.glow { filter:url(#sgglow); }
-  .sg-spine-line { stroke:url(#sgng); stroke-width:1.5; fill:none; }
   .sg-node-text { fill:var(--fg); font-weight:600; }
   .sg-conn { stroke:var(--acc); stroke-width:2; opacity:.65; fill:none; }
   .sg-arr { fill:var(--acc); }
@@ -766,9 +769,9 @@ _PAGE = r"""<!doctype html>
   </label>
   <span id="track-shape-info" class="muted"></span>
   <div class="theme-toggle" title="Color theme">
-    <button id="th-dark" onclick="setTheme('dark')" title="Dark">&#x1F319;</button>
-    <button id="th-light" onclick="setTheme('light')" title="Light">&#x2600;&#xFE0F;</button>
-    <button id="th-system" onclick="setTheme('system')" title="System">&#x1F5A5;&#xFE0F;</button>
+    <button id="th-dark" onclick="applyTheme('dark')" title="Dark">&#x1F319;</button>
+    <button id="th-light" onclick="applyTheme('light')" title="Light">&#x2600;&#xFE0F;</button>
+    <button id="th-system" onclick="applyTheme('system')" title="System">&#x1F5A5;&#xFE0F;</button>
   </div>
 </header>
 <main>
@@ -821,7 +824,7 @@ _PAGE = r"""<!doctype html>
 </main>
 
 <script>
-let STATE = { tab:'shapes', data:null, selected:null, tracks:[], boundTrack:null, boundShape:null, nodes:{}, theme:'system' };
+let STATE = { tab:'shapes', data:null, selected:null, tracks:[], boundTrack:null, boundShape:null, nodes:{} };
 const $ = id => document.getElementById(id);
 
 async function api(path, opts) {
@@ -834,7 +837,6 @@ function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, c=>({'&':'&amp;'
 // --- theme (CSS custom properties + data-theme; system follows the OS) ------
 function resolveSystem(){ return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'; }
 function applyTheme(choice){
-  STATE.theme = choice;
   const effective = choice === 'system' ? resolveSystem() : choice;
   document.documentElement.setAttribute('data-theme', effective);
   for (const t of ['dark','light','system']) $('th-'+t).classList.toggle('active', t===choice);
@@ -843,7 +845,6 @@ function applyTheme(choice){
   // selected graph so any data-derived colors stay consistent.
   if (STATE.selected && STATE.tab === 'shapes') renderGraph();
 }
-function setTheme(choice){ applyTheme(choice); }
 
 // --- tabs + registry --------------------------------------------------------
 function switchTab(tab) {
@@ -883,10 +884,10 @@ function effectiveRow() {
   const ent = entryDoc()[STATE.selected];
   return Object.assign({}, defaultDoc(), ent || {});
 }
-function fxPill(field) {
-  // The drives|intent|display badge for one field, from the vocab effects map.
-  const fx = STATE.data && STATE.data.vocab && STATE.data.vocab.effects ? STATE.data.vocab.effects[field] : null;
-  return fx ? ' <span class="fx '+fx.class+'" title="'+esc(fx.text)+'">'+fx.class+'</span>' : '';
+function fxPill(e) {
+  // The drives|intent|display badge for one field; the caller passes the
+  // resolved effects entry (renderForm already has it as fx[f]).
+  return e ? ' <span class="fx '+e.class+'" title="'+esc(e.text)+'">'+e.class+'</span>' : '';
 }
 function renderForm() {
   const wrap = $('form');
@@ -900,25 +901,25 @@ function renderForm() {
   for (const [f, opts] of Object.entries(v.list_fields||{})) {
     const cur = row[f] || [];
     if (opts) {
-      html += '<div class="field"><label class="fld">'+esc(f)+fxPill(f)+'</label>'
+      html += '<div class="field"><label class="fld">'+esc(f)+fxPill(fx[f])+'</label>'
         + '<select id="f-'+f+'" multiple>'+opts.map(o=>'<option'+(cur.includes(o)?' selected':'')+'>'+esc(o)+'</option>').join('')+'</select>'
         + (fx[f]?'<div class="note" style="margin-top:3px">'+esc(fx[f].text)+'</div>':'')+'</div>';
     } else {
-      html += '<div class="field"><label class="fld">'+esc(f)+fxPill(f)+'</label><input type="text" id="f-'+f+'" value="'+esc((cur||[]).join(', '))+'" placeholder="comma, separated"></div>';
+      html += '<div class="field"><label class="fld">'+esc(f)+fxPill(fx[f])+'</label><input type="text" id="f-'+f+'" value="'+esc((cur||[]).join(', '))+'" placeholder="comma, separated"></div>';
     }
   }
   for (const [f, opts] of Object.entries(v.scalar_fields||{})) {
-    html += '<div class="field"><label class="fld">'+esc(f)+fxPill(f)+'</label><select id="f-'+f+'">'
+    html += '<div class="field"><label class="fld">'+esc(f)+fxPill(fx[f])+'</label><select id="f-'+f+'">'
       + '<option value=""'+(row[f]===undefined?' selected':'')+'>(inherit)</option>'
       + opts.map(o=>'<option'+(row[f]===o?' selected':'')+'>'+esc(o)+'</option>').join('')+'</select></div>';
   }
   if (v.bool_fields && v.bool_fields.length) {
     html += '<div class="field"><label class="fld">flags</label><div class="checks">';
-    for (const f of v.bool_fields) html += '<label><input type="checkbox" id="f-'+f+'"'+(row[f]?' checked':'')+'> '+esc(f)+fxPill(f)+'</label>';
+    for (const f of v.bool_fields) html += '<label><input type="checkbox" id="f-'+f+'"'+(row[f]?' checked':'')+'> '+esc(f)+fxPill(fx[f])+'</label>';
     html += '</div></div>';
   }
   for (const f of (v.text_fields||[])) {
-    html += '<div class="field"><label class="fld">'+esc(f)+fxPill(f)+'</label><textarea id="f-'+f+'">'+esc(row[f]||'')+'</textarea></div>';
+    html += '<div class="field"><label class="fld">'+esc(f)+fxPill(fx[f])+'</label><textarea id="f-'+f+'">'+esc(row[f]||'')+'</textarea></div>';
   }
   if (isNew) html += '<div class="note">This entry does not exist yet — saving creates it.</div>';
   wrap.innerHTML = html;
@@ -1092,11 +1093,11 @@ function taskCardHTML(c, pos) {
     + '<div class="body"><div class="tn">'+esc(c.name||'(unnamed)')+'</div>'
     + '<div class="meta"><span class="stat '+(c.status||'pending')+'">'+esc(statusLabel(c.status))+'</span>';
   if (c.tag) h += '<span class="tag-chip'+(c.known?'':' unknown')+'" title="'+esc(c.when_to_use||'')+'">['+esc(c.tag)+']</span>';
-  else h += '<span class="pill" style="padding:2px 7px">default TDD</span>';
-  if (c.tdd_exempt) h += '<span class="pill" style="padding:2px 7px">tdd-exempt</span>';
-  if (c.coverage_exempt) h += '<span class="pill" style="padding:2px 7px">cov-exempt</span>';
-  if (c.refactor) h += '<span class="pill" style="padding:2px 7px">+ refactor</span>';
-  if (c.coverage_pct!=null) h += '<span class="pill" style="padding:2px 7px">'+c.coverage_pct+'% cov</span>';
+  else h += '<span class="pill sm">default TDD</span>';
+  if (c.tdd_exempt) h += '<span class="pill sm">tdd-exempt</span>';
+  if (c.coverage_exempt) h += '<span class="pill sm">cov-exempt</span>';
+  if (c.refactor) h += '<span class="pill sm">+ refactor</span>';
+  if (c.coverage_pct!=null) h += '<span class="pill sm">'+c.coverage_pct+'% cov</span>';
   h += '</div>';
   if (c.workflow) h += '<div class="wf">'+esc(c.workflow)+'</div>';
   else if (c.tag) h += '<div class="note" style="margin-top:5px">runs default TDD (no bespoke workflow prose for this tag)</div>';
@@ -1140,7 +1141,7 @@ function renderTrackView(env) {
 function renderRecipe() {
   $('recipe').innerHTML =
     '<span class="kb">Before you edit: what actually changes dispatch?</span>'
-    + '<div>• <span class="drives">Drives dispatch</span> — edit <code>verifiers</code> (which run at the checkpoint) and <code>gates</code> (tdd / coverage / checkpoint). These are the ONLY shape fields that change behavior.</div>'
+    + '<div>• <span class="drives">Drives dispatch</span> — edit <code>verifiers</code> (which run at the checkpoint), <code>gates</code> (tdd / coverage / checkpoint), and <code>checkpoint_policy</code> (whether the checkpoint runs at all). These are the ONLY shape fields that change dispatch behavior.</div>'
     + '<div>• <span class="intent">Intent only</span> — <code>nodes</code> declares topology but does <b>not</b> reorder dispatch (the planner→executor→checker spine is hardcoded). It records intent and surfaces a <code>shape_violation</code> when reality drifts.</div>'
     + '<div>• Per-task behavior (migrate-vs-TDD, routing, exemptions) lives in the <b>Task Types</b> registry (<code>workflow</code> prose), not the shape.</div>'
     + '<div>• <code>verify_policy</code> / <code>stop_condition</code> / <code>ac_grounding</code> / <code>instruction</code> are display/reference — not injected into any prompt.</div>'

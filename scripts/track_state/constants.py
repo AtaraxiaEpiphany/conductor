@@ -57,17 +57,26 @@ def task_max_retries(task):
     return mr if isinstance(mr, int) and mr >= 1 else MAX_RETRIES
 
 
-# Bound on consecutive failure-analyst rounds for one task (dispatch.py
-# ``_step_route_failure_analysis``). A failure-analyst whose ``retry_modified``
-# verdict fails again and re-triggers another failure-analyst is the loop this
-# caps: past the limit the router falls through to ``escalate``→halt instead of
-# re-analyzing. Mirrors ``MAX_RECOVERY_TURNS`` (lib/recovery.py) in spirit.
+# Loop-until-dry recovery backstops for the failure-analyze retry arm
+# (dispatch.py ``_step_route_failure_analysis``). The retry arm keeps
+# re-analyzing + retrying while the failure-analyst produces NOVEL root causes;
+# TWO independent backstops stop it (the "twin backstop"):
 #
-# 2 = the analyst gets ONE refinement round on a failed modified-retry (round 1
-# prescribes the modification; if it fails, round 2 can prescribe a different one)
-# before escalating. Raising it further risks burning budget on a stuck task;
-# lowering to 1 gives no refinement at all.
-MAX_ANALYSIS_ROUNDS = 2
+#  RECOVERY_DRY_K — the "converged" signal: after this many CONSECUTIVE rounds
+#    whose root_cause was already seen (no new diagnosis), the router halts
+#    (escalate). The analyst has nothing new to offer — looping further would
+#    just repeat a known-bad modification. Novelty is computed in
+#    cmd_failure_analyst_verdict (which sees the root_cause) and stamped on the
+#    failure-analysis marker as ``seen_root_causes`` + ``consecutive_empty_rounds``.
+#  MAX_RECOVERY_ROUNDS — the hard budget: a per-track ceiling on TOTAL analysis
+#    rounds regardless of novelty, so a run of distinct-but-wrong diagnoses can't
+#    burn budget forever. Read fail-open; a future per-shape ``max_recovery_rounds``
+#    field will tune this per workflow.
+#
+# Both → ``_halt("escalate")``. The retry/decompose/skip/escalate arms are
+# otherwise fully automated; single-homed in runtime/contracts/recovery-policy.md.
+RECOVERY_DRY_K = 2
+MAX_RECOVERY_ROUNDS = 4
 
 # Stuck-lock heartbeat. ``_do_lock`` stamps ``locked_at`` (epoch seconds) on the
 # task; a task still ``in_progress`` past this threshold is treated as a
@@ -84,6 +93,18 @@ LOCKED_AT_FIELD = "locked_at"  # epoch-seconds key on the task object
 # continuous: auto-proceeds through all phases without pausing (phase-checker
 #             skips its confirmation gate; [Manual] tasks auto-defer).
 EXECUTION_MODES = ("interactive", "continuous")
+
+# Recovery policies (schema: track-state.schema.json). DECOUPLES the failed-task
+# recovery decision from ``execution_mode`` — the two read independently. Read at
+# every failed+exhausted decision site via ``dispatch._auto_route_failure``.
+#  ask  (legacy): an interactive track surfaces a Retry/Skip/Block ``ask`` on a
+#                 failed+exhausted task (continuous still auto-routes). Existing
+#                 tracks without the field read as ``ask`` (state.get default).
+#  auto         : routes straight to the skip-analyst handshake REGARDLESS of
+#                 execution_mode — opt an interactive track into auto-recovery
+#                 without giving up checkpoint pausing. New tracks default to it
+#                 (set by ``quality._init_core``).
+RECOVERY_POLICIES = ("ask", "auto")
 
 _RE_TRAILING_MARKER = re.compile(
     r'\s*\[(?:N/A|verified|[0-9a-f]{7}(?:\s*,\s*[0-9a-f]{7})*)\]\s*$'

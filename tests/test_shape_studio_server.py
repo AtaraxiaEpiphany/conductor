@@ -352,5 +352,48 @@ class TaskProfileEndpoint(TestCase):
         self.assertEqual(prof["workflow"], "")
 
 
+class CheckpointPolicyControlSurfaceTests(TestCase):
+    """Track C3 — ``checkpoint_policy`` is the 3rd drives-dispatch field (after
+    verifiers + gates). The Shape Studio's honest control surface must surface
+    it as load-bearing (so an editor sees it changes dispatch), expose its vocab
+    in the dynamic form, and resolve it per-shape. Direct unit tests — no server."""
+
+    def test_effects_marks_checkpoint_policy_as_drives(self):
+        cls, _ = ss._SHAPE_FIELD_EFFECTS["checkpoint_policy"]
+        self.assertEqual(cls, "drives")
+
+    def test_load_bearing_auto_derives_checkpoint_policy(self):
+        # The load_bearing list is derived from _SHAPE_FIELD_EFFECTS (cls ==
+        # "drives") — adding checkpoint_policy as drives MUST surface it here
+        # without a second edit (the no-drift taxonomy).
+        self.assertIn("checkpoint_policy", ss._vocab()["shapes"]["load_bearing"])
+        # verifiers + gates + checkpoint_policy = the three drives fields.
+        self.assertEqual(
+            set(ss._vocab()["shapes"]["load_bearing"]),
+            {"verifiers", "gates", "checkpoint_policy"})
+
+    def test_vocab_exposes_checkpoint_policy_scalar(self):
+        self.assertEqual(
+            ss._vocab()["shapes"]["scalar_fields"]["checkpoint_policy"],
+            ["run", "skip-if-declared"])
+
+    def test_shape_graph_resolves_checkpoint_policy(self):
+        g = ss._shape_graph("default")
+        self.assertEqual(g["checkpoint_policy"], "run")
+
+    def test_field_guide_names_all_three_drives_fields(self):
+        # The Field Guide HTML is a module-level string literal — scan the source
+        # so the assertion survives the HTML living in any module string. The
+        # guide must name checkpoint_policy alongside verifiers + gates (the
+        # OLD "ONLY verifiers and gates change behavior" claim is gone).
+        import inspect
+        src = inspect.getsource(ss)
+        self.assertIn("checkpoint_policy", src)
+        # The pre-C3 misleading fragment (verifiers "and <code>gates</code>"
+        # followed by "ONLY ... fields that change behavior") is gone.
+        self.assertNotIn(
+            "run at the checkpoint) and <code>gates</code>", src)
+
+
 if __name__ == "__main__":
     main()

@@ -47,6 +47,7 @@ The orchestrator supplies:
 | Parameter     | Description                                     |
 | ------------- | ----------------------------------------------- |
 | `TRACK_DIR`   | Absolute path to the track directory             |
+| `REVIEW_MODE` | Optional. `attest` → review-grounded attestation mode (§3.7): review the produced deliverable artifacts against each AC and return per-AC attestation verdicts the orchestrator writes via `track-state review-attest`. Absent (default) → the spec/plan audit (§3.2–§3.6). |
 
 If `TRACK_DIR` is absent or `{TRACK_DIR}/spec.md` and `plan.md` are both missing
 → emit `STATUS: FAILURE` with `REASON: missing artifacts` and stop. A missing
@@ -135,8 +136,7 @@ A task tag whose resolved registry profile is `tdd_exempt` is a **TDD exemption*
 
 ### 3.5 Structure Audit
 
-- spec.md: `## Requirements`, `## Acceptance Criteria`, `## Test Scenarios`
-  sections present and non-empty (unless spec-less).
+- spec.md: `## Requirements` and `## Acceptance Criteria` sections present and non-empty, AND a grounding substrate — either `## Test Scenarios` (test-grounded) OR `## Artifact Anchors` (review-grounded — a `deliverable` shape). One or the other is required; a spec with ACs but NEITHER is a structural defect. **Accept either** — do NOT flag a review-grounded spec for lacking `## Test Scenarios`; its anchors are the substrate (`spec-anchors` enforces the same rule).
 - plan.md: at least one `## Phase N:` heading; every task line carries `[ ]`;
   manual-verification task appended at each phase end (a manual-route tag — `[Manual]` in the shipped registry).
 
@@ -150,6 +150,32 @@ A task tag whose resolved registry profile is `tdd_exempt` is a **TDD exemption*
 **Do not fabricate findings** to look thorough. A clean spec/plan is a valid
 `APPROVED`. Conversely, do not suppress a real defect to avoid friction — an
 honest `CHANGES_REQUESTED` is the whole point.
+
+### 3.7 Review Mode (attest) — review-grounded attestation
+
+When `REVIEW_MODE` is `attest`, you are the **review verifier** for a
+review-grounded (`deliverable`) track: the artifacts have been produced, and you
+attest whether each AC's deliverable actually satisfies its criterion. This is
+the review-grounded twin of `test-runner` running the tests — the AC's grounding
+is an artifact anchor + your attestation, not a test.
+
+1. Read `{TRACK_DIR}/spec.md` and parse `## Artifact Anchors` (each row: `AC-N |
+   <artifact> | <location>`). If the spec is test-grounded (no anchors) → emit
+   `STATUS: FAILURE` with `REASON: attest mode on a test-grounded track` and stop.
+2. For each anchored AC, read the artifact at its `<location>` (the produced
+   deliverable — a doc section, report, data file). Judge, against the AC text,
+   whether the artifact satisfies the criterion.
+3. Return one attestation per AC: verdict `pass` (the artifact satisfies the AC)
+   or `fail` (it does not — name the gap), plus the anchor and a one-line
+   reasoning. Emit them in the `ATTESTATIONS` block (§4.0). **You are read-only**
+   — the orchestrator writes each attestation to the task's evidence via
+   `track-state review-attest "<track_dir>" --phase <p> --task <t> --ac <AC-N>
+   --verdict <pass|fail> --anchor "<artifact>" --attested-by spec-reviewer`.
+
+Do not rubber-stamp. A `pass` means you read the artifact and it satisfies the
+AC; a `fail` names the specific gap. The attestation is the integrity substitute
+for the freedom a deliverable shape takes (no tests) — it must be truthful, or
+the "verified against AC-N" stamp is hollow.
 
 ---
 
@@ -201,6 +227,18 @@ FINDINGS:
 STATUS: FAILURE
 TRACK_DIR: {TRACK_DIR}
 REASON: <one-line description of what failed>
+---END REVIEW RESULT---
+```
+
+### ATTEST (review mode — per-AC attestation verdicts)
+
+```
+---REVIEW RESULT---
+STATUS: ATTEST
+TRACK_DIR: {TRACK_DIR}
+ATTESTATIONS:
+- AC-1 | pass | anchor: docs/api.md | the API doc covers all endpoints named in AC-1
+- AC-2 | fail | anchor: docs/run.md | rollback section missing the database step AC-2 requires
 ---END REVIEW RESULT---
 ```
 

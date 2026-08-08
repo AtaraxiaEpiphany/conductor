@@ -5,14 +5,14 @@ import shlex
 import sys
 from pathlib import Path
 
-from .core import load
+from .core import load, transaction
 from .helpers import (
     out, emit, now_iso, extract_tags, _inherit_tags,
     conductor_dir, _store_evidence, _last_subtask_sha, _any_phase_needs_checkpoint,
     flag, _normalize_sha, target, _extract_tags_for_task, _resolve_conductor_root,
 )
 from .constants import (AUTO_COMPLETE_OK, MAX_RETRIES, task_max_retries,
-                        MAX_ANALYSIS_ROUNDS)
+                        RECOVERY_DRY_K, MAX_RECOVERY_ROUNDS)
 from .mutations import (_do_lock, _do_complete, _do_fail, _do_fail_parent,
                         _do_defer, _do_skip, reactivate_for_modified_retry)
 from .result import _advisory_gates
@@ -194,6 +194,26 @@ def cmd_dispatch_next(track_dir, compact=True):
         # Check if any phase needs a checkpoint before doing anything else
         cp = _any_phase_needs_checkpoint(track_dir, state)
         if cp is not None:
+            # Track C2 fail-hard: a skip-if-declared shape with no integrity
+            # substitute reaches here (a skip-WITH-substitute shape made
+            # _phase_needs_checkpoint return None above, so cp would be None).
+            # The freedom (skip checkpoint) was taken without its verification
+            # substitute → halt, never a silent skip.
+            from .workflow_shapes import resolve_shape, checkpoint_skip_decision
+            shape = resolve_shape(state.get("workflow_shape"))
+            if checkpoint_skip_decision(shape) == "violation":
+                emit(dict(
+                    action="shape_violation", status="error", phase=cp,
+                    workflow_shape=shape,
+                    error=(
+                        f"workflow_shape '{shape}' declares checkpoint_policy "
+                        f"'skip-if-declared' with no integrity substitute — a "
+                        f"checkpoint skip without a verification substitute "
+                        f"(need ac_grounding='review') breaks the 'verified "
+                        f"against AC-N' guarantee. Set ac_grounding='review' "
+                        f"or checkpoint_policy='run'.")),
+                    "dispatch-next", compact)
+                return
             # Rail A/B unification: attach the SAME pre-assembled verifier
             # fan-out the `step` spine emits (dispatch_batch), so
             # skills/implement/SKILL.md §3.2 Step 1 pastes the member `prompt`
@@ -399,15 +419,41 @@ def _find_failed_task(state):
     return None
 
 
+def _auto_route_failure(state):
+    """Whether a failed/exhausted task auto-routes to the skip-analyst handshake
+    (True) instead of surfacing a human Retry/Skip/Block ``ask`` (False).
+
+    Two INDEPENDENT switches grant auto-routing, so each flips without disturbing
+    the other — and ``execution_mode`` keeps its separate meaning (checkpoint
+    pausing), which the recovery decision no longer overloads:
+
+    * ``recovery_policy == "auto"`` — opts an interactive track into auto-recovery
+      WITHOUT giving up checkpoint pausing. New tracks default to ``auto``; an
+      existing track without the field reads ``None`` (not ``"auto"``) and falls
+      through to the legacy rule below, so it stays byte-identical.
+    * ``execution_mode != "interactive"`` (legacy) — continuous never pauses.
+
+    Used at every failed+exhausted decision site. The step-spine sites
+    (``_step_emit_exhausted`` / ``_emit_quiescent_leaf``) emit
+    ``dispatch_skip_analyst`` when this is True; the recover/dispatch-prepare
+    sites simply ATTACH no decision blob (the orchestrator runs ``step`` for the
+    handshake). Single resolver ⇒ the policy can't drift between sites.
+    """
+    if state.get("recovery_policy") == "auto":
+        return True
+    return state.get("execution_mode", "interactive") != "interactive"
+
+
 def _emit_no_active_or_decision(track_dir, state, fixes, compact):
     """No active (pending/in_progress) task remains. If a failed+exhausted task
-    exists on an interactive track, surface it for the §2.0 retry/skip/block
-    decision; otherwise emit ``no_active_task``.
+    exists on a track that surfaces human asks, surface it for the §2.0
+    retry/skip/block decision; otherwise emit ``no_active_task``.
 
-    Continuous mode never surfaces a decision — skip-analyst (§3.6) owns the
-    failed-task path there.
+    The ask/no-ask decision is :func:`_auto_route_failure` (``recovery_policy``
+    or continuous mode). An auto-routing track never gets a decision blob here —
+    the orchestrator runs ``step`` to drive the skip-analyst handshake (§3.6).
     """
-    if state.get("execution_mode", "interactive") == "interactive":
+    if not _auto_route_failure(state):
         found = _find_failed_exhausted(state)
         if found is not None:
             fpi, fti, fsi, tgt, name = found
@@ -598,6 +644,54 @@ def _decompose_decision(track_dir, marker):
     )
 
 
+def _amendment_decision(track_dir, staged):
+    """Build the Apply/Edit/Halt ``decision`` blob for a staged replan amendment.
+
+    The replan arm of ``_step_route_failure_analysis`` stages an amendment
+    (``.conductor/amendment-staged.json``) when failure-analyst supplied the AC
+    details, then emits this ``ask``. The human's ONE touchpoint in the whole
+    recovery router — applying an amendment can supersede an AC a downstream gate
+    already measured against, so it stays a deliberate confirm (the governing
+    invariant). ``Apply`` runs ``track-state amend-apply`` (splices spec.md,
+    reactivates the failing task, injects ``[Conductor Amendment]``, commits —
+    all internal, mirroring ``cmd_split``); ``Edit manually`` runs
+    ``track-state amend-clear`` (abandon the staged splice; the human edits
+    spec.md themselves); ``Halt`` keeps the staged amendment on disk for later.
+    Mirrors ``_decompose_decision``'s {question, header, options, commands, next}.
+    """
+    td = str(track_dir)
+    pi = staged.get("phase")
+    ti = staged.get("task")
+    si = staged.get("subtask")
+    name = staged.get("name", "?")
+    ac_super = staged.get("ac_superseded", "?")
+    ac_prime = staged.get("ac_prime_text", "")
+
+    return dict(
+        question=(
+            f"failure-analyst recommends REPLANNING '{name}' (P{pi}.T{ti}): "
+            f"the spec is wrong — supersede {ac_super} with a corrected criterion"
+            + (f": \"{ac_prime}\"" if ac_prime else "") +
+            ". Apply the amendment in place?"),
+        header="Replan",
+        options=[
+            {"label": "Apply amendment",
+             "description": (f"Append ## Amendment to spec.md (original AC kept), "
+                             f"reactivate '{name}', re-verify against {ac_super}′")},
+            {"label": "Edit manually",
+             "description": "Abandon the staged splice; you edit spec.md yourself, then resume"},
+            {"label": "Halt",
+             "description": "Stop for a human (the staged amendment is kept on disk)"},
+        ],
+        commands={
+            "Apply amendment": [f'track-state amend-apply "{td}"'],
+            "Edit manually": [f'track-state amend-clear "{td}"'],
+            "Halt": [],
+        },
+        next={"Apply amendment": "step", "Edit manually": "step", "Halt": "HALT"},
+    )
+
+
 def cmd_recover(track_dir, compact=True):
     """Recover current task after interruption, with auto-fix and smart advancement.
 
@@ -690,14 +784,15 @@ def cmd_recover(track_dir, compact=True):
     if checkpoint_pending is not None:
         result["phase_checkpoint_pending"] = checkpoint_pending
 
-    # Interactive failed+exhausted → attach a pre-computed Retry/Skip/Block
-    # decision blob (the #1 transducer: the orchestrator stops judging
-    # retry-exhaustion and constructing bash — it AskUserQuestion → run
-    # decision.commands[choice] verbatim). Continuous mode is left to
-    # skip-analyst (§3.6), so no blob there.
+    # A failed+exhausted task on a track that surfaces human asks → attach a pre-
+    # computed Retry/Skip/Block decision blob (the #1 transducer: the orchestrator
+    # stops judging retry-exhaustion and constructing bash — it AskUserQuestion →
+    # run decision.commands[choice] verbatim). An auto-routing track
+    # (``recovery_policy=auto`` or continuous) is left to skip-analyst (§3.6), so
+    # no blob there — the orchestrator runs ``step`` for the handshake.
     if (result.get("status") == "failed"
             and result.get("retry_count", 0) >= result.get("max_retries", 0)
-            and result.get("execution_mode") == "interactive"):
+            and not _auto_route_failure(state)):
         result["decision"] = _failed_task_decision(
             track_dir, pi, ti, si, name, result["retry_count"])
 
@@ -1708,6 +1803,85 @@ def _modified_guidance_clear(track_dir, pi, ti, si):
         path.unlink()
 
 
+# --------------------------------------------------------------------------- #
+# Amendment handshake (A3 — replan-as-amendment). Two markers, both JSON-core
+# like the failure-analysis family above:
+#
+#  ``.conductor/amendment-staged.json`` — STAGED amendment. Written by the replan
+#    arm of ``_step_route_failure_analysis`` when failure-analyst returned the AC
+#    details (ac_superseded + ac_prime_text). Carries the amendment payload until
+#    the human picks Apply (``cmd_amend_apply`` splices spec.md) or Edit manually
+#    (``cmd_amend_clear`` abandons it). A replan WITHOUT AC details still halts
+#    (the analyst must give the AC specifics for an auto-amendment; the governing
+#    invariant forbids silently rewriting an AC).
+#
+#  ``.conductor/.amendment-guidance-<pi>-<ti>[-<si>].md`` — the [Conductor
+#    Amendment] injection for the re-dispatched task (modeled on the modified-
+#    guidance marker above). Written by ``cmd_amend_apply``, consumed + cleared by
+#    the SubagentStart hook (``on-subagent-start.py``) so the retrying executor
+#    learns the spec was amended and re-verifies against the new AC. Keyed by
+#    phase/task/subtask like modified-guidance.
+# --------------------------------------------------------------------------- #
+_AMENDMENT_STAGED_MARKER = "amendment-staged.json"
+
+
+def _amendment_staged_marker_path(track_dir):
+    """Pure path — deliberately no mkdir (mirrors the other marker families)."""
+    return Path(track_dir) / ".conductor" / _AMENDMENT_STAGED_MARKER
+
+
+def _amendment_staged_read_marker(track_dir):
+    """Tolerant reader: ``None`` on missing/corrupt (see ``_json_marker_read``)."""
+    return _json_marker_read(_amendment_staged_marker_path(track_dir))
+
+
+def _amendment_staged_write_marker(track_dir, data):
+    """Write the whole marker dict (see ``_json_marker_write``)."""
+    _json_marker_write(_amendment_staged_marker_path(track_dir), data)
+
+
+def _amendment_staged_clear_marker(track_dir):
+    """Delete the marker; idempotent (see ``_json_marker_clear``)."""
+    _json_marker_clear(_amendment_staged_marker_path(track_dir))
+
+
+_AMENDMENT_LEAD = (
+    "[Conductor Amendment] A failure-analyst ``replan`` verdict amended spec.md "
+    "before this retry: an acceptance criterion was superseded. The original AC "
+    "line is preserved; a ``## Amendment N`` section was appended. Re-verify your "
+    "work against the amended criterion (the supersede is recorded in spec.md), "
+    "and do not assume the prior AC still holds."
+)
+
+
+def _amendment_guidance_path(track_dir, pi, ti, si):
+    sub = f"-{si}" if si is not None else ""
+    return Path(track_dir) / ".conductor" / f".amendment-guidance-{pi}-{ti}{sub}.md"
+
+
+def _amendment_guidance_write(track_dir, pi, ti, si, body):
+    cdir = Path(track_dir) / ".conductor"
+    cdir.mkdir(parents=True, exist_ok=True)
+    _amendment_guidance_path(track_dir, pi, ti, si).write_text(body or "")
+
+
+def _amendment_guidance_read(track_dir, pi, ti, si):
+    path = _amendment_guidance_path(track_dir, pi, ti, si)
+    if not path.exists():
+        return None
+    try:
+        text = path.read_text(encoding="utf-8").strip()
+        return text or None
+    except OSError:
+        return None
+
+
+def _amendment_guidance_clear(track_dir, pi, ti, si):
+    path = _amendment_guidance_path(track_dir, pi, ti, si)
+    if path.exists():
+        path.unlink()
+
+
 def _step_assemble_failure_analyst_prompt(track_dir, state, pi, ti, si, name):
     """Pre-assemble the ``conductor:failure-analyst`` prompt.
 
@@ -1958,14 +2132,21 @@ def _step_route_failure_analysis(track_dir, marker, compact):
       ``retry_modified`` → write the modification to the modified-guidance marker
         (B.5), reactivate the failed task (failed→pending, retry_count preserved
         so the attempt still counts against budget), clear the analysis marker,
-        and re-dispatch task-executor. Bounded by ``analysis_rounds``: past
-        ``MAX_ANALYSIS_ROUNDS`` the router falls through to ``escalate``→halt
-        (a failure-analyst that triggers another failure-analyst is the loop this
-        caps).
-      ``replan`` / ``decompose`` / ``escalate`` → ``halt`` for a human, surfacing
+        and re-dispatch task-executor. Bounded by the TWIN backstop
+        (loop-until-dry + hard budget; constants ``RECOVERY_DRY_K`` /
+        ``MAX_RECOVERY_ROUNDS``): K consecutive rounds with no novel root_cause,
+        OR total rounds over the ceiling → ``escalate``→halt (the analyze→retry→
+        fail loop this caps). Novelty is computed in
+        :func:`cmd_failure_analyst_verdict` and stamped as
+        ``consecutive_empty_rounds``.
+      ``replan`` / ``escalate`` → ``halt`` for a human, surfacing
         ``root_cause`` + ``modification``. (``decompose`` is the exception: it
         routes to an ``ask`` — ``_decompose_decision`` — whose Apply runs
-        ``track-state split`` verbatim; see below. replan/escalate stay halts.)
+        ``track-state split`` verbatim; see below. ``replan`` is the other
+        exception WHEN failure-analyst supplied the AC details: it stages an
+        in-place amendment + an ``ask`` — ``_amendment_decision`` — whose Apply
+        runs ``track-state amend-apply``; replan WITHOUT the AC details, and
+        escalate, stay halts.)
     Unknown recommendation/stage are defensive re-dispatches (never loop).
     """
     td = str(track_dir)
@@ -2031,9 +2212,17 @@ def _step_route_failure_analysis(track_dir, marker, compact):
 
     if stage == "analyzed":
         if rec == "retry_modified":
-            # Cap: a modified retry that fails again would re-trigger the
-            # analyst — bound it so we don't loop analyze→retry→fail forever.
-            if rounds > MAX_ANALYSIS_ROUNDS:
+            # Twin backstop on the analyze→retry→fail loop (loop-until-dry + hard
+            # budget; see constants.RECOVERY_DRY_K / MAX_RECOVERY_ROUNDS):
+            #  (a) DRY — K consecutive rounds with no NEW root_cause → the analyst
+            #      has nothing novel to offer; halt instead of repeating a known-
+            #      bad modification.
+            #  (b) BUDGET — total rounds over the hard ceiling → halt regardless of
+            #      novelty (distinct-but-wrong diagnoses can't burn budget forever).
+            # Novelty is computed in cmd_failure_analyst_verdict (which sees the
+            # root_cause) and stamped as ``consecutive_empty_rounds``.
+            dry = int(marker.get("consecutive_empty_rounds", 0) or 0)
+            if dry >= RECOVERY_DRY_K or rounds > MAX_RECOVERY_ROUNDS:
                 _halt("escalate")
                 return
             _modified_guidance_write(track_dir, pi, ti, si,
@@ -2061,8 +2250,37 @@ def _step_route_failure_analysis(track_dir, marker, compact):
                       execution_mode=load(track_dir).get("execution_mode", "continuous")),
                  "step", compact)
             return
-        if rec in ("replan", "escalate"):
-            _halt(rec)
+        if rec == "replan":
+            # A3 — replan-as-amendment. With the AC details (ac_superseded +
+            # ac_prime_text), stage an in-place amendment + ONE informed confirm
+            # (Apply/Edit/Halt) instead of a halt. Without them, degrade to the
+            # legacy halt: the analyst must give the AC specifics, and the
+            # invariant forbids silently rewriting an AC the downstream gates
+            # already measured against. Single-home: runtime/contracts/plan-amendment.md.
+            ac_super = (marker.get("ac_superseded") or "").strip()
+            ac_prime = (marker.get("ac_prime_text") or "").strip()
+            if ac_super and ac_prime:
+                staged = {
+                    "phase": pi, "task": ti, "subtask": si, "name": name,
+                    "ac_superseded": ac_super, "ac_prime_text": ac_prime,
+                    "root_cause": marker.get("root_cause"),
+                    "affected_tasks": marker.get("affected_tasks") or [],
+                    "recommendation": "replan",
+                }
+                _amendment_staged_write_marker(track_dir, staged)
+                # Clear the analysis marker BEFORE the ask (leaving it would
+                # re-route to replan on the next step after the human picks);
+                # mirrors retry_modified/decompose clearing before their leaf.
+                _failure_analysis_clear_marker(track_dir)
+                emit(dict(action="ask", phase=pi, task=ti, subtask=si, name=name,
+                          decision=_amendment_decision(track_dir, staged),
+                          execution_mode=load(track_dir).get("execution_mode", "continuous")),
+                     "step", compact)
+            else:
+                _halt("replan")
+            return
+        if rec == "escalate":
+            _halt("escalate")
             return
         _failure_analysis_clear_marker(track_dir)  # unknown recommendation
         _redispatch_failure_analyst()
@@ -2073,10 +2291,12 @@ def _step_route_failure_analysis(track_dir, marker, compact):
 
 
 def _step_emit_exhausted(track_dir, outcome, execution_mode, retry_count, compact):
-    """Surface a retries-exhausted failure: interactive → ``ask`` (Retry/Skip/Block
-    via the shared failed-task decision blob), continuous → ``dispatch_skip_analyst``
-    (the spine owns the §3.6 skip-analyst→refute→route handshake via the
-    skip-analysis marker, WM2-3)."""
+    """Surface a retries-exhausted failure: ask-surface track → ``ask``
+    (Retry/Skip/Block via the shared failed-task decision blob), auto-routing
+    track → ``dispatch_skip_analyst`` (the spine owns the §3.6
+    skip-analyst→refute→route handshake via the skip-analysis marker, WM2-3).
+    The ask/no-ask decision is :func:`_auto_route_failure` (``recovery_policy``
+    or continuous mode); ``execution_mode`` is carried through unchanged."""
     state = load(track_dir)
     pi, ti, si = outcome.get("phase"), outcome.get("task"), outcome.get("subtask")
     name, rc = "?", retry_count
@@ -2086,7 +2306,7 @@ def _step_emit_exhausted(track_dir, outcome, execution_mode, retry_count, compac
         rc = tgt.get("retry_count", rc)
     except (IndexError, KeyError, TypeError, ValueError):
         pass
-    if execution_mode == "interactive":
+    if not _auto_route_failure(state):
         decision = _failed_task_decision(
             track_dir, int(pi), int(ti), int(si) if si is not None else None, name, rc)
         emit(dict(action="ask", phase=pi, task=ti, subtask=si, name=name,
@@ -2196,7 +2416,7 @@ def _emit_quiescent_leaf(track_dir, state, compact, command):
         if found is not None:
             fpi, fti, fsi, ftgt, fname = found
             frc = ftgt.get("retry_count", 0)
-            if execution_mode == "interactive":
+            if not _auto_route_failure(state):
                 decision = _failed_task_decision(track_dir, fpi, fti, fsi, fname, frc)
                 emit(dict(action="ask", phase=fpi, task=fti, subtask=fsi, name=fname,
                           decision=decision, execution_mode=execution_mode),
@@ -2219,6 +2439,26 @@ def _emit_quiescent_leaf(track_dir, state, compact, command):
 
     cp = _any_phase_needs_checkpoint(track_dir, state)
     if cp is not None:
+        # Track C2 fail-hard (Rail B mirror of the dispatch-next check): a
+        # skip-if-declared shape with no integrity substitute reaches here (a
+        # skip-WITH-substitute made _phase_needs_checkpoint return None). Halt
+        # on every spine (step / wave-step / the phase_checkpoint leaf), never a
+        # silent skip.
+        from .workflow_shapes import resolve_shape, checkpoint_skip_decision
+        shape = resolve_shape(state.get("workflow_shape"))
+        if checkpoint_skip_decision(shape) == "violation":
+            emit(dict(
+                action="shape_violation", status="error", phase=cp,
+                workflow_shape=shape,
+                error=(
+                    f"workflow_shape '{shape}' declares checkpoint_policy "
+                    f"'skip-if-declared' with no integrity substitute — a "
+                    f"checkpoint skip without a verification substitute "
+                    f"(need ac_grounding='review') breaks the 'verified "
+                    f"against AC-N' guarantee. Set ac_grounding='review' "
+                    f"or checkpoint_policy='run'.")),
+                command, compact)
+            return None
         if command == "step":
             # Serial spine. If a synth_pending marker exists for THIS phase, the
             # verifiers already fanned and their verdicts are on disk (written by
@@ -2591,20 +2831,30 @@ def cmd_skip_refute_review(track_dir, status, reasoning):
 
 
 def cmd_failure_analyst_verdict(track_dir, category, recommendation, root_cause,
-                                modification, what_was_done=None):
+                                modification, what_was_done=None,
+                                ac_superseded=None, ac_prime_text=None,
+                                affected_tasks=None):
     """Transcribe failure-analyst's verdict to the failure-analysis marker.
 
     After ``dispatch_failure_analyst`` returns, the teleoperator parses the
     ``---FAILURE ANALYSIS---`` JSON and runs this. Writes ``stage=analyzed`` so
     the next ``step`` routes (``_step_route_failure_analysis``):
     ``retry_modified`` → inject modification + re-dispatch task-executor;
-    ``replan`` / ``decompose`` / ``escalate`` → ``halt`` for a human.
+    ``replan`` (with AC details) → stage an in-place amendment + ask (A3);
+    ``replan`` (without) / ``decompose`` (ask) / ``escalate`` → ``halt``.
 
     The failed task (phase/task/subtask/name) is re-derived from state via
     ``_find_failed_task`` (broader than skip-analyst's ``_find_failed_exhausted``
     — the analyst can fire before exhaustion). Validates the recommendation and
-    category enums. Carries an ``analysis_rounds`` counter so the router can cap
-    consecutive analysis→retry→fail cycles (``MAX_ANALYSIS_ROUNDS``).
+    category enums. Carries the loop-until-dry bookkeeping — ``analysis_rounds``
+    (total), ``seen_root_causes`` + ``consecutive_empty_rounds`` (novelty) — so
+    the router can stop when the analyst has nothing new (the dry signal,
+    ``RECOVERY_DRY_K``) or the hard budget (``MAX_RECOVERY_ROUNDS``) is hit.
+
+    ``ac_superseded`` / ``ac_prime_text`` / ``affected_tasks`` (A4) are the replan
+    payload: which AC to supersede, the corrected criterion, and which tasks touch
+    it. Absent → the replan arm degrades to a halt (no auto-amendment without the
+    AC specifics; the governing invariant forbids silently rewriting an AC).
     """
     td = str(track_dir)
     if recommendation not in _FAILED_RECOMMENDATIONS:
@@ -2633,10 +2883,29 @@ def cmd_failure_analyst_verdict(track_dir, category, recommendation, root_cause,
                  hint="run `track-state step` to advance"))
         return
     fpi, fti, fsi, _ftgt, fname = found
-    # Increment the per-task analysis-rounds counter (B.7). A fresh marker starts
-    # at 1; an existing marker (re-analyze) carries the prior count forward.
+    # Loop-until-dry bookkeeping (A2). ``analysis_rounds`` counts total rounds;
+    # ``seen_root_causes`` + ``consecutive_empty_rounds`` track NOVELTY so the
+    # router can stop when the analyst has nothing new (the dry signal). A fresh
+    # marker starts at rounds=1, seen=[], empty=0; an existing marker (re-analyze)
+    # carries the prior counters forward. A novel root_cause resets the dry
+    # counter; a repeat (or empty) root_cause increments it.
     prior = _failure_analysis_read_marker(track_dir) or {}
     rounds = int(prior.get("analysis_rounds", 0) or 0) + 1
+    seen = list(prior.get("seen_root_causes", []) or [])
+    rc_text = (root_cause or "").strip()
+    if rc_text and rc_text not in seen:
+        seen.append(rc_text)
+        consecutive_empty = 0  # novel diagnosis → a fresh approach worth a retry
+    else:
+        prev_empty = int(prior.get("consecutive_empty_rounds", 0) or 0)
+        consecutive_empty = prev_empty + 1  # repeat / empty → one more dry round
+    # Normalize affected_tasks (CLI passes a comma-string; in-process a list).
+    if isinstance(affected_tasks, str):
+        affects = [s.strip() for s in affected_tasks.split(",") if s.strip()]
+    elif isinstance(affected_tasks, list):
+        affects = [str(s).strip() for s in affected_tasks if str(s).strip()]
+    else:
+        affects = []
     marker = {
         "phase": fpi, "task": fti, "subtask": fsi, "name": fname,
         "stage": "analyzed", "category": category,
@@ -2645,11 +2914,151 @@ def cmd_failure_analyst_verdict(track_dir, category, recommendation, root_cause,
         "modification": modification,
         "what_was_done": what_was_done,
         "analysis_rounds": rounds,
+        "seen_root_causes": seen,
+        "consecutive_empty_rounds": consecutive_empty,
+        "ac_superseded": (ac_superseded or "").strip() or None,
+        "ac_prime_text": (ac_prime_text or "").strip() or None,
+        "affected_tasks": affects,
     }
     _failure_analysis_write_marker(track_dir, marker)
     out(dict(ok=True, recommendation=recommendation, category=category,
              stage="analyzed", analysis_rounds=rounds,
+             consecutive_empty_rounds=consecutive_empty,
              phase=fpi, task=fti, track_dir=td))
+
+
+def cmd_amend_apply(track_dir):
+    """Apply a staged replan amendment (the ``Apply amendment`` arm of the A3 ask).
+
+    Reads ``.conductor/amendment-staged.json`` (written by the replan arm), then
+    runs the four steps SEQUENTIALLY (mirrors ``cmd_split``'s no-nest ordering):
+    ``splice_amendment`` (spec.md — additive ``## Amendment N``) → write the
+    ``[Conductor Amendment]`` injection marker → reactivate the failing task
+    (failed→pending, retry history preserved so the attempt still counts) →
+    sync + clear the staged marker + bookkeeping commit.
+
+    The amendment is ADDITIVE (spec_amend.splice_amendment): the original
+    ``- AC-N:`` line is never touched, so every downstream "verified against AC-N"
+    stamp stays truthful — the supersede is recorded, not executed. The
+    re-verification happens when the reactivated task re-dispatches against the
+    amended spec (with the injection nudging the executor).
+    """
+    from .spec_amend import splice_amendment
+    td = str(track_dir)
+    staged = _amendment_staged_read_marker(track_dir)
+    if not staged:
+        out(dict(ok=False, track_dir=td,
+                 error="no staged amendment to apply",
+                 hint="stage one via `failure-analyst-verdict --recommendation "
+                      "replan --ac-superseded AC-N --ac-prime-text <text>`"))
+        return
+    pi, ti = staged.get("phase"), staged.get("task")
+    si = staged.get("subtask")
+    name = staged.get("name", "?")
+    ac_super = (staged.get("ac_superseded") or "").strip()
+    ac_prime = (staged.get("ac_prime_text") or "").strip()
+    affects = staged.get("affected_tasks") or []
+    number = splice_amendment(track_dir, ac_super, ac_prime,
+                              root_cause=staged.get("root_cause"),
+                              affected_tasks=affects)
+    # Flag the failing task for re-verify: the [Conductor Amendment] injection
+    # fires on its re-dispatch (modeled on _modified_guidance_write).
+    _amendment_guidance_write(
+        track_dir, pi, ti, si,
+        f"{_AMENDMENT_LEAD}\n\n"
+        f"Supersedes: {ac_super}\nAdds: {ac_super}′ — {ac_prime}\n"
+        f"(Amendment {number if number else 'N'} appended to spec.md.)")
+    # Reactivate the failing task so the spine re-dispatches it against the
+    # amended spec (retry history preserved — not a free retry).
+    reactivate_for_modified_retry(track_dir, pi, ti, si)
+    _do_sync_plan(track_dir, load(track_dir))
+    _amendment_staged_clear_marker(track_dir)
+    loc = f"P{pi}T{ti}" + (f"S{si}" if si else "")
+    _git_commit_ensured(
+        track_dir,
+        f"chore(conductor): Amend spec.md ({ac_super}→{ac_super}′) [{loc}] "
+        f"replan (failure-analyst)")
+    out(dict(ok=True, applied=True, amendment_number=number,
+             ac_superseded=ac_super, phase=pi, task=ti, subtask=si, name=name,
+             track_dir=td))
+
+
+def cmd_amend_clear(track_dir):
+    """Abandon a staged replan amendment (the ``Edit manually`` arm of the A3 ask).
+
+    The human chose to edit spec.md themselves. Clears the staged marker so the
+    next ``step`` resumes instead of re-emitting the amendment ask (idempotent —
+    a missing marker is a no-op success, so a re-clear after a partial resume is
+    safe). Does NOT touch spec.md — the human owns that edit.
+    """
+    td = str(track_dir)
+    had = _amendment_staged_marker_path(track_dir).exists()
+    _amendment_staged_clear_marker(track_dir)
+    out(dict(ok=True, cleared=had, track_dir=td))
+
+
+# The closed attestation-verdict vocabulary (review-grounding Rate-3 channel).
+# ``pass`` is the positive signal ``_attested_acs`` counts (``startswith("pass")``);
+# ``fail`` names a gap. Kept tight on purpose — the attestation is the integrity
+# substitute for a deliverable shape's no-tests freedom, so the verdict must be
+# unambiguous, not a free-form label.
+_REVIEW_VERDICTS = ("pass", "fail")
+_AC_ID_RE = re.compile(r"^AC-\d+$")
+
+
+def cmd_review_attest(track_dir, p, t, ac, verdict, anchor=None,
+                      attested_by=None, subtask=None):
+    """Record a review attestation on a task's evidence (Track B4).
+
+    The write mechanism for the review-grounding verification channel: after
+    ``conductor:spec-reviewer`` (``REVIEW_MODE: attest``) returns a per-AC
+    attestation verdict against a deliverable's produced artifacts, the
+    orchestrator writes each one here. The attestation lands in
+    ``evidence.review_attestations[AC-N] = {anchor, attested_by, verdict}``,
+    which ``spec_integrity._attested_acs`` reads as the Rate-3 verification
+    signal for review-grounded ACs (advisory — not gated, mirroring
+    test-grounded ``tc_coverage``).
+
+    Targets the task by phase/task (and optional subtask) index — the same
+    ``target`` channel ``reset``/``skip``/``block`` use. Validates the AC id
+    (``AC-<n>``) and the verdict (``pass``/``fail``). Idempotent: re-attesting an
+    AC overwrites the prior verdict (the latest review wins).
+    """
+    td = str(track_dir)
+    if not _AC_ID_RE.match(ac or ""):
+        out(dict(error=f"invalid AC id: {ac!r} (expected AC-<n>)", track_dir=td,
+                 hint="the AC id from spec.md ## Acceptance Criteria, e.g. AC-1"))
+        return
+    if verdict not in _REVIEW_VERDICTS:
+        out(dict(error=f"unrecognized verdict: {verdict!r}", track_dir=td,
+                 hint=f"one of: {', '.join(_REVIEW_VERDICTS)} "
+                      "(from spec-reviewer REVIEW_MODE:attest)"))
+        return
+    try:
+        pi, ti = int(p), int(t)
+        si = int(subtask) if subtask is not None else None
+    except (TypeError, ValueError):
+        out(dict(error=f"invalid phase/task index: phase={p!r} task={t!r}",
+                 track_dir=td))
+        return
+    if pi < 1 or ti < 1:
+        out(dict(error=f"indices must be >= 1: phase={pi} task={ti}", track_dir=td))
+        return
+    with transaction(track_dir) as state:
+        try:
+            tgt = target(state, pi, ti, si)
+        except (IndexError, KeyError):
+            out(dict(error=f"no task at phase {pi} task {ti}", track_dir=td))
+            return
+        ev = tgt.setdefault("evidence", {})
+        ev.setdefault("review_attestations", {})[ac] = {
+            "anchor": anchor or "",
+            "attested_by": attested_by or "",
+            "verdict": verdict,
+        }
+        state["updated_at"] = now_iso()
+    out(dict(ok=True, track_dir=td, phase=pi, task=ti,
+             subtask=si, ac=ac, verdict=verdict, attested_by=attested_by or ""))
 
 
 def _parse_bool(val):

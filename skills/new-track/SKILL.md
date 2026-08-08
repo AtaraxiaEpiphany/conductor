@@ -53,9 +53,13 @@ CRITICAL: Validate every tool call. On failure → halt → announce.
 
 1. Get description from `$ARGUMENTS` or `AskUserQuestion`.
 2. Infer track type (feature/bugfix/chore) — do NOT ask user.
-3. **Derive the workflow shape** (confirm only when non-default). Infer from the description: a behavior-preservation *migration* (keywords: migrate/migration/upgrade, framework/library bump, rename/port/rewrite-for-parity, backfill, retire-and-replace) → `migration`; everything else → `default`.
-   - `default` (the common case) → no prompt; set `$WORKFLOW_SHAPE=default`.
-   - `migration` → a consequential choice (the shape drops the `tdd`/`coverage` gates at the track level — tasks owe a green existing suite, not new tests), so confirm via ONE `AskUserQuestion`: *"This reads like a behavior-preservation migration. Use the `migration` shape (drops TDD/coverage gates; pair tasks with `[Migrate]`, whose workflow the executor fetches instead of TDD)?"* Options: **Yes, `migration` shape (Recommended)** / **No, `default` shape (full TDD)**. Store the choice as `$WORKFLOW_SHAPE`.
+3. **Derive the workflow shape** (confirm only when non-default). Infer from the description, in this order:
+   - **`migration`** — a behavior-preservation *migration* (keywords: migrate/migration/upgrade, framework/library bump, rename/port/rewrite-for-parity, backfill, retire-and-replace) where correctness is witnessed by the EXISTING suite.
+   - **`deliverable`** — a non-code *deliverable* (keywords: document/docs/documentation/design/spec/runbook/report/research/guide/onboarding, "write the X doc") whose output is an artifact a reviewer attests, NOT tested code.
+   - **`default`** — everything else (the common case: tested code).
+   - `default` → no prompt; set `$WORKFLOW_SHAPE=default` and `$AC_GROUNDING=test`.
+   - `migration` → a consequential choice (the shape drops the `tdd`/`coverage` gates at the track level — tasks owe a green existing suite, not new tests), so confirm via ONE `AskUserQuestion`: *"This reads like a behavior-preservation migration. Use the `migration` shape (drops TDD/coverage gates; pair tasks with `[Migrate]`, whose workflow the executor fetches instead of TDD)?"* Options: **Yes, `migration` shape (Recommended)** / **No, `default` shape (full TDD)**. Store the choice as `$WORKFLOW_SHAPE`; `$AC_GROUNDING=test` either way (a migration grounds ACs in the existing suite).
+   - `deliverable` → a consequential choice (the shape grounds ACs by **review** — artifact anchors + review attestations instead of tests — and drops the `test-runner` verifier from the checkpoint), so confirm via ONE `AskUserQuestion`: *"This reads like a non-code deliverable (a doc/design/report/runbook). Use the `deliverable` shape (ACs grounded by an artifact anchor + a review attestation, not tests; test-runner dropped from the checkpoint)?"* Options: **Yes, `deliverable` shape (Recommended)** / **No, `default` shape (tested code)**. Store `$WORKFLOW_SHAPE` + `$AC_GROUNDING` from the choice (`deliverable`→`review`; `default`→`test`).
    Override either way later via `track-state set-workflow-shape "<track_dir>" --shape <name>`. The conductor runs one track per session, so a mis-inferred shape is one command to fix.
 4. **Derive the track id deterministically** — pick a short slug (1–3 lowercase words) summarizing the track, then run:
    ```bash
@@ -126,6 +130,8 @@ Dispatch `conductor:spec-planner`, prompt:
 TRACK_DIR={track_dir}
 TRACK_DESCRIPTION={desc}
 TRACK_TYPE={type}
+WORKFLOW_SHAPE={$WORKFLOW_SHAPE}
+AC_GROUNDING={$AC_GROUNDING}
 USER_ANSWERS={answers or N/A}
 RELATED_DOCS={paths or N/A}
 USER_CONTEXT={brief or N/A}
@@ -151,12 +157,14 @@ Parse `---SPEC PLAN RESULT---` block. Confirm `STATUS: SUCCESS` (halt on FAILURE
 TRACK_DIR={track_dir}
 TRACK_DESCRIPTION={desc}
 TRACK_TYPE={type}
+WORKFLOW_SHAPE={$WORKFLOW_SHAPE}
+AC_GROUNDING={$AC_GROUNDING}
 USER_ANSWERS={answers or N/A}
 RELATED_DOCS={paths or N/A}
 USER_CONTEXT={brief or N/A}
 PREVIOUS_ERRORS:
 {the format errors[], the spec-anchors errors[], and/or the AC-integrity gate string, verbatim}
-REGEN_FOCUS: The prior plan.md/spec.md failed validation. FORMAT: every task/subtask line begins with `- [ ]`; every phase begins with `## Phase N: Name`. SPEC-ANCHOR: spec.md has `## Acceptance Criteria` with `- AC-N:` bullets and `## Test Scenarios` with `| TC-N.M | AC-N |` rows — these headings + ID tokens are machine anchors, keep them ASCII even when prose is another language. AC-INTEGRITY: every AC-n appears in some task's `<!-- AC-n -->` AND maps to a `TC-{n}.{m} | AC-n` row. Re-read `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/plan-format-contract.md` and `${CLAUDE_PLUGIN_ROOT}/templates/spec-scaffold.md`, then regenerate a conforming plan.md/spec.md.
+REGEN_FOCUS: The prior plan.md/spec.md failed validation. FORMAT: every task/subtask line begins with `- [ ]`; every phase begins with `## Phase N: Name`. SPEC-ANCHOR: spec.md has `## Acceptance Criteria` with `- AC-N:` bullets AND its grounding substrate — `## Test Scenarios` with `| TC-N.M | AC-N |` rows (test-grounded, `$AC_GROUNDING=test`) OR `## Artifact Anchors` with `| AC-N | <artifact> | <location> |` rows (review-grounded, `$AC_GROUNDING=review`). These headings + ID tokens are machine anchors, keep them ASCII even when prose is another language. AC-INTEGRITY: every AC-n appears in some task's `<!-- AC-n -->` AND is grounded — maps to a `TC-{n}.{m} | AC-n` row (test-grounded) OR an `| AC-n | … |` artifact-anchor row (review-grounded). Re-read `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/plan-format-contract.md` and `${CLAUDE_PLUGIN_ROOT}/templates/spec-scaffold.md`, then regenerate a conforming plan.md/spec.md.
 ```
 
 Re-parse the returned `---SPEC PLAN RESULT---` block (halt on FAILURE), then loop back to step 1.

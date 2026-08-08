@@ -10,7 +10,7 @@ from pathlib import Path
 from .core import load, save
 from .git_ops import docs_synced_for_track, _git_commit
 from .helpers import out, now_iso, conductor_dir, _reset_task, _resolve_conductor_root
-from .constants import EXECUTION_MODES
+from .constants import EXECUTION_MODES, RECOVERY_POLICIES
 from .handoff import _ensure_handoff_index
 from .validate import _parse_plan_structure
 from .plan_parse import parse_plan, to_plan_structure
@@ -146,6 +146,23 @@ def _mode_error(mode, allow_none=False):
     return None
 
 
+def _recovery_policy_error(policy, allow_none=False):
+    """Return an error string if ``policy`` is not a valid recovery policy, else None.
+
+    Mirrors :func:`_mode_error`. ``allow_none`` (used by init, where None means
+    "leave unset → new-track default applies later") accepts a null policy;
+    without it (used by set-recovery-policy) None is rejected.
+    """
+    if policy is None:
+        if allow_none:
+            return None
+        return f"Missing recovery_policy. Must be one of: {', '.join(RECOVERY_POLICIES)}."
+    if policy not in RECOVERY_POLICIES:
+        return (f"Invalid recovery_policy {policy!r}. "
+                f"Must be one of: {', '.join(RECOVERY_POLICIES)}.")
+    return None
+
+
 def _init_core(track_dir, plan, track_id, track_type, description, execution_mode=None,
                force=False):
     """Build track-state.json + index.md + handoff.md from a plan structure dict.
@@ -236,6 +253,15 @@ def _init_core(track_dir, plan, track_id, track_type, description, execution_mod
         # "default", fail-open). Advisory load-bearing: a shape_violation is
         # surfaced when a dispatch agent is off-topology (no-silent-caps).
         "workflow_shape": "default",
+        # Recovery policy for the failed-task path (decoupled from
+        # execution_mode). New tracks default to ``auto``: route a failed+
+        # exhausted task straight to the skip-analyst handshake instead of
+        # surfacing a Retry/Skip/Block ``ask``. EXISTING tracks (re-init without
+        # force never happens; init only writes a fresh state) read absent as
+        # ``ask`` via ``state.get`` so they stay byte-identical; ``--force``
+        # re-init intentionally takes the new default. Mutated after init via
+        # ``set-recovery-policy``.
+        "recovery_policy": "auto",
         "updated_at": now_iso(),
         "phases": phases,
     }
@@ -402,6 +428,30 @@ def cmd_set_mode(track_dir, mode):
     state["updated_at"] = now_iso()
     save(track_dir, state)
     out(dict(ok=True, execution_mode=mode, previous=previous))
+
+
+def cmd_set_recovery_policy(track_dir, policy):
+    """Set ``recovery_policy`` on an existing track without re-initializing state.
+
+    Mirrors :func:`cmd_set_mode`: validate against the closed vocab, then
+    load/set/save, emitting the previous value so the change is visible
+    (no-silent-caps — the failed-task decision sites read this field via
+    ``dispatch._auto_route_failure``). Lets an in-progress track flip between
+    surfacing a Retry/Skip/Block ``ask`` (``ask``) and auto-routing to the
+    skip-analyst handshake (``auto``) independently of ``execution_mode``.
+    """
+    policy_err = _recovery_policy_error(policy, allow_none=False)
+    if policy_err:
+        out(dict(ok=False, error=policy_err))
+        return
+
+    state = load(track_dir)
+    # Absent on legacy tracks reads as ``ask`` (the byte-identical default).
+    previous = state.get("recovery_policy", "ask")
+    state["recovery_policy"] = policy
+    state["updated_at"] = now_iso()
+    save(track_dir, state)
+    out(dict(ok=True, recovery_policy=policy, previous=previous))
 
 
 def set_workflow_shape(track_dir, shape):

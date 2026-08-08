@@ -67,6 +67,7 @@ _FALLBACK = {
         "gates": ["tdd", "coverage", "checkpoint"],
         "ac_grounding": "test",
         "verify_policy": "checkpoint",
+        "checkpoint_policy": "run",
         "stop_condition": "all_nodes_done",
     },
     "shapes": {
@@ -76,6 +77,7 @@ _FALLBACK = {
             "gates": ["tdd", "coverage", "checkpoint"],
             "ac_grounding": "test",
             "verify_policy": "checkpoint",
+            "checkpoint_policy": "run",
             "stop_condition": "all_nodes_done",
         },
     },
@@ -298,14 +300,73 @@ def verifiers_for(shape: str) -> tuple[str, ...]:
 
 
 def verify_policy_for(shape: str) -> str:
-    """How a shape gates progress: ``checkpoint`` | ``none``.
+    """The shape's declared verify policy: ``checkpoint`` | ``none``.
 
-    ``checkpoint`` (default) → the phase-checker stamps a checkpoint gate.
-    ``none`` → no checkpoint gate (research/exploration shapes that produce no
-    committable artifact). Mirrors :func:`task_profiles.route_for` as a
-    shape-level routing primitive.
+    DISPLAY-ONLY today — read by ``build_view_envelope`` / ``registry-doc`` to
+    RENDER the resolved workflow, but NO dispatch or integrity code consults it
+    to gate progress (``_phase_needs_checkpoint`` reads plan.md stamps, not
+    this). The actual checkpoint gate is driven by
+    :func:`checkpoint_policy_for` (whether the phase-checker checkpoint runs at
+    all), composed with :func:`gates_for` (the track-level ``checkpoint`` gate
+    member) — those are the load-bearing seams, not this field. Kept as a
+    declared-intent field a shape states for tooling/display (e.g. a
+    research/exploration shape declares ``none`` to RECORD that it produces no
+    committable artifact); do not read it as a routing primitive.
     """
     return _shape(shape).get("verify_policy", "checkpoint")
+
+
+def checkpoint_policy_for(shape: str) -> str:
+    """Whether a shape's checkpoint phase actually RUNS: ``run`` | ``skip-if-declared``.
+
+    This is the **load-bearing** verification-layer plasticity seam — the 3rd
+    field (after :func:`verifiers_for` + :func:`gates_for`) that genuinely
+    drives dispatch. The dispatch emit sites
+    (:func:`dispatch._step_emit_dispatch_batch` Rail A, and the Rail B-min
+    spine) consult it: ``run`` (default) fans the phase-checker checkpoint out
+    as normal; ``skip-if-declared`` short-circuits the checkpoint emit — but
+    ONLY when the shape declares an integrity substitute (``ac_grounding ==
+    "review"`` → the review attestation is the substitute). A
+    ``skip-if-declared`` shape with NO declared substitute fails HARD (a
+    ``shape_violation`` halt), never a silent skip — that is the "attach a
+    guarantee to every freedom" invariant: ``checkpoint_policy`` must not become
+    a second advisory ``nodes``. Absent/malformed → ``"run"`` (fail-open to
+    today's behavior, so every shipped shape runs its checkpoint unchanged).
+    """
+    return _shape(shape).get("checkpoint_policy", "run")
+
+
+def checkpoint_skip_decision(shape: str) -> str:
+    """The checkpoint-policy verdict for a resolved shape: ``run`` | ``skip`` | ``violation``.
+
+    Composes :func:`checkpoint_policy_for` with the declared-integrity-substitute
+    check, so dispatch has ONE call that returns the operational decision:
+
+    - ``run`` — the checkpoint fans out normally (policy is ``run``, the default
+      for every shipped shape).
+    - ``skip`` — policy is ``skip-if-declared`` AND the shape declares an
+      integrity substitute (``ac_grounding == "review"`` → the review
+      attestation is the substitute). The checkpoint is WAIVED: the review
+      channel is the verification, not the phase-checker checkpoint.
+    - ``violation`` — policy is ``skip-if-declared`` with NO declared
+      substitute. The "attach a guarantee to every freedom" invariant is
+      violated: a freedom (skip the checkpoint) was taken without its
+      verification substitute, so the "verified against AC-N" stamp would be
+      hollow. Dispatch must **fail-hard** (a ``shape_violation`` halt), never a
+      silent skip — ``checkpoint_policy`` must not become a second advisory
+      ``nodes``.
+
+    The substitute criterion is ``ac_grounding == "review"`` (the one declared
+    substitute today). Reads the resolved (default-inherited) shape, so a
+    project overlay that sets ``checkpoint_policy`` and inherits
+    ``ac_grounding`` from ``default`` is judged on its resolved value — the same
+    lens the save-time ``validate_merged_shapes`` cross-field guard uses.
+    """
+    if checkpoint_policy_for(shape) != "skip-if-declared":
+        return "run"
+    if ac_grounding_for(shape) == "review":
+        return "skip"
+    return "violation"
 
 
 def stop_condition_for(shape: str) -> str:
@@ -351,10 +412,13 @@ def gates_for(shape: str) -> tuple[str, ...]:
 def ac_grounding_for(shape: str) -> str:
     """How acceptance criteria are GROUNDED for a shape.
 
-    ``test`` (default) → ACs are grounded by ``test_TC_*`` functions (the basis of
-    ``spec_integrity``'s AC-grounding scan). A shape whose ACs ground another way
-    declares it here; the grounding scan keys off this (Stage 2f) so it does not
-    insist on test-grounding a shape that does not use it. Absent → ``"test"``
+    ``test`` (default) → ACs are grounded by ``test_TC_*`` functions (the basis
+    of ``spec_integrity``'s AC-grounding scan: Rate 1 measures AC→TC coverage,
+    Rate 3 the measured test twin). ``review`` → ACs are grounded by an artifact
+    anchor + a review attestation (a non-code deliverable shape), so the scan's
+    review branch measures AC→anchor coverage and AC→attestation instead. The
+    integrity engine reads this (``spec_integrity._resolve_grounding``) so it
+    does not insist on test-grounding a review shape. Absent → ``"test"``
     (fail-open to today's behavior). Unknown shape → the default shape's value.
     """
     return _shape(shape).get("ac_grounding", "test")

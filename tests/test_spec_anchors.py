@@ -75,6 +75,30 @@ _SPEC_AC_NO_TC_TABLE = """\
 - AC-1: 合法订单返回订单号。
 """
 
+# Track B2: a review-grounded (non-code) spec carries ## Artifact Anchors in
+# lieu of ## Test Scenarios. cmd_spec_anchors accepts EITHER substrate — a spec
+# with ACs + anchors (no TC table) is structurally sound.
+_SPEC_REVIEW_WITH_ANCHORS = """\
+# Specification: Design Doc
+## Acceptance Criteria
+- AC-1: API design documented
+- AC-2: runbook delivered
+## Artifact Anchors
+| AC Ref | Artifact | Location |
+| ------ | -------- | -------- |
+| AC-1   | API design doc | docs/api.md |
+| AC-2   | migration runbook | docs/run.md |
+"""
+
+# ACs present but NEITHER substrate (no Test Scenarios, no Artifact Anchors) —
+# the structural hole cmd_spec_anchors exists to catch. Language-agnostic: this
+# fixture is CJK prose with anchors neither.
+_SPEC_AC_NO_SUBSTRATE = """\
+# Specification: x
+## Acceptance Criteria
+- AC-1: 设计文档已交付。
+"""
+
 
 class SpecAnchorsTests(TestCase):
     def test_cjk_prose_with_english_anchors_passes(self):
@@ -107,6 +131,26 @@ class SpecAnchorsTests(TestCase):
         self.assertEqual(r["tc_count"], 0)
         self.assertEqual(len(r["errors"]), 1)
         self.assertIn("Test Scenarios", r["errors"][0])
+
+    def test_review_spec_with_artifact_anchors_passes(self):
+        # Track B2: a review-grounded spec (## Artifact Anchors, no Test
+        # Scenarios) is structurally sound — anchors satisfy the substrate check.
+        r = _run(_track(_SPEC_REVIEW_WITH_ANCHORS))
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["ac_count"], 2)
+        self.assertEqual(r["tc_count"], 0)
+        self.assertEqual(r["anchor_count"], 2)
+        self.assertEqual(r["errors"], [])
+
+    def test_acs_present_but_no_substrate_is_ok_false(self):
+        # ACs but NEITHER Test Scenarios NOR Artifact Anchors — the hole the check
+        # catches. The error names BOTH substrates so the author knows the
+        # review-grounded alternative exists.
+        r = _run(_track(_SPEC_AC_NO_SUBSTRATE))
+        self.assertFalse(r["ok"])
+        self.assertEqual(len(r["errors"]), 1)
+        self.assertIn("Test Scenarios", r["errors"][0])
+        self.assertIn("Artifact Anchors", r["errors"][0])
 
     def test_always_exits_zero_via_out(self):
         # cmd_spec_anchors surfaces failure via ok:false in JSON, never a

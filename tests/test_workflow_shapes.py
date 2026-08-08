@@ -29,7 +29,7 @@ ROOT = Path(__file__).resolve().parent.parent
 REGISTRY = ROOT / "templates" / "workflow" / "workflow-shapes.json"
 
 # The baseline shapes the registry ships.
-BASELINE_SHAPES = ("default", "research-first", "migration")
+BASELINE_SHAPES = ("default", "research-first", "migration", "deliverable")
 
 
 class RegistryShapeTests(TestCase):
@@ -61,6 +61,17 @@ class RegistryShapeTests(TestCase):
                          ("spec-planner", "task-executor", "phase-checker"))
         self.assertEqual(ws.verify_policy_for("default"), "checkpoint")
         self.assertEqual(ws.stop_condition_for("default"), "all_nodes_done")
+
+    def test_checkpoint_policy_for_defaults_to_run_everywhere(self):
+        # Track C1: checkpoint_policy is the 3rd load-bearing drives-dispatch
+        # field (after verifiers + gates). Byte-identical behavior: EVERY shipped
+        # shape resolves "run" (the checkpoint always ran before this field
+        # existed), so default-inheritance from the registry's `default` is the
+        # no-op that keeps today's behavior. Unknown shape fails open to "run".
+        for shape in BASELINE_SHAPES:
+            self.assertEqual(ws.checkpoint_policy_for(shape), "run",
+                             f"shape [{shape}] must resolve checkpoint_policy=run")
+        self.assertEqual(ws.checkpoint_policy_for("typo-shape"), "run")
 
     def test_research_first_runs_explorer_before_planner(self):
         # The proof shape: explorer FIRST, then planner, then executor; no
@@ -130,7 +141,9 @@ class GatesForTests(TestCase):
     gate fires for a task iff (gate in gates_for(shape)) AND (not task_exempt) —
     composed at the F2 commit hook (``tdd``) and the F3 advisory gate
     (``coverage``) from Stage 2b. Distinct from ``verifiers_for`` (checkpoint
-    children) and ``verify_policy_for`` (whether a checkpoint phase runs)."""
+    children) and ``checkpoint_policy_for`` (whether the checkpoint actually
+    RUNS — the load-bearing switch); ``verify_policy_for`` is declared display
+    intent only (no code consults it to gate progress)."""
 
     def test_default_shape_enforces_all_three_gates(self):
         # Byte-identical to today: default runs the tdd, coverage, and checkpoint
@@ -189,7 +202,8 @@ class MigrationShapeTests(TestCase):
 
     def test_migration_ac_grounding_is_test(self):
         # Existing tests ground the ACs (ac_grounding=test), so the spec_integrity
-        # grounding scan (Stage 2f) won't insist on NEW test-grounding a migration.
+        # grounding scan takes its test branch for a migration track (Rate 1 = AC→TC
+        # coverage) rather than insisting on review anchors a migration doesn't use.
         self.assertEqual(ws.ac_grounding_for("migration"), "test")
 
     def test_migration_when_to_use_pairs_with_migrate_tag(self):
@@ -197,6 +211,60 @@ class MigrationShapeTests(TestCase):
         when = data["shapes"]["migration"].get("when_to_use", "")
         self.assertIn("PRESERVATION", when)
         self.assertIn("[Migrate]", when)
+
+
+class DeliverableShapeTests(TestCase):
+    """Track B1: the built-in ``deliverable`` shape — the first REVIEW-grounded
+    non-code shape. A deliverable track (a design doc, research report, spec,
+    runbook, data deliverable) produces an artifact whose correctness is
+    witnessed by an artifact anchor + a review attestation, not by automated
+    tests. The shape drops the test-runner verifier (no tests to run — ac-tracer
+    alone fans out) and grounds ACs by ``review`` (``ac_grounding=review``). The
+    planner→executor→checker spine is unchanged; only the verifier set + the
+    grounding paradigm differ. (Track B2 wires the integrity scan to honor
+    ``ac_grounding``; until then the shape is resolvable and its verifiers/gates
+    drive dispatch, which is what these tests pin.)"""
+
+    def test_deliverable_resolves_with_canonical_topology(self):
+        self.assertEqual(ws.resolve_shape("deliverable"), "deliverable")
+        # Same planner→executor→checker spine as default.
+        self.assertEqual(ws.nodes_for("deliverable"),
+                         ("spec-planner", "task-executor", "phase-checker"))
+
+    def test_deliverable_drops_test_runner_verifier(self):
+        # THE load-bearing B1 claim: a deliverable shape fans out ac-tracer ONLY
+        # (test-runner has nothing to run — no tests). verifiers_for reads the
+        # row, so the checkpoint wave is ac-tracer alone.
+        self.assertEqual(ws.verifiers_for("deliverable"), ("ac-tracer",))
+
+    def test_deliverable_drops_tdd_and_coverage_gates(self):
+        # tdd/coverage are test-grounded gates; a review-grounded shape drops
+        # them at the track level — only the checkpoint gate remains.
+        self.assertEqual(ws.gates_for("deliverable"), ("checkpoint",))
+
+    def test_deliverable_ac_grounding_is_review(self):
+        # The grounding axis: review, not test. B2's integrity scan reads this
+        # so a deliverable shape is NOT required to ground its ACs in test_TC_*.
+        self.assertEqual(ws.ac_grounding_for("deliverable"), "review")
+
+    def test_deliverable_verify_policy_runs_checkpoint(self):
+        # Declared intent: a deliverable states verify_policy=checkpoint. It DOES
+        # run a checkpoint — but the load-bearing switch is checkpoint_policy=run
+        # (inherited), NOT this field (verify_policy is display-only). Distinct
+        # from research-first, whose verify_policy=none records that exploration
+        # produces no committable artifact.
+        self.assertEqual(ws.verify_policy_for("deliverable"), "checkpoint")
+
+    def test_deliverable_when_to_use_names_review_grounding(self):
+        data = json.loads(REGISTRY.read_text(encoding="utf-8"))
+        when = data["shapes"]["deliverable"].get("when_to_use", "")
+        self.assertIn("DELIVERABLE", when)
+        self.assertIn("review", when.lower())
+
+    def test_ac_grounding_vocab_includes_review(self):
+        # The closed vocab widened for B1: review is now a valid scalar.
+        from scripts.track_state.registry_validate import AC_GROUNDINGS
+        self.assertIn("review", AC_GROUNDINGS)
 
 
 class ResolveShapeTests(TestCase):

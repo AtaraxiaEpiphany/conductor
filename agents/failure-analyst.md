@@ -88,8 +88,19 @@ Based on the diagnosis, determine:
 - **recommendation** — one of `retry_modified`, `replan`, `decompose`, `escalate`.
 - **modification** — the concrete delta for the next action. **Required when
   `recommendation == retry_modified`**: a specific, different approach the executor should
-  take (not "try harder"). For `replan`: which AC/task text is wrong and the correction.
-  For `decompose`: the proposed subtask split. For `escalate`: may be omitted.
+  take (not "try harder"). For `decompose`: the proposed subtask split. For `replan`: a
+  short human-readable note on the proposed edit (the machine-read fields below carry the
+  actual correction). For `escalate`: may be omitted.
+- **`replan` payload** — **Required when `recommendation == replan`.** A replan means the
+  spec is wrong, not the implementation. Supply the AC specifics so the spine can stage an
+  in-place amendment (instead of halting) — see
+  `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/plan-amendment.md`:
+  - **`ac_superseded`** — the AC the failure disproved (e.g. `"AC-2"`).
+  - **`ac_prime_text`** — the corrected criterion that replaces it (becomes `AC-N′`).
+  - **`affected_tasks`** — which other tasks already measured against the superseded AC and
+    owe a re-verification pass (e.g. `["P1.T2"]`); may be `[]`.
+  - Absent or blank `ac_superseded`/`ac_prime_text` → the replan degrades to a halt (the
+    governing invariant forbids silently rewriting an AC a downstream gate measured against).
 
 **Mapping category → recommendation (default, overridable by specifics):**
 
@@ -110,6 +121,8 @@ parses this to decide next actions.
 
 ### On Success
 
+`recommendation == retry_modified` / `decompose` / `escalate`:
+
 ```
 ---FAILURE ANALYSIS---
 {
@@ -117,7 +130,25 @@ parses this to decide next actions.
   "root_cause": "one-two sentence root cause",
   "what_was_done": "what prior attempts accomplished",
   "recommendation": "retry_modified",
-  "modification": "the concrete different approach / corrected AC / proposed split"
+  "modification": "the concrete different approach / proposed split"
+}
+---END ANALYSIS---
+```
+
+`recommendation == replan` (spec is wrong — supply the AC specifics so the spine can stage
+an in-place amendment; see `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/plan-amendment.md`):
+
+```
+---FAILURE ANALYSIS---
+{
+  "category": "spec_plan_defect",
+  "root_cause": "AC-2 contradicts AC-1 under empty input",
+  "what_was_done": "implemented AC-2 as written",
+  "recommendation": "replan",
+  "modification": "narrow AC-2 to non-empty input",
+  "ac_superseded": "AC-2",
+  "ac_prime_text": "the handler accepts empty input and returns a sentinel, not raises",
+  "affected_tasks": ["P1.T2"]
 }
 ---END ANALYSIS---
 ```

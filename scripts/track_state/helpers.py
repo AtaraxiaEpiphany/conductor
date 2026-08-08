@@ -22,6 +22,11 @@ from .constants import (
 # in sync (a wiring test guards drift).
 from .task_profiles import TAG_VOCAB as _tag_vocab
 
+# workflow_shapes is stdlib-only (no .core/.helpers import), so this is cycle-free.
+# Used by ``_phase_needs_checkpoint`` to waive the checkpoint for a
+# ``skip-if-declared`` shape that declares an integrity substitute (Track C2).
+from .workflow_shapes import checkpoint_skip_decision, resolve_shape
+
 
 def _resolve_conductor_root(track_dir):
     """Walk up from ``track_dir`` to the conductor root (the dir holding tracks.md).
@@ -477,6 +482,20 @@ def _phase_needs_checkpoint(track_dir, state, phase_index):
     pattern = rf"^##\s+Phase\s+{phase_index}\b.*\[checkpoint:\s*[0-9a-f]+\]"
     if re.search(pattern, content, re.MULTILINE):
         return None  # Checkpoint exists
+
+    # Track C2 — verification-layer plasticity. A shape whose
+    # ``checkpoint_policy`` is ``skip-if-declared`` AND that declares an
+    # integrity substitute (``ac_grounding == "review"`` → the review
+    # attestation) WAIVES the checkpoint: the review channel is the
+    # verification, not the phase-checker checkpoint. Return None so EVERY
+    # consumer of "is a checkpoint pending?" (the 2 dispatch emit sites + the 6
+    # status/read sites) agrees it is not — a waived checkpoint must not show as
+    # pending on a dashboard while dispatch skips it. A ``skip-if-declared``
+    # shape with NO substitute does NOT waive here (it falls through to
+    # ``return phase_index``): the dispatch emit sites catch that as a hard
+    # ``shape_violation`` (never a silent skip — see ``checkpoint_skip_decision``).
+    if checkpoint_skip_decision(resolve_shape(state.get("workflow_shape"))) == "skip":
+        return None
 
     return phase_index  # Phase done but no checkpoint
 
