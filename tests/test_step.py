@@ -527,9 +527,9 @@ class StepExhaustedTests(TestCase):
 class StepTerminalTests(TestCase):
     def test_phase_complete_without_checkpoint_emits_dispatch_batch(self):
         # Serial spine: a phase whose tasks are all terminal but has no checkpoint
-        # emits dispatch_batch — the pre-assembled ac-tracer + test-runner fan-out
-        # (COMPACT_FIELDS["step"] now keeps "wave") — retiring the phase_checkpoint
-        # non-spine hand-off for the verifier prompts.
+        # emits dispatch_batch — the pre-assembled ac-tracer + build-runner +
+        # test-runner fan-out (COMPACT_FIELDS["step"] now keeps "wave") — retiring
+        # the phase_checkpoint non-spine hand-off for the verifier prompts.
         d = _phase_complete_track()
         self.addCleanup(shutil.rmtree, d, ignore_errors=True)
         o = _step(d)
@@ -537,7 +537,7 @@ class StepTerminalTests(TestCase):
         self.assertEqual(o["phase"], 1)
         self.assertEqual(o["execution_mode"], "interactive")
         members = {m["agent"]: m for m in o["wave"]}
-        self.assertEqual(set(members), {"ac-tracer", "test-runner"})
+        self.assertEqual(set(members), {"ac-tracer", "build-runner", "test-runner"})
 
     def test_dispatch_batch_ac_tracer_prompt_omits_phase_index(self):
         # ac-tracer §2.0 ASSIGNMENT takes only TRACK_DIR + TRACK_ID (no PHASE_INDEX).
@@ -557,6 +557,18 @@ class StepTerminalTests(TestCase):
         self.assertIn("TRACK_DIR=", tr["prompt"])
         self.assertIn("TRACK_ID=step", tr["prompt"])
         self.assertIn("PHASE_INDEX=1", tr["prompt"])
+
+    def test_dispatch_batch_build_runner_prompt_includes_phase_index(self):
+        # build-runner is fanned out for EVERY code phase (the cheapest-first L0
+        # tier) and, like test-runner, takes PHASE_INDEX so it resolves the build
+        # command scoped to the right phase. Track 1 — the new compile floor.
+        d = _phase_complete_track()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        wave = _step(d)["wave"]
+        br = next(m for m in wave if m["agent"] == "build-runner")
+        self.assertIn("TRACK_DIR=", br["prompt"])
+        self.assertIn("TRACK_ID=step", br["prompt"])
+        self.assertIn("PHASE_INDEX=1", br["prompt"])
 
     def test_finalizing_last_task_in_phase_emits_dispatch_batch(self):
         # Site A (_step_route_after_finalize): finalizing the last in_progress

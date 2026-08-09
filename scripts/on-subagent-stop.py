@@ -93,6 +93,11 @@ STDOUT_BLOCK_AGENTS = {
         "IMMEDIATELY print the ---AC TRACE RESULT--- block (Section 5.0). Report "
         "VERDICT: ERROR with a one-line REASON if the integrity check could not complete."
     ),
+    "build-runner": (
+        "IMMEDIATELY print the ---BUILD VERIFY RESULT--- block (Section 5.0). Report "
+        "STATUS: error with a one-line REASON if no build command could be resolved or "
+        "the build could not run at all (a failing build is STATUS: failed, NOT error)."
+    ),
     "test-runner": (
         "IMMEDIATELY print the ---L1 VERIFY RESULT--- block (Section 5.0). Report "
         "STATUS: error with a one-line REASON if the test command could not run at all "

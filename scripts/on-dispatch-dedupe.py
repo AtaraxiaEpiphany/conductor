@@ -61,9 +61,9 @@ from lib import dispatch_lifecycle as lifecycle
 
 
 # Only these agents mutate the working tree for a locked task, so only they are
-# single-writer-critical. Verifiers (ac-tracer, test-runner), phase-checker,
-# skip-analyst, failure-analyst and refuter are read-only or own their own
-# lifecycle → excluded.
+# single-writer-critical. Verifiers (ac-tracer, build-runner, test-runner),
+# phase-checker, skip-analyst, failure-analyst and refuter are read-only or own
+# their own lifecycle → excluded.
 _WRITE_AGENTS = ("task-executor", "explorer")
 
 

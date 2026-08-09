@@ -69,9 +69,13 @@ def _graph(envelope):
     if verifiers:
         cells = list(verifiers)
         # Surface the code-free narrowing as an annotation (the envelope already
-        # reflects the drop; this just makes it legible rather than silent).
-        if "test-runner" not in verifiers:
-            cells.append("(code-free phase: test-runner dropped)")
+        # reflects the drop; this just makes it legible rather than silent). Only
+        # annotate when the shape is NOT review-grounded — a review shape
+        # (deliverable) legitimately omits the code tiers by design, so its
+        # ac-tracer-only fan-out is expected, not a narrowed code phase.
+        if ("test-runner" not in verifiers
+                and rw.get("ac_grounding") != "review"):
+            cells.append("(code-free phase: build+test tiers dropped)")
         out.append("│    checkpoint:  " + "   ".join(cells))
     gate_cells = []
     for key, fid, label in _GATE_LABELS:

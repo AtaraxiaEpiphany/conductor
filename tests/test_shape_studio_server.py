@@ -209,7 +209,8 @@ class SaveEndpoint(TestCase):
         tmp = tempfile.mkdtemp()
         frag = {"shapes": {"studio-e2e": {
             "nodes": ["explorer", "spec-planner"],
-            "verifiers": ["ac-tracer"], "gates": ["checkpoint"]}}}
+            "verifiers": ["ac-tracer"], "gates": ["checkpoint"],
+            "ac_grounding": "review"}}}
         with _Server(tmp) as srv:
             status, res = _post(srv.base, "/api/registry/save",
                                 {"which": "shapes", "target": "overlay", "doc": frag})
@@ -299,22 +300,22 @@ class NodesEndpoint(TestCase):
     def tearDown(self):
         self.srv.stop()
 
-    def test_returns_all_six_agents(self):
+    def test_returns_all_seven_agents(self):
         status, body = _get_json(self.srv.base, "/api/nodes")
         self.assertEqual(status, 200)
         nodes = body["nodes"]
         self.assertEqual(set(nodes), {"spec-planner", "explorer",
                                       "task-executor", "phase-checker",
-                                      "ac-tracer", "test-runner"})
+                                      "ac-tracer", "build-runner", "test-runner"})
         for name, d in nodes.items():
             self.assertIn(d["kind"], ("spine", "verifier"), name)
             self.assertTrue(d["role"], name)
             self.assertTrue(d["produces"], name)
-        # the four spine nodes are kind=spine; the two verifiers are kind=verifier
+        # the four spine nodes are kind=spine; the three verifiers are kind=verifier
         self.assertEqual(sorted(n for n, d in nodes.items() if d["kind"] == "spine"),
                          ["explorer", "phase-checker", "spec-planner", "task-executor"])
         self.assertEqual(sorted(n for n, d in nodes.items() if d["kind"] == "verifier"),
-                         ["ac-tracer", "test-runner"])
+                         ["ac-tracer", "build-runner", "test-runner"])
 
 
 class TaskProfileEndpoint(TestCase):
@@ -364,13 +365,17 @@ class CheckpointPolicyControlSurfaceTests(TestCase):
 
     def test_load_bearing_auto_derives_checkpoint_policy(self):
         # The load_bearing list is derived from _SHAPE_FIELD_EFFECTS (cls ==
-        # "drives") — adding checkpoint_policy as drives MUST surface it here
-        # without a second edit (the no-drift taxonomy).
+        # "drives") — adding checkpoint_policy AND ac_grounding as drives MUST
+        # surface them here without a second edit (the no-drift taxonomy).
+        # ac_grounding is load-bearing: the build-tier cross-field guard keys on
+        # it (test-grounded REQUIRES build-runner), and it is the declared
+        # substitute that lets a skip-if-declared freedom waive the checkpoint.
         self.assertIn("checkpoint_policy", ss._vocab()["shapes"]["load_bearing"])
-        # verifiers + gates + checkpoint_policy = the three drives fields.
+        self.assertIn("ac_grounding", ss._vocab()["shapes"]["load_bearing"])
+        # verifiers + gates + checkpoint_policy + ac_grounding = the four drives.
         self.assertEqual(
             set(ss._vocab()["shapes"]["load_bearing"]),
-            {"verifiers", "gates", "checkpoint_policy"})
+            {"verifiers", "gates", "checkpoint_policy", "ac_grounding"})
 
     def test_vocab_exposes_checkpoint_policy_scalar(self):
         self.assertEqual(
@@ -381,18 +386,23 @@ class CheckpointPolicyControlSurfaceTests(TestCase):
         g = ss._shape_graph("default")
         self.assertEqual(g["checkpoint_policy"], "run")
 
-    def test_field_guide_names_all_three_drives_fields(self):
+    def test_field_guide_names_all_drives_fields(self):
         # The Field Guide HTML is a module-level string literal — scan the source
         # so the assertion survives the HTML living in any module string. The
-        # guide must name checkpoint_policy alongside verifiers + gates (the
-        # OLD "ONLY verifiers and gates change behavior" claim is gone).
+        # guide must name ALL drives fields: verifiers + gates + checkpoint_policy
+        # + ac_grounding (the OLD "ONLY verifiers and gates" claim is gone, and
+        # ac_grounding is no longer mislabeled display/reference).
         import inspect
         src = inspect.getsource(ss)
-        self.assertIn("checkpoint_policy", src)
+        for field in ("checkpoint_policy", "ac_grounding"):
+            self.assertIn(field, src)
         # The pre-C3 misleading fragment (verifiers "and <code>gates</code>"
         # followed by "ONLY ... fields that change behavior") is gone.
         self.assertNotIn(
             "run at the checkpoint) and <code>gates</code>", src)
+        # ac_grounding must NOT be lumped into the display/reference list anymore.
+        self.assertNotIn(
+            "ac_grounding</code> are display/reference", src)
 
 
 if __name__ == "__main__":

@@ -89,7 +89,7 @@ class WrapperEquivalenceTests(TestCase):
 
     def test_verifier_wrapper_equals_builder(self):
         state = dict(track_id="abc")
-        for agent in ("ac-tracer", "test-runner"):
+        for agent in ("ac-tracer", "build-runner", "test-runner"):
             self.assertEqual(
                 _step_assemble_verifier_prompt("/td", state, 2, agent),
                 build_dispatch_prompt("dispatch_batch", "/td", state=state,
@@ -225,7 +225,7 @@ class RailARailBParityTests(TestCase):
             self.assertEqual(out["action"], "dispatch_phase_checker")
             self.assertIn("wave", out)
             agents = {m["agent"] for m in out["wave"]}
-            self.assertEqual(agents, {"ac-tracer", "test-runner"})
+            self.assertEqual(agents, {"ac-tracer", "build-runner", "test-runner"})
             # Each member prompt is reproducible from the builder.
             state = load(td)
             for member in out["wave"]:

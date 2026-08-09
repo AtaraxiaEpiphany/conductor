@@ -78,7 +78,7 @@ class TestViewDefaultShape(TestCase):
         rw = env["resolved_workflow"]
         self.assertEqual(rw["shape"], "default")
         self.assertEqual(rw["nodes"], ["spec-planner", "task-executor", "phase-checker"])
-        self.assertEqual(rw["verifiers"], ["ac-tracer", "test-runner"])
+        self.assertEqual(rw["verifiers"], ["ac-tracer", "build-runner", "test-runner"])
         self.assertEqual(rw["gates"], ["tdd", "coverage", "checkpoint"])
         self.assertEqual(rw["verify_policy"], "checkpoint")
         # Track C4: the envelope carries the load-bearing verification paradigm

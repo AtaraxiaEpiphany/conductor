@@ -2,7 +2,7 @@
 type: concept
 sources:
   - scripts/track_state/dispatch.py
-last_verified: 2026-08-08
+last_verified: 2026-08-09
 ---
 
 # Recovery Policy
@@ -74,6 +74,42 @@ a fixed count is wrong exactly when the analyst is making genuine progress
 (novelty) — loop-until-dry lets that run while capping the stuck case. A future
 per-shape `max_recovery_rounds` field will tune the budget per workflow; today it
 is a single global default read fail-open.
+
+## Phase-level recovery (Track 2 — "finally succeeds")
+
+The router above recovers failing **tasks**. A phase that fails its **checkpoint**
+gate is the other stall: today's hard gate halts on `FAILED` and waits for a human.
+On an auto-routing track (`recovery_policy=auto` or continuous), the SAME
+verdict-driven router runs at phase granularity first — so a long-running track
+marches through gated phases and finally succeeds instead of stalling at the
+boundary. The entry point is `cmd_phase_checkpoint_review`'s `FAILED` arm, which
+writes the phase-recovery marker (`_step_route_phase_recovery` owns the route).
+
+**Byte-identical invariant:** an `ask`-surface track (interactive +
+`recovery_policy=ask`, the legacy default) still halts on a `FAILED` checkpoint
+exactly as before — `cmd_phase_checkpoint_review` branches on
+`_auto_route_failure`. A track without the field reads as `ask`, so every existing
+track behaves exactly as before.
+
+The phase-level failure-analyst is the **same agent** (`conductor:failure-analyst`)
+in PHASE mode (`PHASE_INDEX` without `TASK_INDEX`); its verdict is transcribed by
+`cmd_phase_failure_analyst-verdict`. The arms mirror the task-level router:
+
+- **`retry_modified`** — reactivate the phase's `completed` tasks (→pending, retry
+  history preserved), inject the modification on the phase's primary task, set the
+  marker to the transparent `recovering` stage, and re-dispatch. The checkpoint
+  re-fans when the tasks finish; a `PASSED` resolves the cycle, a `FAILED` increments
+  the counters and re-runs the analyst. `recovering` is invisible to `cmd_step` so
+  the spine re-dispatches the reactivated tasks normally.
+- **`replan`** — the spec/plan is wrong (the AC-trace-defect case that today halts).
+  With the AC details it stages the SAME additive amendment as the task-level arm
+  (see [[runtime/contracts/plan-amendment]]); without them it halts.
+- **`escalate`** — halt for a human (only on budget exhaustion).
+
+The twin backstop binds the retry arm, mirroring the task-level one on a **per-phase
+ceiling**: the shared `RECOVERY_DRY_K` novelty arm + `MAX_PHASE_RECOVERY_ROUNDS`
+(the hard budget, lower than the task-level `MAX_RECOVERY_ROUNDS` because a phase
+round re-runs the whole phase). Both route to `_halt("escalate")`.
 
 ## Governing invariant
 

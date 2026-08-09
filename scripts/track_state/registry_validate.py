@@ -36,7 +36,13 @@ from __future__ import annotations
 SPINE_NODES = ("spec-planner", "explorer", "task-executor", "phase-checker")
 
 #: Ordered tuple of valid checkpoint verifier agents (the `verifiers` field).
-VERIFIERS = ("ac-tracer", "test-runner")
+#: `ac-tracer` (AC-evidence trace) + `build-runner` (L0 compile/build) +
+#: `test-runner` (L1 suite) fan out in parallel at every code-shape checkpoint.
+#: `build-runner` is the cheapest-first floor — a compile gate that catches code
+#: the test suite never imports (the "unimported module" hole); a shape that
+#: drops it (a non-code `deliverable`) must declare an integrity substitute
+#: (`ac_grounding="review"`), enforced by :func:`validate_merged_shapes`.
+VERIFIERS = ("ac-tracer", "build-runner", "test-runner")
 
 #: Ordered tuple of valid track-level quality gates (the `gates` field).
 GATES = ("tdd", "coverage", "checkpoint")
@@ -276,6 +282,41 @@ def validate_merged_shapes(merged) -> list[str]:
                             f"without a verification substitute breaks the "
                             f"AC-verification guarantee — set "
                             f"ac_grounding='review' or checkpoint_policy='run'.")
+    # Build-gate cross-field invariant (same "attach a guarantee to every
+    # freedom" rule): a shape whose ACs are test-grounded (``ac_grounding !=
+    # "review"``) IS a code shape, so it MUST run the compile tier — its
+    # resolved ``verifiers`` MUST include ``build-runner``. Dropping the build is
+    # only valid for a review-grounded shape (``deliverable`` — no code to
+    # compile; the review attestation is the substitute). A code shape that
+    # silently drops the build reopens the "unimported module" hole the build
+    # tier closes. Judged on the default-INHERITED value (a row may inherit
+    # ``ac_grounding``/``verifiers`` from ``default``), mirroring runtime exactly.
+    # The top-level ``default`` is checked too — a project overlaying
+    # ``default.verifiers`` to drop the build floor would weaken every track.
+    if isinstance(merged, dict) and isinstance(merged.get("default"), dict):
+        default_verifiers = merged["default"].get("verifiers")
+        if not isinstance(default_verifiers, list):
+            default_verifiers = []
+        check_rows = [("default", merged["default"])]
+        shapes = merged.get("shapes")
+        if isinstance(shapes, dict):
+            check_rows.extend((n, r) for n, r in shapes.items()
+                              if isinstance(r, dict))
+        for name, row in check_rows:
+            grounding = row.get("ac_grounding", default_grounding)
+            if grounding == "review":
+                continue  # non-code shape — no compile owed (review is the substitute)
+            row_verifiers = row.get("verifiers", default_verifiers)
+            if not isinstance(row_verifiers, list):
+                row_verifiers = default_verifiers
+            if "build-runner" not in row_verifiers:
+                errs.append(
+                    f"shape {name!r}: ac_grounding={grounding!r} (a code shape) "
+                    f"requires the build tier — add 'build-runner' to its "
+                    f"verifiers (the L0 compile gate catches code the test suite "
+                    f"never imports). Dropping the build is only valid for a "
+                    f"review-grounded shape; set ac_grounding='review' if this "
+                    f"shape produces no code to compile.")
     return errs
 
 

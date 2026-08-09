@@ -3,7 +3,7 @@ type: concept
 sources:
   - scripts/track_state/spec_amend.py
   - scripts/track_state/dispatch.py
-last_verified: 2026-08-08
+last_verified: 2026-08-09
 ---
 
 # Plan Amendment
@@ -29,6 +29,13 @@ silently rewriting an AC a downstream gate already measured against.
 section to spec.md, reactivate the failing task (retry history preserved), inject
 a `[Conductor Amendment]` nudge for the re-dispatch, and commit. The track then
 resumes — the reactivated task re-dispatches against the amended spec.
+
+The SAME machinery fires from the **phase-level recovery router** (Track 2): a
+phase checkpoint that `FAILED` on an auto-routing track can route a `replan`
+verdict through `cmd_phase_failure_analyst-verdict`, staging the same amendment
+against the phase's primary task. The format, the confirm, and the governing
+invariant are identical — only the trigger (a phase-gate failure vs a task
+failure) differs. See [[runtime/contracts/recovery-policy]] § "Phase-level recovery".
 
 ## The format: additive only
 

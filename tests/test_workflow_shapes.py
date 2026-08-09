@@ -104,21 +104,22 @@ class VerifiersForTests(TestCase):
     checkpoint *children*, never spine nodes."""
 
     def test_default_shape_fans_out_standard_pair(self):
-        # Byte-identical to the pre-#4 hardcoded [ac-tracer, test-runner] pair.
+        # Byte-identical to the pre-#4 hardcoded triple — now build-runner is the
+        # cheapest-first compile floor between ac-tracer and test-runner.
         self.assertEqual(ws.verifiers_for("default"),
-                         ("ac-tracer", "test-runner"))
+                         ("ac-tracer", "build-runner", "test-runner"))
 
     def test_research_first_also_fans_out_standard_pair(self):
         # research-first swaps the SPINE (explorer-first) but fans out the SAME
         # verifiers at its checkpoint.
         self.assertEqual(ws.verifiers_for("research-first"),
-                         ("ac-tracer", "test-runner"))
+                         ("ac-tracer", "build-runner", "test-runner"))
 
     def test_unknown_shape_fails_open_to_default_pair(self):
         # A typo / unregistered shape must NOT block the fan-out — fall back to
-        # the default shape's verifiers (the standard pair).
+        # the default shape's verifiers (the standard triple).
         self.assertEqual(ws.verifiers_for("typo-shape"),
-                         ("ac-tracer", "test-runner"))
+                         ("ac-tracer", "build-runner", "test-runner"))
 
     def test_fields_documents_verifiers(self):
         # The `verifiers` field is documented in the registry's _fields block
@@ -191,9 +192,10 @@ class MigrationShapeTests(TestCase):
                          ("spec-planner", "task-executor", "phase-checker"))
 
     def test_migration_reuses_existing_verifiers(self):
-        # The existing suite is the behavior-preservation signal — no new verifier.
+        # The existing suite is the behavior-preservation signal; the build tier
+        # catches any module the suite never imports.
         self.assertEqual(ws.verifiers_for("migration"),
-                         ("ac-tracer", "test-runner"))
+                         ("ac-tracer", "build-runner", "test-runner"))
 
     def test_migration_drops_tdd_and_coverage_gates(self):
         # The track-level gate set is checkpoint-only: tdd/coverage OFF here,
@@ -335,23 +337,28 @@ class OverrideLayerTests(TestCase):
 
     def test_project_shape_omitting_a_verifier_controls_fanout(self):
         # THE load-bearing #4 case: a project overlay declares a shape whose
-        # `verifiers` list omits test-runner. The fan-out reads verifiers_for,
-        # so this shape fans out ONLY ac-tracer — zero plugin edits. This is
-        # where the shape becomes load-bearing on the verifier axis.
+        # `verifiers` list omits the code tiers (build-runner + test-runner). The
+        # fan-out reads verifiers_for, so this shape fans out ONLY ac-tracer —
+        # zero plugin edits. This is where the shape becomes load-bearing on the
+        # verifier axis. Review-grounded (ac_grounding=review) so the omit is
+        # valid: a review shape owes no compile/test (the review attestation is
+        # its substitute); omitting the code tiers on a test-grounded shape would
+        # be rejected by validate_merged_shapes at save.
         proj = self._mk_project()
         os.environ["CLAUDE_PROJECT_DIR"] = proj
         self._write_overlay(proj, {"shapes": {"lint-only": {
             "nodes": ["spec-planner", "task-executor", "phase-checker"],
-            "verifiers": ["ac-tracer"],  # omit test-runner
+            "verifiers": ["ac-tracer"],  # omit the code tiers
+            "ac_grounding": "review",
             "verify_policy": "checkpoint",
             "stop_condition": "all_nodes_done"}}})
         ws._load.cache_clear()
 
         self.assertIn("lint-only", ws.SHAPES_VOCAB())
         self.assertEqual(ws.verifiers_for("lint-only"), ("ac-tracer",))
-        # The default shape is untouched (still the standard pair).
+        # The default shape is untouched (still the standard triple).
         self.assertEqual(ws.verifiers_for("default"),
-                         ("ac-tracer", "test-runner"))
+                         ("ac-tracer", "build-runner", "test-runner"))
 
     def test_project_shape_dropping_a_gate_controls_composition(self):
         # THE load-bearing portability case: a project overlay declares a shape
@@ -365,7 +372,7 @@ class OverrideLayerTests(TestCase):
         os.environ["CLAUDE_PROJECT_DIR"] = proj
         self._write_overlay(proj, {"shapes": {"release-cut": {
             "nodes": ["spec-planner", "task-executor", "phase-checker"],
-            "verifiers": ["ac-tracer", "test-runner"],
+            "verifiers": ["ac-tracer", "build-runner", "test-runner"],
             "gates": ["checkpoint"],
             "verify_policy": "checkpoint",
             "stop_condition": "all_nodes_done"}}})
@@ -741,15 +748,17 @@ class PhaseCodeFreeTests(TestCase):
         self.assertNotIn("L1_VERIFY_STATUS=None", prompt)
 
     def test_phase_checker_marker_verdict_wins_over_code_free(self):
-        # If test-runner DID run (marker carries l1_status), that verdict is
-        # honored even on a code-free phase — the narrowing only fills the EMPTY
-        # case, it never clobbers a real verdict.
+        # If test-runner/build-runner DID run (marker carries the verdicts), those
+        # verdicts are honored even on a code-free phase — the narrowing only
+        # fills the EMPTY case, it never clobbers a real verdict.
         from scripts.track_state.dispatch import _build_phase_checker
         st = {"track_id": "t", "execution_mode": "interactive",
               "phases": [{"name": "P1", "tasks": [{"name": "[Config] tweak"}]}]}
         prompt = _build_phase_checker(
-            "/td", st, 1, {"ac_verdict": "passed", "l1_status": "passed"})
+            "/td", st, 1,
+            {"ac_verdict": "passed", "l1_status": "passed", "build_status": "passed"})
         self.assertIn("L1_VERIFY_STATUS=passed", prompt)
+        self.assertIn("BUILD_VERIFY_STATUS=passed", prompt)
         self.assertNotIn("skipped", prompt)
 
 

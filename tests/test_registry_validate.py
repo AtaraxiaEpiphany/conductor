@@ -41,7 +41,7 @@ class VocabConstants(TestCase):
                          ("spec-planner", "explorer", "task-executor", "phase-checker"))
 
     def test_verifiers_and_gates(self):
-        self.assertEqual(rv.VERIFIERS, ("ac-tracer", "test-runner"))
+        self.assertEqual(rv.VERIFIERS, ("ac-tracer", "build-runner", "test-runner"))
         self.assertEqual(rv.GATES, ("tdd", "coverage", "checkpoint"))
 
     def test_policies_groundings_routes(self):
@@ -71,10 +71,12 @@ class ShippedBaselinesValidate(TestCase):
 
 class ShapeValidation(TestCase):
     def _base(self):
-        # Minimal valid shape document.
+        # Minimal valid shape document. default includes build-runner so it is
+        # valid under validate_merged_shapes too (a test-grounded shape must run
+        # the build tier — the cross-field guard).
         return {
             "default": {"nodes": ["spec-planner", "task-executor", "phase-checker"],
-                        "verifiers": ["ac-tracer", "test-runner"],
+                        "verifiers": ["ac-tracer", "build-runner", "test-runner"],
                         "gates": ["tdd", "coverage", "checkpoint"]},
             "shapes": {"default": {"nodes": ["spec-planner", "task-executor"]}},
         }
@@ -206,6 +208,67 @@ class TaskTypeValidation(TestCase):
         overlay = {"tags": {"K8sRollout": {"route": "executor", "tdd_exempt": True,
                                            "coverage_exempt": True}}}
         self.assertEqual(rv.validate_task_types(overlay), [])
+
+
+class BuildTierCrossFieldGuard(TestCase):
+    """Track 1's cross-field invariant (the PRIMARY catch, mirroring Track C2's
+    checkpoint-skip guard): a test-grounded shape IS a code shape, so its
+    resolved verifiers MUST include ``build-runner`` (the L0 compile tier). Only
+    a review-grounded shape (the ``deliverable`` pattern) may drop it — the
+    review attestation is the integrity substitute. Judged on the
+    default-INHERITED value, mirroring runtime."""
+
+    def _base(self):
+        # default is a valid code shape (test-grounded, carries the build tier).
+        return {
+            "default": {"nodes": ["spec-planner", "task-executor", "phase-checker"],
+                        "verifiers": ["ac-tracer", "build-runner", "test-runner"],
+                        "gates": ["tdd", "coverage", "checkpoint"],
+                        "ac_grounding": "test"},
+            "shapes": {"default": {"nodes": ["spec-planner"]}},
+        }
+
+    def test_test_grounded_shape_without_build_runner_rejected(self):
+        # THE critical rule: a code shape that silently drops the build tier
+        # reopens the "unimported module" hole — reject at save.
+        doc = self._base()
+        doc["shapes"]["hole"] = {"ac_grounding": "test",
+                                 "verifiers": ["ac-tracer", "test-runner"]}
+        errs = rv.validate_merged_shapes(doc)
+        self.assertTrue(any("'hole'" in e and "build-runner" in e
+                            and "build tier" in e for e in errs), errs)
+
+    def test_review_grounded_shape_may_omit_build_runner(self):
+        # A non-code (review) shape owes no compile — the review attestation is
+        # the substitute. ac-tracer alone is a valid verifier set (deliverable).
+        doc = self._base()
+        doc["shapes"]["doc-only"] = {"ac_grounding": "review",
+                                     "verifiers": ["ac-tracer"]}
+        self.assertEqual(rv.validate_merged_shapes(doc), [])
+
+    def test_inherited_test_grounding_without_build_runner_rejected(self):
+        # A row that INHERITS ac_grounding=test from default (does not declare
+        # it) and drops build-runner is still a code shape missing its compile
+        # tier — rejected (mirrors runtime inheritance).
+        doc = self._base()
+        doc["shapes"]["inher"] = {"verifiers": ["ac-tracer", "test-runner"]}
+        errs = rv.validate_merged_shapes(doc)
+        self.assertTrue(any("'inher'" in e and "build-runner" in e for e in errs),
+                        errs)
+
+    def test_default_dropping_build_runner_rejected(self):
+        # Overlaying top-level default.verifiers to drop the build floor would
+        # weaken EVERY track — the top-level default is checked too.
+        doc = self._base()
+        doc["default"]["verifiers"] = ["ac-tracer", "test-runner"]
+        errs = rv.validate_merged_shapes(doc)
+        self.assertTrue(any("'default'" in e and "build-runner" in e
+                            for e in errs), errs)
+
+    def test_shipped_baseline_clean_under_build_guard(self):
+        # The shipped registries carry build-runner on every code shape and omit
+        # it only on the review-grounded deliverable — the guard is a no-op there.
+        self.assertEqual(rv.validate_merged_shapes(_shapes_baseline()), [])
 
 
 class MergedRequiresDefault(TestCase):

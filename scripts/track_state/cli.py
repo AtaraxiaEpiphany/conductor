@@ -15,6 +15,7 @@ from .dispatch import (
     cmd_phase_verdict, cmd_phase_checkpoint_review,
     cmd_skip_analyst_verdict, cmd_skip_refute_review,
     cmd_failure_analyst_verdict,
+    cmd_phase_failure_analyst_verdict,
     cmd_amend_apply, cmd_amend_clear,
     cmd_review_attest,
 )
@@ -314,11 +315,14 @@ COMMAND_HELP = {
                          "gate-advance in code, not teleoperator prose."),
     "phase-verdict": ("phase-verdict <track-dir> --ac-verdict <passed|warn|skipped|FAILED|ERROR> "
                       "[--ac-gate <gate>] [--ac-n-ungrounded <N>] "
+                      "[--build-status <passed|failed|error> --build-command <cmd>] "
                       "[--l1-status <passed|failed|error> --l1-command <cmd>]",
                       "Transcribe the fanned verifier verdicts to the checkpoint marker "
                       "(stage=synth_pending); the next `step` emits the phase-checker synth dispatch. "
-                      "Pass the L1 pair (--l1-*) — test-runner is the sole second verifier (test-runner ran "
-                      "on a suite-gated phase). Owns the §3.2 parse→assemble step in code, not teleoperator prose."),
+                      "Pass the build pair (--build-*, from ---BUILD VERIFY RESULT---) and the L1 pair "
+                      "(--l1-*, from ---L1 VERIFY RESULT---) when build-runner/test-runner were fanned out "
+                      "(both are narrowed out on a code-free phase). Owns the §3.2 parse→assemble step "
+                      "in code, not teleoperator prose."),
     "phase-checkpoint-review": ("phase-checkpoint-review <track-dir> --status <PASSED|FAILED> [--sha <7-hex>] [--reason <text>]",
                                 "Stamp the phase checkpoint from phase-checker's STATUS (PASSED stamps + clears; "
                                 "FAILED clears → halt). Owns the §3.7 stamp/halt step in code, not teleoperator prose."),
@@ -337,6 +341,15 @@ COMMAND_HELP = {
                                 "`step` routes (retry_modified→inject+redispatch; replan+AC details→stage amendment ask; "
                                 "decompose→split ask; escalate/replan-without-details→halt). "
                                 "--modification is required for retry_modified; --ac-superseded + --ac-prime-text enable the replan amendment."),
+    "phase-failure-analyst-verdict": ("phase-failure-analyst-verdict <track-dir> --category <deterministic_bug|spec_plan_defect|context_budget|environmental|stuck> "
+                                      "--recommendation <retry_modified|replan|escalate> "
+                                      "[--root-cause <text>] [--modification <text>] [--what-was-done <text>] "
+                                      "[--ac-superseded <AC-N>] [--ac-prime-text <text>] [--affected-tasks <a,b,c>]",
+                                      "Transcribe the PHASE-level failure-analyst's verdict to the phase-recovery marker (stage=analyzed, "
+                                      "Track 2). Only fires on an auto-routing track whose checkpoint FAILED (writes stage=failed in "
+                                      "phase-checkpoint-review). The next `step` routes (retry_modified→reactivate phase tasks + redispatch; "
+                                      "replan+AC details→stage amendment ask; escalate/replan-without-details→halt). Bounded by the per-phase "
+                                      "twin backstop (RECOVERY_DRY_K / MAX_PHASE_RECOVERY_ROUNDS)."),
     "amend-apply": ("amend-apply <track-dir>",
                     "Apply a staged replan amendment: append ## Amendment N to spec.md (original AC kept), "
                     "reactivate the failing task, inject [Conductor Amendment], commit. The Apply arm of the replan ask."),
@@ -471,7 +484,8 @@ _COMMAND_GROUPS = [
     ("Rail B-min Spines", ["step", "post-loop-step", "post-loop-review",
                            "phase-verdict", "phase-checkpoint-review",
                            "skip-analyst-verdict", "skip-refute-review",
-                           "failure-analyst-verdict", "amend-apply", "amend-clear",
+                           "failure-analyst-verdict", "phase-failure-analyst-verdict",
+                           "amend-apply", "amend-clear",
                            "review-attest"]),
     ("Wave Parallelism", ["dispatch-wave", "wave-status", "wave-finalize", "wave-abort", "wave-step"]),
     ("Naming", ["derive-name", "resolve-track", "check"]),
@@ -766,7 +780,9 @@ def main():
                 flag(args, "--ac-gate"),
                 flag(args, "--ac-n-ungrounded"),
                 flag(args, "--l1-status"),
-                flag(args, "--l1-command"))
+                flag(args, "--l1-command"),
+                flag(args, "--build-status"),
+                flag(args, "--build-command"))
         elif cmd == "phase-checkpoint-review":
             cmd_phase_checkpoint_review(
                 track_dir, flag(args, "--status"),
@@ -781,6 +797,13 @@ def main():
                 track_dir, flag(args, "--status"), flag(args, "--reasoning"))
         elif cmd == "failure-analyst-verdict":
             cmd_failure_analyst_verdict(
+                track_dir, flag(args, "--category"),
+                flag(args, "--recommendation"), flag(args, "--root-cause"),
+                flag(args, "--modification"), flag(args, "--what-was-done"),
+                flag(args, "--ac-superseded"), flag(args, "--ac-prime-text"),
+                flag(args, "--affected-tasks"))
+        elif cmd == "phase-failure-analyst-verdict":
+            cmd_phase_failure_analyst_verdict(
                 track_dir, flag(args, "--category"),
                 flag(args, "--recommendation"), flag(args, "--root-cause"),
                 flag(args, "--modification"), flag(args, "--what-was-done"),

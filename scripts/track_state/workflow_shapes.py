@@ -63,7 +63,7 @@ from pathlib import Path
 _FALLBACK = {
     "default": {
         "nodes": ["spec-planner", "task-executor", "phase-checker"],
-        "verifiers": ["ac-tracer", "test-runner"],
+        "verifiers": ["ac-tracer", "build-runner", "test-runner"],
         "gates": ["tdd", "coverage", "checkpoint"],
         "ac_grounding": "test",
         "verify_policy": "checkpoint",
@@ -73,7 +73,7 @@ _FALLBACK = {
     "shapes": {
         "default": {
             "nodes": ["spec-planner", "task-executor", "phase-checker"],
-            "verifiers": ["ac-tracer", "test-runner"],
+            "verifiers": ["ac-tracer", "build-runner", "test-runner"],
             "gates": ["tdd", "coverage", "checkpoint"],
             "ac_grounding": "test",
             "verify_policy": "checkpoint",
@@ -266,9 +266,10 @@ def nodes_for(shape: str) -> tuple[str, ...]:
     (fail-open: a typo never blocks dispatch, it falls back to the standard loop).
 
     Note this is the SPINE topology only. Checkpoint verifiers (``ac-tracer`` /
-    ``test-runner``) are NOT spine nodes — they are checkpoint *children*
-    declared via :func:`verifiers_for`, and a ``phase-checker`` dispatching one
-    is on-topology regardless of ``nodes``. Do not conflate the two lists.
+    ``build-runner`` / ``test-runner``) are NOT spine nodes — they are checkpoint
+    *children* declared via :func:`verifiers_for`, and a ``phase-checker``
+    dispatching one is on-topology regardless of ``nodes``. Do not conflate the
+    two lists.
     """
     return tuple(_shape(shape).get("nodes", ()))
 
@@ -285,18 +286,19 @@ def verifiers_for(shape: str) -> tuple[str, ...]:
 
     Distinct from :func:`nodes_for` (the spine topology): verifiers are
     checkpoint *children*, never spine nodes. Absent/empty/malformed → the
-    standard ``("ac-tracer", "test-runner")`` pair (fail-open, mirroring
-    :func:`nodes_for`'s fail-open to default). Unknown shape → the default
+    standard ``("ac-tracer", "build-runner", "test-runner")`` triple (fail-open,
+    mirroring :func:`nodes_for`'s fail-open to default) — the cheapest-first
+    graduated gate (compile floor → test bar). Unknown shape → the default
     shape's verifiers. Returns a tuple for stable membership.
     """
     raw = _shape(shape).get("verifiers")
     if not isinstance(raw, list) or not raw:
         return tuple(_shape("default").get("verifiers") or
-                     ("ac-tracer", "test-runner"))
+                     ("ac-tracer", "build-runner", "test-runner"))
     # Drop non-str / empty entries defensively (a malformed row never crashes
     # the fan-out).
     return tuple(str(v) for v in raw if isinstance(v, str) and v) or \
-        ("ac-tracer", "test-runner")
+        ("ac-tracer", "build-runner", "test-runner")
 
 
 def verify_policy_for(shape: str) -> str:

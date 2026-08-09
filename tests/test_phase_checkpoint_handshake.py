@@ -59,20 +59,66 @@ class PhaseVerdictTests(TestCase):
         self.assertIsNone(m["ac_gate"])
 
     def test_build_verdict_threads_into_phase_checker_assignment(self):
-        # _build_phase_checker emits the L1_VERIFY_STATUS/COMMAND lines the
-        # phase-checker consumes from the marker. Every phase fans out the
-        # standard ac-tracer + test-runner pair now, so the assignment always
-        # carries the L1 verdict and never any BUILD lines.
+        # _build_phase_checker emits the BUILD_VERIFY_STATUS/COMMAND +
+        # L1_VERIFY_STATUS/COMMAND lines the phase-checker consumes from the
+        # marker. Every CODE phase fans out the ac-tracer + build-runner +
+        # test-runner triple, so the assignment carries BOTH the build verdict
+        # and the L1 verdict (the build tier is the cheapest-first floor).
         from scripts.track_state.dispatch import _build_phase_checker
         d = _phase_complete_track()
         self.addCleanup(shutil.rmtree, d, ignore_errors=True)
         state = {"track_id": "t", "execution_mode": "interactive"}
-        _run(cmd_phase_verdict, d, "passed", None, None, "passed", "pytest -q")
+        _run(cmd_phase_verdict, d, "passed", None, None, "passed", "pytest -q",
+             "passed", "npx tsc --noEmit")
         m = _phase_cp_read_marker(d)
         body = _build_phase_checker(d, state, 1, m)
+        self.assertIn("BUILD_VERIFY_STATUS=passed", body)
+        self.assertIn("BUILD_VERIFY_COMMAND=npx tsc --noEmit", body)
         self.assertIn("L1_VERIFY_STATUS=passed", body)
         self.assertIn("L1_VERIFY_COMMAND=pytest -q", body)
-        self.assertNotIn("BUILD_VERIFY_STATUS", body)
+
+    def test_build_failed_threads_to_phase_checker_assignment(self):
+        # THE hard-gate rule (Track 1): a build-runner STATUS: failed verdict
+        # threads through to the phase-checker as BUILD_VERIFY_STATUS=failed, the
+        # signal phase-checker.md §2.5 turns into STATUS: FAILED (a compile break
+        # is a phase failure, never an advance-on-broken-code). The build tier is
+        # the cheapest-first floor — it fails before the suite is even read.
+        from scripts.track_state.dispatch import _build_phase_checker
+        d = _phase_complete_track()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        state = {"track_id": "t", "execution_mode": "interactive"}
+        _run(cmd_phase_verdict, d, "passed", None, None, "passed", "pytest -q",
+             "failed", "npx tsc --noEmit")
+        m = _phase_cp_read_marker(d)
+        self.assertEqual(m["build_status"], "failed")
+        body = _build_phase_checker(d, state, 1, m)
+        self.assertIn("BUILD_VERIFY_STATUS=failed", body)
+        self.assertIn("BUILD_VERIFY_COMMAND=npx tsc --noEmit", body)
+
+    def test_build_status_error_is_non_blocking_and_persisted(self):
+        # build-runner STATUS: error means "no build command resolvable" (e.g. a
+        # pure-Python repo with no compile step) — NON-BLOCKING (phase-checker.md
+        # §2.5 treats it as a no-op, not a failure). It still threads through so
+        # the checker records it rather than reading an empty verdict as a defect.
+        d = _phase_complete_track()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        o = _run(cmd_phase_verdict, d, "passed", None, None, "passed", "pytest -q",
+                 "error", None)
+        self.assertTrue(o["ok"])
+        m = _phase_cp_read_marker(d)
+        self.assertEqual(m["build_status"], "error")
+        self.assertIsNone(m["build_command"])
+
+    def test_unknown_build_status_errors(self):
+        # A transcription typo HALTs with a clear error (code guard — never hand
+        # the synthesizer a garbage build verdict). Mirrors the l1/ac enum guards.
+        d = _phase_complete_track()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        o = _run(cmd_phase_verdict, d, "passed", None, None, "passed", "pytest -q",
+                 "borked", None)
+        self.assertIn("error", o)
+        self.assertFalse(_phase_cp_marker_path(d).exists(),
+                         "a rejected transcription must not write a marker")
 
     def test_unknown_ac_verdict_errors(self):
         d = _phase_complete_track()

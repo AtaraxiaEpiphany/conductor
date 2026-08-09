@@ -150,7 +150,7 @@ COMPACT_FIELDS = {
     # Rail B-min spine (skills/implement-step/SKILL.md). `step` collapses the
     # §2.0/§3.0 routing into one leaf action; the union of keys across its
     # action variants: dispatch (agent/prompt/attempt/is_resume), dispatch_batch
-    # (phase/wave — the pre-assembled ac-tracer + test-runner verifier prompts),
+    # (phase/wave — the pre-assembled ac-tracer + build-runner + test-runner verifier prompts),
     # ask (decision), skip_analyze/wave_active (phase), done, parent_stuck (sha).
     # Error envelopes bypass the allowlist (emit's error carve-out).
     "step": ("action", "phase", "task", "subtask", "name", "execution_mode",

@@ -171,8 +171,11 @@ class ValidateMergedGuardTests(TestCase):
     dicts — no overlay needed. Default-inheritance is honored."""
 
     def _base(self):
+        # default includes build-runner so it is valid under the build-tier
+        # cross-field guard (a test-grounded shape must run the compile tier).
         return {
-            "default": {"nodes": ["spec-planner"], "verifiers": ["ac-tracer"],
+            "default": {"nodes": ["spec-planner"],
+                        "verifiers": ["ac-tracer", "build-runner", "test-runner"],
                         "gates": ["checkpoint"], "ac_grounding": "test"},
             "shapes": {"default": {"nodes": ["spec-planner"]}},
         }

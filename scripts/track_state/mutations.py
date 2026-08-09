@@ -391,6 +391,34 @@ def reactivate_for_modified_retry(track_dir, p, t, s=None):
     return load(track_dir)
 
 
+def reactivate_phase_tasks(track_dir, p):
+    """Reactivate every ``completed`` task in phase ``p`` back to ``pending`` —
+    the phase-recovery retry arm (a phase checkpoint that FAILED on an auto-
+    routing track re-runs its tasks so the checkpoint re-fans with the fix).
+
+    Mirrors :func:`reactivate_for_modified_retry`: only ``status`` flips (to
+    ``pending``); ``retry_count`` / ``last_failure_summary`` are preserved, and
+    ``skipped`` / ``deferred`` / ``failed`` tasks are left alone (they are not
+    re-doable work). Current indices move to the FIRST reactivated task so
+    dispatch re-enters the phase at its top. Returns the reloaded state.
+    """
+    pi = int(p)
+    first = None
+    with transaction(track_dir) as state:
+        phases = state.get("phases", [])
+        if 1 <= pi <= len(phases):
+            for ti, task in enumerate(phases[pi - 1].get("tasks", []), 1):
+                if task.get("status") == "completed":
+                    task["status"] = "pending"
+                    clean(task, {"status", "retry_count", "last_failure_summary"})
+                    if first is None:
+                        first = (ti, None)
+        if first is not None:
+            _set_current_indices(state, pi, first[0], None)
+            state["updated_at"] = now_iso()
+    return load(track_dir)
+
+
 # Statuses that may be meaningfully decomposed. Terminal-clean states
 # (completed/skipped/blocked/cancelled) have no pending work to split out.
 _SPLITTABLE = {"pending", "in_progress", "failed"}

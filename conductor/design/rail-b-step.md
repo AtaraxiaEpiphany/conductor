@@ -6,7 +6,9 @@ code, closing the verdict-on-disk gate:
 - **Phase checkpoint (WM2-2):** `dispatch_batch` fans `ac-tracer` + `test-runner`
   (pre-assembled) → teleoperator transcribes verdicts to `phase-verdict` (`synth_pending`
   marker) → spine dispatches `phase-checker` (prompt from the marker) → teleoperator
-  transcribes `STATUS` to `phase-checkpoint-review` (PASSED stamps; FAILED → halt).
+  transcribes `STATUS` to `phase-checkpoint-review` (PASSED stamps + clears any
+  phase-recovery marker; FAILED → on an auto-routing track writes the phase-recovery
+  marker so the next `step` dispatches `dispatch_phase_failure_analyst`, else halts).
 - **skip_analyze (WM2-3):** `dispatch_skip_analyst` → teleoperator transcribes the
   `recommendation` to `skip-analyst-verdict` (`analyzed` marker) → spine routes
   (`skip` → `dispatch_refuter`, else → `halt`) → teleoperator transcribes the refute
@@ -41,7 +43,8 @@ extracted from the CLI wrappers) plus `recover`-equivalent routing.
 |---|---|---|---|
 | `dispatch` | `agent`, `prompt` (verbatim), `attempt`, `is_resume` | Dispatch `conductor:<agent>` with the pre-assembled prompt. | **spine** |
 | `dispatch_batch` | `phase`, `wave` (per-member `agent` + `prompt`) | Fire each `wave` member's `conductor:<agent>` in ONE parallel message; transcribe the two RESULT blocks to `phase-verdict`; loop. | **spine** |
-| `dispatch_phase_checker` | `agent` (`phase-checker`), `phase`, `prompt` (verbatim, assembled from the marker) | Dispatch `conductor:phase-checker`; transcribe its `STATUS` to `phase-checkpoint-review`; PASSED loops, FAILED halts. | **spine** |
+| `dispatch_phase_checker` | `agent` (`phase-checker`), `phase`, `prompt` (verbatim, assembled from the marker) | Dispatch `conductor:phase-checker`; transcribe its `STATUS` to `phase-checkpoint-review`; PASSED loops, FAILED routes phase-recovery on an auto-routing track (`dispatch_phase_failure_analyst`), else halts. | **spine** |
+| `dispatch_phase_failure_analyst` | `agent` (`failure-analyst`), `phase`, `prompt` (verbatim, `PHASE_INDEX` w/o `TASK_INDEX` → PHASE mode) | Dispatch `conductor:failure-analyst`; transcribe its `---FAILURE ANALYSIS---` to `phase-failure-analyst-verdict`; loops (`retry_modified`→reactivate+redispatch, `replan`-w/AC→`ask`, `replan`-w/o or `escalate`→`halt`). | **spine** |
 | `dispatch_skip_analyst` | `agent` (`skip-analyst`), `phase`,`task`,`name`, `prompt` (verbatim) | Dispatch `conductor:skip-analyst`; transcribe `recommendation`/`reasoning`/`impact`/`can_skip` to `skip-analyst-verdict`; loop. | **spine** |
 | `dispatch_refuter` | `agent` (`refuter`), `phase`,`task`,`name`, `prompt` (verbatim, CLAIM embeds skip-analyst's reasoning) | Dispatch `conductor:refuter`; transcribe `STATUS`/`reasoning` to `skip-refute-review`; loop. | **spine** |
 | `ask` | `decision` (question/header/options/commands/next) | `AskUserQuestion` → run `commands[choice]` verbatim → HALT or loop. | **spine** |
@@ -98,7 +101,10 @@ recover→dispatch-next semantics:
 2. Else if a failed+exhausted task exists → `ask` (interactive) /
    `dispatch_skip_analyst` (continuous) (recover §2.0 surfaces the decision *before*
    a phase checkpoint). *(Top of `cmd_step`, a `skip-analysis` marker short-circuits
-   all of this — the §3.6 handshake routes by marker stage.)*
+   all of this — the §3.6 handshake routes by marker stage. A `phase-recovery` marker
+   (stage `failed`/`analyzed`, i.e. not the transparent `recovering`) short-circuits
+   even earlier — `_step_route_phase_recovery` owns the phase-level verdict router;
+   `recovering` is skipped so the spine re-dispatches reactivated tasks normally.)*
 3. Else if an earlier phase needs a checkpoint → fan or synthesize (gates before
    later-phase dispatch; dispatch-next §3.0's first check). No `synth_pending`
    marker (or a stale one) → `dispatch_batch` (fan) and clear any stale marker; a

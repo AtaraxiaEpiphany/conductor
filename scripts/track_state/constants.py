@@ -78,6 +78,16 @@ def task_max_retries(task):
 RECOVERY_DRY_K = 2
 MAX_RECOVERY_ROUNDS = 4
 
+# Per-PASE hard budget (the phase-recovery twin backstop's ceiling; the dry arm
+# reuses the shared ``RECOVERY_DRY_K`` above). A phase checkpoint that FAILS on an
+# auto-routing track routes through the phase-level failure-analyst; the retry arm
+# reactivates the phase's tasks and re-fans the checkpoint. This caps how many
+# such analyze→retry→re-fail rounds a single phase may burn (distinct-but-wrong
+# diagnoses can't loop forever) before ``escalate``→halt. Lower than the task-level
+# ceiling because a phase round re-runs the whole phase (heavier than one task).
+# Single-homed in runtime/contracts/recovery-policy.md (§ "Phase-level recovery").
+MAX_PHASE_RECOVERY_ROUNDS = 3
+
 # Stuck-lock heartbeat. ``_do_lock`` stamps ``locked_at`` (epoch seconds) on the
 # task; a task still ``in_progress`` past this threshold is treated as a
 # killed-session orphan and reaped to ``pending`` by

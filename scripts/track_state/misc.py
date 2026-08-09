@@ -474,9 +474,10 @@ def build_view_envelope(track_dir):
     verifiers = list(ws.verifiers_for(shape))
     current_phase = state.get("current_phase_index")
     if isinstance(current_phase, int) and tp.phase_is_code_free(state, current_phase):
-        # Phase-composition narrowing — a code-free current phase drops test-runner
-        # from the checkpoint fan-out (mirrors dispatch._build_verifier_wave).
-        verifiers = [v for v in verifiers if v != "test-runner"]
+        # Phase-composition narrowing — a code-free current phase drops the code
+        # tiers (build-runner + test-runner) from the checkpoint fan-out (mirrors
+        # dispatch._build_verifier_wave); ac-tracer stays (ACs are still traced).
+        verifiers = [v for v in verifiers if v not in ("test-runner", "build-runner")]
 
     return dict(
         track=dict(

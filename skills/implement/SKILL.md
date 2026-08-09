@@ -91,11 +91,11 @@ Returns `action` enum — switch on it:
 
 ### 3.2 Action: `dispatch_phase_checker`
 
-The phase checkpoint is a **fan-out-and-synthesize**: read-only verifier tiers run in parallel, then `conductor:phase-checker` consumes their verdicts and owns the L1 fix-and-retry + L2 + L4 + commit. Two verifiers fan out every checkpoint: `conductor:ac-tracer` (the AC-evidence trace) and `conductor:test-runner` (the suite verdict).
+The phase checkpoint is a **fan-out-and-synthesize**: read-only verifier tiers run in parallel, then `conductor:phase-checker` consumes their verdicts (cheapest-first graduated gate) and owns the L1 fix-and-retry + L2 + L4 + commit. Three verifiers fan out every code-phase checkpoint: `conductor:build-runner` (L0 compile/build — the floor), `conductor:test-runner` (L1 suite), and `conductor:ac-tracer` (the AC-evidence trace). `build-runner` is the fail-fast floor — a compile failure fails the checkpoint before the test tier is spent.
 
-**Step 1 — Fan out the verifiers in ONE message:** `conductor:ac-tracer` and `conductor:test-runner`, pasting each member's **pre-assembled `prompt` field verbatim** (built by `build_dispatch_prompt` — the single source both rails share; do NOT hand-interpolate `TRACK_DIR`/`TRACK_ID`/`PHASE_INDEX`). On a **code-free phase** (every task resolves `coverage_exempt`; the code-free set is registry-derived, not a literal tag list — `track-state registry-doc`), the wave omits `test-runner` (nothing to run) and **only `ac-tracer` fans out** — see Step 3 for how that surfaces in the synth.
+**Step 1 — Fan out the verifiers in ONE message:** `conductor:build-runner`, `conductor:ac-tracer`, and `conductor:test-runner`, pasting each member's **pre-assembled `prompt` field verbatim** (built by `build_dispatch_prompt` — the single source both rails share; do NOT hand-interpolate `TRACK_DIR`/`TRACK_ID`/`PHASE_INDEX`). On a **code-free phase** (every task resolves `coverage_exempt`; the code-free set is registry-derived, not a literal tag list — `track-state registry-doc`), the wave omits `build-runner` and `test-runner` (nothing to compile or run) and **only `ac-tracer` fans out** — see Step 3 for how that surfaces in the synth.
 
-**Step 2 — Parse the result blocks.** From `ac-tracer`'s `---AC TRACE RESULT---`: `VERDICT` (passed/warn/skipped/FAILED/ERROR), `GATE` (when FAILED), `N_UNGROUNDED` (when warn). From `test-runner`'s `---L1 VERIFY RESULT---`: `STATUS`/`COMMAND` (the suite verdict). On a code-free phase there is no `test-runner` result block — record `L1_VERIFY_STATUS` as `skipped` in Step 3.
+**Step 2 — Parse the result blocks.** From `build-runner`'s `---BUILD VERIFY RESULT---`: `STATUS`/`COMMAND` (the compile verdict — `passed`/`failed`/`error`; `error` = no build command resolvable, e.g. an interpreted language, NON-BLOCKING). From `ac-tracer`'s `---AC TRACE RESULT---`: `VERDICT` (passed/warn/skipped/FAILED/ERROR), `GATE` (when FAILED), `N_UNGROUNDED` (when warn). From `test-runner`'s `---L1 VERIFY RESULT---`: `STATUS`/`COMMAND` (the suite verdict). On a code-free phase there are no `build-runner` or `test-runner` result blocks — record both as `skipped` in Step 3.
 
 **Step 3 — Dispatch `conductor:phase-checker`** (canonical dispatch — §2.1, §3.5b, §3.7 reuse this fan-out+synthesize; only the `PHASE` value source differs), passing the fleet's verdicts through:
 
@@ -104,6 +104,8 @@ TRACK_DIR={td}
 TRACK_ID={id}
 PHASE_INDEX={phase from output}
 EXECUTION_MODE={interactive|continuous}
+BUILD_VERIFY_STATUS=<build-runner STATUS — or `skipped (no code-producing tasks)` when build-runner was omitted from the wave (code-free phase)>
+BUILD_VERIFY_COMMAND=<build-runner COMMAND — omit entirely on a code-free phase>
 AC_TRACE_VERDICT=<ac-tracer VERDICT>
 AC_TRACE_GATE=<ac-tracer GATE — include only when VERDICT is FAILED>
 AC_TRACE_N_UNGROUNDED=<ac-tracer N_UNGROUNDED — include only when VERDICT is warn>
@@ -111,7 +113,7 @@ L1_VERIFY_STATUS=<test-runner STATUS — or `skipped (no code-producing tasks)` 
 L1_VERIFY_COMMAND=<test-runner COMMAND — omit entirely on a code-free phase>
 ```
 
-Then transcribe to `track-state phase-verdict "<td>" --ac-verdict <V> [--ac-gate <G>] [--ac-n-ungrounded <N>] --l1-status <S> [--l1-command "<CMD>"]` — on a code-free phase pass `--l1-status "skipped (no code-producing tasks)"` and omit `--l1-command`. Then → **Section 3.6** (Phase Boundary).
+Then transcribe to `track-state phase-verdict "<td>" --ac-verdict <V> [--ac-gate <G>] [--ac-n-ungrounded <N>] --build-status <S> [--build-command "<CMD>"] --l1-status <S> [--l1-command "<CMD>"]` — on a code-free phase pass `--build-status "skipped (no code-producing tasks)"` and `--l1-status "skipped (no code-producing tasks)"` and omit both `--*-command`. Then → **Section 3.6** (Phase Boundary).
 
 ### 3.3 Action: `dispatch_explorer`
 
@@ -271,7 +273,7 @@ One bounded pass (no loop, no transient state). The refactorer runs the suite it
 track-state phase-done "<track_dir>" <phase>
 ```
 
-`complete=true` → dispatch `conductor:phase-checker` (§3.2), `PHASE=<phase>`. FAILED → HALT (surface `FAILURE_REASON`; an AC-trace authoring defect requires editing `spec.md`/`plan.md` then re-running the phase — not a `task-executor` retry). Otherwise → Section 3.1.
+`complete=true` → dispatch `conductor:phase-checker` (§3.2), `PHASE=<phase>`. FAILED → HALT (surface `FAILURE_REASON`; an AC-trace authoring defect requires editing `spec.md`/`plan.md` then re-running the phase — not a `task-executor` retry). *(Rail A halts on a FAILED checkpoint. The step spine — `/conductor:implement-step` — instead routes a FAILED phase through the recovery router on an auto-routing track, so a long-running track finally succeeds; see `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/recovery-policy.md` § "Phase-level recovery".)* Otherwise → Section 3.1.
 `complete=false` → Section 3.1.
 
 ### 3.8 Action: `finalize`

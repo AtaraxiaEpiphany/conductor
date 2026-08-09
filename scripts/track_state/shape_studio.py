@@ -78,8 +78,12 @@ NODE_DOCS = {
         "produces": "checkpoint commit",
     },
     "ac-tracer": {
-        "role": "AC-evidence trace — verifies each acceptance criterion is grounded by tests (read-only).",
+        "role": "AC-evidence trace — verifies each acceptance criterion is grounded (by tests or by a review anchor, per ac_grounding). Read-only.",
         "produces": "per-AC verdict",
+    },
+    "build-runner": {
+        "role": "L0 compile/build/typecheck — resolves the project's build command and runs it ONCE, no fix, no edit (read-only). The cheapest-first floor: catches code the test suite never imports.",
+        "produces": "pass / fail",
     },
     "test-runner": {
         "role": "L1 verify-only — resolves the test command and runs it ONCE, no fix, no edit (read-only).",
@@ -92,13 +96,13 @@ NODE_DOCS = {
 # mapped to the frontend's green/amber/muted badge language so a user can
 # predict an edit's effect BEFORE reading the text. Shape fields first:
 _SHAPE_FIELD_EFFECTS = {
-    "verifiers": ("drives", "The checkpoint fans out exactly these verifiers. Drop test-runner here and it will not run at the checkpoint."),
+    "verifiers": ("drives", "The checkpoint fans out exactly these verifiers (ac-tracer → build-runner → test-runner, cheapest-first). Drop a tier here and it will not run at the checkpoint — but a test-grounded shape (ac_grounding != review) MUST keep build-runner, or the studio's save gate rejects it (dropping the compile tier reopens the unimported-module hole)."),
     "gates": ("drives", "These track-level quality gates fire, composed with each task's per-tag exemptions. Drop tdd/coverage for a non-code shape."),
     "checkpoint_policy": ("drives", "Whether the checkpoint phase actually RUNS. run (default) fans it out; skip-if-declared short-circuits it — but ONLY with a declared integrity substitute (ac_grounding=review), else the studio's save gate rejects it (a skip without a substitute breaks the AC-verification guarantee)."),
     "nodes": ("intent", "Declares the intended spine topology. ADVISORY: dispatch order is fixed (planner→executor→checker); this records intent and surfaces a shape_violation when reality drifts. It does NOT reorder execution."),
     "verify_policy": ("display", "Whether a checkpoint phase runs at all (checkpoint vs none). Read by registry-doc; not injected into any prompt."),
     "stop_condition": ("display", "What marks the shape done. Display-only today."),
-    "ac_grounding": ("display", "How acceptance criteria are grounded (test). Feeds the spec-integrity grounding scan."),
+    "ac_grounding": ("drives", "How acceptance criteria are grounded: test (the default — spec-integrity measures AC→test coverage) or review (a non-code deliverable — spec-integrity measures AC→anchor + review attestation). LOAD-BEARING: it switches the grounding scan AND is the declared substitute that lets a shape drop the build/test tiers (a review shape owes no compile; a test shape owes the build tier)."),
     "instruction": ("display", "Human/tooling reference prose. NOT injected into the orchestrator prompt (contrast the task-type `workflow` field, which IS)."),
     "when_to_use": ("display", "Human/tooling reference prose. NOT injected into the orchestrator prompt."),
 }
@@ -1141,10 +1145,10 @@ function renderTrackView(env) {
 function renderRecipe() {
   $('recipe').innerHTML =
     '<span class="kb">Before you edit: what actually changes dispatch?</span>'
-    + '<div>• <span class="drives">Drives dispatch</span> — edit <code>verifiers</code> (which run at the checkpoint), <code>gates</code> (tdd / coverage / checkpoint), and <code>checkpoint_policy</code> (whether the checkpoint runs at all). These are the ONLY shape fields that change dispatch behavior.</div>'
+    + '<div>• <span class="drives">Drives dispatch</span> — edit <code>verifiers</code> (which run at the checkpoint — ac-tracer → build-runner → test-runner, cheapest-first), <code>gates</code> (tdd / coverage / checkpoint), <code>checkpoint_policy</code> (whether the checkpoint runs at all), and <code>ac_grounding</code> (how AC are grounded: <b>test</b> vs <b>review</b> — the substitute that lets a non-code shape drop the build/test tiers). These are the ONLY shape fields that change dispatch behavior.</div>'
     + '<div>• <span class="intent">Intent only</span> — <code>nodes</code> declares topology but does <b>not</b> reorder dispatch (the planner→executor→checker spine is hardcoded). It records intent and surfaces a <code>shape_violation</code> when reality drifts.</div>'
     + '<div>• Per-task behavior (migrate-vs-TDD, routing, exemptions) lives in the <b>Task Types</b> registry (<code>workflow</code> prose), not the shape.</div>'
-    + '<div>• <code>verify_policy</code> / <code>stop_condition</code> / <code>ac_grounding</code> / <code>instruction</code> are display/reference — not injected into any prompt.</div>'
+    + '<div>• <code>verify_policy</code> / <code>stop_condition</code> / <code>instruction</code> are display/reference — not injected into any prompt.</div>'
     + '<div>• Target: <code>overlay</code> = this project only; <code>baseline</code> = ships to ALL projects. Choose deliberately.</div>';
 }
 

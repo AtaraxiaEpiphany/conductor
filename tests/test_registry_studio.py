@@ -166,7 +166,7 @@ class SaveRegistryAccept(TestCase):
         tmp = tempfile.mkdtemp()
         frag = {"shapes": {"proj-default": {
             "nodes": ["spec-planner", "task-executor", "phase-checker"],
-            "verifiers": ["ac-tracer", "test-runner"],
+            "verifiers": ["ac-tracer", "build-runner", "test-runner"],
             "gates": ["tdd", "coverage", "checkpoint"]}}}
         res = rs.save_registry("shapes", "overlay", frag, project_dir=tmp)
         self.assertTrue(res["ok"], res)
