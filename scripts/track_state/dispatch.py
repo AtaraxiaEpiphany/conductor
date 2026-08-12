@@ -172,6 +172,36 @@ def cmd_next(track_dir, compact=True):
     emit(result, "next", compact)
     return result
 
+
+def _emit_checkpoint_violation(state, cp, command, compact):
+    """Track C2 fail-hard emit: a ``skip-if-declared`` shape with no integrity
+    substitute reached a checkpoint (a skip-WITH-substitute shape made
+    ``_any_phase_needs_checkpoint`` return ``None`` — so this is the
+    no-substitute case). The freedom (skip checkpoint) was taken without its
+    verification substitute → emit ``shape_violation`` and halt, never a silent
+    skip. Shared by both rails (``cmd_dispatch_next`` and
+    ``_emit_quiescent_leaf``) so the user-facing remediation string cannot drift
+    between Rail A and Rail B. Returns True if emitted (caller returns); False
+    if the shape is not a violation (caller proceeds with the checkpoint).
+    """
+    from .workflow_shapes import resolve_shape, checkpoint_skip_decision
+    shape = resolve_shape(state.get("workflow_shape"))
+    if checkpoint_skip_decision(shape) != "violation":
+        return False
+    emit(dict(
+        action="shape_violation", status="error", phase=cp,
+        workflow_shape=shape,
+        error=(
+            f"workflow_shape '{shape}' declares checkpoint_policy "
+            f"'skip-if-declared' with no integrity substitute — a "
+            f"checkpoint skip without a verification substitute "
+            f"(need ac_grounding='review') breaks the 'verified "
+            f"against AC-N' guarantee. Set ac_grounding='review' "
+            f"or checkpoint_policy='run'.")),
+        command, compact)
+    return True
+
+
 def cmd_dispatch_next(track_dir, compact=True):
     """One-call dispatch decision: next + parent-complete resolution + tag routing.
     Returns action enum for orchestrator to switch on."""
@@ -201,20 +231,7 @@ def cmd_dispatch_next(track_dir, compact=True):
             # _phase_needs_checkpoint return None above, so cp would be None).
             # The freedom (skip checkpoint) was taken without its verification
             # substitute → halt, never a silent skip.
-            from .workflow_shapes import resolve_shape, checkpoint_skip_decision
-            shape = resolve_shape(state.get("workflow_shape"))
-            if checkpoint_skip_decision(shape) == "violation":
-                emit(dict(
-                    action="shape_violation", status="error", phase=cp,
-                    workflow_shape=shape,
-                    error=(
-                        f"workflow_shape '{shape}' declares checkpoint_policy "
-                        f"'skip-if-declared' with no integrity substitute — a "
-                        f"checkpoint skip without a verification substitute "
-                        f"(need ac_grounding='review') breaks the 'verified "
-                        f"against AC-N' guarantee. Set ac_grounding='review' "
-                        f"or checkpoint_policy='run'.")),
-                    "dispatch-next", compact)
+            if _emit_checkpoint_violation(state, cp, "dispatch-next", compact):
                 return
             # Rail A/B unification: attach the SAME pre-assembled verifier
             # fan-out the `step` spine emits (dispatch_batch), so
@@ -1431,6 +1448,7 @@ def _build_verifier_wave(track_dir, state, phase, verifiers=None):
     """
     from .workflow_shapes import resolve_shape, verifiers_for
     from .task_profiles import phase_is_code_free
+    from .registry_validate import CODE_TIERS
     if verifiers is None:
         shape = resolve_shape(state.get("workflow_shape"))
         verifiers = verifiers_for(shape)
@@ -1444,16 +1462,14 @@ def _build_verifier_wave(track_dir, state, phase, verifiers=None):
     # (cmd_dispatch_next threads verifiers= through; _step_emit_dispatch_batch
     # resolves here) narrow identically — putting it only in resolve_phase_gate
     # would miss Rail B, which does not call it.
-    if phase_is_code_free(state, phase) and any(
-            v in ("test-runner", "build-runner") for v in verifiers):
+    if phase_is_code_free(state, phase) and any(v in CODE_TIERS for v in verifiers):
         # Guard: never narrow to an empty wave. A shipped shape pairs the code
         # tiers with ac-tracer, but a project-overlay shape declaring
         # verifiers=['test-runner'] (no ac-tracer) would drop to () here → a
         # checkpoint that fans out zero verifiers and can produce no verdict
         # (stall). Keep at least one tier in that pathological case rather than
         # emitting an empty wave.
-        non_code = tuple(v for v in verifiers
-                         if v not in ("test-runner", "build-runner"))
+        non_code = tuple(v for v in verifiers if v not in CODE_TIERS)
         if non_code:
             verifiers = non_code
     members = []
@@ -1485,6 +1501,30 @@ def _build_verifier(track_dir, state, phase, agent):
     return "\n".join(lines)
 
 
+def _verify_status_lines(marker, key, label, code_free):
+    """A verifier's ``STATUS`` (+ optional ``COMMAND``) lines for the phase-checker
+    prompt. ``key`` is the marker field prefix (``l1`` / ``build``); ``label`` is
+    the prompt-token prefix (``L1_VERIFY`` / ``BUILD_VERIFY``).
+
+    An empty verdict is coerced to ``"skipped (no code-producing tasks)"`` on a
+    code-free phase (that tier was narrowed out of the fan-out by
+    :func:`_build_verifier_wave`); a genuinely empty verdict on a NOT-code-free
+    phase stays empty so the checker surfaces it as FAILURE (a dispatch defect).
+    ``marker.get(f"{key}_status") or ""`` coerces ``None`` (cmd_phase_verdict
+    writes ``l1_status=None`` when ``--l1-status`` is omitted) to ``""`` — without
+    it the f-string would emit the literal ``"L1_VERIFY_STATUS=None"``, a token
+    phase-checker.md has no branch for. Shared by the L1 and build verdicts.
+    """
+    status = marker.get(f"{key}_status") or ""
+    if not status and code_free:
+        status = "skipped (no code-producing tasks)"
+    out = [f"{label}_STATUS={status}"]
+    command = marker.get(f"{key}_command")
+    if command:
+        out.append(f"{label}_COMMAND={command}")
+    return out
+
+
 def _build_phase_checker(track_dir, state, phase, marker):
     """``dispatch_phase_checker`` envelope body (the synthesizer) from the fanned
     verifier verdicts stored in the marker.
@@ -1508,32 +1548,14 @@ def _build_phase_checker(track_dir, state, phase, marker):
         lines.append(f"AC_TRACE_GATE={marker['ac_gate']}")
     if ac == "warn" and marker.get("ac_n_ungrounded") is not None:
         lines.append(f"AC_TRACE_N_UNGROUNDED={marker['ac_n_ungrounded']}")
-    # No L1 verdict is transcribed when test-runner was dropped from the fan-out
-    # (a code-free phase — _build_verifier_wave narrows it out). Convert that
-    # empty marker into an explicit "skipped" so the checker records it rather
-    # than treating a missing verdict as a failure. A genuinely empty verdict
-    # on a NOT-code-free phase (test-runner should have run) stays empty — the
-    # checker surfaces that as FAILURE (a dispatch defect).
-    # cmd_phase_verdict writes l1_status=None when --l1-status is omitted (a
-    # code-free phase, or a transcription defect), so .get("l1_status", "")
-    # returns None — coerce to "" or the f-string would emit the literal
-    # "L1_VERIFY_STATUS=None", a token phase-checker.md has no branch for.
-    # The same logic applies to build_status (build-runner narrowed out
-    # identically on a code-free phase).
+    # L1/build verifier verdicts. An empty verdict is coerced to "skipped" on a
+    # code-free phase (the tier was narrowed out); a genuinely empty verdict on a
+    # NOT-code-free phase stays empty → the checker surfaces FAILURE. See
+    # ``_verify_status_lines`` for the None-coercion gotcha.
     from .task_profiles import phase_is_code_free
     code_free = phase_is_code_free(state, phase)
-    l1_status = marker.get("l1_status") or ""
-    if not l1_status and code_free:
-        l1_status = "skipped (no code-producing tasks)"
-    lines.append(f"L1_VERIFY_STATUS={l1_status}")
-    if marker.get("l1_command"):
-        lines.append(f"L1_VERIFY_COMMAND={marker['l1_command']}")
-    build_status = marker.get("build_status") or ""
-    if not build_status and code_free:
-        build_status = "skipped (no code-producing tasks)"
-    lines.append(f"BUILD_VERIFY_STATUS={build_status}")
-    if marker.get("build_command"):
-        lines.append(f"BUILD_VERIFY_COMMAND={marker['build_command']}")
+    lines.extend(_verify_status_lines(marker, "l1", "L1_VERIFY", code_free))
+    lines.extend(_verify_status_lines(marker, "build", "BUILD_VERIFY", code_free))
     return "\n".join(lines)
 
 
@@ -1969,12 +1991,6 @@ def _amendment_guidance_read(track_dir, pi, ti, si):
         return None
 
 
-def _amendment_guidance_clear(track_dir, pi, ti, si):
-    path = _amendment_guidance_path(track_dir, pi, ti, si)
-    if path.exists():
-        path.unlink()
-
-
 def _step_assemble_failure_analyst_prompt(track_dir, state, pi, ti, si, name):
     """Pre-assemble the ``conductor:failure-analyst`` prompt.
 
@@ -2240,6 +2256,43 @@ def _step_route_skip_analysis(track_dir, marker, compact):
     _redispatch_skip_analyst()
 
 
+def _stage_replan_amendment(track_dir, pi, ti, si, name, marker, clear_marker,
+                            compact):
+    """Stage the A3 replan-as-amendment (shared by the task- and phase-level
+    recovery routers). With the AC details (``ac_superseded`` +
+    ``ac_prime_text``) → write the staged-amendment marker + ONE informed
+    confirm ``ask`` (Apply/Edit/Halt); without → signal the caller to halt (the
+    analyst must give the AC specifics; the governing invariant forbids silently
+    rewriting an AC the downstream gates already measured against).
+
+    Single-homes the staged-payload SHAPE — it is a cross-router contract read
+    back by :func:`cmd_amend_apply`, so the task- and phase-level arms must build
+    the identical dict. ``clear_marker`` is the router's own clear fn
+    (:func:`_failure_analysis_clear_marker` / :func:`_phase_recovery_clear_marker`)
+    — the marker is cleared BEFORE the ask so the next ``step`` does not re-route
+    to replan. Returns True if the ask was emitted; False if the AC details are
+    absent (the caller halts). Single-home: runtime/contracts/plan-amendment.md.
+    """
+    ac_super = (marker.get("ac_superseded") or "").strip()
+    ac_prime = (marker.get("ac_prime_text") or "").strip()
+    if not (ac_super and ac_prime):
+        return False
+    staged = {
+        "phase": pi, "task": ti, "subtask": si, "name": name,
+        "ac_superseded": ac_super, "ac_prime_text": ac_prime,
+        "root_cause": marker.get("root_cause"),
+        "affected_tasks": marker.get("affected_tasks") or [],
+        "recommendation": "replan",
+    }
+    _amendment_staged_write_marker(track_dir, staged)
+    clear_marker(track_dir)
+    emit(dict(action="ask", phase=pi, task=ti, subtask=si, name=name,
+              decision=_amendment_decision(track_dir, staged),
+              execution_mode=load(track_dir).get("execution_mode", "continuous")),
+         "step", compact)
+    return True
+
+
 def _step_route_failure_analysis(track_dir, marker, compact):
     """Route the failure_analyze handshake from the on-disk marker.
 
@@ -2370,32 +2423,16 @@ def _step_route_failure_analysis(track_dir, marker, compact):
                  "step", compact)
             return
         if rec == "replan":
-            # A3 — replan-as-amendment. With the AC details (ac_superseded +
-            # ac_prime_text), stage an in-place amendment + ONE informed confirm
-            # (Apply/Edit/Halt) instead of a halt. Without them, degrade to the
-            # legacy halt: the analyst must give the AC specifics, and the
-            # invariant forbids silently rewriting an AC the downstream gates
-            # already measured against. Single-home: runtime/contracts/plan-amendment.md.
-            ac_super = (marker.get("ac_superseded") or "").strip()
-            ac_prime = (marker.get("ac_prime_text") or "").strip()
-            if ac_super and ac_prime:
-                staged = {
-                    "phase": pi, "task": ti, "subtask": si, "name": name,
-                    "ac_superseded": ac_super, "ac_prime_text": ac_prime,
-                    "root_cause": marker.get("root_cause"),
-                    "affected_tasks": marker.get("affected_tasks") or [],
-                    "recommendation": "replan",
-                }
-                _amendment_staged_write_marker(track_dir, staged)
-                # Clear the analysis marker BEFORE the ask (leaving it would
-                # re-route to replan on the next step after the human picks);
-                # mirrors retry_modified/decompose clearing before their leaf.
-                _failure_analysis_clear_marker(track_dir)
-                emit(dict(action="ask", phase=pi, task=ti, subtask=si, name=name,
-                          decision=_amendment_decision(track_dir, staged),
-                          execution_mode=load(track_dir).get("execution_mode", "continuous")),
-                     "step", compact)
-            else:
+            # A3 — replan-as-amendment. With the AC details → stage an in-place
+            # amendment + ONE informed confirm (Apply/Edit/Halt); without them →
+            # degrade to the legacy halt (the analyst must give the AC specifics;
+            # the invariant forbids silently rewriting an AC the downstream gates
+            # already measured against). Shared staging: _stage_replan_amendment
+            # (clears the analysis marker BEFORE the ask — leaving it would
+            # re-route to replan on the next step).
+            if not _stage_replan_amendment(track_dir, pi, ti, si, name,
+                                           marker, _failure_analysis_clear_marker,
+                                           compact):
                 _halt("replan")
             return
         if rec == "escalate":
@@ -2489,7 +2526,8 @@ def _step_route_phase_recovery(track_dir, marker, compact):
             # them against the modification; the checkpoint re-fans when they finish.
             # The primary task carries the modified-guidance injection (the rest
             # re-verify by virtue of re-running).
-            primary = _phase_primary_task(load(track_dir), pi)
+            state = load(track_dir)
+            primary = _phase_primary_task(state, pi)
             if primary is None:  # defensive: a phase with no reactivatable task
                 _halt("escalate")
                 return
@@ -2505,7 +2543,7 @@ def _step_route_phase_recovery(track_dir, marker, compact):
             # cmd_phase_checkpoint_review.
             marker["stage"] = "recovering"
             _phase_recovery_write_marker(track_dir, marker)
-            _do_sync_plan(track_dir, load(track_dir))
+            _do_sync_plan(track_dir, state)
             _git_commit_ensured(
                 track_dir,
                 f"chore(conductor): Reactivate phase {pi} for modified retry "
@@ -2514,32 +2552,15 @@ def _step_route_phase_recovery(track_dir, marker, compact):
         if rec == "replan":
             # A3 — replan-as-amendment, reusing the task-level amendment machinery.
             # The phase's primary task is the reactivation target (amend-apply's
-            # reactivate_for_modified_retry keys on it). With the AC details → stage
-            # + ONE confirm ask (the only human touchpoint); without → degrade to
-            # the legacy halt (the analyst must give the AC specifics; the invariant
-            # forbids silently rewriting an AC).
-            ac_super = (marker.get("ac_superseded") or "").strip()
-            ac_prime = (marker.get("ac_prime_text") or "").strip()
-            if ac_super and ac_prime:
-                pti, psi, pname = _phase_primary_task(load(track_dir), pi) \
-                    or (None, None, "?")
-                staged = {
-                    "phase": pi, "task": pti, "subtask": psi, "name": pname,
-                    "ac_superseded": ac_super, "ac_prime_text": ac_prime,
-                    "root_cause": marker.get("root_cause"),
-                    "affected_tasks": marker.get("affected_tasks") or [],
-                    "recommendation": "replan",
-                }
-                _amendment_staged_write_marker(track_dir, staged)
-                # Clear the phase-recovery marker BEFORE the ask (leaving it would
-                # re-route on the next step after the human picks); mirrors the
-                # task-level replan arm clearing before its ask.
-                _phase_recovery_clear_marker(track_dir)
-                emit(dict(action="ask", phase=pi, task=pti, subtask=psi, name=pname,
-                          decision=_amendment_decision(track_dir, staged),
-                          execution_mode=load(track_dir).get("execution_mode", "continuous")),
-                     "step", compact)
-            else:
+            # reactivate_for_modified_retry keys on it). Resolve it up front, then
+            # the shared stager builds + emits the ask (or signals halt when the
+            # AC details are absent). Shared staging: _stage_replan_amendment
+            # (clears the phase-recovery marker BEFORE the ask).
+            pti, psi, pname = _phase_primary_task(load(track_dir), pi) \
+                or (None, None, "?")
+            if not _stage_replan_amendment(track_dir, pi, pti, psi, pname,
+                                           marker, _phase_recovery_clear_marker,
+                                           compact):
                 _halt("replan")
             return
         if rec == "escalate":
@@ -2707,20 +2728,7 @@ def _emit_quiescent_leaf(track_dir, state, compact, command):
         # skip-WITH-substitute made _phase_needs_checkpoint return None). Halt
         # on every spine (step / wave-step / the phase_checkpoint leaf), never a
         # silent skip.
-        from .workflow_shapes import resolve_shape, checkpoint_skip_decision
-        shape = resolve_shape(state.get("workflow_shape"))
-        if checkpoint_skip_decision(shape) == "violation":
-            emit(dict(
-                action="shape_violation", status="error", phase=cp,
-                workflow_shape=shape,
-                error=(
-                    f"workflow_shape '{shape}' declares checkpoint_policy "
-                    f"'skip-if-declared' with no integrity substitute — a "
-                    f"checkpoint skip without a verification substitute "
-                    f"(need ac_grounding='review') breaks the 'verified "
-                    f"against AC-N' guarantee. Set ac_grounding='review' "
-                    f"or checkpoint_policy='run'.")),
-                command, compact)
+        if _emit_checkpoint_violation(state, cp, command, compact):
             return None
         if command == "step":
             # Serial spine. If a synth_pending marker exists for THIS phase, the
@@ -3170,6 +3178,62 @@ def cmd_skip_refute_review(track_dir, status, reasoning):
     out(dict(ok=True, stage="refuted", refute_status=verdict, track_dir=td))
 
 
+def _validate_verdict(recommendation, category, modification, td):
+    """Shared enum + retry_modified-modification validation for the task- and
+    phase-level failure-analyst verdict transcribers. Returns an ``out()``-ready
+    error dict, or ``None`` when valid. Single-homes the validation so the two
+    transcribers (and their error/hint strings) cannot drift.
+    """
+    if recommendation not in _FAILED_RECOMMENDATIONS:
+        return dict(error=f"unrecognized recommendation: {recommendation!r}",
+                    track_dir=td,
+                    hint=f"one of: {', '.join(_FAILED_RECOMMENDATIONS)} "
+                         "(from ---FAILURE ANALYSIS--- recommendation)")
+    if category not in _FAILED_CATEGORIES:
+        return dict(error=f"unrecognized category: {category!r}", track_dir=td,
+                    hint=f"one of: {', '.join(_FAILED_CATEGORIES)} "
+                         "(from ---FAILURE ANALYSIS--- category)")
+    if recommendation == "retry_modified" and not (modification or "").strip():
+        return dict(error="retry_modified requires a non-empty modification "
+                          "(a specific different approach)", track_dir=td,
+                    hint="provide --modification, or choose escalate/replan/decompose")
+    return None
+
+
+def _recovery_counters(prior, root_cause):
+    """Loop-until-dry bookkeeping shared by the two verdict transcribers — the
+    load-bearing twin-backstop signal the routers key on.
+
+    ``analysis_rounds`` counts total rounds; ``seen_root_causes`` +
+    ``consecutive_empty_rounds`` track NOVELTY so the router can stop when the
+    analyst has nothing new (the dry signal, ``RECOVERY_DRY_K``). A fresh marker
+    starts at rounds=1/seen=[]/empty=0; an existing marker (re-analyze, or a
+    phase ``recovering`` marker carried across a re-fail) folds its prior
+    counters forward. A novel root_cause resets the dry counter; a repeat (or
+    empty) root_cause increments it. Returns ``(rounds, seen, consecutive_empty)``.
+    """
+    rounds = int(prior.get("analysis_rounds", 0) or 0) + 1
+    seen = list(prior.get("seen_root_causes", []) or [])
+    rc_text = (root_cause or "").strip()
+    if rc_text and rc_text not in seen:
+        seen.append(rc_text)
+        consecutive_empty = 0  # novel diagnosis → a fresh approach worth a retry
+    else:
+        prev_empty = int(prior.get("consecutive_empty_rounds", 0) or 0)
+        consecutive_empty = prev_empty + 1  # repeat / empty → one more dry round
+    return rounds, seen, consecutive_empty
+
+
+def _normalize_affected_tasks(affected_tasks):
+    """Normalize the ``affected_tasks`` replan payload (the CLI passes a comma-
+    string; in-process a list). Shared by both verdict transcribers."""
+    if isinstance(affected_tasks, str):
+        return [s.strip() for s in affected_tasks.split(",") if s.strip()]
+    if isinstance(affected_tasks, list):
+        return [str(s).strip() for s in affected_tasks if str(s).strip()]
+    return []
+
+
 def cmd_failure_analyst_verdict(track_dir, category, recommendation, root_cause,
                                 modification, what_was_done=None,
                                 ac_superseded=None, ac_prime_text=None,
@@ -3197,20 +3261,9 @@ def cmd_failure_analyst_verdict(track_dir, category, recommendation, root_cause,
     AC specifics; the governing invariant forbids silently rewriting an AC).
     """
     td = str(track_dir)
-    if recommendation not in _FAILED_RECOMMENDATIONS:
-        out(dict(error=f"unrecognized recommendation: {recommendation!r}", track_dir=td,
-                 hint=f"one of: {', '.join(_FAILED_RECOMMENDATIONS)} "
-                      "(from ---FAILURE ANALYSIS--- recommendation)"))
-        return
-    if category not in _FAILED_CATEGORIES:
-        out(dict(error=f"unrecognized category: {category!r}", track_dir=td,
-                 hint=f"one of: {', '.join(_FAILED_CATEGORIES)} "
-                      "(from ---FAILURE ANALYSIS--- category)"))
-        return
-    if recommendation == "retry_modified" and not (modification or "").strip():
-        out(dict(error="retry_modified requires a non-empty modification "
-                       "(a specific different approach)", track_dir=td,
-                 hint="provide --modification, or choose escalate/replan/decompose"))
+    err = _validate_verdict(recommendation, category, modification, td)
+    if err is not None:
+        out(err)
         return
     state, _fixes, verrors = ensure_healthy(track_dir)
     if state is None:
@@ -3223,29 +3276,13 @@ def cmd_failure_analyst_verdict(track_dir, category, recommendation, root_cause,
                  hint="run `track-state step` to advance"))
         return
     fpi, fti, fsi, _ftgt, fname = found
-    # Loop-until-dry bookkeeping (A2). ``analysis_rounds`` counts total rounds;
-    # ``seen_root_causes`` + ``consecutive_empty_rounds`` track NOVELTY so the
-    # router can stop when the analyst has nothing new (the dry signal). A fresh
-    # marker starts at rounds=1, seen=[], empty=0; an existing marker (re-analyze)
-    # carries the prior counters forward. A novel root_cause resets the dry
-    # counter; a repeat (or empty) root_cause increments it.
+    # Loop-until-dry bookkeeping (single-homed in _recovery_counters — the
+    # load-bearing twin-backstop signal). A prior marker (re-analyze) folds its
+    # counters forward; a fresh marker starts at rounds=1/seen=[]/empty=0.
     prior = _failure_analysis_read_marker(track_dir) or {}
-    rounds = int(prior.get("analysis_rounds", 0) or 0) + 1
-    seen = list(prior.get("seen_root_causes", []) or [])
-    rc_text = (root_cause or "").strip()
-    if rc_text and rc_text not in seen:
-        seen.append(rc_text)
-        consecutive_empty = 0  # novel diagnosis → a fresh approach worth a retry
-    else:
-        prev_empty = int(prior.get("consecutive_empty_rounds", 0) or 0)
-        consecutive_empty = prev_empty + 1  # repeat / empty → one more dry round
+    rounds, seen, consecutive_empty = _recovery_counters(prior, root_cause)
     # Normalize affected_tasks (CLI passes a comma-string; in-process a list).
-    if isinstance(affected_tasks, str):
-        affects = [s.strip() for s in affected_tasks.split(",") if s.strip()]
-    elif isinstance(affected_tasks, list):
-        affects = [str(s).strip() for s in affected_tasks if str(s).strip()]
-    else:
-        affects = []
+    affects = _normalize_affected_tasks(affected_tasks)
     marker = {
         "phase": fpi, "task": fti, "subtask": fsi, "name": fname,
         "stage": "analyzed", "category": category,
@@ -3291,20 +3328,9 @@ def cmd_phase_failure_analyst_verdict(track_dir, category, recommendation, root_
     recommendation + category enums. Idempotent overwrite on a re-analyze.
     """
     td = str(track_dir)
-    if recommendation not in _FAILED_RECOMMENDATIONS:
-        out(dict(error=f"unrecognized recommendation: {recommendation!r}", track_dir=td,
-                 hint=f"one of: {', '.join(_FAILED_RECOMMENDATIONS)} "
-                      "(from ---FAILURE ANALYSIS--- recommendation)"))
-        return
-    if category not in _FAILED_CATEGORIES:
-        out(dict(error=f"unrecognized category: {category!r}", track_dir=td,
-                 hint=f"one of: {', '.join(_FAILED_CATEGORIES)} "
-                      "(from ---FAILURE ANALYSIS--- category)"))
-        return
-    if recommendation == "retry_modified" and not (modification or "").strip():
-        out(dict(error="retry_modified requires a non-empty modification "
-                       "(a specific different approach)", track_dir=td,
-                 hint="provide --modification, or choose escalate/replan/decompose"))
+    err = _validate_verdict(recommendation, category, modification, td)
+    if err is not None:
+        out(err)
         return
     state, _fixes, verrors = ensure_healthy(track_dir)
     if state is None:
@@ -3318,23 +3344,11 @@ def cmd_phase_failure_analyst_verdict(track_dir, category, recommendation, root_
                       "transcribe); run `track-state step` to advance"))
         return
     pi = prior.get("phase")
-    # Loop-until-dry bookkeeping (mirrors cmd_failure_analyst_verdict). A prior at
-    # stage=``recovering`` is a re-fail after a retry — its counters carry forward.
-    rounds = int(prior.get("analysis_rounds", 0) or 0) + 1
-    seen = list(prior.get("seen_root_causes", []) or [])
-    rc_text = (root_cause or "").strip()
-    if rc_text and rc_text not in seen:
-        seen.append(rc_text)
-        consecutive_empty = 0
-    else:
-        prev_empty = int(prior.get("consecutive_empty_rounds", 0) or 0)
-        consecutive_empty = prev_empty + 1
-    if isinstance(affected_tasks, str):
-        affects = [s.strip() for s in affected_tasks.split(",") if s.strip()]
-    elif isinstance(affected_tasks, list):
-        affects = [str(s).strip() for s in affected_tasks if str(s).strip()]
-    else:
-        affects = []
+    # Loop-until-dry bookkeeping (mirrors cmd_failure_analyst_verdict via the
+    # shared _recovery_counters). A prior at stage=``recovering`` is a re-fail
+    # after a retry — its counters carry forward.
+    rounds, seen, consecutive_empty = _recovery_counters(prior, root_cause)
+    affects = _normalize_affected_tasks(affected_tasks)
     # Preserve the failing-verifier context + reason the router re-dispatches the
     # analyst with (cmd_step → ``failed``/``analyzed`` re-analyze) so a re-analyze
     # round still sees WHY the phase failed.

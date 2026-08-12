@@ -468,6 +468,7 @@ def build_view_envelope(track_dir):
     """
     from . import workflow_shapes as ws
     from . import task_profiles as tp
+    from .registry_validate import CODE_TIERS
 
     state = load(track_dir)
     shape = ws.resolve_shape(state.get("workflow_shape"))
@@ -476,8 +477,9 @@ def build_view_envelope(track_dir):
     if isinstance(current_phase, int) and tp.phase_is_code_free(state, current_phase):
         # Phase-composition narrowing — a code-free current phase drops the code
         # tiers (build-runner + test-runner) from the checkpoint fan-out (mirrors
-        # dispatch._build_verifier_wave); ac-tracer stays (ACs are still traced).
-        verifiers = [v for v in verifiers if v not in ("test-runner", "build-runner")]
+        # dispatch._build_verifier_wave — both off the shared CODE_TIERS tuple);
+        # ac-tracer stays (ACs are still traced).
+        verifiers = [v for v in verifiers if v not in CODE_TIERS]
 
     return dict(
         track=dict(

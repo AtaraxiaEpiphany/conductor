@@ -20,11 +20,11 @@ must stay sound forever):
 
 Modeled on ``sync.insert_subtask_lines`` (line walk + atomic ``os.replace``).
 """
-import os
 import re
 import sys
-import tempfile
 from pathlib import Path
+
+from lib.atomic_io import atomic_write_text
 
 # Existing amendment headings (to compute the next number). Case-insensitive.
 _AMENDMENT_HEAD = re.compile(r"^##\s+Amendment\s+(\d+)\b", re.IGNORECASE)
@@ -78,10 +78,11 @@ def splice_amendment(track_dir, ac_superseded, ac_prime_text, root_cause=None,
                      affected_tasks=None):
     """Append a ``## Amendment N`` section to spec.md. Returns the number used.
 
-    Atomic (temp + ``os.replace``). Returns ``None`` and emits a WARNING to stderr
-    if spec.md is missing or the splice fails — the rest of the amend-apply flow
-    still runs (the amendment marker + injection carry the intent; the human can
-    splice manually). Mirrors ``insert_subtask_lines``'s fail-soft contract.
+    Atomic (temp + ``os.replace`` via :func:`lib.atomic_io.atomic_write_text`).
+    Returns ``None`` and emits a WARNING to stderr if spec.md is missing or the
+    splice fails — the rest of the amend-apply flow still runs (the amendment
+    marker + injection carry the intent; the human can splice manually).
+    Mirrors ``insert_subtask_lines``'s fail-soft contract.
     """
     spec_path = Path(track_dir) / "spec.md"
     if not spec_path.exists():
@@ -94,18 +95,9 @@ def splice_amendment(track_dir, ac_superseded, ac_prime_text, root_cause=None,
     text = spec_path.read_text()
     if not text.endswith("\n"):
         text += "\n"
-    fd, tmp = tempfile.mkstemp(dir=str(spec_path.parent), prefix=".spec-amend-")
     try:
-        with os.fdopen(fd, "w") as f:
-            f.write(text + block)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, spec_path)
+        atomic_write_text(spec_path, text + block)
     except OSError:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
         print("WARNING: spec.md amendment splice failed — spec.md unchanged",
               file=sys.stderr)
         return None

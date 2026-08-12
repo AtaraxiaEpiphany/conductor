@@ -44,6 +44,13 @@ SPINE_NODES = ("spec-planner", "explorer", "task-executor", "phase-checker")
 #: (`ac_grounding="review"`), enforced by :func:`validate_merged_shapes`.
 VERIFIERS = ("ac-tracer", "build-runner", "test-runner")
 
+#: The verifier tiers that run CODE (a compile or a test suite) — the subset of
+#: :data:`VERIFIERS` a code-free phase narrows out (nothing to compile, nothing
+#: to test). Single-homed so the dispatch fan-out builder and the dashboard view
+#: narrow identically (the studio view mirrors the dispatch builder off THIS
+#: tuple, not a re-typed copy).
+CODE_TIERS = ("build-runner", "test-runner")
+
 #: Ordered tuple of valid track-level quality gates (the `gates` field).
 GATES = ("tdd", "coverage", "checkpoint")
 
@@ -253,6 +260,14 @@ def validate_merged_shapes(merged) -> list[str]:
         errs.append(
             "merged shapes registry must declare a top-level 'default' object "
             "(the fail-open fallback target)")
+    # The default row's ac_grounding — the value every shape inherits when it
+    # does not override ac_grounding itself. Hoisted to the top of both cross-
+    # field guards below (C2 skip-if-declared + build-gate) judge inheritance off
+    # the SAME value; binding it inside the first guard leaked state across the
+    # two. "test" when ``default`` is absent or not a dict.
+    default_row = merged.get("default") if isinstance(merged, dict) else None
+    default_grounding = (default_row.get("ac_grounding", "test")
+                         if isinstance(default_row, dict) else "test")
     # Track C2 cross-field invariant: a shape declaring
     # ``checkpoint_policy: skip-if-declared`` MUST declare an integrity
     # substitute (``ac_grounding: review``) — the "attach a guarantee to every
@@ -263,9 +278,6 @@ def validate_merged_shapes(merged) -> list[str]:
     # hand-edited/legacy registry. Judged on the default-INHERITED value (a row
     # may inherit ``ac_grounding`` from ``default``), mirroring runtime exactly.
     if isinstance(merged, dict):
-        default_grounding = (merged.get("default") or {}).get(
-            "ac_grounding", "test") if isinstance(merged.get("default"), dict) \
-            else "test"
         shapes = merged.get("shapes")
         if isinstance(shapes, dict):
             for name, row in shapes.items():
