@@ -413,6 +413,17 @@ def reactivate_phase_tasks(track_dir, p):
                     clean(task, {"status", "retry_count", "last_failure_summary"})
                     if first is None:
                         first = (ti, None)
+                    # Reactivate this task's completed subtasks too — a
+                    # reactivated parent whose subtasks are all completed is
+                    # auto-completed by _find_next_task (Pass 2 parent-complete)
+                    # without re-dispatching any subtask, which would defeat the
+                    # phase-recovery re-run. Recurses the same ``completed``
+                    # predicate as the parent (skipped/deferred subtasks stay).
+                    for sub in task.get("subtasks", []) or []:
+                        if sub.get("status") == "completed":
+                            sub["status"] = "pending"
+                            clean(sub, {"status", "retry_count",
+                                        "last_failure_summary"})
         if first is not None:
             _set_current_indices(state, pi, first[0], None)
             state["updated_at"] = now_iso()

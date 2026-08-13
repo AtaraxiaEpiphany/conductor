@@ -4,6 +4,7 @@ import re
 import shlex
 import sys
 from pathlib import Path
+from urllib.parse import quote
 
 from .core import load, transaction
 from .helpers import (
@@ -1501,22 +1502,25 @@ def _build_verifier(track_dir, state, phase, agent):
     return "\n".join(lines)
 
 
-def _verify_status_lines(marker, key, label, code_free):
+def _verify_status_lines(marker, key, label, owed):
     """A verifier's ``STATUS`` (+ optional ``COMMAND``) lines for the phase-checker
     prompt. ``key`` is the marker field prefix (``l1`` / ``build``); ``label`` is
     the prompt-token prefix (``L1_VERIFY`` / ``BUILD_VERIFY``).
 
-    An empty verdict is coerced to ``"skipped (no code-producing tasks)"`` on a
-    code-free phase (that tier was narrowed out of the fan-out by
-    :func:`_build_verifier_wave`); a genuinely empty verdict on a NOT-code-free
-    phase stays empty so the checker surfaces it as FAILURE (a dispatch defect).
-    ``marker.get(f"{key}_status") or ""`` coerces ``None`` (cmd_phase_verdict
+    An empty verdict is coerced to ``"skipped (no code-producing tasks)"`` when
+    the tier was NOT fanned (``owed=False``): either the phase is code-free
+    (coverage_exempt tasks → the code tiers were narrowed out of the wave) OR the
+    resolved workflow-shape dropped the tier itself — a ``deliverable`` shape fans
+    only ``ac-tracer``, so build-runner/test-runner never run and an empty verdict
+    is EXPECTED, not a dispatch defect. A genuinely empty verdict when the tier
+    WAS fanned (``owed=True``) stays empty so the checker surfaces it as FAILURE
+    (the verifier owed a verdict and produced none). ``marker.get(f"{key}_status") or ""`` coerces ``None`` (cmd_phase_verdict
     writes ``l1_status=None`` when ``--l1-status`` is omitted) to ``""`` — without
     it the f-string would emit the literal ``"L1_VERIFY_STATUS=None"``, a token
     phase-checker.md has no branch for. Shared by the L1 and build verdicts.
     """
     status = marker.get(f"{key}_status") or ""
-    if not status and code_free:
+    if not status and not owed:
         status = "skipped (no code-producing tasks)"
     out = [f"{label}_STATUS={status}"]
     command = marker.get(f"{key}_command")
@@ -1548,14 +1552,26 @@ def _build_phase_checker(track_dir, state, phase, marker):
         lines.append(f"AC_TRACE_GATE={marker['ac_gate']}")
     if ac == "warn" and marker.get("ac_n_ungrounded") is not None:
         lines.append(f"AC_TRACE_N_UNGROUNDED={marker['ac_n_ungrounded']}")
-    # L1/build verifier verdicts. An empty verdict is coerced to "skipped" on a
-    # code-free phase (the tier was narrowed out); a genuinely empty verdict on a
-    # NOT-code-free phase stays empty → the checker surfaces FAILURE. See
+    # L1/build verifier verdicts. An empty verdict is coerced to "skipped" when
+    # the tier was NOT fanned for this phase — either the phase is code-free
+    # (the code tiers were narrowed out) OR the resolved workflow-shape dropped
+    # the tier (a deliverable shape fans only ac-tracer, dropping build-runner/
+    # test-runner by shape — not by code-free narrowing, so the old code_free-
+    # only coercion misread the empty verdict as a FAILED dispatch defect). A
+    # genuinely empty verdict when the tier WAS fanned stays empty → the checker
+    # surfaces FAILURE. The fanned set mirrors _build_verifier_wave /
+    # build_view_envelope (shape verifiers, narrowed by phase_is_code_free). See
     # ``_verify_status_lines`` for the None-coercion gotcha.
+    from .workflow_shapes import resolve_shape, verifiers_for
     from .task_profiles import phase_is_code_free
-    code_free = phase_is_code_free(state, phase)
-    lines.extend(_verify_status_lines(marker, "l1", "L1_VERIFY", code_free))
-    lines.extend(_verify_status_lines(marker, "build", "BUILD_VERIFY", code_free))
+    from .registry_validate import CODE_TIERS
+    fanned = list(verifiers_for(resolve_shape(state.get("workflow_shape"))))
+    if phase_is_code_free(state, phase):
+        fanned = [v for v in fanned if v not in CODE_TIERS]
+    lines.extend(_verify_status_lines(marker, "l1", "L1_VERIFY",
+                                      owed="test-runner" in fanned))
+    lines.extend(_verify_status_lines(marker, "build", "BUILD_VERIFY",
+                                      owed="build-runner" in fanned))
     return "\n".join(lines)
 
 
@@ -1870,13 +1886,19 @@ _PHASE_RECOVERY_RECIPES = {
 def _phase_primary_task(state, pi):
     """The ``(ti, si, name)`` of a phase's primary task — the scope the replan
     amendment reactivates first (the rest re-verify via the amendment's
-    ``affected_tasks``). The first non-skipped task in the phase; ``None`` if the
-    phase has no reactivatable task (a defensive degrade — replan → escalate)."""
+    ``affected_tasks``). The first ``completed`` task in the phase: the one
+    :func:`reactivate_phase_tasks` flips to ``pending`` first → re-dispatches
+    first → the natural anchor for the modified-guidance / amendment injection.
+    MUST match ``reactivate_phase_tasks``'s ``completed`` predicate — an earlier
+    version keyed on ``status != "skipped"`` and could land the guidance on a
+    deferred/blocked task that never re-dispatches, burning a recovery round for
+    zero effect. ``None`` if the phase has no reactivatable (completed) task — a
+    defensive degrade (retry_modified/replan → escalate)."""
     phases = state.get("phases", [])
     if not (1 <= int(pi) <= len(phases)):
         return None
     for ti, task in enumerate(phases[int(pi) - 1].get("tasks", []), 1):
-        if task.get("status") != "skipped":
+        if task.get("status") == "completed":
             return ti, None, task.get("name", "?")
     return None
 
@@ -2543,7 +2565,12 @@ def _step_route_phase_recovery(track_dir, marker, compact):
             # cmd_phase_checkpoint_review.
             marker["stage"] = "recovering"
             _phase_recovery_write_marker(track_dir, marker)
-            _do_sync_plan(track_dir, state)
+            # RELOAD — ``state`` is the pre-reactivation snapshot; the tasks it
+            # still marks ``completed`` were flipped to ``pending`` on disk by
+            # ``reactivate_phase_tasks``. Syncing the stale snapshot would write
+            # wrong ``[x]`` markers into plan.md and commit the drift (the task-
+            # level twin at the ``analyzed`` arm reloads for the same reason).
+            _do_sync_plan(track_dir, load(track_dir))
             _git_commit_ensured(
                 track_dir,
                 f"chore(conductor): Reactivate phase {pi} for modified retry "
@@ -2556,8 +2583,11 @@ def _step_route_phase_recovery(track_dir, marker, compact):
             # the shared stager builds + emits the ask (or signals halt when the
             # AC details are absent). Shared staging: _stage_replan_amendment
             # (clears the phase-recovery marker BEFORE the ask).
-            pti, psi, pname = _phase_primary_task(load(track_dir), pi) \
-                or (None, None, "?")
+            primary = _phase_primary_task(load(track_dir), pi)
+            if primary is None:  # defensive: a phase with no reactivatable task
+                _halt("escalate")
+                return
+            pti, psi, pname = primary
             if not _stage_replan_amendment(track_dir, pi, pti, psi, pname,
                                            marker, _phase_recovery_clear_marker,
                                            compact):
@@ -2641,14 +2671,17 @@ def _step_route_after_finalize(track_dir, outcome, compact):
     ceiling = _outcome_max_retries(track_dir, outcome)
     rc = outcome.get("retry_count", 0)
     if rc < ceiling:
-        # Pre-exhaustion tier (B.6, continuous only): when exactly one attempt
-        # remains, route through failure-analyst first so the final attempt is a
-        # *modified* retry rather than a third identical one. Interactive mode
-        # keeps a human in the loop and skips this. Lower retry_counts get the
-        # ordinary identical retry — the analyst fires once, on the penultimate
-        # failure, not on every failure.
-        if (execution_mode == "continuous" and rc == ceiling - 1
-                and ceiling >= 2):
+        # Pre-exhaustion tier (B.6): when exactly one attempt remains, route
+        # through failure-analyst first so the final attempt is a *modified*
+        # retry rather than a third identical one. Honors ``_auto_route_failure``
+        # (``recovery_policy=auto`` OR non-interactive) — an interactive+auto
+        # track gets the same modified-retry-at-penultimate as a continuous one
+        # (the recovery_policy/execution_mode decoupling this field introduced);
+        # an ask-surface track keeps a human in the loop and skips this. Lower
+        # retry_counts get the ordinary identical retry — the analyst fires once,
+        # on the penultimate failure, not on every failure.
+        if (rc == ceiling - 1 and ceiling >= 2
+                and _auto_route_failure(load(track_dir))):
             return _step_emit_dispatch_failure_analyst(track_dir, outcome, compact)
         return _step_emit_dispatch(track_dir, compact)
     _step_emit_exhausted(track_dir, outcome, execution_mode, rc, compact)
@@ -2669,7 +2702,7 @@ def _step_emit_dispatch_failure_analyst(track_dir, outcome, compact):
         name = "?"
     emit(dict(action="dispatch_failure_analyst", agent="failure-analyst",
               phase=pi, task=ti, subtask=si, name=name,
-              execution_mode="continuous",
+              execution_mode=state.get("execution_mode", "interactive"),
               prompt=_step_assemble_failure_analyst_prompt(
                   track_dir, state, pi, ti, si, name)),
          "step", compact)
@@ -3837,8 +3870,17 @@ _APPLY_FIXES_DIR = "post-loop-fixes"  # conductor-managed sentinels (committed)
 
 
 def _post_loop_fix_sentinel(track_dir, file_path):
-    """Path to the per-chunk ``.done`` sentinel marking ``file_path``'s chunk drained."""
-    safe = re.sub(r"[^A-Za-z0-9._-]", "_", file_path) + ".done"
+    """Path to the per-chunk ``.done`` sentinel marking ``file_path``'s chunk drained.
+
+    ``file_path`` is percent-encoded (collision-free) so two distinct paths can't
+    share one sentinel: ``src/lib.py`` and ``src_lib.py`` both collapsed to
+    ``src_lib.py.done`` under the old ``[^A-Za-z0-9._-]→_`` sanitizer, silently
+    dropping the second chunk (``_post_loop_next_apply_fixes`` filters by
+    ``sentinel.exists()``). ``quote(..., safe='')`` encodes ``/`` as ``%2F``
+    (distinct from ``_``) and is injective on distinct inputs, so every path
+    gets its own sentinel.
+    """
+    safe = quote(file_path, safe="") + ".done"
     return Path(track_dir) / ".conductor" / _APPLY_FIXES_DIR / safe
 
 

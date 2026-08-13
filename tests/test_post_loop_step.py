@@ -525,9 +525,27 @@ class ApplyFixesGateTests(TestCase):
         self.assertNotIn('"Low"', out["prompt"])
         # post drops the per-chunk sentinel; post_on defaults to non_failure
         # (a failed chunk is NOT marked done → re-entry re-dispatches it).
+        # Sentinel filename is the percent-encoded path (collision-free — see
+        # test_sentinel_encoding_is_collision_free).
         self.assertTrue(any("post-loop-fixes" in c for c in out["post"]))
-        self.assertTrue(any("src_a.py.done" in c for c in out["post"]))
+        self.assertTrue(any("src%2Fa.py.done" in c for c in out["post"]))
         self.assertNotIn("post_on", out)
+
+    def test_sentinel_encoding_is_collision_free(self):
+        # Two distinct paths must NOT share one sentinel: the old
+        # [^A-Za-z0-9._-]→_ sanitizer collapsed `src/lib.py` and `src_lib.py`
+        # onto the same `src_lib.py.done`, silently skipping the second chunk
+        # (`_post_loop_next_apply_fixes` filters by sentinel.exists()). The
+        # percent-encoded encoding is injective on distinct inputs.
+        from track_state.dispatch import _post_loop_fix_sentinel
+        d = _apply_fixes_fixture(self._FINDINGS)
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        a = _post_loop_fix_sentinel(d, "src/lib.py")
+        b = _post_loop_fix_sentinel(d, "src_lib.py")
+        self.assertNotEqual(a, b)
+        self.assertTrue(a.name.endswith(".done"))
+        # `/` must survive as %2F (distinct from a literal `_`).
+        self.assertIn("%2F", a.name)
 
     def test_drained_chunk_advances_to_next_file(self):
         d = _apply_fixes_fixture(self._FINDINGS)

@@ -26,11 +26,20 @@ from pathlib import Path
 
 from lib.atomic_io import atomic_write_text
 
+from .spec_parse import parse_spec_text
+
 # Existing amendment headings (to compute the next number). Case-insensitive.
 _AMENDMENT_HEAD = re.compile(r"^##\s+Amendment\s+(\d+)\b", re.IGNORECASE)
 
 # Prime mark (U+2032) — the superseding criterion is AC-N′.
 _PRIME = "′"
+
+# A well-formed AC id (``AC-<digits>``). Used to gate the existence check: a
+# free-form ``ac_superseded`` ref is left alone (the failure-analyst may cite a
+# sub-clause prose-style), but an id-shaped ref MUST name a real AC — otherwise
+# the amendment would record a supersede of a criterion that does not exist (a
+# hallucinated id), lying in the spec's permanent record.
+_AC_ID_RE = re.compile(r"^AC-\d+$")
 
 
 def next_amendment_number(spec_path):
@@ -89,10 +98,25 @@ def splice_amendment(track_dir, ac_superseded, ac_prime_text, root_cause=None,
         print("WARNING: spec.md missing — amendment not spliced "
               "(marker + injection carry intent)", file=sys.stderr)
         return None
+    text = spec_path.read_text()
+    # Existence check (finding 14): an id-shaped ``ac_superseded`` MUST name a
+    # real AC. A hallucinated id (e.g. AC-9 in a spec that declares AC-1..AC-3)
+    # would write an amendment claiming to supersede a criterion that does not
+    # exist — a lie in spec.md's permanent record, and one every later
+    # "verified against AC-N" stamp inherits. Refuse to splice the block (the
+    # marker + injection still carry the replan intent; the human splices after
+    # correcting the id), matching the fail-soft contract of the missing-spec
+    # and splice-failed arms below. Free-form refs skip the check.
+    if _AC_ID_RE.match(ac_superseded or ""):
+        existing = set(parse_spec_text(text).get("acs", []))
+        if ac_superseded not in existing:
+            print(f"WARNING: {ac_superseded} not found in spec.md acceptance "
+                  f"criteria — amendment not spliced (correct the id and re-run, "
+                  f"or the marker + injection carry intent)", file=sys.stderr)
+            return None
     number = next_amendment_number(spec_path)
     block = render_amendment(number, ac_superseded, ac_prime_text, root_cause,
                              affected_tasks)
-    text = spec_path.read_text()
     if not text.endswith("\n"):
         text += "\n"
     try:

@@ -277,23 +277,31 @@ def validate_merged_shapes(merged) -> list[str]:
     # dispatch's runtime ``checkpoint_skip_decision`` is defense-in-depth for a
     # hand-edited/legacy registry. Judged on the default-INHERITED value (a row
     # may inherit ``ac_grounding`` from ``default``), mirroring runtime exactly.
-    if isinstance(merged, dict):
+    #
+    # The top-level ``default`` row is checked TOO — an overlay setting
+    # ``default.checkpoint_policy='skip-if-declared'`` without ``ac_grounding=
+    # 'review'`` would otherwise pass save-time validation yet halt every
+    # default-shape track at runtime (the runtime resolver reads ``default`` as
+    # the inheritance base). An earlier version walked only ``shapes`` and
+    # missed it; the build-gate below seeds ``default`` the same way.
+    if isinstance(merged, dict) and isinstance(merged.get("default"), dict):
+        check_rows = [("default", merged["default"])]
         shapes = merged.get("shapes")
         if isinstance(shapes, dict):
-            for name, row in shapes.items():
-                if not isinstance(row, dict):
-                    continue
-                if row.get("checkpoint_policy", "run") == "skip-if-declared":
-                    grounding = row.get("ac_grounding", default_grounding)
-                    if grounding != "review":
-                        errs.append(
-                            f"shape {name!r}: checkpoint_policy "
-                            f"'skip-if-declared' requires an integrity "
-                            f"substitute (ac_grounding='review'); found "
-                            f"ac_grounding={grounding!r}. A checkpoint skip "
-                            f"without a verification substitute breaks the "
-                            f"AC-verification guarantee — set "
-                            f"ac_grounding='review' or checkpoint_policy='run'.")
+            check_rows.extend((n, r) for n, r in shapes.items()
+                              if isinstance(r, dict))
+        for name, row in check_rows:
+            if row.get("checkpoint_policy", "run") == "skip-if-declared":
+                grounding = row.get("ac_grounding", default_grounding)
+                if grounding != "review":
+                    errs.append(
+                        f"shape {name!r}: checkpoint_policy "
+                        f"'skip-if-declared' requires an integrity "
+                        f"substitute (ac_grounding='review'); found "
+                        f"ac_grounding={grounding!r}. A checkpoint skip "
+                        f"without a verification substitute breaks the "
+                        f"AC-verification guarantee — set "
+                        f"ac_grounding='review' or checkpoint_policy='run'.")
     # Build-gate cross-field invariant (same "attach a guarantee to every
     # freedom" rule): a shape whose ACs are test-grounded (``ac_grounding !=
     # "review"``) IS a code shape, so it MUST run the compile tier — its

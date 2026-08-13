@@ -282,7 +282,11 @@ def _validate_track_dir(track_dir, project_dir):
     2. **It is actually a track** (a ``track-state.json`` sibling exists).
     3. **It is under the project's ``conductor/tracks/`` tree** when a project
        dir is known — so a local studio cannot be pointed at, say, the plugin's
-       own source via a crafted ``track_dir``.
+       own source via a crafted ``track_dir``. "Known" includes auto-detection:
+       when no ``--project-dir`` is given, the project root is resolved via the
+       same ``workflow_shapes._project_root`` ladder the registry ops use, so
+       containment holds in the common auto-detect case (not just the explicit
+       one). Fail-open ONLY when no project is detectable at all.
 
     Returns ``None`` on any failure; callers emit a 400. No client path is ever
     passed to the state layer without clearing this.
@@ -299,6 +303,18 @@ def _validate_track_dir(track_dir, project_dir):
         return None
     if not (resolved / "track-state.json").is_file():
         return None
+    # When no explicit --project-dir was given, resolve one via the SAME ladder
+    # the registry ops use (workflow_shapes._project_root: $CLAUDE_PROJECT_DIR →
+    # cwd-with-tracks-dir), so containment holds in auto-detect mode too. Without
+    # this, a studio started with no --project-dir would accept ANY
+    # track-state.json-bearing dir on the host — the containment the docstring
+    # promises was enforced only for the explicit-dir case, leaving the auto-
+    # detect case (the common one) open. If the ladder detects no project
+    # (None), there is nothing to contain against and we fail OPEN — but a real
+    # track always lives under a detectable project, so this only relaxes for
+    # genuinely project-less hosts.
+    if not project_dir:
+        project_dir = ws._project_root()
     if project_dir:
         tracks_root = Path(project_dir).resolve(strict=False) / "conductor" / "tracks"
         try:
@@ -387,7 +403,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 return
             try:
                 snap = rs.load_with_origins(which, self._project_dir)
-            except ValueError as exc:
+            except (ValueError, OSError) as exc:
                 _json_response(self, {"ok": False, "error": str(exc)}, 400)
                 return
             snap["vocab"] = _vocab()[which]
@@ -474,7 +490,14 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 return
             # save_registry resolves the path INTERNALLY from which/target/
             # project-dir — no client path is trusted. Hard-rejects invalid.
-            result = rs.save_registry(which, target, doc, self._project_dir)
+            # A filesystem error (read-only install, full disk, perms) escapes
+            # save_registry unguarded (its .bak is try/except'd but the mkdir /
+            # atomic_write_json raises are not) — catch it here so the handler
+            # returns a JSON error + no stray .bak is left half-written.
+            try:
+                result = rs.save_registry(which, target, doc, self._project_dir)
+            except (OSError, ValueError) as exc:
+                result = {"ok": False, "error": f"save failed: {exc}"}
             _json_response(self, result, 200 if result.get("ok") else 400)
             return
 
@@ -496,7 +519,10 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 _json_response(self, {"ok": False,
                                       "error": "bad/missing 'shape'"}, 400)
                 return
-            result = rs.set_workflow_shape(str(resolved), shape)
+            try:
+                result = rs.set_workflow_shape(str(resolved), shape)
+            except (OSError, ValueError) as exc:
+                result = {"ok": False, "error": f"set shape failed: {exc}"}
             _json_response(self, result, 200 if result.get("ok") else 400)
             return
 
@@ -1113,7 +1139,7 @@ function renderTrackView(env) {
   if (!env || env.error) { wrap.innerHTML = '<div class="muted">'+esc(env && env.error || 'no track data')+'</div>'; return; }
   const rw = env.resolved_workflow || {}, pos = rw.position || {}, cards = (env.studio && env.studio.task_cards) || [], q = env.quality || {};
   let html = '<div class="card" style="margin-top:14px">'
-    + '<h2 style="margin:0 0 8px">Bound track: '+esc(env.track||'?')+'</h2>'
+    + '<h2 style="margin:0 0 8px">Bound track: '+esc((env.track&&env.track.track_id)||'?')+'</h2>'
     + '<div class="row" style="margin:0">'
     + '<span class="pill">shape: '+esc(rw.shape||'?')+'</span>'
     + '<span class="pill">verifiers: '+esc((rw.verifiers||[]).join(', ')||'—')+'</span>'

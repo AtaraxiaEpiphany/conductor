@@ -291,6 +291,46 @@ class TrackShapeBinding(TestCase):
         self.assertEqual(status, 400)
 
 
+class AutoDetectContainment(TestCase):
+    """When ``--project-dir`` is omitted, ``_validate_track_dir`` must STILL
+    enforce project containment — it resolves the project root via the same
+    ``workflow_shapes._project_root`` ladder the registry ops use ($CLAUDE_PROJECT_DIR
+    → cwd-with-tracks). Without this, a studio started with no --project-dir would
+    accept any track-state.json-bearing dir on the host (the containment promised
+    in the docstring was enforced only for the explicit-dir case)."""
+
+    def _make_track(self, project):
+        tdir = Path(project, "conductor", "tracks", "x")
+        tdir.mkdir(parents=True)
+        save(str(tdir), _track_state())
+        return tdir
+
+    def test_auto_detect_rejects_track_outside_resolved_project(self):
+        proj_a = tempfile.mkdtemp()
+        proj_b = tempfile.mkdtemp()
+        track_in_a = self._make_track(proj_a)
+        track_in_b = self._make_track(proj_b)  # in a DIFFERENT project tree
+        import os
+        from unittest.mock import patch
+        with patch.dict(os.environ, {"CLAUDE_PROJECT_DIR": proj_a}):
+            # project_dir=None → auto-detect resolves to proj_a.
+            self.assertIsNone(ss._validate_track_dir(str(track_in_b), None))
+            # A track under the auto-detected project is still accepted.
+            self.assertEqual(ss._validate_track_dir(str(track_in_a), None),
+                             track_in_a.resolve())
+
+    def test_explicit_project_dir_still_governs(self):
+        # Explicit project_dir wins and is NOT overridden by CLAUDE_PROJECT_DIR.
+        proj_a = tempfile.mkdtemp()
+        proj_b = tempfile.mkdtemp()
+        track_in_b = self._make_track(proj_b)
+        import os
+        from unittest.mock import patch
+        with patch.dict(os.environ, {"CLAUDE_PROJECT_DIR": proj_a}):
+            self.assertIsNone(
+                ss._validate_track_dir(str(track_in_b), proj_a))
+
+
 class NodesEndpoint(TestCase):
     """``/api/nodes`` — the 6-agent legend (display prose only)."""
 
