@@ -132,7 +132,6 @@ class PreflightWorkflowFilesTests(TestCase):
         if workflow:
             wf.mkdir(parents=True, exist_ok=True)
             (wf / "index.md").write_text("x")
-            (wf / "post-loop.md").write_text("x")
         return str(track)
 
     def _preflight(self, track):
@@ -149,17 +148,9 @@ class PreflightWorkflowFilesTests(TestCase):
     def test_missing_workflow_files_reported(self):
         r = self._preflight(self._project(workflow=False))
         self.assertFalse(r["ok"], r)
-        self.assertEqual(r["missing_workflow"],
-                         ["workflow/index.md", "workflow/post-loop.md"])
-        # track-core files are fine — only the project-level files are missing
+        self.assertEqual(r["missing_workflow"], ["workflow/index.md"])
+        # track-core files are fine — only the project-level index is missing
         self.assertEqual(r["missing"], [])
-
-    def test_missing_post_loop_only(self):
-        track = self._project(workflow=True)
-        (Path(self.d) / "conductor" / "workflow" / "post-loop.md").unlink()
-        r = self._preflight(track)
-        self.assertFalse(r["ok"], r)
-        self.assertEqual(r["missing_workflow"], ["workflow/post-loop.md"])
 
     def test_fail_open_without_conductor_root(self):
         # Bare track dir with NO tracks.md ancestor → workflow check is skipped

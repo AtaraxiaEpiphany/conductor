@@ -18,9 +18,9 @@ COMPRESSION_INSTRUCTIONS = """COMPRESSION PRIORITY:
 [COMPRESS] All completed task results to: task_name=sha,status (one line each)
 [DISCARD] Sections 1.0-2.0 (one-time setup, re-read from disk if needed)
 [DISCARD] All intermediate CLI outputs (lock, sync-plan, phase-done details)
-[DISCARD] Section 4.0 post-loop (re-read from workflow file when needed)
+[DISCARD] Section 4.0 post-loop (re-read from the plugin template when needed)
 
-CRITICAL: After compression, re-read conductor/workflow/post-loop.md only when entering Section 4.0."""
+CRITICAL: After compression, re-read ${CLAUDE_PLUGIN_ROOT}/templates/post-loop.md only when entering Section 4.0."""
 
 
 def main():

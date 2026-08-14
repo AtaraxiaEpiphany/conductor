@@ -256,11 +256,6 @@ class SetupScaffoldingHookCleanTests(TestCase):
             'cp "${CLAUDE_PLUGIN_ROOT}/templates/code-styleguides/"{general,python}.md '
             'conductor/workflow/code-styleguides/'))
 
-    def test_cp_core_workflow_files_clean(self):
-        self.assertTrue(self._clean(
-            'cp "${CLAUDE_PLUGIN_ROOT}/templates/"{task-workflow,'
-            'phase-checkpoint,post-loop}.md conductor/workflow/'))
-
     def test_cp_devcommands_clean(self):
         self.assertTrue(self._clean(
             'cp "${CLAUDE_PLUGIN_ROOT}/templates/dev-commands/"python.md '

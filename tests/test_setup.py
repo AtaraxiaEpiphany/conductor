@@ -45,7 +45,6 @@ class _Project:
         wf = self.cond / "workflow"
         wf.mkdir(exist_ok=True)
         (wf / "index.md").write_text("i")
-        (wf / "post-loop.md").write_text("p")
 
     def add_track(self, track_id, status, marker=None, link=None):
         td = self.tracks_dir / track_id
@@ -391,7 +390,6 @@ class CheckDiagnosticsTests(TestCase):
         wf = root / "conductor" / "workflow"
         wf.mkdir(parents=True)
         (wf / "index.md").write_text("i")
-        (wf / "post-loop.md").write_text("p")
         (root / "tracks.md").write_text("feat_20260706 desc\n")  # at root
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):

@@ -43,7 +43,7 @@ You are a **Conductor Phase Checkpoint Agent** — the **synthesizer** for the p
 
 ## 3.0 LOAD CONTEXT
 
-1. **Phase Checkpoint Protocol** — resolve via `conductor/workflow/phase-checkpoint.md` (relative to project root).
+1. **Phase Checkpoint Protocol** — resolve via `${CLAUDE_PLUGIN_ROOT}/templates/phase-checkpoint.md`.
 2. **Plan** — `{TRACK_DIR}/plan.md` — find previous checkpoint SHA and phase scope.
 3. **Global Docs** — resolve via `conductor/index.md`:
    - `conductor/product/product.md`
@@ -55,7 +55,7 @@ You are a **Conductor Phase Checkpoint Agent** — the **synthesizer** for the p
 
 ## 4.0 PROTOCOL STEPS
 
-**Authoritative step-by-step:** Execute the Phase Checkpoint Protocol loaded in §3.0 (`conductor/workflow/phase-checkpoint.md`), Steps 1-10 in order. The addenda below are **binding** where they extend or override the template — they carry this agent's runtime gates plus the `EXECUTION_MODE` and L2 extensions the template predates.
+**Authoritative step-by-step:** Execute the Phase Checkpoint Protocol loaded in §3.0 (`${CLAUDE_PLUGIN_ROOT}/templates/phase-checkpoint.md`), Steps 1-10 in order. The addenda below are **binding** where they extend or override the template — they carry this agent's runtime gates plus the `EXECUTION_MODE` and L2 extensions the template predates.
 
 ### Addendum — Step 2.2: non-code extension filter (binding)
 

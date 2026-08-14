@@ -143,7 +143,7 @@ The AC text + TC rows are already in the Layer 1 task-context JSON (`acs` and `t
 
 ### Layer 3: Workflow + Style (READ BEFORE Step 3)
 
-Read `conductor/workflow/task-workflow.md` — Steps 3-8 section only (skip Steps 1-2, 10-11).
+Read `${CLAUDE_PLUGIN_ROOT}/templates/task-workflow.md` — Steps 3-8 section only (skip Steps 1-2, 10-11).
 Read `conductor/workflow/testing/strategy.md` — test file placement policy and naming conventions.
 Read the relevant style guide from `conductor/workflow/code-styleguides/`.
 
@@ -173,7 +173,7 @@ Branch on **this task's leading tag**, resolved from the registry (the `[Conduct
 - **`route: explore`** (`[Explore]`) → **ERROR**: report **FAILURE**. Exploration routes to the `explorer` agent, not you — you produce no findings, only code.
 - **Default (no tag / untagged)** → **Full TDD (Steps 3-8)** below. This is the path for the majority of tasks.
 
-**Canonical TDD cycle (Steps 3-8):** `conductor/workflow/task-workflow.md` is authoritative — read its **Steps 3-8 section only** (skip Steps 1-2, 9-11, orchestrator-owned). Agent-specific bindings below override/extend the template.
+**Canonical TDD cycle (Steps 3-8):** `${CLAUDE_PLUGIN_ROOT}/templates/task-workflow.md` is authoritative — read its **Steps 3-8 section only** (skip Steps 1-2, 9-11, orchestrator-owned). Agent-specific bindings below override/extend the template.
 
 **Agent-specific bindings:**
 

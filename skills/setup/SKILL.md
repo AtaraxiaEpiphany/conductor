@@ -92,21 +92,15 @@ Save state: `2.3_tech_stack_styleguides`.
 
 ### 2.4 Workflow
 
-Copy the workflow templates into `conductor/workflow/` with Bash (`cp`/`sed`) rather than Read+Write. These are pure file copies — `phase-checkpoint.md` and `post-loop.md` carry runtime tokens (`{TRACK_DIR}`/`{PHASE_INDEX}`/`{CLAUDE_PLUGIN_ROOT}`) that agents substitute later, so they pass through **verbatim and must NOT be sed'd**. Routing them through `cp` keeps their contents out of the orchestrator context.
+Seed `conductor/workflow/` with the dev-command files and generate its index. The doctrine files (`task-workflow.md`, `phase-checkpoint.md`, `post-loop.md`) are NOT copied here — agents and skills read them directly from `${CLAUDE_PLUGIN_ROOT}/templates/` at runtime (one home, auto-updates with the plugin, no drift), mirroring how `runtime/contracts/*.md` are consumed. The dev-command files ARE pure copies (no tokens), so `cp` keeps their bodies out of the orchestrator context.
 
-1. **Core workflow files** (pure copies):
-   ```bash
-   mkdir -p conductor/workflow/testing
-   cp "${CLAUDE_PLUGIN_ROOT}/templates/"{task-workflow,phase-checkpoint,post-loop}.md conductor/workflow/
-   ```
-
-2. **Dev commands:** copy the detected languages' dev-command files into `conductor/workflow/dev-commands/` — the path task-runner / build-runner / refactorer / apply-fixes / phase-checker read at runtime (pure Bash keeps the lang files out of context). No `general.md` (unlike styleguides) — detected languages only:
+1. **Dev commands:** copy the detected languages' dev-command files into `conductor/workflow/dev-commands/` — the path task-runner / build-runner / refactorer / apply-fixes / phase-checker read at runtime (pure Bash keeps the lang files out of context). No `general.md` (unlike styleguides) — detected languages only:
    ```bash
    mkdir -p conductor/workflow/dev-commands
    cp "${CLAUDE_PLUGIN_ROOT}/templates/dev-commands/"{<lang1>,<lang2>}.md conductor/workflow/dev-commands/
    ```
 
-3. **Testing strategy:** `AskUserQuestion` — **"How should I create the testing strategy?"** with options:
+2. **Testing strategy:** `AskUserQuestion` — **"How should I create the testing strategy?"** with options:
    - **"Use the filtered template (Recommended)"** (default) → run the scaffold script below. Language-filtered, deterministic, contract-correct.
    - **"Generate a project-specific strategy"** → dispatch `conductor:strategy-writer` (inspects the project's real test layout/frameworks, asks follow-up questions, writes the file). Best for projects whose actual conventions diverge from the generic template.
 
@@ -124,11 +118,11 @@ Copy the workflow templates into `conductor/workflow/` with Bash (`cp`/`sed`) ra
    ```
    The agent inspects the live project, asks the user questions interactively, writes `conductor/workflow/testing/strategy.md`, and self-verifies via `scripts/verify-strategy.py` (the deterministic invariant backstop for the generated doc). Parse the `---STRATEGY RESULT---` block; on `STATUS: FAILURE` → halt → announce.
 
-4. **Workflow index:** generate `conductor/workflow/index.md` listing the created files (task-workflow, phase-checkpoint, post-loop, code-styleguides/, dev-commands/, testing/strategy.md — per-project content, not a template copy). Include one line documenting the **task-type override hook**: a project MAY drop `conductor/workflow/task-type-profiles.json` here to add project-specific task-type tags or override a built-in tag's semantics — it merges over the plugin baseline (project wins conflicts; absent = plugin defaults). Do **not** auto-create the file — it is opt-in by presence; a project creates it only when it actually wants an override (auto-creating a full-baseline copy would shadow future plugin-shipped tags).
+3. **Workflow index:** generate `conductor/workflow/index.md` listing the created files (code-styleguides/, dev-commands/, testing/strategy.md — per-project content, not a template copy). Include one line documenting the **task-type override hook**: a project MAY drop `conductor/workflow/task-type-profiles.json` here to add project-specific task-type tags or override a built-in tag's semantics — it merges over the plugin baseline (project wins conflicts; absent = plugin defaults). Do **not** auto-create the file — it is opt-in by presence; a project creates it only when it actually wants an override (auto-creating a full-baseline copy would shadow future plugin-shipped tags).
 
-5. **Verify** every referenced file exists before continuing.
+4. **Verify** every referenced file exists before continuing.
 
-6. **Wiki overview/purpose/log** — copy each to its renamed target, then stamp the current ISO-8601 timestamp over `{TIMESTAMP}`:
+5. **Wiki overview/purpose/log** — copy each to its renamed target, then stamp the current ISO-8601 timestamp over `{TIMESTAMP}`:
    ```bash
    ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
    cp "${CLAUDE_PLUGIN_ROOT}/templates/wiki-overview.md" conductor/overview.md
@@ -137,7 +131,7 @@ Copy the workflow templates into `conductor/workflow/` with Bash (`cp`/`sed`) ra
    sed -i "s/{TIMESTAMP}/$ts/g" conductor/overview.md conductor/purpose.md conductor/log.md
    ```
 
-7. **Seed `conductor/purpose.md` Goals** — the one content edit in this phase: `Edit` `conductor/purpose.md` to replace the Goals placeholder with the goals gathered in §2.1. The other sections start as self-documenting placeholders (the template annotates who fills each and when): **Key Questions** and **Out of Scope** are seeded from the first track's Brief by `/conductor:new-track` §2.2b (additive, intersection-only); **Evolving Thesis** and **Active Decisions** are deliberately empty until wiki-synthesizer Phase 2 harvests them from completed tracks. This file is the wiki's directional intent — *why* the project exists, distinct from the structural overview.
+6. **Seed `conductor/purpose.md` Goals** — the one content edit in this phase: `Edit` `conductor/purpose.md` to replace the Goals placeholder with the goals gathered in §2.1. The other sections start as self-documenting placeholders (the template annotates who fills each and when): **Key Questions** and **Out of Scope** are seeded from the first track's Brief by `/conductor:new-track` §2.2b (additive, intersection-only); **Evolving Thesis** and **Active Decisions** are deliberately empty until wiki-synthesizer Phase 2 harvests them from completed tracks. This file is the wiki's directional intent — *why* the project exists, distinct from the structural overview.
 Save state: `2.4_workflow`.
 
 ### 2.5 Finalization

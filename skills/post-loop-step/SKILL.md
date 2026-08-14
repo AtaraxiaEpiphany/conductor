@@ -1,6 +1,6 @@
 ---
 name: post-loop-step
-description: Rail B-min post-loop teleoperator — runs `track-state post-loop-step` and relays exactly the leaf action it emits (resolve deferred / finalize / dispatch a doc-sync or review agent / digest / archive / done). Thin alternative to the prose post-loop (templates/post-loop.md §5.0–§8.0) for small-window models.
+description: Rail B-min post-loop teleoperator — runs `track-state post-loop-step` and relays exactly the leaf action it emits (resolve deferred / finalize / dispatch a doc-sync or review agent / digest / archive / done). Thin alternative to the prose post-loop template (§5.0–§8.0) for small-window models.
 when_to_use: Spike — drive a finalized track's post-loop via the code-driven `post-loop-step` spine instead of the prose template. Chains after /conductor:implement-step or /conductor:parallel-step at `done`. Use to A/B a small-window model end-to-end.
 argument-hint: "[track_name]"
 allowed-tools: Bash, Read, Agent, AskUserQuestion

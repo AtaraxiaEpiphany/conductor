@@ -216,7 +216,7 @@ Then run the shared post-loop — identical to `implement` §4.0:
 track-state post-loop-status "<track_dir>"
 ```
 
-Read `conductor/workflow/post-loop.md` and execute sections 5.0–8.0 (doc-sync, review, etc.). Same lock discipline as `implement`: never stop between a review and its reviewed-range stamp (a harness compaction mid-transaction loses the review-done signal and forces an expensive re-review).
+Read `${CLAUDE_PLUGIN_ROOT}/templates/post-loop.md` and execute sections 5.0–8.0 (doc-sync, review, etc.). Same lock discipline as `implement`: never stop between a review and its reviewed-range stamp (a harness compaction mid-transaction loses the review-done signal and forces an expensive re-review).
 
 ---
 

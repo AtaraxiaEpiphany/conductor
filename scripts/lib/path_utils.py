@@ -5,7 +5,6 @@ Provides unified path manipulation and file system utilities.
 
 import os
 import re
-import shutil
 from pathlib import Path
 from typing import Optional, List
 
@@ -262,28 +261,6 @@ def clean_temp_files(directory: Path, max_age_hours: int = 24) -> List[Path]:
                 continue
 
     return deleted
-
-
-def copy_with_backup(src: Path, dst: Path, backup_suffix: str = ".bak") -> bool:
-    """Copy file with backup if destination exists
-
-    Args:
-        src: Source file path
-        dst: Destination file path
-        backup_suffix: Backup file suffix
-
-    Returns:
-        True if copy succeeded
-    """
-    if dst.exists():
-        backup_path = dst.with_suffix(dst.suffix + backup_suffix)
-        shutil.copy2(dst, backup_path)
-
-    try:
-        shutil.copy2(src, dst)
-        return True
-    except Exception:
-        return False
 
 
 def resolve_safe_path(base: Path, path_str: str) -> Optional[Path]:

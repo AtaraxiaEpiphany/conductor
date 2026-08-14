@@ -284,6 +284,6 @@ track-state phase-done "<track_dir>" <phase>
 
 ## 4.0 POST-LOOP
 
-Run `track-state post-loop-status "<track_dir>"` and keep the envelope (`finalized`, `doc_synced`, `review.done`/`review.range`, `shas_count`). §5.5/§6.0/§7.0 gate on it to skip phases already completed across an interruption (if you resume without it, re-run — it's a cheap git-log grep + state load). Then read `conductor/workflow/post-loop.md` and execute sections 5.0–8.0.
+Run `track-state post-loop-status "<track_dir>"` and keep the envelope (`finalized`, `doc_synced`, `review.done`/`review.range`, `shas_count`). §5.5/§6.0/§7.0 gate on it to skip phases already completed across an interruption (if you resume without it, re-run — it's a cheap git-log grep + state load). Then read `${CLAUDE_PLUGIN_ROOT}/templates/post-loop.md` and execute sections 5.0–8.0.
 
 ---

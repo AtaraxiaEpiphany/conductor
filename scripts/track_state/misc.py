@@ -23,15 +23,15 @@ from .spec_integrity import compute_ac_integrity
 # setup check repeated (with drift) across skills — preflight centralizes it.
 _TRACK_CORE_FILES = ("spec.md", "plan.md", "track-state.json")
 
-# Project-level workflow files every /conductor:implement run depends on
-# (implement §1.0 reads index.md; §4.0 reads post-loop.md). They live at the
-# conductor ROOT, not inside the track dir, so preflight resolves the root from
-# the track path and checks them alongside the track-core files. Fail-open: when
+# Project-level workflow index every /conductor:implement run depends on
+# (implement §1.0 reads index.md). It lives at the conductor ROOT, not inside
+# the track dir, so preflight resolves the root from the track path and checks
+# it alongside the track-core files. Fail-open: when
 # no conductor root is locatable (no tracks.md ancestor — e.g. a bare temp dir),
 # the workflow check is skipped rather than failing ok, so a resolution miss can
 # never HALT setup on a non-standard layout (and the existing preflight tests,
 # which use temp dirs without a project layout, stay green).
-_WORKFLOW_FILES = ("workflow/index.md", "workflow/post-loop.md")
+_WORKFLOW_FILES = ("workflow/index.md",)
 
 # Track-level non-terminal statuses eligible for auto-select — exactly the
 # `[~]`/`[ ]` markers the skills auto-select on. (Task-level `pending` is NOT a
@@ -151,10 +151,9 @@ def cmd_preflight(track_dir):
     """Verify a track's core conductor files exist and its state loads.
 
     Single machine-checkable entry point for skill setup checks, replacing the
-    repeated "verify spec.md/plan.md/track-state.json" prose. Also gates the two
-    project-level workflow files (``conductor/workflow/index.md`` and
-    ``post-loop.md``) that implement depends on — fail-open per
-    ``_resolve_conductor_root``. Outputs
+    repeated "verify spec.md/plan.md/track-state.json" prose. Also gates the
+    project-level workflow index (``conductor/workflow/index.md``) that
+    implement depends on — fail-open per ``_resolve_conductor_root``. Outputs
     ``{ok, missing, missing_workflow, track_dir, invalid_state}`` and ALWAYS
     exits 0 — callers switch on ``ok`` and emit their own halt message (mirrors
     ``validate``). The check itself lives in ``_preflight_result``, shared with
