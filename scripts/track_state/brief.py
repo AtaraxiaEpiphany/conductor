@@ -1,7 +1,7 @@
 """Brief resume-marker CLI — the /conductor:brief counterpart to new_track.py.
 
-The marker ``<track_dir>/.conductor/brief-progress.json`` is a transient
-(gitignored, deleted at §5 hand-off) pre-state record: it exists BEFORE any
+The marker ``<track_dir>/.conductor/brief-progress.json`` is a transient pre-state record (gitignored via
+``track_state.quality._TRANSIENT_MARKERS``; deleted at §5 hand-off): it exists BEFORE any
 ``track-state.json`` and lets an interrupted ``brief`` run be detected so the
 orchestrator can offer resume/discard instead of silently overwriting.
 

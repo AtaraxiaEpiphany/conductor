@@ -55,6 +55,7 @@ SEED_PATHS = [
     "conductor/log.md",
     "conductor/workflow/index.md",
     "conductor/workflow/code-styleguides",  # dir; setup copies general + detected langs
+    "conductor/workflow/dev-commands",  # dir; setup copies detected langs (no general.md)
     "conductor/workflow/testing/strategy.md",
     "conductor/tracks.md",
     "conductor/index.md",

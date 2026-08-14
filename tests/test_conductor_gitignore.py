@@ -33,7 +33,7 @@ CONDUCTOR_BLOCK = GITIGNORE_TEMPLATE
 
 # Per-track .conductor/.gitignore body, as written by quality._ensure_conductor_gitignore.
 # conftest.py puts ``scripts/`` on sys.path so ``track_state`` resolves as in production.
-from track_state.quality import _CONDUCTOR_GITIGNORE  # noqa: E402
+from track_state.quality import _CONDUCTOR_GITIGNORE, _TRANSIENT_MARKERS  # noqa: E402
 
 
 def _check_ignore(repo, path):
@@ -100,6 +100,28 @@ class GitignoreSemanticsTests(TestCase):
             self.assertFalse(_check_ignore(self.repo, rel),
                              f"real file must stay tracked: {rel}")
 
+    def test_track_root_scratch_is_ignored(self):
+        # Track-state scratch lives at the track ROOT (conductor/tracks/<id>/),
+        # not under .conductor/, so only the root block can cover it. Before the
+        # root block gained these specific patterns, the relayed `git add -A`
+        # (task-executor Step 8, _bookkeeping_commit_line) swept them into commits.
+        for rel in (
+            "conductor/tracks/feat-x/track-state.json.bak",
+            "conductor/tracks/feat-x/.track-state.lock",
+            "conductor/tracks/feat-x/.track-state.json.tmp.abc",
+            "conductor/workflow/workflow-shapes.json.bak",  # registry .bak
+        ):
+            self._touch(rel)
+            self.assertTrue(_check_ignore(self.repo, rel),
+                            f"track-root scratch must be ignored: {rel}")
+
+    def test_registry_files_stay_tracked(self):
+        # Collateral guard: *.json.bak must NOT swallow the real registry file.
+        rel = "conductor/workflow/workflow-shapes.json"
+        self._touch(rel)
+        self.assertFalse(_check_ignore(self.repo, rel),
+                         "real registry file must stay tracked")
+
     def test_append_is_idempotent_in_shell(self):
         # The exact §2.5 guard: grep the begin sentinel, skip if present, else
         # append. Running it twice must not duplicate the block.
@@ -153,14 +175,15 @@ class PerTrackConductorGitignoreTests(TestCase):
         return rel
 
     def test_transient_markers_are_ignored(self):
-        # The regression: these dot-prefixed markers under per-track .conductor/
-        # were NOT in the per-track gitignore list and showed as untracked.
-        for rel in (
-            "conductor/tracks/feat-x/.conductor/.dispatch-inflight-1-1.json",
-            "conductor/tracks/feat-x/.conductor/.dispatch.lock",
-            "conductor/tracks/feat-x/.conductor/.tripwire-2-3.count",
-            "conductor/tracks/feat-x/.conductor/.modified-guidance-1-1.md",
-        ):
+        # Anti-drift gate: drive off the single source of truth. Every entry in
+        # _TRANSIENT_MARKERS must (a) appear in the written .conductor/.gitignore
+        # body and (b) be genuinely git-ignored at its per-track path. Adding a
+        # new marker to the tuple auto-tests it; hand-editing _CONDUCTOR_GITIGNORE
+        # (so it drifts from the tuple) is caught by (a).
+        for pattern, sample in _TRANSIENT_MARKERS:
+            self.assertIn(pattern, _CONDUCTOR_GITIGNORE,
+                          f"pattern missing from ignore body: {pattern}")
+            rel = f"conductor/tracks/feat-x/.conductor/{sample}"
             self._touch(rel)
             self.assertTrue(_check_ignore(self.repo, rel),
                             f"transient marker must be ignored: {rel}")
@@ -176,6 +199,20 @@ class PerTrackConductorGitignoreTests(TestCase):
             self._touch(rel)
             self.assertTrue(_check_ignore(self.repo, rel),
                             f"listed transient artifact must be ignored: {rel}")
+
+    def test_durable_sidecars_stay_tracked(self):
+        # Pin the deliberately-EXCLUDED durables (NOT in _TRANSIENT_MARKERS) so a
+        # future addition to the tuple can't silently start ignoring committed
+        # bookkeeping. post-loop.json carries reviewed_range; track-findings.md is
+        # the cross-phase bridge; track-directives.md is the constraint channel.
+        for rel in (
+            "conductor/tracks/feat-x/.conductor/post-loop.json",
+            "conductor/tracks/feat-x/.conductor/track-findings.md",
+            "conductor/tracks/feat-x/.conductor/track-directives.md",
+        ):
+            self._touch(rel)
+            self.assertFalse(_check_ignore(self.repo, rel),
+                             f"durable sidecar must stay tracked: {rel}")
 
 
 if __name__ == "__main__":

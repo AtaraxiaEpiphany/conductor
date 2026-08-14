@@ -9,6 +9,16 @@
 # which is committed by track commits — is NOT ignored.
 /.conductor/
 
+# Conductor track-state scratch — written into every conductor/tracks/<id>/
+# (the track ROOT, not under .conductor/). The root-anchored /.conductor/ rule
+# above cannot reach them, and the per-track .conductor/.gitignore only governs
+# .conductor/. Specific names — NOT *.lock/*.bak globally (collateral: yarn.lock,
+# Cargo.lock, poetry.lock must stay committable). *.json.bak also covers the
+# registry <name>.json.bak written by track-state registry-studio saves.
+*.json.bak
+.track-state.lock
+.track-state.json.tmp.*
+
 # Common build artifacts / dependency caches — a safety net so task-executor's
 # `git add -A` (Step 8) cannot sweep these into an implementation commit. These
 # are sensible defaults for most stacks; review and adjust for your project

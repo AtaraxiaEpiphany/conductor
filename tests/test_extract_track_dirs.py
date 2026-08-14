@@ -258,13 +258,13 @@ class SetupScaffoldingHookCleanTests(TestCase):
 
     def test_cp_core_workflow_files_clean(self):
         self.assertTrue(self._clean(
-            'cp "${CLAUDE_PLUGIN_ROOT}/templates/"{template,task-workflow,'
+            'cp "${CLAUDE_PLUGIN_ROOT}/templates/"{task-workflow,'
             'phase-checkpoint,post-loop}.md conductor/workflow/'))
 
-    def test_devcommands_cat_and_sed_insert_clean(self):
-        cmd = ('cat "${CLAUDE_PLUGIN_ROOT}/templates/dev-commands/"python.md > /tmp/.devcmds\n'
-               "sed -i '/<!-- DEV_COMMANDS:/r /tmp/.devcmds' conductor/workflow/template.md")
-        self.assertTrue(self._clean(cmd))
+    def test_cp_devcommands_clean(self):
+        self.assertTrue(self._clean(
+            'cp "${CLAUDE_PLUGIN_ROOT}/templates/dev-commands/"python.md '
+            'conductor/workflow/dev-commands/'))
 
     def test_sed_test_root_clean(self):
         self.assertTrue(self._clean(

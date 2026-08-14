@@ -48,6 +48,7 @@ Development workflow and reference materials. Consult as needed.
 |-----|------|--------|
 | Workflow Index | conductor/workflow/index.md | seeded |
 | Code Styleguides | conductor/workflow/code-styleguides/ | seeded |
+| Dev Commands | conductor/workflow/dev-commands/ | seeded |
 | Git Flow | conductor/workflow/git-flow.md | on-demand |
 | Testing Strategy | conductor/workflow/testing/strategy.md | seeded |
 | References | conductor/resource/references/index.md | on-demand |

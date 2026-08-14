@@ -74,6 +74,16 @@ def _validate_plan_structure(plan):
 
 
 # Transient subagent artifacts that must never be swept into conductor commits.
+#
+# NORMATIVE SOURCE = the _TRANSIENT_MARKERS tuple below (each entry is a
+# (gitignore_pattern, concrete_sample) pair; the sample is consumed by
+# tests/test_conductor_gitignore.py to prove the pattern actually matches).
+# This prose is maintainer rationale only — the drift-gate test asserts every
+# tuple entry appears in the written .conductor/.gitignore AND is genuinely
+# git-ignored, so a new marker added to the tuple is auto-covered and a hand-edit
+# to _CONDUCTOR_GITIGNORE is caught. Durably-committed sidecars (post-loop.json,
+# track-findings.md, track-directives.md) are deliberately NOT in the tuple.
+#
 # result.json is written by task-executor/explorer and deleted by dispatch-finalize
 # each cycle; tracking it only churns git history (committed then re-deleted).
 # new-track-progress.json is the new-track resume marker (skills/new-track/SKILL.md
@@ -104,21 +114,53 @@ def _validate_plan_structure(plan):
 # (dispatch.py _modified_guidance_write / on-subagent-start.py): stamped on a
 # retry-with-modified-guidance decision, consumed-on-read and cleared; transient
 # plumbing, never staged.
-_CONDUCTOR_GITIGNORE = """# Conductor runtime artifacts — transient, never commit.
-result.json
-.result.tmp.*
-new-track-progress.json
-phase-checkpoint.json
-skip-analysis.json
-review-seen.json
-parallel.json
-wave-agent.marker
-.wave-drain-processed
-.dispatch-inflight-*.json
-.dispatch.lock
-.tripwire-*.count
-.modified-guidance-*.md
-"""
+# brief-progress.json is the /conductor:brief resume marker (brief.py): written
+# before track-state.json exists and deleted at §5 hand-off; transient. (Was missing
+# from the ignore list — brief.py's docstring falsely claimed "gitignored".)
+# failure-analysis.json is the failure-analyst handshake marker (dispatch.py
+# _FAILURE_ANALYSIS_MARKER): carries the diagnosis between dispatch and the
+# retry/replan/decompose verdict; consumed/cleared on resolution. Transient.
+# phase-recovery.json is the phase-checkpoint FAILED→recovery marker (dispatch.py
+# _PHASE_RECOVERY_MARKER): routes a failed checkpoint through the failure analyst
+# + verdict router; cleared when the next terminal verdict resolves it. Transient.
+# amendment-staged.json is the spec-amendment staging marker (dispatch.py
+# _AMENDMENT_STAGED_MARKER): carries a staged ## Amendment until applied/cleared. Transient.
+# .amendment-guidance-*.md is the amendment retry-guidance injection (dispatch.py
+# _amendment_guidance_path / on-subagent-start.py): consumed-on-read and cleared,
+# mirroring .modified-guidance-*.md. Transient.
+# review-result.json is the post-loop code-review findings marker (on-subagent-stop.py):
+# carries review findings for the post-loop spine; transient per cycle.
+_TRANSIENT_MARKERS = (
+    # (gitignore_pattern, concrete_sample) — the sample lets the drift-gate test
+    # prove glob patterns actually match without a parallel drift-prone dict.
+    ("result.json", "result.json"),
+    (".result.tmp.*", ".result.tmp.abc123"),
+    ("new-track-progress.json", "new-track-progress.json"),
+    ("phase-checkpoint.json", "phase-checkpoint.json"),
+    ("skip-analysis.json", "skip-analysis.json"),
+    ("review-seen.json", "review-seen.json"),
+    ("parallel.json", "parallel.json"),
+    ("wave-agent.marker", "wave-agent.marker"),
+    (".wave-drain-processed", ".wave-drain-processed"),
+    (".dispatch-inflight-*.json", ".dispatch-inflight-1-1.json"),
+    (".dispatch.lock", ".dispatch.lock"),
+    (".tripwire-*.count", ".tripwire-2-3.count"),
+    (".modified-guidance-*.md", ".modified-guidance-1-1.md"),
+    # recovery / amendment / brief markers (added this pass — were drifting).
+    ("brief-progress.json", "brief-progress.json"),
+    ("failure-analysis.json", "failure-analysis.json"),
+    ("phase-recovery.json", "phase-recovery.json"),
+    ("amendment-staged.json", "amendment-staged.json"),
+    (".amendment-guidance-*.md", ".amendment-guidance-1-1.md"),
+    ("review-result.json", "review-result.json"),
+)
+_PATTERNS = tuple(pattern for pattern, _sample in _TRANSIENT_MARKERS)
+# Derived so the ignore body and the drift-gate test's source of truth cannot
+# diverge. Format pinned: header line + newline-joined patterns + trailing newline.
+_CONDUCTOR_GITIGNORE = (
+    "# Conductor runtime artifacts — transient, never commit.\n"
+    + "\n".join(_PATTERNS) + "\n"
+)
 
 
 def _ensure_conductor_gitignore(track_path):

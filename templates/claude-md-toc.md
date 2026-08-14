@@ -32,6 +32,7 @@ needed).
 | **Workflow**    | Workflow Index          | `./conductor/workflow/index.md`                            | **seeded** — create if missing.                                               |
 |                 | Code Patterns           | `./conductor/workflow/code-styleguides/<code-patterns>.md` | **on-demand** — create if missing.                                            |
 |                 | Code Style              | `./conductor/workflow/code-styleguides/<language>.md`      | **seeded** — create if missing.                                               |
+|                 | Dev Commands            | `./conductor/workflow/dev-commands/<language>.md`          | **seeded** — create if missing.                                               |
 |                 | Git Flow                | `./conductor/workflow/git-flow.md`                         | **on-demand** — create if missing.                                            |
 |                 | Testing                 | `./conductor/workflow/testing/strategy.md`                 | **seeded** — create if missing.                                               |
 | **Resources**   | Glossary                | `./conductor/resource/glossary.md`                         | **on-demand** — global; create if missing.                                    |

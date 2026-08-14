@@ -97,14 +97,13 @@ Copy the workflow templates into `conductor/workflow/` with Bash (`cp`/`sed`) ra
 1. **Core workflow files** (pure copies):
    ```bash
    mkdir -p conductor/workflow/testing
-   cp "${CLAUDE_PLUGIN_ROOT}/templates/"{template,task-workflow,phase-checkpoint,post-loop}.md conductor/workflow/
+   cp "${CLAUDE_PLUGIN_ROOT}/templates/"{task-workflow,phase-checkpoint,post-loop}.md conductor/workflow/
    ```
 
-2. **Inject dev commands:** concatenate the detected languages' dev-command files and insert them at the `<!-- DEV_COMMANDS:` anchor in `template.md` (pure Bash keeps the lang files out of context):
+2. **Dev commands:** copy the detected languages' dev-command files into `conductor/workflow/dev-commands/` — the path task-runner / build-runner / refactorer / apply-fixes / phase-checker read at runtime (pure Bash keeps the lang files out of context). No `general.md` (unlike styleguides) — detected languages only:
    ```bash
-   cat "${CLAUDE_PLUGIN_ROOT}/templates/dev-commands/"{<lang1>,<lang2>}.md > /tmp/.devcmds
-   sed -i '/<!-- DEV_COMMANDS:/r /tmp/.devcmds' conductor/workflow/template.md
-   rm -f /tmp/.devcmds
+   mkdir -p conductor/workflow/dev-commands
+   cp "${CLAUDE_PLUGIN_ROOT}/templates/dev-commands/"{<lang1>,<lang2>}.md conductor/workflow/dev-commands/
    ```
 
 3. **Testing strategy:** `AskUserQuestion` — **"How should I create the testing strategy?"** with options:
@@ -125,7 +124,7 @@ Copy the workflow templates into `conductor/workflow/` with Bash (`cp`/`sed`) ra
    ```
    The agent inspects the live project, asks the user questions interactively, writes `conductor/workflow/testing/strategy.md`, and self-verifies via `scripts/verify-strategy.py` (the deterministic invariant backstop for the generated doc). Parse the `---STRATEGY RESULT---` block; on `STATUS: FAILURE` → halt → announce.
 
-4. **Workflow index:** generate `conductor/workflow/index.md` listing the created files (per-project content — not a template copy). Include one line documenting the **task-type override hook**: a project MAY drop `conductor/workflow/task-type-profiles.json` here to add project-specific task-type tags or override a built-in tag's semantics — it merges over the plugin baseline (project wins conflicts; absent = plugin defaults). Do **not** auto-create the file — it is opt-in by presence; a project creates it only when it actually wants an override (auto-creating a full-baseline copy would shadow future plugin-shipped tags).
+4. **Workflow index:** generate `conductor/workflow/index.md` listing the created files (task-workflow, phase-checkpoint, post-loop, code-styleguides/, dev-commands/, testing/strategy.md — per-project content, not a template copy). Include one line documenting the **task-type override hook**: a project MAY drop `conductor/workflow/task-type-profiles.json` here to add project-specific task-type tags or override a built-in tag's semantics — it merges over the plugin baseline (project wins conflicts; absent = plugin defaults). Do **not** auto-create the file — it is opt-in by presence; a project creates it only when it actually wants an override (auto-creating a full-baseline copy would shadow future plugin-shipped tags).
 
 5. **Verify** every referenced file exists before continuing.
 

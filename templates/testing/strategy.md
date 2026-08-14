@@ -85,7 +85,7 @@ Rationale: tooling (`pytest`, `make`, CI) already looks in these places, and kee
 
 ## Cache & Artifact Management
 
-<!-- DYNAMIC: Injected from dev-commands/<lang>.md Environment section during setup. -->
+<!-- DYNAMIC: The bullets below are language-filtered at scaffold time (scaffold-strategy.py keeps rows whose `lang:` marker matches a detected language). -->
 
 Keep test artifacts out of the source tree:
 - Python: `PYTHONPYCACHEPREFIX` redirects `__pycache__/` to `/tmp/`. <!-- lang:python -->
