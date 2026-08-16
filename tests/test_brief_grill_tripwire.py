@@ -7,13 +7,18 @@ the floor; allow when the marker is finalized (committed:true) or absent;
 allow non-brief writes; the AskUserQuestion matcher increments the counter.
 Isolates CLAUDE_PLUGIN_DATA so sibling tests' counters don't interfere.
 """
+import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
+import time
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import TestCase, main
+
+from scripts.track_state import brief as br
 
 _REPO = Path(__file__).resolve().parent.parent
 _GUARD = _REPO / "scripts" / "on-brief-grill-tripwire.py"
@@ -233,6 +238,99 @@ class BriefCounterKeyFallbackTests(TestCase):
             _set_grill_complete(td, committed=False)
             # No conductor/tracks.md.
             self.assertIsNone(_probe(Path(d), "Write", str(td / "brief.md")))
+
+
+class BriefCounterLifecycleTests(TestCase):
+    """Counter hygiene: the reused-track_id grill bypass. Before the shared
+    ``lib/brief_counters`` module, counters never cleared (finalize didn't
+    know about them) and never reaped — a stale high count pre-satisfied a
+    later brief's grill floor. Pins: finalize clears; stale entries reaped on
+    bump; legacy plain-int entries treated as absent."""
+
+    def _counter_file(self, project):
+        return project / ".data" / "brief-grill-counters.json"
+
+    def test_stale_high_count_does_not_satisfy_floor(self):
+        """THE bypass regression: a stale (TTL-expired) high count for a reused
+        track_id must NOT satisfy the grill floor — the write stays denied."""
+        with tempfile.TemporaryDirectory() as d:
+            project = Path(d)
+            td = _track(project)
+            _set_marker(td, committed=False)
+            stale_ts = time.time() - 86400 - 1  # past BRIEF_COUNTER_TTL
+            self._counter_file(project).parent.mkdir(parents=True, exist_ok=True)
+            self._counter_file(project).write_text(json.dumps({
+                td.name: {"count": 99, "ts": stale_ts},
+            }))
+            self.assertEqual(_probe(project, "Write", str(td / "brief.md")), "deny")
+
+    def test_legacy_int_entry_treated_as_absent(self):
+        """A pre-schema plain-int entry has no ts — it reads as 0 (not a
+        satisfiable floor) and is reaped on the next write."""
+        with tempfile.TemporaryDirectory() as d:
+            project = Path(d)
+            td = _track(project)
+            _set_marker(td, committed=False)
+            self._counter_file(project).parent.mkdir(parents=True, exist_ok=True)
+            self._counter_file(project).write_text(json.dumps({td.name: 99}))
+            self.assertEqual(_probe(project, "Write", str(td / "brief.md")), "deny")
+
+    def test_fresh_high_count_still_satisfies_floor(self):
+        """Guard against over-tightening: a fresh (in-TTL) count at the floor
+        still satisfies the gate — the reap must not eat live counters."""
+        with tempfile.TemporaryDirectory() as d:
+            project = Path(d)
+            td = _track(project)
+            _set_marker(td, committed=False)
+            for _ in range(_MIN_FLOOR):
+                _probe(project, "AskUserQuestion", cwd=str(td))
+            self.assertIsNone(_probe(project, "Write", str(td / "brief.md")))
+
+    def test_finalize_clears_counter(self):
+        """brief-finalize clears the track's counter so a later brief for the
+        same track_id starts at a fresh grill budget (the primary hygiene —
+        the TTL reap is defense-in-depth for runs that never finalize)."""
+        with tempfile.TemporaryDirectory() as d:
+            project = Path(d)
+            td = _track(project)
+            _set_marker(td, committed=False)
+            for _ in range(_MIN_FLOOR):
+                _probe(project, "AskUserQuestion", cwd=str(td))
+            self.assertTrue(self._counter_file(project).exists())
+            # Finalize in-process, with the data dir pointed at the temp
+            # project (get_data_dir reads env at call time).
+            os.environ["CLAUDE_PLUGIN_DATA"] = str(project / ".data")
+            try:
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    br.cmd_brief_finalize(str(td))
+                result = json.loads(buf.getvalue())
+            finally:
+                os.environ.pop("CLAUDE_PLUGIN_DATA", None)
+            self.assertTrue(result["ok"])
+            data = json.loads(self._counter_file(project).read_text())
+            self.assertNotIn(td.name, data)
+
+    def test_bump_reaps_stale_entries(self):
+        """A bump rewrites the file without TTL-expired or legacy entries —
+        the sidecar can't grow unbounded or carry stale pre-satisfaction."""
+        with tempfile.TemporaryDirectory() as d:
+            project = Path(d)
+            stale = _track(project, "stale_20260721")
+            legacy = _track(project, "legacy_20260721")
+            self._counter_file(project).parent.mkdir(parents=True, exist_ok=True)
+            self._counter_file(project).write_text(json.dumps({
+                stale.name: {"count": 42, "ts": time.time() - 86400 - 1},
+                legacy.name: 7,
+            }))
+            # Bump from a THIRD track's cwd — the bump reaps stale/legacy
+            # entries and records only the bumper.
+            other = _track(project, "other_20260721")
+            _probe(project, "AskUserQuestion", cwd=str(other))
+            data = json.loads(self._counter_file(project).read_text())
+            self.assertNotIn(legacy.name, data)
+            self.assertNotIn(stale.name, data)
+            self.assertEqual(data[other.name]["count"], 1)
 
 
 if __name__ == "__main__":

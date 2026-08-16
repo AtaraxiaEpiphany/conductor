@@ -60,7 +60,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from hook_io import read_hook_input, write_hook_output  # noqa: E402
 from logging import init_logging, log_entry  # noqa: E402
-from env import get_data_dir  # noqa: E402
+from lib.brief_counters import bump_counter, read_counters, read_count  # noqa: E402
 
 # Lead for the deny reason — a brief-specific marker (NOT [Conductor Recovery],
 # which marks a hook-injected stop-recovery turn; this is a permission denial).
@@ -73,11 +73,9 @@ _BRIEF_GUARD = "[Conductor Brief Guard]"
 # isn't falsely blocked, but a 2-question shortcut is.
 MIN_GRILL_QUESTIONS = 6
 _BRIEF_MARKER = "brief-progress.json"
-_COUNTER_FILE = "brief-grill-counters.json"
-
-
-def _counter_path():
-    return get_data_dir() / _COUNTER_FILE
+# Counter sidecar vocabulary (file name, schema, TTL reap, finalize clear) is
+# single-homed in lib/brief_counters.py — shared with track_state.brief's
+# finalize so a stale high count can never pre-satisfy a later brief's floor.
 
 
 def _derive_track_id_from_cwd(cwd):
@@ -94,48 +92,6 @@ def _derive_track_id_from_cwd(cwd):
         if parent.name and parent.parent.name == "tracks":
             return parent.name
     return None
-
-
-def _read_counters():
-    path = _counter_path()
-    if not path.exists():
-        return {}
-    try:
-        raw = json.loads(path.read_text())
-        return raw if isinstance(raw, dict) else {}
-    except (ValueError, OSError):
-        return {}
-
-
-def _bump_counter(track_id):
-    """Increment the AskUserQuestion counter for a track. Best-effort, always
-    returns the new count (≥1) so the caller never blocks on a write glitch."""
-    if not track_id:
-        return 1
-    try:
-        data = _read_counters()
-        count = (data.get(track_id) or 0) + 1
-        data[track_id] = count
-        path = _counter_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(data, ensure_ascii=False))
-        return count
-    except Exception:
-        return 1
-
-
-def _clear_counter(track_id):
-    """Drop the counter once the brief is written (marker → committed/finalized)
-    so a later brief for the same track_id starts at a fresh grill budget."""
-    if not track_id:
-        return
-    try:
-        data = _read_counters()
-        if track_id in data:
-            del data[track_id]
-            _counter_path().write_text(json.dumps(data, ensure_ascii=False))
-    except Exception:
-        pass
 
 
 def _marker_committed_false(track_dir):
@@ -255,7 +211,7 @@ def main():
             if active_dir:
                 track_id = Path(active_dir).name
         if track_id:
-            count = _bump_counter(track_id)
+            count = bump_counter(track_id)
             log_entry(log_file, f"event=grill_question track={track_id} count={count}")
         write_hook_output()
         return
@@ -293,8 +249,8 @@ def main():
                   f"event=brief_write_allowed track={track_id} reason=grill_complete")
         write_hook_output()
         return
-    data = _read_counters()
-    count = (data.get(track_id) or 0)
+    data = read_counters()
+    count = read_count(data, track_id)
     if count >= MIN_GRILL_QUESTIONS:
         log_entry(log_file, f"event=brief_write_allowed track={track_id} count={count}")
         write_hook_output()

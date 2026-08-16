@@ -13,6 +13,7 @@ invariants: idempotent, tolerant reader, parents=True mkdir, always-CLI-invoked.
 import json
 from pathlib import Path
 
+from lib.brief_counters import clear_counter
 from .helpers import out, _find_registry
 
 _BRIEF_MARKER = "brief-progress.json"
@@ -95,11 +96,22 @@ def cmd_brief_finalize(track_dir):
     Idempotent — a missing marker is a no-op success. Verifies brief.md exists:
     finalizing without a brief would leave a track dir with no artifact and no
     marker, masking the failure. ``brief_present`` reports the check so the skill
-    can warn without the command hard-failing (finalize is the cleanup step)."""
+    can warn without the command hard-failing (finalize is the cleanup step).
+
+    Also clears the grill tripwire's per-track counter (shared vocabulary in
+    ``lib/brief_counters``) so a later brief for the same track_id starts at a
+    fresh grill budget — without this, a stale high count would pre-satisfy
+    the next run's grill floor (a silent grill bypass)."""
+    marker = _brief_read_marker(track_dir)
     path = _brief_marker_path(track_dir)
     removed = path.exists()
     if removed:
         path.unlink()
+    # Clear under BOTH keys the tripwire may have bumped (the marker's
+    # track_id and the track-dir name) — they are normally the same, but the
+    # counter key derives from cwd, so clear defensively.
+    for key in {marker.get("track_id"), Path(track_dir).name} if marker else {Path(track_dir).name}:
+        clear_counter(key)
     brief_present = (Path(track_dir) / "brief.md").exists()
     out(dict(ok=True, finalized=True, removed=removed,
              brief_present=brief_present, track_dir=str(track_dir)))
