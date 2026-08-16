@@ -71,8 +71,9 @@ def _wave_size() -> int:
     except (TypeError, ValueError):
         return DEFAULT_WAVE_SIZE
 
-WAVE_LEDGER_NAME = "parallel.json"      # sidecar under .conductor/
-WAVE_MARKER_NAME = "wave-agent.marker"  # per-worktree SubagentStop short-circuit
+# Filenames single-homed in lib.constants (imported so the quality gitignore
+# derives from the same home). Historical public names preserved.
+from lib.constants import RESULT_MARKER, WAVE_LEDGER_NAME, WAVE_MARKER_NAME  # noqa: E402
 
 # Member statuses within the ledger.
 MEMBER_IN_FLIGHT = "in_flight"
@@ -578,7 +579,7 @@ def finalize_wave_member(track_dir, p, t):
     wt_td = (member.get("worktree_track_dir")
              or _wt_track_dir(worktree, track_dir, repo_root))
 
-    r = _read_worktree_result(conductor_dir(wt_td) / "result.json")
+    r = _read_worktree_result(conductor_dir(wt_td) / RESULT_MARKER)
     status = (r.get("status", "") if r else "").upper()
     tip = _git_branch_tip(repo_root, branch)
     n_commits = _git_range_commit_count(repo_root, base, tip) if tip else 0
@@ -712,7 +713,7 @@ def cmd_wave_abort(track_dir, compact=True):
 # because finalize_wave_member re-loads + full-overwrites the ledger each call —
 # a field would be lost on concurrent re-entry and re-fire seam_review. Keyed on
 # (track_id, base_sha) so a new wave self-invalidates it. Gitignored (quality.py).
-WAVE_DRAIN_MARKER_NAME = ".wave-drain-processed"
+from lib.constants import WAVE_DRAIN_MARKER_NAME  # noqa: E402
 
 
 def _drain_marker_path(track_dir):
@@ -783,7 +784,7 @@ def _wave_member_unstarted(track_dir, ledger, member):
     repo_root = ledger.get("repo_root") or _git_rev_parse_toplevel(track_dir)
     wt_td = (member.get("worktree_track_dir")
              or _wt_track_dir(member["worktree"], track_dir, repo_root))
-    if (conductor_dir(wt_td) / "result.json").exists():
+    if (conductor_dir(wt_td) / RESULT_MARKER).exists():
         return False
     tip = _git_branch_tip(repo_root, member["branch"])
     if not tip:

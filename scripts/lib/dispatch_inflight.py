@@ -57,6 +57,8 @@ transient markers like this one are glob-ignored). See
 import json
 from pathlib import Path
 
+from .constants import DISPATCH_INFLIGHT_TMPL
+
 
 def marker_path(track_dir, phase, task, subtask=None):
     """Pure path to the inflight marker — deliberately no mkdir.
@@ -66,8 +68,8 @@ def marker_path(track_dir, phase, task, subtask=None):
     ``.exists() == False`` with no side effects.
     """
     sub = f"-{subtask}" if subtask is not None else ""
-    name = f".dispatch-inflight-{phase}-{task}{sub}.json"
-    return Path(track_dir) / ".conductor" / name
+    return Path(track_dir) / ".conductor" / DISPATCH_INFLIGHT_TMPL.format(
+        phase=phase, task=task, sub=sub)
 
 
 def read(track_dir, phase, task, subtask=None):

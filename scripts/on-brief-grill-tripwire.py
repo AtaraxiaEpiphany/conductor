@@ -61,6 +61,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from hook_io import read_hook_input, write_hook_output  # noqa: E402
 from logging import init_logging, log_entry  # noqa: E402
 from lib.brief_counters import bump_counter, read_counters, read_count  # noqa: E402
+from lib.constants import BRIEF_PROGRESS_MARKER as _BRIEF_MARKER  # noqa: E402
 
 # Lead for the deny reason — a brief-specific marker (NOT [Conductor Recovery],
 # which marks a hook-injected stop-recovery turn; this is a permission denial).
@@ -72,7 +73,6 @@ _BRIEF_GUARD = "[Conductor Brief Guard]"
 # below the node count so a grill that confirms two nodes in one turn (legit)
 # isn't falsely blocked, but a 2-question shortcut is.
 MIN_GRILL_QUESTIONS = 6
-_BRIEF_MARKER = "brief-progress.json"
 # Counter sidecar vocabulary (file name, schema, TTL reap, finalize clear) is
 # single-homed in lib/brief_counters.py — shared with track_state.brief's
 # finalize so a stale high count can never pre-satisfy a later brief's floor.

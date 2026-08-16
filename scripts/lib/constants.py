@@ -62,3 +62,37 @@ def is_build_artifact_path(path: str) -> bool:
     if any(seg in BUILD_ARTIFACT_NAMES for seg in parts):
         return True
     return parts[-1] in BUILD_ARTIFACT_EXACT
+
+
+# --- Transient runtime marker filenames (.conductor/ under a track) ---------
+# Single home for every transient marker FILENAME / path TEMPLATE so the
+# writer modules, the hooks that probe them, and quality.py's normative
+# gitignore tuple (``_TRANSIENT_MARKERS``) cannot drift: derive = import the
+# constant, never re-type it. Owner modules alias these under their historical
+# private names (e.g. dispatch's ``_PHASE_CP_MARKER``); quality builds its
+# gitignore patterns from the exact same constants.
+#
+# Concrete filenames:
+RESULT_MARKER = "result.json"                      # task result; deleted by dispatch-finalize
+NT_PROGRESS_MARKER = "new-track-progress.json"     # new-track resume marker (new_track.py)
+PHASE_CHECKPOINT_MARKER = "phase-checkpoint.json"  # phase-checkpoint handshake (dispatch.py)
+SKIP_ANALYSIS_MARKER = "skip-analysis.json"        # skip-analyze handshake (dispatch.py)
+REVIEW_RESULT_MARKER = "review-result.json"        # post-loop review findings (dispatch.py)
+REVIEW_SEEN_MARKER = "review-seen.json"            # self-review loop state (implement skill §3.6b prose)
+WAVE_LEDGER_NAME = "parallel.json"                 # wave sidecar ledger (wave.py)
+WAVE_MARKER_NAME = "wave-agent.marker"             # per-worktree SubagentStop short-circuit (wave.py)
+WAVE_DRAIN_MARKER_NAME = ".wave-drain-processed"   # wave-step drain marker (wave.py)
+DISPATCH_LOCK_NAME = ".dispatch.lock"              # flock target (lib/dispatch_lock.py)
+BRIEF_PROGRESS_MARKER = "brief-progress.json"      # brief resume marker (brief.py)
+FAILURE_ANALYSIS_MARKER = "failure-analysis.json"  # failure-analyst handshake (dispatch.py)
+PHASE_RECOVERY_MARKER = "phase-recovery.json"      # phase-checkpoint recovery (dispatch.py)
+AMENDMENT_STAGED_MARKER = "amendment-staged.json"  # spec-amendment staging (dispatch.py)
+
+# Path templates. ``{sub}`` interpolates to ``-N`` or ``""``; the other fields
+# are indices. quality.py derives each family's gitignore glob from the
+# template (every field → ``*``, adjacent stars collapsed), so renaming or
+# re-shaping a marker updates the gitignore automatically.
+DISPATCH_INFLIGHT_TMPL = ".dispatch-inflight-{phase}-{task}{sub}.json"
+TRIPWIRE_COUNT_TMPL = ".tripwire-{phase}-{task}{sub}.count"
+MODIFIED_GUIDANCE_TMPL = ".modified-guidance-{pi}-{ti}{sub}.md"
+AMENDMENT_GUIDANCE_TMPL = ".amendment-guidance-{pi}-{ti}{sub}.md"

@@ -38,6 +38,8 @@ import fcntl
 import os
 from pathlib import Path
 
+from .constants import DISPATCH_LOCK_NAME
+
 
 def _lock_path(track_dir):
     """Path to the per-track dispatch lock file.
@@ -47,7 +49,7 @@ def _lock_path(track_dir):
     ``track_state.quality._ensure_conductor_gitignore``). Transient lock state —
     never handed to the model or staged.
     """
-    return Path(track_dir) / ".conductor" / ".dispatch.lock"
+    return Path(track_dir) / ".conductor" / DISPATCH_LOCK_NAME
 
 
 @contextlib.contextmanager

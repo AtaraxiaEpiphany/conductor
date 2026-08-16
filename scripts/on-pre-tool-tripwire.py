@@ -49,6 +49,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent / "lib"))
 
+from lib.constants import TRIPWIRE_COUNT_TMPL  # single home (quality gitignore derives here)
+
 from lib.hook_io import read_hook_input, write_hook_output
 from lib.locked_task import resolve as resolve_locked_task
 
@@ -78,8 +80,8 @@ _DIRECTIVE = (
 def _count_file(track_dir: Path, phase, task, subtask) -> Path:
     """Scratch counter path under the track's .conductor/ (gitignored runtime)."""
     sub = f"-{subtask}" if subtask is not None else ""
-    name = f".tripwire-{phase}-{task}{sub}.count"
-    return Path(track_dir) / ".conductor" / name
+    return Path(track_dir) / ".conductor" / TRIPWIRE_COUNT_TMPL.format(
+        phase=phase, task=task, sub=sub)
 
 
 def _read_count(path: Path) -> int:

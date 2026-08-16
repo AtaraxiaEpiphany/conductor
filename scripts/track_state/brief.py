@@ -16,7 +16,7 @@ from pathlib import Path
 from lib.brief_counters import clear_counter
 from .helpers import out, _find_registry
 
-_BRIEF_MARKER = "brief-progress.json"
+from lib.constants import BRIEF_PROGRESS_MARKER as _BRIEF_MARKER  # single home (quality gitignore derives here)
 
 
 def _brief_marker_path(track_dir):

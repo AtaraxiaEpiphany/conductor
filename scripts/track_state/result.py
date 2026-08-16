@@ -5,6 +5,7 @@ from pathlib import Path
 
 from lib.atomic_io import atomic_write_json
 from .core import load
+from lib.constants import RESULT_MARKER  # single home (quality gitignore derives here)
 from .spec_integrity import _ac_integrity_gates, _TC_ID, _measured_tcs
 from .plan_parse import parse_plan
 from .workflow_shapes import resolve_shape, gates_for
@@ -312,7 +313,7 @@ def cmd_write_result(track_dir, args=None):
     ``args`` defaults to ``sys.argv[3:]`` but is injectable for tests.
     """
     cdir = conductor_dir(track_dir)
-    result_path = cdir / "result.json"
+    result_path = cdir / RESULT_MARKER
     if args is None:
         args = sys.argv[3:]
 
@@ -351,7 +352,7 @@ def cmd_process_result(track_dir):
     """Read .conductor/result.json, update state, sync plan, manage handoff.
     Writes git notes audit trail. Enforces F2/F3 quality gates.
     Deletes result file after processing."""
-    result_path = conductor_dir(track_dir) / "result.json"
+    result_path = conductor_dir(track_dir) / RESULT_MARKER
 
     if not result_path.exists():
         out(dict(error="No result file at .conductor/result.json"))

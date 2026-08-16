@@ -90,12 +90,15 @@ class SeenSetPersistenceTests(TestCase):
 
 class ReviewSeenGitignoreTests(TestCase):
     """review-seen.json is transient loop state under .conductor/ — it must be in
-    the conductor-gitignore template so it is never staged by a conductor commit
-    (alongside the other transient markers)."""
+    the conductor-gitignore tuple so it is never staged by a conductor commit
+    (alongside the other transient markers). Asserted against the DERIVED
+    _TRANSIENT_MARKERS (runtime truth), not the module source text — the
+    filename is single-homed in lib.constants now."""
 
     def test_review_seen_in_conductor_gitignore(self):
-        quality = (ROOT / "scripts" / "track_state" / "quality.py").read_text(encoding="utf-8")
-        self.assertIn("review-seen.json", quality)
+        from scripts.track_state.quality import _TRANSIENT_MARKERS
+        patterns = {pattern for pattern, _sample in _TRANSIENT_MARKERS}
+        self.assertIn("review-seen.json", patterns)
 
 
 if __name__ == "__main__":

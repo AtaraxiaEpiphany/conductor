@@ -23,6 +23,19 @@ from .sync import _do_sync_plan
 from lib import dispatch_inflight as _inflight
 from lib import dispatch_lock as _dispatch_lock
 from lib.git_utils import implementation_uncommitted_files
+# Marker filenames/templates single-homed in lib.constants (aliased to the
+# historical private names; quality.py's gitignore derives from the same home).
+from lib.constants import (
+    RESULT_MARKER,
+    PHASE_CHECKPOINT_MARKER as _PHASE_CP_MARKER,
+    SKIP_ANALYSIS_MARKER as _SKIP_ANALYSIS_MARKER,
+    FAILURE_ANALYSIS_MARKER as _FAILURE_ANALYSIS_MARKER,
+    PHASE_RECOVERY_MARKER as _PHASE_RECOVERY_MARKER,
+    AMENDMENT_STAGED_MARKER as _AMENDMENT_STAGED_MARKER,
+    REVIEW_RESULT_MARKER as _REVIEW_RESULT_MARKER,
+    MODIFIED_GUIDANCE_TMPL,
+    AMENDMENT_GUIDANCE_TMPL,
+)
 from .git_ops import (
     _git_commit, _git_commit_ensured, _git_head_sha, _write_git_note,
     _has_sibling_sha, _update_task_sha, _recover_git_notes,
@@ -828,7 +841,7 @@ def _clear_stale_result(track_dir):
     current task's result. Clearing here guarantees the next result.json is
     genuinely from this run. ``missing_ok=True`` makes it a no-op on a fresh task.
     """
-    (conductor_dir(track_dir) / "result.json").unlink(missing_ok=True)
+    (conductor_dir(track_dir) / RESULT_MARKER).unlink(missing_ok=True)
 
 
 def _dispatch_inflight_write(track_dir, pi, ti, si, start_sha, written_at_iso):
@@ -1317,7 +1330,7 @@ def finalize_dispatch(track_dir):
     route on its outcome in the same call. ``--override`` still works: the underlying
     ``_resolve_finalize_target`` reads ``sys.argv`` exactly as before.
     """
-    result_path = conductor_dir(track_dir) / "result.json"
+    result_path = conductor_dir(track_dir) / RESULT_MARKER
 
     resolved = _resolve_finalize_target(track_dir, result_path)
     if resolved is None:
@@ -1684,7 +1697,6 @@ def _json_marker_clear(path):
 # file per track — only one checkpoint is pending at a time (the first needing
 # one); the phase lives inside the JSON so a stale post-crash file self-clears.
 # --------------------------------------------------------------------------- #
-_PHASE_CP_MARKER = "phase-checkpoint.json"
 
 
 def _phase_cp_marker_path(track_dir):
@@ -1758,7 +1770,6 @@ def shape_allows(track_dir, agent, state=None):
 # the route judgment (skip / halt-for-human); the teleoperator only transcribes.
 # Fires only in continuous mode (interactive uses the `ask` failed-task blob).
 # --------------------------------------------------------------------------- #
-_SKIP_ANALYSIS_MARKER = "skip-analysis.json"
 
 
 def _skip_analysis_marker_path(track_dir):
@@ -1790,7 +1801,6 @@ def _skip_analysis_clear_marker(track_dir):
 # (``_step_route_failure_analysis``); the teleoperator only transcribes the
 # verdict. See agents/failure-analyst.md for the taxonomy.
 # --------------------------------------------------------------------------- #
-_FAILURE_ANALYSIS_MARKER = "failure-analysis.json"
 
 # Verdict enums (mirrors _SKIP_RECOMMENDATIONS). The category taxonomy is the
 # analyst's diagnostic classification; the recommendation is the action it asks
@@ -1847,7 +1857,6 @@ def _failure_analysis_clear_marker(track_dir):
 #                    marker so the spine re-dispatches the reactivated tasks
 #                    normally. The next FAILED (or PASSED) resolves it.
 # --------------------------------------------------------------------------- #
-_PHASE_RECOVERY_MARKER = "phase-recovery.json"
 
 
 def _phase_recovery_marker_path(track_dir):
@@ -1911,7 +1920,7 @@ def _phase_primary_task(state, pi):
 # concurrent sibling task's retry can't read another's guidance.
 def _modified_guidance_path(track_dir, pi, ti, si):
     sub = f"-{si}" if si is not None else ""
-    return Path(track_dir) / ".conductor" / f".modified-guidance-{pi}-{ti}{sub}.md"
+    return Path(track_dir) / ".conductor" / MODIFIED_GUIDANCE_TMPL.format(pi=pi, ti=ti, sub=sub)
 
 
 def _modified_guidance_write(track_dir, pi, ti, si, modification, root_cause=None):
@@ -1953,7 +1962,6 @@ def _modified_guidance_read(track_dir, pi, ti, si):
 #    learns the spec was amended and re-verifies against the new AC. Keyed by
 #    phase/task/subtask like modified-guidance.
 # --------------------------------------------------------------------------- #
-_AMENDMENT_STAGED_MARKER = "amendment-staged.json"
 
 
 def _amendment_staged_marker_path(track_dir):
@@ -1987,7 +1995,7 @@ _AMENDMENT_LEAD = (
 
 def _amendment_guidance_path(track_dir, pi, ti, si):
     sub = f"-{si}" if si is not None else ""
-    return Path(track_dir) / ".conductor" / f".amendment-guidance-{pi}-{ti}{sub}.md"
+    return Path(track_dir) / ".conductor" / AMENDMENT_GUIDANCE_TMPL.format(pi=pi, ti=ti, sub=sub)
 
 
 def _amendment_guidance_write(track_dir, pi, ti, si, body):
@@ -2910,7 +2918,7 @@ def cmd_step(track_dir, compact=True):
     pi = state.get("current_phase_index", 0)
     ti = state.get("current_task_index", 0)
     si = state.get("current_subtask_index")
-    result_path = conductor_dir(track_dir) / "result.json"
+    result_path = conductor_dir(track_dir) / RESULT_MARKER
     if pi >= 1 and ti >= 1:
         try:
             tgt = target(state, pi, ti, si)
@@ -3676,7 +3684,7 @@ def _post_loop_counts(state):
 
 def _post_loop_read_findings(track_dir):
     """Best-effort read of ``review-result.json`` findings (defensive)."""
-    path = conductor_dir(track_dir) / "review-result.json"
+    path = conductor_dir(track_dir) / _REVIEW_RESULT_MARKER
     if not path.exists():
         return []
     try:

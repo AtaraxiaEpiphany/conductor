@@ -22,6 +22,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent / "lib"))
 
 from lib.hook_io import read_hook_input, write_simple_output
+from lib.constants import TRIPWIRE_COUNT_TMPL  # single home (on-pre-tool-tripwire + gitignore derive here)
 from lib.locked_task import resolve as resolve_locked_task
 from lib import dispatch_lifecycle as lifecycle
 
@@ -527,7 +528,8 @@ def _reset_tripwire_counter(cwd, agent_type):
             return
         track_dir, phase, task, subtask = locked
         sub = f"-{subtask}" if subtask is not None else ""
-        path = Path(track_dir) / ".conductor" / f".tripwire-{phase}-{task}{sub}.count"
+        path = Path(track_dir) / ".conductor" / TRIPWIRE_COUNT_TMPL.format(
+            phase=phase, task=task, sub=sub)
         if path.exists():
             path.unlink()
     except Exception:

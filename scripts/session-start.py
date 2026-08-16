@@ -21,14 +21,31 @@ from lib.frontmatter import check_corpus_frontmatter
 from lib.atomic_io import atomic_write_text
 from lib.logging import init_logging, log_entry
 
+# The compact reminder's volatile lines are DERIVED, never re-typed: the Task
+# State legend renders from track_state.constants.MARKER_MAP (the single source
+# for status↔checkbox markers) and the commit line's type list renders from
+# lib.constants.VALID_COMMIT_TYPES (V10's single source — same rendering as the
+# pre-command-check deny message). F1-F6/V1-V11 stay static (names, not values).
+sys.path.insert(0, str(Path(__file__).parent))
+from track_state.constants import MARKER_MAP, SHA_MARKERS  # noqa: E402
+from lib.constants import VALID_COMMIT_TYPES  # noqa: E402
 
-COMPACT_CONTENT = """## Conductor Core (compact)
+
+def _task_state_line() -> str:
+    parts = [
+        f"[{marker}] {status}{' [sha]' if marker in SHA_MARKERS else ''}"
+        for status, marker in MARKER_MAP.items()
+    ]
+    return "Task State: | " + " | ".join(parts) + " |"
+
+
+COMPACT_CONTENT = f"""## Conductor Core (compact)
 
 Post-compaction step 1: run `track-state recover <td>`, switch on status; never rely on memory.
 
-Task State: | [ ] pending | [~] in_progress | [x] completed [sha] | [!] failed [sha] | [>] skipped [sha] | [d] deferred [sha] | [#] blocked [sha] | [-] cancelled [sha] |
+{_task_state_line()}
 
-Commit: <type>(<scope>): <description>
+Commit: <{VALID_COMMIT_TYPES.strip("()")}>(<scope>): <description>
 
 Firewall: F1(state lock) F2(TDD) F3(coverage) F4(SHA) F5(checkpoint) F6(context guard)
 Anti-patterns: V1-V11. Violation -> STOP -> WORKFLOW VIOLATION: <code> -> revert."""

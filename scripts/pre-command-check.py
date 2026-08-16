@@ -21,6 +21,7 @@ from lib.hook_io import (
     get_tool_name
 )
 from lib.json_utils import load_json_safe
+from lib.constants import VALID_COMMIT_TYPES
 from lib.validation import (
     validate_commit_message, _extract_commit_message, commit_arg_shell_broken_reason,
 )
@@ -744,7 +745,7 @@ def main():
             additional_context = (
                 f'[Conductor] V10 Violation: Commit message does not follow conventional format. '
                 f'Expected: type(scope): description. '
-                f'Types: feat|fix|docs|style|refactor|test|chore. '
+                f'Types: {VALID_COMMIT_TYPES.strip("()")}. '
                 f'Suggested: {suggested_fix}'
             )
             permission_reason = (

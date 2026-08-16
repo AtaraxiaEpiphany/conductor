@@ -3,6 +3,7 @@ import json
 import os
 import re
 import shutil
+import string
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,6 +16,17 @@ from .handoff import _ensure_handoff_index
 from .validate import _parse_plan_structure
 from .plan_parse import parse_plan, to_plan_structure
 from .task_profiles import derive_task_type
+# Marker filenames/templates single-homed in lib.constants — the gitignore
+# tuple below derives from the exact constants the writer modules use.
+from lib.constants import (
+    RESULT_MARKER, NT_PROGRESS_MARKER, PHASE_CHECKPOINT_MARKER,
+    SKIP_ANALYSIS_MARKER, REVIEW_SEEN_MARKER, REVIEW_RESULT_MARKER,
+    WAVE_LEDGER_NAME, WAVE_MARKER_NAME, WAVE_DRAIN_MARKER_NAME,
+    DISPATCH_LOCK_NAME, BRIEF_PROGRESS_MARKER, FAILURE_ANALYSIS_MARKER,
+    PHASE_RECOVERY_MARKER, AMENDMENT_STAGED_MARKER,
+    DISPATCH_INFLIGHT_TMPL, TRIPWIRE_COUNT_TMPL,
+    MODIFIED_GUIDANCE_TMPL, AMENDMENT_GUIDANCE_TMPL,
+)
 
 
 def _checklist_status(track_dir):
@@ -84,6 +96,12 @@ def _validate_plan_structure(plan):
 # to _CONDUCTOR_GITIGNORE is caught. Durably-committed sidecars (post-loop.json,
 # track-findings.md, track-directives.md) are deliberately NOT in the tuple.
 #
+# Every FILENAME below is imported from lib.constants (the single home shared
+# with the writer modules and hooks — see the marker section there); the glob
+# families are derived from their path templates via _globify, and each sample
+# is rendered from the same template, so a rename or reshape can never leave
+# the gitignore behind.
+#
 # result.json is written by task-executor/explorer and deleted by dispatch-finalize
 # each cycle; tracking it only churns git history (committed then re-deleted).
 # new-track-progress.json is the new-track resume marker (skills/new-track/SKILL.md
@@ -130,29 +148,52 @@ def _validate_plan_structure(plan):
 # mirroring .modified-guidance-*.md. Transient.
 # review-result.json is the post-loop code-review findings marker (on-subagent-stop.py):
 # carries review findings for the post-loop spine; transient per cycle.
+_RESULT_TMP_GLOB = ".result.tmp.*"  # explorer scratch files; globbed below in cleanup
+
+
+def _globify(tmpl: str) -> str:
+    """Render a marker path template as its gitignore glob (every field → *)).
+
+    ``.modified-guidance-{pi}-{ti}{sub}.md`` → ``.modified-guidance-*-*.md``
+    (adjacent stars collapsed so ``{ti}{sub}`` doesn't emit ``**``). The glob
+    and the writer's filename can't drift — both come from the one template.
+    """
+    parts = []
+    for literal, field, _spec, _conv in string.Formatter().parse(tmpl):
+        parts.append(literal)
+        if field:
+            parts.append("*")
+    return re.sub(r"\*{2,}", "*", "".join(parts))
+
+
+# (gitignore_pattern, concrete_sample) — the sample lets the drift-gate test
+# prove glob patterns actually match without a parallel drift-prone dict.
+# Filenames: lib.constants (single home). Samples: rendered from the same
+# templates as the globs.
 _TRANSIENT_MARKERS = (
-    # (gitignore_pattern, concrete_sample) — the sample lets the drift-gate test
-    # prove glob patterns actually match without a parallel drift-prone dict.
-    ("result.json", "result.json"),
-    (".result.tmp.*", ".result.tmp.abc123"),
-    ("new-track-progress.json", "new-track-progress.json"),
-    ("phase-checkpoint.json", "phase-checkpoint.json"),
-    ("skip-analysis.json", "skip-analysis.json"),
-    ("review-seen.json", "review-seen.json"),
-    ("parallel.json", "parallel.json"),
-    ("wave-agent.marker", "wave-agent.marker"),
-    (".wave-drain-processed", ".wave-drain-processed"),
-    (".dispatch-inflight-*.json", ".dispatch-inflight-1-1.json"),
-    (".dispatch.lock", ".dispatch.lock"),
-    (".tripwire-*.count", ".tripwire-2-3.count"),
-    (".modified-guidance-*.md", ".modified-guidance-1-1.md"),
-    # recovery / amendment / brief markers (added this pass — were drifting).
-    ("brief-progress.json", "brief-progress.json"),
-    ("failure-analysis.json", "failure-analysis.json"),
-    ("phase-recovery.json", "phase-recovery.json"),
-    ("amendment-staged.json", "amendment-staged.json"),
-    (".amendment-guidance-*.md", ".amendment-guidance-1-1.md"),
-    ("review-result.json", "review-result.json"),
+    (RESULT_MARKER, RESULT_MARKER),
+    (_RESULT_TMP_GLOB, ".result.tmp.abc123"),  # explorer-written scratch; quality-owned glob
+    (NT_PROGRESS_MARKER, NT_PROGRESS_MARKER),
+    (PHASE_CHECKPOINT_MARKER, PHASE_CHECKPOINT_MARKER),
+    (SKIP_ANALYSIS_MARKER, SKIP_ANALYSIS_MARKER),
+    (REVIEW_SEEN_MARKER, REVIEW_SEEN_MARKER),  # skill-prose-owned (implement §3.6b)
+    (WAVE_LEDGER_NAME, WAVE_LEDGER_NAME),
+    (WAVE_MARKER_NAME, WAVE_MARKER_NAME),
+    (WAVE_DRAIN_MARKER_NAME, WAVE_DRAIN_MARKER_NAME),
+    (_globify(DISPATCH_INFLIGHT_TMPL),
+     DISPATCH_INFLIGHT_TMPL.format(phase=1, task=1, sub="")),
+    (DISPATCH_LOCK_NAME, DISPATCH_LOCK_NAME),
+    (_globify(TRIPWIRE_COUNT_TMPL),
+     TRIPWIRE_COUNT_TMPL.format(phase=2, task=3, sub="")),
+    (_globify(MODIFIED_GUIDANCE_TMPL),
+     MODIFIED_GUIDANCE_TMPL.format(pi=1, ti=1, sub="")),
+    (BRIEF_PROGRESS_MARKER, BRIEF_PROGRESS_MARKER),
+    (FAILURE_ANALYSIS_MARKER, FAILURE_ANALYSIS_MARKER),
+    (PHASE_RECOVERY_MARKER, PHASE_RECOVERY_MARKER),
+    (AMENDMENT_STAGED_MARKER, AMENDMENT_STAGED_MARKER),
+    (_globify(AMENDMENT_GUIDANCE_TMPL),
+     AMENDMENT_GUIDANCE_TMPL.format(pi=1, ti=1, sub="")),
+    (REVIEW_RESULT_MARKER, REVIEW_RESULT_MARKER),
 )
 _PATTERNS = tuple(pattern for pattern, _sample in _TRANSIENT_MARKERS)
 # Derived so the ignore body and the drift-gate test's source of truth cannot
@@ -783,14 +824,14 @@ def cmd_gc(track_dir):
     fixes = []
 
     # Clean orphaned temp files from interrupted save() / write-result operations
-    for pattern in [".track-state.json.tmp*", ".result.tmp.*"]:
+    for pattern in [".track-state.json.tmp*", _RESULT_TMP_GLOB]:
         for tmp_file in track_path.glob(pattern):
             try:
                 tmp_file.unlink()
                 fixes.append(f"Removed orphaned temp file: {tmp_file.name}")
             except OSError:
                 pass
-    for tmp_file in cond_dir.glob(".result.tmp.*"):
+    for tmp_file in cond_dir.glob(_RESULT_TMP_GLOB):
         try:
             tmp_file.unlink()
             fixes.append(f"Removed orphaned temp file: {tmp_file.name}")

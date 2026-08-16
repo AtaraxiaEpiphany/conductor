@@ -25,7 +25,7 @@ from pathlib import Path
 from .constants import EXECUTION_MODES
 from .helpers import out, _find_registry
 
-_NT_MARKER = "new-track-progress.json"
+from lib.constants import NT_PROGRESS_MARKER as _NT_MARKER  # single home (quality gitignore derives here)
 
 # Ordered resume keys (skills/new-track/SKILL.md §0.5). The first key NOT in
 # steps_done is where an interrupted run resumes. state_created / registry_updated
