@@ -9,7 +9,7 @@ Conductor coordinates software construction by managing the full lifecycle of de
 - **Track-based project management** — Work is organized into tracks (feature / bugfix / chore / docs), each with spec, plan, state, and handoff files
 - **TDD enforcement** — Mandatory test-driven development with an 80 % coverage gate (server-side verification, not agent self-report)
 - **Registry-driven workflow** — The tag/shape vocabulary that drives routing, gating, and topology is *data*, resolved as **plugin baseline ⊕ project overlay** (one JSON row to add a task type or a workflow shape — zero plugin edits)
-- **Subagent orchestration** — A main orchestrator dispatches 23 specialized AI agents for isolated, focused work
+- **Subagent orchestration** — A main orchestrator dispatches 24 specialized AI agents for isolated, focused work
 - **State machine CLI** — `track-state` manages all state mutations atomically; `plan.md` stays in sync as the human-readable mirror
 - **Execution firewall** — Six mandatory pre-action checks (F1–F6) and eleven anti-patterns (V1–V11) prevent workflow violations
 - **Resumable recovery** — Handoff files, state recovery on resume, name-keyed plan reconciliation, and SubagentStop result-block recovery — an agent that crashes before emitting its result block earns a recovery turn instead of being silently lost
@@ -97,7 +97,7 @@ When a divergent run is undone with `git reset`, two name-keyed paths bring stat
 
 ```
 conductor-plugin/
-├── agents/                 23 specialised agent definitions (.md)
+├── agents/                 24 specialised agent definitions (.md)
 ├── bin/track-state         Shell wrapper for the state CLI
 ├── conductor/design/       Decision records (serial-execution, loop-heartbeat, rail-b step/wave …)
 ├── hooks/hooks.json        9 hook event types, 20 hook entries
@@ -110,7 +110,7 @@ conductor-plugin/
 │   ├── lib/                Shared library (env, dispatch_inflight, hook_io, logging, recovery, validation …)
 │   ├── track_state/        State machine CLI package (cli + cmd_* modules + *_profiles.py registries)
 │   └── *.py                Hook scripts (session start/end, subagent-start, dispatch-dedupe, tripwire …)
-├── skills/                 16 slash-command skills (implement, new-track, reconcile, re-spec, parallel, wiki …)
+├── skills/                 17 slash-command skills (implement, new-track, reconcile, re-spec, parallel, wiki …)
 ├── templates/
 │   ├── workflow/             The two registries: task-type / workflow-shape profiles (.json)
 │   ├── code-styleguides/     10 language style guides
@@ -131,6 +131,7 @@ conductor-plugin/
 | `project-analyzer` | sonnet | Brownfield project detection |
 | `phase-checker` | sonnet | Phase checkpoint synthesizer (verify loop) |
 | `ac-tracer` | sonnet | AC-evidence-trace phase verification (read-only) |
+| `build-runner` | haiku | L0 compile/build phase tier — resolves and runs the build once (read-only) |
 | `test-runner` | haiku | L1 verify-only phase tier — runs the suite once (read-only) |
 | `code-reviewer` | sonnet | Deep code review against spec/plan |
 | `refuter` | sonnet | Adversarial read-only verdict/finding verifier |

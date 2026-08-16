@@ -32,7 +32,7 @@ Wave loop: `DISPATCH-WAVE → FAN OUT → INTEGRATE (per member) → (drained) �
 
 ## 0.0 MODEL — when waves run vs serial
 
-`dispatch-wave` computes a **ready-set**: pending, flat (no subtasks), executor-routed (manual/explore-route tasks excluded — `route_for == executor`), AND **opt-in via a `<!-- deps: -->` comment** whose every declared dep is satisfied (completed/skipped/deferred). Capped at 4 members. Tasks with no deps comment stay on the serial spine — a wave ONLY ever contains tasks the plan author declared independent. Serial fallback (§3.0) may satisfy deps for the next wave.
+`dispatch-wave` computes a **ready-set**: pending, flat (no subtasks), executor-routed (manual/explore-route tasks excluded — `route_for == executor`), AND **opt-in via a `<!-- deps: -->` comment** whose every declared dep is satisfied (completed/skipped/deferred). Capped at the resolved wave size — `CONDUCTOR_WAVE_SIZE`, default 2 (`DEFAULT_WAVE_SIZE` in `scripts/track_state/wave.py`). Tasks with no deps comment stay on the serial spine — a wave ONLY ever contains tasks the plan author declared independent. Serial fallback (§3.0) may satisfy deps for the next wave.
 
 ---
 

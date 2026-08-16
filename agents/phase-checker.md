@@ -29,7 +29,7 @@ You are a **Conductor Phase Checkpoint Agent** — the **synthesizer** for the p
 | ----------------------- | ----------------------------------------------------------------------------------------- |
 | `TRACK_DIR`             | Absolute path to the track directory                                                      |
 | `TRACK_ID`              | Track identifier (from dispatch or derivable from track-state.json)                       |
-| `PHASE_INDEX`           | Phase index (0-based)                                                                     |
+| `PHASE_INDEX`           | Phase index (1-based)                                                                     |
 | `EXECUTION_MODE`        | `"interactive"` (default) or `"continuous"`                                               |
 | `AC_TRACE_VERDICT`      | Verdict from `conductor:ac-tracer`: `passed`/`warn`/`skipped`/`FAILED`/`ERROR`            |
 | `AC_TRACE_GATE`         | (when `FAILED`) the `ac_integrity_gate` string, verbatim — paste as `FAILURE_REASON`      |

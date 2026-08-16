@@ -30,7 +30,7 @@ Your single job: resolve the correct test command and run it **once** — then r
 | -------------- | ------------------------------------------------------------------- |
 | `TRACK_DIR`    | Absolute path to the track directory                                |
 | `TRACK_ID`     | Track identifier                                                    |
-| `PHASE_INDEX`  | Phase index (0-based) — for the report, not for any state mutation  |
+| `PHASE_INDEX`  | Phase index (1-based) — for the report, not for any state mutation  |
 
 ---
 
