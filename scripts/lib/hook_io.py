@@ -162,20 +162,6 @@ def write_simple_output(additional_context: Optional[str] = None) -> None:
     write_hook_output(additional_context=additional_context)
 
 
-def write_decision_block(reason: str) -> None:
-    """Write decision to block execution
-
-    Args:
-        reason: Reason for blocking
-    """
-    write_hook_output(decision="block", reason=reason)
-
-
-def write_decision_allow() -> None:
-    """Write decision to allow execution"""
-    write_hook_output()
-
-
 # Common field quick accessors
 def get_hook_event_name() -> Optional[str]:
     """Get hook_event_name from input
@@ -186,26 +172,6 @@ def get_hook_event_name() -> Optional[str]:
     return get_hook_field("hook_event_name", "")
 
 
-def get_session_id() -> Optional[str]:
-    """Get session_id"""
-    return get_hook_field("session_id")
-
-
-def get_cwd() -> Optional[str]:
-    """Get current working directory"""
-    return get_hook_field("cwd")
-
-
 def get_tool_name() -> Optional[str]:
     """Get tool name"""
     return get_hook_field("tool_name")
-
-
-def get_agent_id() -> Optional[str]:
-    """Get agent_id (subagent hooks)"""
-    return get_hook_field("agent_id")
-
-
-def get_agent_type() -> Optional[str]:
-    """Get agent_type (subagent hooks)"""
-    return get_hook_field("agent_type")

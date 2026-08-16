@@ -18,8 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent / "lib"))
 from lib.hook_io import (
     read_hook_input,
     write_hook_output,
-    get_tool_name,
-    get_cwd
+    get_tool_name
 )
 from lib.json_utils import load_json_safe
 from lib.validation import (

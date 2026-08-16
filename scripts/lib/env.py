@@ -212,69 +212,6 @@ def get_logs_dir() -> Path:
     return data_dir / "logs"
 
 
-def get_session_id() -> Optional[str]:
-    """Get current session ID
-
-    Returns:
-        Session ID or None
-    """
-    return os.environ.get("CLAUDE_SESSION_ID")
-
-
-def get_permission_mode() -> Optional[str]:
-    """Get current permission mode
-
-    Returns:
-        Permission mode or None
-    """
-    return os.environ.get("CLAUDE_PERMISSION_MODE")
-
-
-def get_cwd() -> Optional[str]:
-    """Get current working directory
-
-    Returns:
-        Working directory path or None
-    """
-    return os.environ.get("CLAUDE_CWD")
-
-
-def ensure_env_vars(required_vars: list[str]) -> None:
-    """Ensure required environment variables exist
-
-    Args:
-        required_vars: List of required environment variable names
-
-    Raises:
-        ValueError: When required environment variables are missing
-    """
-    missing_vars = []
-    for var in required_vars:
-        if not os.environ.get(var):
-            missing_vars.append(var)
-
-    if missing_vars:
-        raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
-
-
-def is_remote_env() -> bool:
-    """Check if running in remote environment
-
-    Returns:
-        True if running in remote environment
-    """
-    return os.environ.get("CLAUDE_CODE_REMOTE") == "true"
-
-
-def is_compact_mode() -> bool:
-    """Check if running in compact mode
-
-    Returns:
-        True if running in compact mode
-    """
-    return os.environ.get("CLAUDE_EFFORT") == "low"
-
-
 # Common path quick accessors
 def get_track_state_json(track_dir: Path) -> Path:
     """Get track-state.json file path

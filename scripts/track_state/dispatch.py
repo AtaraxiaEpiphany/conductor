@@ -1934,12 +1934,6 @@ def _modified_guidance_read(track_dir, pi, ti, si):
         return None
 
 
-def _modified_guidance_clear(track_dir, pi, ti, si):
-    path = _modified_guidance_path(track_dir, pi, ti, si)
-    if path.exists():
-        path.unlink()
-
-
 # --------------------------------------------------------------------------- #
 # Amendment handshake (A3 — replan-as-amendment). Two markers, both JSON-core
 # like the failure-analysis family above:
