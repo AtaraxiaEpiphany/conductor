@@ -48,6 +48,13 @@ from .brief import cmd_brief_init, cmd_brief_finalize, cmd_brief_resume, cmd_bri
 from .logs_read import cmd_log_path, cmd_subagent_log
 from .registry_studio import cmd_registry_json, cmd_registry_save
 from .shape_studio import cmd_shape_studio
+# Command-surface tables live in the leaf module ``.commands`` (single source
+# for the pre-command guard and README sync too); aliased to the historical
+# underscore names so callers/tests importing them from cli still work.
+from .commands import (
+    COMMAND_GROUPS as _COMMAND_GROUPS,
+    INDEX_COMMANDS as _INDEX_COMMANDS,
+)
 
 
 _BOOL_FLAGS = {"--full", "--fix", "--check", "--force", "--verify"}
@@ -470,37 +477,6 @@ COMMAND_HELP = {
                      "ALWAYS exits 0 — action:none|resume"),
 }
 
-_COMMAND_GROUPS = [
-    ("Lifecycle", ["init-from-plan", "start", "set-mode", "set-recovery-policy", "set-workflow-shape", "finalize", "archive"]),
-    ("Navigation", ["next", "dispatch-next", "recover", "indices"]),
-    ("State Mutations", ["lock", "complete", "fail", "skip", "defer", "block", "reset",
-                         "set-max-retries", "split"]),
-    ("Sync & Registry", ["sync-plan", "reconcile-plan", "sync-handoff",
-                         "registry-update", "registry-add", "registry-doc"]),
-    ("Handoff", ["get-handoff", "append-handoff", "harvest-candidates",
-                 "compile-track-findings"]),
-    ("Result Processing", ["write-result", "process-result"]),
-    ("Dispatch Composites", ["dispatch-prepare", "dispatch-finalize", "record-summary"]),
-    ("Rail B-min Spines", ["step", "post-loop-step", "post-loop-review",
-                           "phase-verdict", "phase-checkpoint-review",
-                           "skip-analyst-verdict", "skip-refute-review",
-                           "failure-analyst-verdict", "phase-failure-analyst-verdict",
-                           "amend-apply", "amend-clear",
-                           "review-attest"]),
-    ("Wave Parallelism", ["dispatch-wave", "wave-status", "wave-finalize", "wave-abort", "wave-step"]),
-    ("Naming", ["derive-name", "resolve-track", "check"]),
-    ("New-Track Resume", ["new-track-resume", "new-track-init", "new-track-step",
-                          "new-track-set-mode", "new-track-finalize"]),
-    ("Brief", ["brief-resume", "brief-init", "brief-finalize", "brief-grill-done"]),
-    ("Diagnostics", ["validate", "gc", "shas", "post-loop-status", "checklist-verify",
-                     "deferred-report", "phase-done", "add-checkpoint", "preflight",
-                     "quality-snapshot", "spec-integrity", "spec-anchors", "spec-delta",
-                     "task-context", "view", "status"]),
-    ("Workflow Studio", ["shape-studio", "registry-json", "registry-save"]),
-    ("Logs", ["log-path", "subagent-log"]),
-]
-
-
 def cmd_help(command=None):
     """Print usage help for all commands or a specific command."""
     if command and command in COMMAND_HELP:
@@ -569,9 +545,6 @@ def main():
         _NO_TRACK_DIR_COMMANDS | _TD_NO_RESOLUTION_COMMANDS
     ):
         track_dir = _resolve_track_dir_or_halt(track_dir, cmd)
-
-    _INDEX_COMMANDS = {"lock", "complete", "fail", "skip", "block", "defer",
-                       "set-max-retries", "split"}
 
     try:
         if cmd in _INDEX_COMMANDS:

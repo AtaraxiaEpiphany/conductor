@@ -85,32 +85,27 @@ def has_in_progress_task(state_file: Path) -> bool:
     return False
 
 
-_SANCTIONED_TS_SUBCOMMANDS = {
-    # Every subcommand in cli.py _COMMAND_GROUPS plus the hidden "setup" alias
-    # and "help". A sanctioned subcommand bypasses the broad rm/mv/delete/move
-    # verb scan (Layer A below): the track-state CLI never deletes/moves track
-    # files, and the one catastrophic op (mutating track-state.json itself) is
-    # already caught by is_direct_track_state_modification(). Keep in sync with
-    # _COMMAND_GROUPS — the test suite asserts this set covers it.
-    "add-checkpoint", "amend-apply", "amend-clear", "append-handoff", "archive", "block", "check",
-    "checklist-verify", "complete", "compile-track-findings", "defer", "deferred-report", "derive-name",
-    "dispatch-finalize", "dispatch-next", "dispatch-prepare", "dispatch-wave",
-    "fail", "failure-analyst-verdict", "finalize", "gc", "get-handoff", "harvest-candidates", "help",
-    "indices", "init-from-plan", "lock", "new-track-finalize", "new-track-init",
-    "new-track-resume", "new-track-set-mode", "new-track-step", "next",
-    "phase-checkpoint-review", "phase-done", "phase-failure-analyst-verdict", "phase-verdict",
-    "post-loop-review", "post-loop-status",
-    "post-loop-step", "preflight", "process-result", "quality-snapshot",
-    "record-summary", "recover", "reconcile-plan", "registry-add", "registry-doc", "registry-json",
-    "registry-save", "registry-update", "reset",
-    "resolve-track", "review-attest", "set-max-retries", "set-mode", "set-recovery-policy", "set-workflow-shape", "setup", "shas",
-    "shape-studio", "skip", "status",
-    "skip-analyst-verdict", "skip-refute-review", "spec-anchors", "spec-delta",
-    "spec-integrity", "subagent-log", "log-path", "view",
-    "brief-init", "brief-finalize", "brief-grill-done", "brief-resume",
-    "split", "start", "step", "sync-handoff", "sync-plan", "task-context", "validate", "wave-abort",
-    "wave-finalize", "wave-status", "wave-step", "write-result",
-}
+def _load_sanctioned_subcommands() -> frozenset:
+    """File-load ``track_state/commands.py`` and derive the sanctioned set.
+
+    Imported by file path rather than ``from track_state.commands import ...``
+    because this is the hottest hook (every Bash PreToolUse) and importing the
+    ``track_state`` package would drag its ``__init__`` chain — the whole
+    dispatch/wave/misc import graph, ~80ms — onto every call. commands.py is a
+    stdlib-only leaf by contract, so a direct file-load is safe and ~0.2ms.
+
+    Derivation (groups + hidden ``setup`` alias + ``help``) replaces the old
+    ~90-entry hand copy, which historically missed subcommands.
+    """
+    import importlib.util
+    path = Path(__file__).parent / "track_state" / "commands.py"
+    spec = importlib.util.spec_from_file_location("track_state_commands_leaf", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.SANCTIONED_SUBCOMMANDS
+
+
+_SANCTIONED_TS_SUBCOMMANDS = _load_sanctioned_subcommands()
 
 
 def _track_state_subcommand(command: str):
