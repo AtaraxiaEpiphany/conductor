@@ -10,13 +10,13 @@ finalize (no multi-step state machine like new-track's ``steps_done``). The skil
 never hand-edits the JSON; it calls these commands. Mirrors new_track.py's
 invariants: idempotent, tolerant reader, parents=True mkdir, always-CLI-invoked.
 """
-import json
 from pathlib import Path
 
 from lib.brief_counters import clear_counter
 from .helpers import out, _find_registry
 
-from lib.constants import BRIEF_PROGRESS_MARKER as _BRIEF_MARKER  # single home (quality gitignore derives here)
+from lib.constants import BRIEF_PROGRESS_MARKER as _BRIEF_MARKER
+from lib.markers import json_marker_read, json_marker_write  # single home (quality gitignore derives here)
 
 
 def _brief_marker_path(track_dir):
@@ -26,25 +26,14 @@ def _brief_marker_path(track_dir):
 
 
 def _brief_read_marker(track_dir):
-    """Tolerant reader: survives a missing or corrupt file by returning None."""
-    path = _brief_marker_path(track_dir)
-    if not path.exists():
-        return None
-    try:
-        data = json.loads(path.read_text())
-        if isinstance(data, dict):
-            return data
-    except (ValueError, OSError):
-        pass
-    return None
+    """Tolerant reader (lib.markers): None on missing/corrupt file."""
+    return json_marker_read(_brief_marker_path(track_dir))
 
 
 def _brief_write_marker(track_dir, data):
-    """Write the whole marker dict, creating the track dir + .conductor/ if
-    needed (the track dir may not yet exist at init time)."""
-    cdir = Path(track_dir) / ".conductor"
-    cdir.mkdir(parents=True, exist_ok=True)
-    _brief_marker_path(track_dir).write_text(json.dumps(data, ensure_ascii=False))
+    """Write the whole marker dict (lib.markers), creating the track dir +
+    .conductor/ if needed (may not yet exist at init time)."""
+    json_marker_write(_brief_marker_path(track_dir), data)
 
 
 def cmd_brief_init(track_dir, track_id):

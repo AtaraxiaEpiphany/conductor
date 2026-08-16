@@ -19,13 +19,13 @@ tolerant reader — the same invariants as the post-loop sidecar, without the
 Lifecycle: ``init`` → ``step spec_planned`` → ``step reviewed`` → ``set-mode``
 → ``step state_created`` → ``step registry_updated`` → ``finalize`` (deletes).
 """
-import json
 from pathlib import Path
 
 from .constants import EXECUTION_MODES
 from .helpers import out, _find_registry
 
-from lib.constants import NT_PROGRESS_MARKER as _NT_MARKER  # single home (quality gitignore derives here)
+from lib.constants import NT_PROGRESS_MARKER as _NT_MARKER
+from lib.markers import json_marker_read, json_marker_write  # single home (quality gitignore derives here)
 
 # Ordered resume keys (skills/new-track/SKILL.md §0.5). The first key NOT in
 # steps_done is where an interrupted run resumes. state_created / registry_updated
@@ -46,27 +46,16 @@ def _nt_marker_path(track_dir):
 
 
 def _nt_read_marker(track_dir):
-    """Tolerant reader mirroring ``_post_loop_read_sidecar``: survives a missing
-    or corrupt file by returning ``None``, so callers branch without existence
-    checks and a half-written file never crashes the resume glob."""
-    path = _nt_marker_path(track_dir)
-    if not path.exists():
-        return None
-    try:
-        data = json.loads(path.read_text())
-        if isinstance(data, dict):
-            return data
-    except (ValueError, OSError):
-        pass
-    return None
+    """Tolerant reader (lib.markers): survives a missing or corrupt file by
+    returning ``None``, so callers branch without existence checks and a
+    half-written file never crashes the resume glob."""
+    return json_marker_read(_nt_marker_path(track_dir))
 
 
 def _nt_write_marker(track_dir, data):
-    """Write the whole marker dict. ``parents=True`` ensures the track dir AND
-    its ``.conductor/`` exist (the track dir may not yet at §2.1 init time)."""
-    cdir = Path(track_dir) / ".conductor"
-    cdir.mkdir(parents=True, exist_ok=True)
-    _nt_marker_path(track_dir).write_text(json.dumps(data, ensure_ascii=False))
+    """Write the whole marker dict (lib.markers): ``parents=True`` ensures the
+    track dir AND its ``.conductor/`` exist (may not yet at §2.1 init time)."""
+    json_marker_write(_nt_marker_path(track_dir), data)
 
 
 def cmd_new_track_init(track_dir, track_id, description, type_):

@@ -62,6 +62,7 @@ from hook_io import read_hook_input, write_hook_output  # noqa: E402
 from logging import init_logging, log_entry  # noqa: E402
 from lib.brief_counters import bump_counter, read_counters, read_count  # noqa: E402
 from lib.constants import BRIEF_PROGRESS_MARKER as _BRIEF_MARKER  # noqa: E402
+from lib.markers import json_marker_read  # noqa: E402
 
 # Lead for the deny reason — a brief-specific marker (NOT [Conductor Recovery],
 # which marks a hook-injected stop-recovery turn; this is a permission denial).
@@ -109,15 +110,8 @@ def _marker_committed_false(track_dir):
 
 
 def _read_marker(track_dir):
-    """Tolerant marker reader: returns the marker dict or None on missing/corrupt."""
-    marker = Path(track_dir) / ".conductor" / _BRIEF_MARKER
-    if not marker.exists():
-        return None
-    try:
-        data = json.loads(marker.read_text())
-        return data if isinstance(data, dict) else None
-    except (ValueError, OSError):
-        return None
+    """Tolerant marker reader (lib.markers): the marker dict or None."""
+    return json_marker_read(Path(track_dir) / ".conductor" / _BRIEF_MARKER)
 
 
 def _marker_grill_complete(track_dir):

@@ -1654,33 +1654,13 @@ def _step_assemble_verifier_prompt(track_dir, state, phase, agent):
 # family keeps its named helpers (call sites + tests) while the bodies live once.
 # Mirrors ``new_track.py``'s tolerant read/write helpers and lifecycle.
 # --------------------------------------------------------------------------- #
-def _json_marker_read(path):
-    """Tolerant reader: the marker dict, or ``None`` on missing/corrupt.
-
-    ``None`` always means "treat as absent" so the routing branches on the marker
-    without existence checks and a half-written file never crashes the spine.
-    """
-    if not path.exists():
-        return None
-    try:
-        data = json.loads(path.read_text())
-        if isinstance(data, dict):
-            return data
-    except (ValueError, OSError):
-        pass
-    return None
-
-
-def _json_marker_write(path, data):
-    """Write the whole marker dict; ``parents=True`` ensures ``.conductor/`` exists."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False))
-
-
-def _json_marker_clear(path):
-    """Delete the marker; idempotent (a missing file is a no-op success)."""
-    if path.exists():
-        path.unlink()
+# Bodies single-homed in lib.markers (aliased to the historical private names —
+# call sites and tests keep working).
+from lib.markers import (
+    json_marker_read as _json_marker_read,
+    json_marker_write as _json_marker_write,
+    json_marker_clear as _json_marker_clear,
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -3585,15 +3565,9 @@ def _post_loop_read_sidecar(track_dir):
                     advisory_diff_shown=None, lint_status=None, lint_done=False,
                     digest_shown=None,
                     review_verdict=None, review_critical=None, review_high=None)
-    if not path.exists():
-        return defaults
-    try:
-        data = json.loads(path.read_text())
-        if isinstance(data, dict):
-            for k, v in data.items():
-                defaults[k] = v
-    except (ValueError, OSError):
-        pass
+    data = _json_marker_read(path)
+    if data:
+        defaults.update(data)
     return defaults
 
 

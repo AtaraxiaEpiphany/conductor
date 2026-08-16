@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .core import load, save
+from lib.markers import json_marker_read  # tolerant marker read, single-homed
 from .helpers import (
     out, now_iso, target, extract_tags, _reset_task,
     _any_phase_needs_checkpoint, conductor_dir, _tag_exempt_from_coverage,
@@ -1327,13 +1328,9 @@ def cmd_post_loop_status(track_dir):
     # Written by the orchestrator immediately after code-reviewer returns.
     reviewed_range = None
     pl_path = Path(track_dir) / ".conductor" / "post-loop.json"
-    if pl_path.exists():
-        try:
-            data = json.loads(pl_path.read_text())
-            if isinstance(data, dict):
-                reviewed_range = data.get("reviewed_range")
-        except (ValueError, OSError):
-            reviewed_range = None
+    data = json_marker_read(pl_path)
+    if data:
+        reviewed_range = data.get("reviewed_range")
 
     review_done = bool(reviewed_range and current_range
                        and reviewed_range == current_range)
