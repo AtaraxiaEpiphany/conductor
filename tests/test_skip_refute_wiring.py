@@ -11,10 +11,19 @@ the refuter agent defaults to SUSTAINED-when-uncertain globally, so the per-
 domain conservative direction is selected by CLAIM framing. For a skip we want
 block-when-uncertain (skipping is the riskier action), so the CLAIM is framed as
 "the skip is unsafe" and SUSTAINED => override to block. This is the OPPOSITE
-direction from the plan gate, which is called out in the skill body.
+direction from the plan gate (new-track §2.3b).
+
+Rail A paste-verbatim (design D3): the refuter prompt is now ASSEMBLED IN CODE
+(`_step_assemble_refuter_prompt`, emitted by `skip-analyst-verdict`'s
+`dispatch_refuter` envelope) — the skill pastes it verbatim and never re-derives
+the CLAIM. So the framing pins assert on the CODE builder, and the skill pins
+assert it points at the emitted prompt + agents/refuter.md (the framing's
+single home) instead of hand-writing the block.
 """
 from pathlib import Path
 from unittest import TestCase, main
+
+from scripts.track_state import dispatch
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -22,19 +31,31 @@ ROOT = Path(__file__).resolve().parent.parent
 class SkipRefuteWiringTests(TestCase):
     def setUp(self):
         self.skill = (ROOT / "skills" / "implement" / "SKILL.md").read_text(encoding="utf-8")
+        self.builder = dispatch._step_assemble_refuter_prompt.__doc__ or ""
 
     def test_skip_refute_section_present(self):
         self.assertIn("**Skip refute (continuous mode only).**", self.skill)
 
     def test_dispatches_refuter_domain_skip(self):
         self.assertIn("conductor:refuter", self.skill)
-        self.assertIn("DOMAIN=skip", self.skill)
+        # The prompt source: skip-analyst-verdict's emitted envelope, not a
+        # hand-written block in the skill.
+        self.assertIn("dispatch_refuter", self.skill)
+        self.assertNotIn("DOMAIN=skip", self.skill)
 
-    def test_claim_framed_as_skip_unsafe(self):
+    def test_code_builder_frames_claim_as_skip_unsafe(self):
         # Framed so SUSTAINED (default when uncertain) = block — the conservative
-        # direction for a consequential unattended skip.
-        self.assertIn("this skip is UNSAFE", self.skill)
-        self.assertIn("block-when-uncertain", self.skill)
+        # direction for a consequential unattended skip. The framing lives in
+        # the code builder now (single source), not the skill prose.
+        marker = {"phase": 1, "task": 2, "name": "t", "reasoning": "r"}
+        prompt = dispatch._step_assemble_refuter_prompt("/tmp/td", marker)
+        self.assertIn("DOMAIN=skip", prompt)
+        self.assertIn("this skip is UNSAFE", prompt)
+        self.assertIn("CONTEXT_PATHS=", prompt)
+
+    def test_builder_doc_states_sustained_direction(self):
+        self.assertIn("SUSTAINED-when-uncertain", self.builder)
+        self.assertIn("block-when-uncertain", self.builder)
 
     def test_sustained_overrides_to_block(self):
         self.assertIn("STATUS: SUSTAINED", self.skill)
@@ -56,12 +77,11 @@ class SkipRefuteWiringTests(TestCase):
         # the unattended continuous path.
         self.assertIn("continuous mode only", self.skill.lower())
 
-    def test_framing_cross_referenced_to_plan_gate(self):
-        # The skill must call out that the plan gate (new-track §2.3b) frames its
-        # CLAIM oppositely — this is the consistency contract between the two
-        # refuter callers, and the guard against someone "aligning" them.
-        self.assertIn("new-track", self.skill)
-        self.assertIn("opposite", self.skill.lower())
+    def test_framing_home_is_refuter_agent(self):
+        # The CLAIM-direction rationale is single-homed in agents/refuter.md
+        # (§1.0 "No decision field" — the three callers' opposite framings);
+        # the skill points there instead of restating it.
+        self.assertIn("agents/refuter.md", self.skill)
 
 
 if __name__ == "__main__":

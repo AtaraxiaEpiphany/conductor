@@ -194,7 +194,7 @@ CONTEXT_PATHS={track_dir}/spec.md {track_dir}/plan.md {USER_ANSWERS path or N/A}
 AC_EVIDENCE={the ac_evidence list from the §2.3 spec-integrity JSON — each AC's measured/claimed/missing TCs}
 ```
 
-> The CLAIM is framed as "the plan is sound" deliberately. The refuter defaults to `SUSTAINED` when it cannot pin a specific grounded defect, so `SUSTAINED` = proceed-when-uncertain and `REFUTED` = grounded evidence of unsoundness. A consequential plan gate must not hard-block the track on a hunch — only a cited, re-confirmable semantic defect justifies a regen. (The skip gate in `implement` §3.6 frames its CLAIM the opposite way, because skipping is the riskier action there.)
+> The CLAIM is framed as "the plan is sound" — the proceed-when-uncertain direction — because a consequential plan gate must not hard-block the track on a hunch. Why the direction is the CALLER's choice (and how the other domains frame theirs) is single-homed in `agents/refuter.md` §1.0 ("No decision field").
 
 Parse the `---REFUTATION RESULT---` block:
 

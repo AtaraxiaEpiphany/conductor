@@ -97,20 +97,9 @@ The `wave` array has one member per ready task, each carrying `worktree`, `branc
 
 If the envelope carries a non-empty `deferred` list, those are eligible members the wave cap (`CONDUCTOR_WAVE_SIZE`, default 2) pushed past this wave — announce each before fanning out: `⚠️ Wave cap reached; deferring <P{p}.T{t} …> to the next wave`. They stay `pending`; the next `dispatch-wave` picks them up. **The cap is never silent** (no-silent-caps).
 
-Per member, dispatch `conductor:task-executor` with the canonical minimal prompt **plus worktree pinning**:
+Per member, dispatch `conductor:task-executor` pasting the member's **pre-assembled `prompt` field verbatim** (built by `_wave_assemble_member_prompt` — the same builder the wave-step spine uses). It carries the worktree pinning (`cd "{worktree}"` first line + `WORKTREE_DIR`) and a worktree-scoped `TRACK_DIR`; `SUBTASK` is omitted (wave members are flat-only) — never re-type or extend the block by hand.
 
-```
-WORKTREE_DIR={worktree}
-TRACK_DIR={worktree_track_dir}
-PHASE={p}
-TASK={t}
-SUBTASK=null
-NAME={name}
-ATTEMPT=1
-MAX_RETRIES={m}
-```
-
-Lead the agent's first action with `cd "{WORKTREE_DIR}"` (Bash cwd persists), so every later `git`/edit lands in the worktree. `TRACK_DIR` points into the worktree, so `track-state write-result "{TRACK_DIR}" ...` writes the worktree's own `result.json` — what `wave-finalize` reads. The agent otherwise behaves identically to serial (TDD, coverage, commits on its branch). It does NOT call dispatch-finalize — wave integration is the orchestrator's job (§4.0).
+`TRACK_DIR` points into the worktree, so `track-state write-result "{TRACK_DIR}" ...` writes the worktree's own `result.json` — what `wave-finalize` reads. The agent otherwise behaves identically to serial (TDD, coverage, commits on its branch). It does NOT call dispatch-finalize — wave integration is the orchestrator's job (§4.0).
 
 After ALL members return → **§4.0** (integrate each, in any order).
 
@@ -198,7 +187,7 @@ If `phase_checkpoint_pending` was emitted by any `wave-finalize`, or after a wav
 track-state phase-done "<track_dir>" <phase>
 ```
 
-`complete=true` → run the phase-checkpoint fan-out+synthesize (`implement` §3.2: fan out `conductor:build-runner` + `conductor:ac-tracer` + `conductor:test-runner`, then dispatch `conductor:phase-checker` with their verdicts), `PHASE=<phase>`, then → **§3.1**. FAILED → HALT. `complete=false` → **§3.1**.
+`complete=true` → run the phase-checkpoint fan-out+synthesize (`implement` §3.2: fan the `verifier_wave` members' `prompt` fields verbatim, transcribe via `phase-verdict`, then dispatch `conductor:phase-checker` pasting its emitted `prompt`), then → **§3.1**. FAILED → HALT. `complete=false` (or `complete=true` without `checkpoint_due`) → **§3.1**.
 
 ---
 

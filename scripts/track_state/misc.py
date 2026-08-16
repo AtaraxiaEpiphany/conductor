@@ -1335,6 +1335,17 @@ def cmd_post_loop_status(track_dir):
     review_done = bool(reviewed_range and current_range
                        and reviewed_range == current_range)
 
+    # Rail A paste-verbatim (design D3): when the §7.0 review is owed, attach
+    # the deterministic prompt core (same builder the post-loop-step spine
+    # emits) so templates/post-loop.md §7.0 pastes it instead of re-building
+    # the first-commit-inclusive range in prose. Lazy import (misc→dispatch
+    # would cycle at module level).
+    review_prompt = None
+    if shas and not review_done:
+        from .dispatch import build_review_prompt
+        review_prompt = build_review_prompt(
+            str(track_dir), state.get("track_id", ""), current_range)
+
     status = state.get("status")
     finalized = (status == "completed"
                  and isinstance(state.get("quality_score"), (int, float)))
@@ -1345,7 +1356,7 @@ def cmd_post_loop_status(track_dir):
         finalized=finalized,
         doc_synced=docs_synced_for_track(track_dir),
         review=dict(done=review_done, range=current_range,
-                    reviewed_range=reviewed_range),
+                    reviewed_range=reviewed_range, prompt=review_prompt),
         shas_count=len(shas),
     ))
 
@@ -1433,7 +1444,23 @@ def cmd_phase_done(track_dir, p):
             total += 1
             if sub["status"] in terminal:
                 done += 1
-    out(dict(complete=done == total, terminal=done, total=total))
+    result = dict(complete=done == total, terminal=done, total=total)
+    if result["complete"]:
+        # Rail A paste-verbatim (design D3): when THIS phase's checkpoint is
+        # due, attach the same pre-assembled verifier fan-out `dispatch-next`
+        # and `step` emit (single source: _build_verifier_wave) so §3.7 → §3.2
+        # Step 1 pastes each member's `prompt` verbatim — the code-free
+        # narrowing (which verifiers fan) is resolved in code, not re-derived
+        # in prose. Lazy import: dispatch imports misc (cycle at module level).
+        from .dispatch import _build_verifier_wave, resolve_phase_gate
+        from .helpers import _phase_needs_checkpoint
+        cp = _phase_needs_checkpoint(track_dir, state, int(p))
+        if cp is not None:
+            gate_plan = resolve_phase_gate(track_dir, state, cp)
+            result["checkpoint_due"] = True
+            result["verifier_wave"] = _build_verifier_wave(
+                track_dir, state, cp, verifiers=gate_plan["verifiers"])
+    out(result)
 
 def cmd_registry_update(track_dir, tracks_md_path):
     """Update a track's entry in the Tracks Registry (tracks.md) based on track-state.json status.

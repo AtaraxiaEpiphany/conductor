@@ -177,12 +177,17 @@ class RefactorSeamTests(unittest.TestCase):
         self.assertIn("REVISION_RANGE", SKILL)
 
     def test_dispatch_range_binds_code_sha(self):
-        # REVISION_RANGE must bind {code_sha} (the agent's code commit), NOT {sha}
-        # (the conductor chore commit, whose diff is state files). Binding {sha}
-        # made [Refactor] a no-op (REFACTORED: NONE); {code_sha} is the task's
+        # REVISION_RANGE must bind code_sha (the agent's code commit), NOT sha
+        # (the conductor chore commit, whose diff is state files). Binding sha
+        # made [Refactor] a no-op (REFACTORED: NONE); code_sha is the task's
         # actual code — the same bound the refactor-scope commit gate enforces.
-        self.assertIn("REVISION_RANGE={code_sha}~1..{code_sha}", SKILL)
-        self.assertNotIn("REVISION_RANGE={sha}~1..{sha}", SKILL)
+        # Rail A paste-verbatim (design D3): the binding lives in the CODE
+        # builder (`_build_refactorer_prompt`, emitted on the finalize
+        # envelope's `refactor.prompt`); the skill pastes it verbatim.
+        from scripts.track_state import dispatch
+        prompt = dispatch._build_refactorer_prompt("/td", "abc1234")
+        self.assertIn("REVISION_RANGE=abc1234~1..abc1234", prompt)
+        self.assertIn("pasting that `prompt` field verbatim", SKILL)
 
     def test_non_blocking(self):
         # The task already succeeded; the refactor seam is non-blocking.
@@ -197,9 +202,10 @@ class RefactorSeamTests(unittest.TestCase):
         self.assertIn("STATUS: FAILURE", SKILL)
 
     def test_success_routing_3_6b_before_3_6c(self):
-        # §3.6 SUCCESS routes review before refactor: 3.6b → 3.6c → 3.7.
-        self.assertIn("Section 3.6b", SKILL)
-        self.assertIn("Section 3.6c", SKILL)
+        # §3.6 SUCCESS routes review before refactor: self_review (§3.6b) →
+        # refactor (§3.6c) → §3.7 — asserted on the ordered phrasing so a
+        # reorder can't pass by containing both tokens somewhere.
+        self.assertIn("`self_review` (§3.6b) → `refactor` (§3.6c)", SKILL)
 
 
 if __name__ == "__main__":

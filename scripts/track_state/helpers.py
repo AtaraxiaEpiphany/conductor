@@ -146,7 +146,15 @@ COMPACT_FIELDS = {
                           "phase_checkpoint_pending", "retry_count",
                           "phase", "task", "subtask", "summary",
                           "coverage_gate", "tdd_gate", "coverage_pct",
-                          "ac_integrity_gate", "ears_gate", "tc_consistency_gate"),
+                          "ac_integrity_gate", "ears_gate", "tc_consistency_gate",
+                          # Rail A paste-verbatim (design D3): failure arms carry
+                          # the analyst dispatch (next_action + agent + prompt);
+                          # the SUCCESS arm carries the §3.6b/§3.6c opt-in
+                          # envelopes (self_review / refactor, each with agent +
+                          # prompt). Without these keys here the compact envelope
+                          # would strip them — the skill would never see them.
+                          "next_action", "agent", "prompt",
+                          "self_review", "refactor"),
     # Rail B-min spine (skills/implement-step/SKILL.md). `step` collapses the
     # §2.0/§3.0 routing into one leaf action; the union of keys across its
     # action variants: dispatch (agent/prompt/attempt/is_resume), dispatch_batch

@@ -1,5 +1,6 @@
 """Task dispatch orchestration: find next, prepare, finalize."""
 import json
+import os
 import re
 import shlex
 import sys
@@ -19,6 +20,7 @@ from .mutations import (_do_lock, _do_complete, _do_fail, _do_fail_parent,
                         _do_defer, _do_skip, reactivate_for_modified_retry,
                         reactivate_phase_tasks)
 from .result import _advisory_gates
+from .task_profiles import refactor_for
 from .sync import _do_sync_plan
 from lib import dispatch_inflight as _inflight
 from lib import dispatch_lock as _dispatch_lock
@@ -1322,6 +1324,75 @@ def _finalize_task(track_dir, p, t, s, r, task_name, status):
     return dict(error=f"Unknown status: {status}"), False
 
 
+def _attach_rail_a_next(result, track_dir):
+    """Attach Rail A's next-dispatch envelope (agent + pre-assembled prompt).
+
+    Design D3 (paste-verbatim): the failure arms mirror
+    :func:`_step_route_after_finalize`'s routing — skip-analyst when retries are
+    exhausted (auto-routing tracks), failure-analyst on the penultimate failure
+    — and the SUCCESS arm resolves the §3.6b/§3.6c opt-ins, so
+    skills/implement/SKILL.md §3.6 pastes the emitted ``prompt`` verbatim
+    instead of hand-interpolating KEY=value blocks. Advisory: no state
+    mutation, no side effects (the analysts/reviewer/refactorer are read-only
+    or self-contained), and `step` (Rail B) ignores these keys — it routes with
+    its own emit. ``next_action: "dispatch_executor"`` (a plain retry) carries
+    no prompt by design: §3.1's dispatch-prepare owns the lock + the prompt.
+    """
+    if result.get("error") or result.get("status") == "error":
+        return result
+    state = load(track_dir)
+    if result.get("status") == "failure":
+        pi, ti = result.get("phase"), result.get("task")
+        si = result.get("subtask")
+        try:
+            tgt = target(state, int(pi), int(ti), int(si) if si is not None else None)
+            name = tgt.get("name", "?")
+            ceiling = task_max_retries(tgt)
+        except (IndexError, KeyError, TypeError, ValueError):
+            return result
+        rc = int(result.get("retry_count", 0) or 0)
+        if rc < ceiling:
+            if (rc == ceiling - 1 and ceiling >= 2
+                    and _auto_route_failure(state)):
+                result.update(
+                    next_action="dispatch_failure_analyst",
+                    agent="failure-analyst",
+                    prompt=_step_assemble_failure_analyst_prompt(
+                        track_dir, state, pi, ti, si, name))
+            else:
+                result["next_action"] = "dispatch_executor"  # §3.1 prepare+paste
+        elif _auto_route_failure(state):
+            result.update(
+                next_action="dispatch_skip_analyst",
+                agent="skip-analyst",
+                prompt=_step_assemble_skip_analyst_prompt(
+                    track_dir, state, pi, ti, si, name))
+        else:
+            result["next_action"] = "ask"  # §2.2 Retry/Skip/Block via recover
+        return result
+    if result.get("status") == "success" and result.get("committed"):
+        # §3.6b / §3.6c opt-ins — zero latency when off (no builder runs).
+        p, t_ = result.get("phase"), result.get("task")
+        try:
+            tgt = target(state, int(p), int(t_))
+        except (IndexError, KeyError, TypeError, ValueError):
+            return result
+        name = tgt.get("name", "?")
+        code_sha = result.get("code_sha") or result.get("sha") or ""
+        if "[Review]" in name or os.environ.get("CONDUCTOR_SELF_REVIEW") == "1":
+            result["self_review"] = dict(
+                agent="code-reviewer",
+                prompt=_build_self_review_prompt(track_dir, state, code_sha))
+        tags = _extract_tags_for_task(state, str(p), str(t_))
+        if (("[Refactor]" in name)
+                or os.environ.get("CONDUCTOR_TASK_REFACTOR") == "1"
+                or (tags and refactor_for(tags[0]))):
+            result["refactor"] = dict(
+                agent="refactorer",
+                prompt=_build_refactorer_prompt(track_dir, code_sha))
+    return result
+
+
 def finalize_dispatch(track_dir):
     """Compute-only half of ``dispatch-finalize`` — returns the result dict, no emit.
 
@@ -1357,7 +1428,7 @@ def finalize_dispatch(track_dir):
     if result.get("status") != "error":
         _dispatch_inflight_clear(track_dir, p, t, s)
 
-    return result
+    return _attach_rail_a_next(result, track_dir)
 
 
 def cmd_dispatch_finalize(track_dir, compact=True):
@@ -2084,6 +2155,47 @@ def _step_assemble_refuter_prompt(track_dir, marker):
         f"CLAIM={claim}",
         f"CONTEXT_PATHS={td}/plan.md {td}/track-state.json "
         f"{td}/.conductor/handoff/P{pi}T{ti}.md",
+    ])
+
+
+def _build_self_review_prompt(track_dir, state, code_sha):
+    """Pre-assemble the ``conductor:code-reviewer`` self-review prompt (§3.6b).
+
+    The review loop's FIRST dispatch (round 1); later rounds re-dispatch
+    task-executor with findings as remediation (§3.6b step 2), and the loop's
+    `seen` bookkeeping stays orchestrator-owned (prose). Emitted on the
+    dispatch-finalize SUCCESS envelope when the task opted in, so Rail A pastes
+    verbatim instead of hand-interpolating the revision range.
+    """
+    return "\n".join([
+        f"TRACK_DIR={track_dir}",
+        f"TRACK_ID={state.get('track_id', '')}",
+        f"REVISION_RANGE={code_sha}~1..{code_sha}",
+    ])
+
+
+def build_review_prompt(track_dir, track_id, revision_range):
+    """Pre-assemble the ``conductor:code-reviewer`` prompt core (post-loop §7.0).
+
+    The three deterministic fields both rails share — the SHA-range line is the
+    drift-prone one (``{first}~1..{last}``, first-commit-inclusive), which is
+    why it is built in code. Rail A's post-loop prose appends the three
+    project-resolved guideline lines (PRODUCT_GUIDELINES/TECH_STACK/
+    STYLEGUIDES_DIR — orchestrator context, not track state) on top.
+    """
+    return (f"TRACK_DIR={track_dir}\nTRACK_ID={track_id}\n"
+            f"REVISION_RANGE={revision_range}\n")
+
+
+def _build_refactorer_prompt(track_dir, code_sha):
+    """Pre-assemble the ``conductor:refactorer`` tactical-refactor prompt (§3.6c).
+
+    One bounded pass, non-blocking — the task already succeeded. ``REVISION_
+    RANGE`` is the implementation SHA pair, not the conductor commit.
+    """
+    return "\n".join([
+        f"TRACK_DIR={track_dir}",
+        f"REVISION_RANGE={code_sha}~1..{code_sha}",
     ])
 
 
@@ -3011,7 +3123,16 @@ def cmd_phase_verdict(track_dir, ac_verdict, ac_gate, ac_n_ungrounded,
         "build_command": build_command or None,
     }
     _phase_cp_write_marker(track_dir, marker)
-    out(dict(ok=True, phase=cp, stage="synth_pending", track_dir=td))
+    # Rail A paste-verbatim (design D3): the verdict transcription is the last
+    # input the synthesizer prompt needs, so emit the phase-checker dispatch
+    # envelope here — skills/implement §3.2 Step 3 pastes `prompt` verbatim
+    # instead of hand-writing the field block. Same builder the `step` spine
+    # uses (stage=synth_pending → dispatch_phase_checker); verdict-first order
+    # now matches Rail B exactly.
+    out(dict(ok=True, phase=cp, stage="synth_pending", track_dir=td,
+             next_action="dispatch_phase_checker", agent="phase-checker",
+             prompt=_step_assemble_phase_checker_prompt(
+                 track_dir, state, cp, marker)))
 
 
 def cmd_phase_checkpoint_review(track_dir, status, sha, reason):
@@ -3162,8 +3283,28 @@ def cmd_skip_analyst_verdict(track_dir, recommendation, reasoning, impact, can_s
         "refute_status": None, "refute_reasoning": None,
     }
     _skip_analysis_write_marker(track_dir, marker)
-    out(dict(ok=True, recommendation=recommendation, stage="analyzed",
-             phase=fpi, task=fti, track_dir=td))
+    # Rail A paste-verbatim (design D3): mirror the `step` router's
+    # stage=analyzed branches so §3.6 pastes the next dispatch's prompt instead
+    # of hand-interpolating it (refuter CLAIM embeds skip-analyst's reasoning —
+    # assembled in code so a weak orchestrator can't fumble it). Read-only
+    # advisory: the refute/execute side effects stay on the `step` spine and
+    # the §3.6 verdict commands.
+    result = dict(ok=True, recommendation=recommendation, stage="analyzed",
+                  phase=fpi, task=fti, track_dir=td)
+    if recommendation == "skip":
+        result.update(next_action="dispatch_refuter", agent="refuter",
+                      prompt=_step_assemble_refuter_prompt(track_dir, marker))
+    elif recommendation == "retry_with_modification":
+        if _auto_route_failure(state):
+            result.update(
+                next_action="dispatch_failure_analyst", agent="failure-analyst",
+                prompt=_step_assemble_failure_analyst_prompt(
+                    track_dir, state, fpi, fti, fsi, fname))
+        else:
+            result["next_action"] = "halt_interactive"
+    elif recommendation == "pause_and_escalate":
+        result["next_action"] = "halt"
+    out(result)
 
 
 def cmd_skip_refute_review(track_dir, status, reasoning):
@@ -4076,8 +4217,7 @@ def cmd_post_loop_step(track_dir, compact=True):
             # judgment out of prose (WM2 verdict-on-disk, step 1).
             emit(dict(action="dispatch_review", agent="code-reviewer", track_dir=td,
                       range=range_str, shas_count=len(shas),
-                      prompt=(f"TRACK_DIR={td}\nTRACK_ID={track_id}\n"
-                              f"REVISION_RANGE={range_str}\n")),
+                      prompt=build_review_prompt(td, track_id, range_str)),
                  "post-loop-step", compact)
             return
 

@@ -123,11 +123,8 @@ If STATUS: FAILURE (agent error) → announce and continue (non-blocking).
 ## 7.0 AUTO-REVIEW
 
 1. From the §4.0 `post-loop-status` envelope: if `shas_count == 0` → skip review (→ §7.5). Elif `review.done` is true (sidecar `reviewed_range` == current `review.range`) → skip re-review, announce `"auto-review already ran for this range"`, → §7.5. Otherwise use `review.range` (`{first}~1..{last}`) — it includes the first commit's own changes; do NOT rebuild the range yourself. (If resuming after a compaction without the envelope, re-run `track-state post-loop-status "<track_dir>"` first.)
-2. Dispatch `conductor:code-reviewer`. Description: `"Auto-review track '<desc>'"`.
+2. Dispatch `conductor:code-reviewer`. Description: `"Auto-review track '<desc>'"`. Paste the envelope's `review.prompt` core verbatim (emitted by `post-loop-status` — the deterministic `TRACK_DIR`/`TRACK_ID`/`REVISION_RANGE` lines, same builder the post-loop-step spine uses; never rebuild the range yourself), then append the three project-resolved guideline lines:
    ```
-   TRACK_DIR={track_dir}
-   TRACK_ID={track_id}
-   REVISION_RANGE={range}
    PRODUCT_GUIDELINES={resolved_path}
    TECH_STACK={resolved_path}
    STYLEGUIDES_DIR={resolved_path}

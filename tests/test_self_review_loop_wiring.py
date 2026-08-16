@@ -9,6 +9,8 @@ removed or restructured.
 from pathlib import Path
 from unittest import TestCase, main
 
+from scripts.track_state import dispatch
+
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -20,9 +22,10 @@ class SelfReviewLoopWiringTests(TestCase):
         self.assertIn("### 3.6b Self-Review Loop", self.skill)
 
     def test_success_path_routes_through_loop(self):
-        # §3.6 SUCCESS must hand off to §3.6b (not skip straight to §3.7) — now
-        # routed 3.6b (review) → 3.6c (refactor) → 3.7.
-        self.assertIn("**Section 3.6b** (self-review, if `[Review]`)", self.skill)
+        # §3.6 SUCCESS must hand off to the opt-in follow-ups in order (not skip
+        # straight to §3.7): self_review (§3.6b) → refactor (§3.6c) → §3.7, keyed
+        # on the finalize envelope's opt-in keys.
+        self.assertIn("`self_review` (§3.6b) → `refactor` (§3.6c)", self.skill)
 
     def test_default_off(self):
         self.assertIn("DEFAULT OFF", self.skill)
@@ -42,12 +45,17 @@ class SelfReviewLoopWiringTests(TestCase):
         self.assertIn("REVISION_RANGE", self.skill)
 
     def test_review_range_binds_code_sha(self):
-        # §3.6b's code-reviewer REVISION_RANGE binds {code_sha} (the task's code
-        # commit), not {sha} (the conductor chore commit). Binding {sha} made
-        # [Review] always read "clean" — the chore diff is state files; {code_sha}
+        # §3.6b's code-reviewer REVISION_RANGE binds code_sha (the task's code
+        # commit), not sha (the conductor chore commit). Binding sha made
+        # [Review] always read "clean" — the chore diff is state files; code_sha
         # is the task's actual code, so review now sees real findings.
-        self.assertIn("REVISION_RANGE={code_sha}~1..{code_sha}", self.skill)
-        self.assertNotIn("REVISION_RANGE={sha}~1..{sha}", self.skill)
+        # Rail A paste-verbatim (design D3): the binding lives in the CODE
+        # builder (`_build_self_review_prompt`, emitted on the finalize
+        # envelope's `self_review.prompt`); the skill pastes it verbatim.
+        prompt = dispatch._build_self_review_prompt("/td", {"track_id": "x"}, "abc1234")
+        self.assertIn("REVISION_RANGE=abc1234~1..abc1234", prompt)
+        self.assertNotIn("~1..", prompt.replace("abc1234~1..abc1234", ""))
+        self.assertIn("self_review.prompt", self.skill)
 
     def test_bounded_by_convergence_and_budget(self):
         # No runaway loop — convergence (loop-until-dry) capped by a 3-iteration

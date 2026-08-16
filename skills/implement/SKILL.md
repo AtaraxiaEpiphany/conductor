@@ -97,23 +97,7 @@ The phase checkpoint is a **fan-out-and-synthesize**: read-only verifier tiers r
 
 **Step 2 — Parse the result blocks.** From `build-runner`'s `---BUILD VERIFY RESULT---`: `STATUS`/`COMMAND` (the compile verdict — `passed`/`failed`/`error`; `error` = no build command resolvable, e.g. an interpreted language, NON-BLOCKING). From `ac-tracer`'s `---AC TRACE RESULT---`: `VERDICT` (passed/warn/skipped/FAILED/ERROR), `GATE` (when FAILED), `N_UNGROUNDED` (when warn). From `test-runner`'s `---L1 VERIFY RESULT---`: `STATUS`/`COMMAND` (the suite verdict). On a code-free phase there are no `build-runner` or `test-runner` result blocks — record both as `skipped` in Step 3.
 
-**Step 3 — Dispatch `conductor:phase-checker`** (canonical dispatch — §2.1, §3.5b, §3.7 reuse this fan-out+synthesize; only the `PHASE` value source differs), passing the fleet's verdicts through:
-
-```
-TRACK_DIR={td}
-TRACK_ID={id}
-PHASE_INDEX={phase from output}
-EXECUTION_MODE={interactive|continuous}
-BUILD_VERIFY_STATUS=<build-runner STATUS — or `skipped (no code-producing tasks)` when build-runner was omitted from the wave (code-free phase)>
-BUILD_VERIFY_COMMAND=<build-runner COMMAND — omit entirely on a code-free phase>
-AC_TRACE_VERDICT=<ac-tracer VERDICT>
-AC_TRACE_GATE=<ac-tracer GATE — include only when VERDICT is FAILED>
-AC_TRACE_N_UNGROUNDED=<ac-tracer N_UNGROUNDED — include only when VERDICT is warn>
-L1_VERIFY_STATUS=<test-runner STATUS — or `skipped (no code-producing tasks)` when test-runner was omitted from the wave (code-free phase)>
-L1_VERIFY_COMMAND=<test-runner COMMAND — omit entirely on a code-free phase>
-```
-
-Then transcribe to `track-state phase-verdict "<td>" --ac-verdict <V> [--ac-gate <G>] [--ac-n-ungrounded <N>] --build-status <S> [--build-command "<CMD>"] --l1-status <S> [--l1-command "<CMD>"]` — on a code-free phase pass `--build-status "skipped (no code-producing tasks)"` and `--l1-status "skipped (no code-producing tasks)"` and omit both `--*-command`. Then → **Section 3.6** (Phase Boundary).
+**Step 3 — Transcribe the verdicts, then dispatch `conductor:phase-checker`.** Run `track-state phase-verdict "<td>" --ac-verdict <V> [--ac-gate <G>] [--ac-n-ungrounded <N>] --build-status <S> [--build-command "<CMD>"] --l1-status <S> [--l1-command "<CMD>"]` — on a code-free phase pass `--build-status "skipped (no code-producing tasks)"` and `--l1-status "skipped (no code-producing tasks)"` and omit both `--*-command`. The command's output carries the synthesizer dispatch envelope: **dispatch `conductor:phase-checker` pasting the emitted `prompt` field verbatim** (built by `build_dispatch_prompt` from the just-transcribed verdicts — the same builder the step spine uses; do NOT hand-write the `KEY=value` block). Then → **Section 3.6** (Phase Boundary).
 
 ### 3.3 Action: `dispatch_explorer`
 
@@ -168,34 +152,21 @@ Then `track-state sync-plan "<track_dir>"` → `git commit -m "chore(conductor):
 track-state dispatch-finalize "<track_dir>"
 ```
 
-**SUCCESS**: `committed: false` → announce `"conductor commit failed, result.json preserved"` → re-run `dispatch-finalize` (max 3 attempts, then HALT with `"dispatch-finalize stuck"`). Deviations > 0 → announce. If `phase_checkpoint_pending` present → dispatch `conductor:phase-checker` immediately. Otherwise → **Section 3.6b** (self-review, if `[Review]`) → **Section 3.6c** (refactor, if `[Refactor]`) → **§3.7**.
+**SUCCESS**: `committed: false` → announce `"conductor commit failed, result.json preserved"` → re-run `dispatch-finalize` (max 3 attempts, then HALT with `"dispatch-finalize stuck"`). Deviations > 0 → announce. If `phase_checkpoint_pending` present → dispatch `conductor:phase-checker` immediately. Otherwise, when the envelope carries the opt-in follow-ups, run them in order — `self_review` (§3.6b) → `refactor` (§3.6c) — then **§3.7**. Neither key present → straight to **§3.7** (zero latency when opted out).
 
-**FAILURE**: retry < max → re-dispatch (§3.1). In **continuous mode**, when exactly one attempt remains (`retry == max - 1`), the spine dispatches `conductor:failure-analyst` first so the final attempt is a *modified* retry rather than another identical one — see the failure-analyst block below. retry >= max → dispatch `conductor:skip-analyst`:
-
-```
-TRACK_DIR={td}
-TRACK_ID={id}
-PHASE_INDEX={p}
-TASK_INDEX={t}
-TASK_NAME={name}
-```
+**FAILURE**: the finalize envelope carries `next_action` (+ `agent` + pre-assembled `prompt` when the next step is an agent dispatch):
+- `next_action: "dispatch_executor"` (retry remains, not penultimate) → re-dispatch via **§3.1** (dispatch-prepare → paste its `prompt`).
+- `next_action: "dispatch_failure_analyst"` (exactly one attempt remains on an auto-routing track) → dispatch `conductor:failure-analyst` pasting the envelope's `prompt` field verbatim — the final attempt is a *modified* retry, not another identical one.
+- `next_action: "dispatch_skip_analyst"` (retries exhausted, auto-routing track) → dispatch `conductor:skip-analyst` pasting the envelope's `prompt` field verbatim.
+- `next_action: "ask"` (retries exhausted, ask-surface track) → §2.2's Retry/Skip/Block decision (next `recover` surfaces it).
 
 Skip-analyst result — parse the `---SKIP ANALYSIS---` JSON and act by `recommendation`:
 
-- **`recommendation: skip`** (`can_skip: true`) → **run the skip refute first** (below). If the refute lets the skip stand → `track-state skip "<track_dir>" <phase> <task>` → Section 3.1. If the refute overrides → handle as `pause_and_escalate`.
+- **`recommendation: skip`** (`can_skip: true`) → **run the skip refute first**: transcribe via `track-state skip-analyst-verdict "<td>" --recommendation skip --reasoning "<text>" --impact "<text>" --can-skip <true|false>` — its output carries `next_action: "dispatch_refuter"` with the refuter's `prompt` pre-assembled (the CLAIM embeds skip-analyst's reasoning verbatim, assembled in code). Dispatch `conductor:refuter` pasting that `prompt` verbatim. If the refute lets the skip stand → `track-state skip "<track_dir>" <phase> <task>` → Section 3.1. If the refute overrides → handle as `pause_and_escalate`.
 - **`recommendation: pause_and_escalate`** (or skip-refute override) → `track-state sync-plan "<track_dir>"` → commit → **HALT**: surface `impact` + `reasoning` (and the refuter's `EVIDENCE`/`REASONING` if it overrode). An unattended continuous track stops for human judgment rather than silently skipping or blocking.
-- **`recommendation: retry_with_modification`** → the skip-analyst says "fixable, just not by skipping." In **continuous mode**, dispatch `conductor:failure-analyst` (below) for a real diagnosis — its `retry_modified` verdict re-dispatches task-executor with a modified approach. In **interactive mode** (human in the loop), `track-state sync-plan` → commit → HALT with the reasoning as modification guidance.
+- **`recommendation: retry_with_modification`** → the skip-analyst says "fixable, just not by skipping." Transcribe via `skip-analyst-verdict`: on an auto-routing track its output carries `next_action: "dispatch_failure_analyst"` with the failure-analyst `prompt` pre-assembled — dispatch it (see the failure-analyst block below); its `retry_modified` verdict re-dispatches task-executor with a modified approach. In **interactive mode** (human in the loop), `track-state sync-plan` → commit → HALT with the reasoning as modification guidance.
 
-**Skip refute (continuous mode only).** `§2.2`'s interactive path already has a human gate; this refute runs only on the unattended continuous path, where a wrong skip silently cascades a hole into downstream work. When `recommendation == skip`, dispatch `conductor:refuter` to challenge it before acting:
-
-```
-PROJECT_DIR={project_root}
-DOMAIN=skip
-CLAIM=Skip-analyst recommended skipping task P{p}T{t} ("{name}"), reasoning: "{skip-analyst reasoning}". Challenge framing: this skip is UNSAFE — a dependency marked completed is only superficially done (its own ACs not actually met), or the failure handoff describes a fix cheap relative to the cost of skipping.
-CONTEXT_PATHS={td}/plan.md {td}/track-state.json {td}/.conductor/handoff/P{p}T{t}.md
-```
-
-> The CLAIM is framed as "the skip is unsafe" deliberately: the refuter defaults to `SUSTAINED` when uncertain, so `SUSTAINED` = block-when-uncertain (the conservative direction for a skip, the riskier action). `REFUTED` = grounded evidence the skip IS safe. (`new-track` §2.3b frames its CLAIM the opposite way — "the plan is sound" — because a plan gate should proceed-when-uncertain.)
+**Skip refute (continuous mode only).** `§2.2`'s interactive path already has a human gate; this refute runs only on the unattended continuous path, where a wrong skip silently cascades a hole into downstream work. The refuter's challenge framing (why the CLAIM asserts "the skip is UNSAFE", and why `SUSTAINED` = block-when-uncertain) is single-homed in `agents/refuter.md` — the prompt you paste is assembled by `skip-analyst-verdict`, never re-derived here.
 
 Parse the `---REFUTATION RESULT---` block:
 
@@ -203,17 +174,7 @@ Parse the `---REFUTATION RESULT---` block:
 - **`STATUS: REFUTED`** (grounded evidence the skip is safe) → let the skip stand → `track-state skip` → Section 3.1.
 - **`STATUS: FAILURE`** → defer to skip-analyst's primary verdict: announce `"⚠️ skip refute could not complete — proceeding on skip-analyst's recommendation"` and let the skip stand. A backup-agent crash is not new evidence the skip is safe; the announce keeps it visible without halting the track on a backup failure.
 
-**Failure-analyst (continuous mode only).** A read-only diagnostic that answers *why* a task keeps failing before spending the retry budget on another identical attempt. The spine dispatches it (a) when one attempt remains (`retry == max - 1`) and (b) on a skip-analyst `retry_with_modification` hand-off. Dispatch `conductor:failure-analyst`:
-
-```
-TRACK_DIR={td}
-TRACK_ID={id}
-PHASE_INDEX={p}
-TASK_INDEX={t}
-TASK_NAME={name}
-RETRY_COUNT={retry}
-MAX_RETRIES={max}
-```
+**Failure-analyst (continuous mode only).** A read-only diagnostic that answers *why* a task keeps failing before spending the retry budget on another identical attempt. The spine dispatches it (a) when one attempt remains (`retry == max - 1` — the finalize envelope's `dispatch_failure_analyst` prompt) and (b) on a skip-analyst `retry_with_modification` hand-off (the `skip-analyst-verdict` envelope's `dispatch_failure_analyst` prompt). Dispatch `conductor:failure-analyst` **pasting that emitted `prompt` field verbatim** (`TRACK_DIR`/`TRACK_ID`/`PHASE_INDEX`/`TASK_INDEX`/`TASK_NAME`/`RETRY_COUNT`/`MAX_RETRIES` are resolved from live state — never re-type them).
 
 Parse the `---FAILURE ANALYSIS---` JSON and act by `recommendation`:
 
@@ -233,12 +194,7 @@ When opted in (after a SUCCESSFUL `dispatch-finalize`, before §3.7), run a **co
 
 **Persist `seen` across compaction** (loop state a compaction would otherwise lose): at loop **entry**, load `.conductor/review-seen.json` (conductor-owned, gitignored) — if its `task_sha` matches this task, restore its `seen` (resuming a compacted loop); else start empty (never inherit another task's set). After each round that adds signatures, write it back as `{"task_sha": "<sha>", "seen": [...]}`. On **any terminal exit**, delete the file.
 
-1. **Reviewer pass** — dispatch `conductor:code-reviewer` (read-only) on `<task_sha>~1..<task_sha>`:
-   ```
-   TRACK_DIR={td}
-   TRACK_ID={id}
-   REVISION_RANGE={code_sha}~1..{code_sha}
-   ```
+1. **Reviewer pass** — dispatch `conductor:code-reviewer` (read-only) pasting the finalize envelope's `self_review.prompt` field verbatim (`REVISION_RANGE` is resolved to this task's `code_sha~1..code_sha` — never re-type it):
 2. **Decide from the `---REVIEW RESULT---` block** (substring-check severities), counting only NEW `Critical`/`High` (signatures not in `seen`):
    - **Zero NEW `Critical`/`High`** — dry round → announce `"🔍 Self-review [Review]: clean"` → delete `.conductor/review-seen.json` → §3.7.
    - **NEW `Critical`/`High`** → add signatures to `seen`, **write `review-seen.json` back**; re-dispatch `conductor:task-executor` with `ATTEMPT={n+1}` and the NEW findings as remediation (the agent fixes its own changes), `dispatch-finalize` again, loop to step 1.
@@ -254,12 +210,7 @@ When opted in (after a SUCCESSFUL `dispatch-finalize`, before §3.7), run a **co
 
 `[Refactor]` is now BOTH a real tag (declarative — `refactor: true` on the tag row) AND a name marker (per-task escape hatch). Either form opts into this seam; neither enters the `[Docs]`/`[Config]`/… TDD/coverage-exemption logic, so a refactorable task still owes TDD (F2) and coverage (F3). (Tier rationale — mechanical Step 5 vs tactical refactorer — lives in `agents/refactorer.md` §1.0.)
 
-When opted in, dispatch `conductor:refactorer`, prompt:
-
-```
-TRACK_DIR={td}
-REVISION_RANGE={code_sha}~1..{code_sha}
-```
+When opted in, the finalize envelope carries `refactor` with the agent + pre-assembled prompt — dispatch `conductor:refactorer` pasting that `prompt` field verbatim (`REVISION_RANGE` resolves to the task's `code_sha~1..code_sha`).
 
 Parse the `---REFACTOR RESULT---` block (non-blocking — the task already succeeded):
 - **STATUS: SUCCESS** → announce `"🔨 [Refactor]: {REFACTORED} → {COMMITTED}"` → §3.7.
@@ -273,7 +224,7 @@ One bounded pass (no loop, no transient state). The refactorer runs the suite it
 track-state phase-done "<track_dir>" <phase>
 ```
 
-`complete=true` → dispatch `conductor:phase-checker` (§3.2), `PHASE=<phase>`. FAILED → HALT (surface `FAILURE_REASON`; an AC-trace authoring defect requires editing `spec.md`/`plan.md` then re-running the phase — not a `task-executor` retry). *(Rail A halts on a FAILED checkpoint. The step spine — `/conductor:implement-step` — instead routes a FAILED phase through the recovery router on an auto-routing track, so a long-running track finally succeeds; see `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/recovery-policy.md` § "Phase-level recovery".)* Otherwise → Section 3.1.
+`complete=true` with `checkpoint_due: true` → fan out the `verifier_wave` members (§3.2 Step 1 — paste each member's `prompt` verbatim; the wave's code-free narrowing is already resolved), `PHASE=<phase>`. `complete=true` without `checkpoint_due` (checkpoint present or waived by shape) → Section 3.1. On the phase-checker: FAILED → HALT (surface `FAILURE_REASON`; an AC-trace authoring defect requires editing `spec.md`/`plan.md` then re-running the phase — not a `task-executor` retry). *(Rail A halts on a FAILED checkpoint. The step spine — `/conductor:implement-step` — instead routes a FAILED phase through the recovery router on an auto-routing track, so a long-running track finally succeeds; see `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/recovery-policy.md` § "Phase-level recovery".)* Otherwise → Section 3.1.
 `complete=false` → Section 3.1.
 
 ### 3.8 Action: `finalize`
