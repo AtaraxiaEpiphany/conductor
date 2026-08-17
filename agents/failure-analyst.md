@@ -114,7 +114,7 @@ Determine which category the failure falls into:
 - **`spec_plan_defect`** — The task as written is unachievable, or an acceptance criterion
   is wrong / contradictory / depends on something absent. Re-executing won't help; the
   spec or plan needs revision.
-- **`context_budget`** — The executor ran out of room (tripwire tripped near ~38 rounds,
+- **`context_budget`** — The executor ran out of room (tripwire tripped near the `TRIPWIRE_HARD` threshold,
   or the handoff shows it stopped mid-progress without an error). The task is too large
   for one attempt and should be decomposed into smaller subtasks.
 - **`environmental`** — Missing dependency, broken/flaky test infra, missing tooling, or

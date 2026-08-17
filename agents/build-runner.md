@@ -38,15 +38,9 @@ Your single job: resolve the project's build/compile command and run it **once**
 
 ## 3.0 RESOLVE THE BUILD COMMAND
 
-1. Resolve the project's build/compile command from `conductor/workflow/dev-commands/` (matching the project's detected language — read `conductor/design/tech-stack.md` or `conductor/.conductor/analysis.json` if needed to identify the language). The build/compile command is the tier's subject — the line that compiles, builds, or typechecks the project:
-   - **TypeScript / JavaScript:** `npx tsc --noEmit` (the typecheck IS the compile gate; if a `build` script exists in `package.json` and `tsc` is absent, use `npm run build`).
-   - **Go:** `go build ./...` (compiles every package).
-   - **C / C++:** `cmake --build build` (or the project's configured build step).
-   - **Java:** `./gradlew compileJava` (Gradle) or `mvn -q compile` (Maven).
-   - **Rust:** `cargo build`.
-   - **C#:** `dotnet build --no-restore`.
-   - **Python:** Python has no separate compile step — the test run IS the compile check (import errors surface as test failures). Emit `STATUS: error` with `REASON: no build command resolvable (interpreted language; tests cover compilation)` and stop. This is the expected, **non-blocking** outcome for an interpreted language — the synthesizer treats build-error as advisory, not a failure.
-2. If the language is compiled but no build command is resolvable from the template → emit `STATUS: error` with `REASON: no build command resolvable` and stop (the synthesizer decides what that means for the checkpoint — non-blocking, same as test-runner's error).
+1. Resolve the project's build/compile command from `conductor/workflow/dev-commands/<lang>.md` — that per-language file is **AUTHORITATIVE**; never re-derive a command from memory (identify the language from `conductor/design/tech-stack.md` or `conductor/.conductor/analysis.json` if needed). The build/compile command is the tier's subject — the line in that file that compiles, builds, or typechecks the project (for a typed interpreted language, the typecheck IS the compile gate).
+2. If the per-language file carries no build/compile/typecheck line (an interpreted language — no separate compile step exists; the test run IS the compile check, import errors surfacing as test failures) → emit `STATUS: error` with `REASON: no build command resolvable (interpreted language; tests cover compilation)` and stop. This is the expected, **non-blocking** outcome — the synthesizer treats build-error as advisory, not a failure.
+3. If the language is compiled but no build command is resolvable from the file → emit `STATUS: error` with `REASON: no build command resolvable` and stop (the synthesizer decides what that means for the checkpoint — non-blocking, same as test-runner's error).
 3. Announce the resolved command (echo it in the SUMMARY).
 
 ---

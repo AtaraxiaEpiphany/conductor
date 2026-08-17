@@ -34,10 +34,11 @@ Step 5 adds no extra dispatch.
    on the Green commit. **Never fix forward** through a refactor regression — a
    small-window model spends more rounds "fixing" a broken refactor than
    reverting it.
-4. **bounded.** Cap refactor at **~6 rounds**, counted against the §7.0 38-round
-   tripwire. If refactor would trip the tripwire, **skip it** — a working Green
-   commit outranks refactor. (A small-window model can't self-assess "percent of
-   budget," so count rounds, exactly as §7.0 does.)
+4. **bounded.** Cap refactor at **~6 rounds**, counted against the §7.0 tripwire
+   (`TRIPWIRE_HARD`, owned by `on-pre-tool-tripwire.py`). If refactor would trip
+   the tripwire, **skip it** — a working Green commit outranks refactor. (A
+   small-window model can't self-assess "percent of budget," so count rounds,
+   exactly as §7.0 does.)
 
 ## Procedure
 

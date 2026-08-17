@@ -10,11 +10,7 @@ model: sonnet
 
 ## 0.0 RESOLVE PATHS
 
-Key paths (resolve via `conductor/index.md` if non-default):
-- Product: `conductor/product/product.md`
-- Tech Stack: `conductor/design/tech-stack.md`
-- Tracks Registry: `conductor/tracks.md`
-- Workflow Index: `conductor/workflow/index.md`
+Read `conductor/index.md` (the project-index TOC — the declared single routing map) and resolve every conductor path from its tables. This skill restates NO paths: a non-default layout shows up in the index, not here (a restated path list is the first thing to drift).
 
 ## 1.0 RESUME CHECK
 
@@ -67,20 +63,7 @@ Interactive. Write to `conductor/product/product-guidelines.md`. Save state: `2.
 - Greenfield: ask from scratch.
 - Write to `conductor/design/tech-stack.md`.
 
-**Style Guides (auto-derive):**
-
-| Language | Guides |
-|----------|--------|
-| JavaScript | `javascript.md` |
-| TypeScript | `typescript.md` + `javascript.md` |
-| Python | `python.md` |
-| Go | `go.md` |
-| Java | `java.md` |
-| C++ | `cpp.md` |
-| C# | `csharp.md` |
-| Dart | `dart.md` |
-| HTML/CSS | `html-css.md` |
-| *(any)* | `general.md` (always) |
+**Style Guides (auto-derive):** the guide set resolves from `${CLAUDE_PLUGIN_ROOT}/templates/code-styleguides/` — **that directory listing is authoritative** (one `<lang>.md` per detected language, matched by basename; `general.md` is ALWAYS included; TypeScript additionally pulls `javascript.md`). Never restate the per-language catalog here — a new template guide ships when the plugin updates, and this table would silently rot.
 
 Confirm the set with the user, then copy the selected guides into place with one Bash call. These are pure copies (no placeholders), so `cp` keeps the guide bodies out of the orchestrator context:
 ```bash

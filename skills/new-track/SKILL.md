@@ -11,11 +11,7 @@ model: sonnet
 
 ## 0.0 RESOLVE PATHS
 
-Key paths (resolve via `conductor/index.md` if non-default):
-- Product: `conductor/product/product.md`
-- Tech Stack: `conductor/design/tech-stack.md`
-- Tracks Registry: `conductor/tracks.md`
-- Workflow Index: `conductor/workflow/index.md`
+Read `conductor/index.md` (the project-index TOC — the declared single routing map) and resolve every conductor path from its tables. This skill restates NO paths: a non-default layout shows up in the index, not here (a restated path list is the first thing to drift).
 
 ## 0.5 RESUME CHECK
 
