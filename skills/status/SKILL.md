@@ -31,7 +31,7 @@ Empty `$ARGUMENTS` → all tracks; a track id / shortname / dir → that one tra
 
 ### Status → marker map (apply to every task/subtask `status`)
 
-`pending`→`[ ]` · `in_progress`→`[~]` · `completed`→`[x]` · `failed`→`[!]` · `skipped`→`[>]` · `deferred`→`[d]` · `blocked`→`[#]` · `cancelled`→`[-]` · `archived`→`[x]`
+`pending`→`[ ]` · `in_progress`→`[~]` · `completed`→`[x]` · `failed`→`[!]` · `skipped`→`[>]` · `deferred`→`[d]` · `blocked`→`[#]` · `cancelled`→`[-]`
 
 ### Summary
 

@@ -83,6 +83,11 @@ WATCHED = [
     "agents/task-executor.md",
     "skills/implement/SKILL.md",
     "skills/parallel/SKILL.md",
+    "templates/task-workflow.md",
+    "skills/new-track/SKILL.md",
+    "skills/setup/SKILL.md",
+    "skills/review/SKILL.md",
+    "skills/status/SKILL.md",
 ]
 
 # Two independent trip conditions for a prose closed-set enumeration, both keyed

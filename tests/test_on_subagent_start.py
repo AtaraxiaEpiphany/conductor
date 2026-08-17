@@ -180,6 +180,19 @@ class SubagentMatcherCompletenessTests(TestCase):
             f"{sorted(unguarded)}",
         )
 
+    def test_every_agent_has_a_reminder_row(self):
+        """The AGENT_REMINDERS dict is keyed by agent name — a new agents/*.md
+        with no row means filter-subagent-output gets no result delimiter from
+        the dispatch, and a stale row means a deleted agent still claims one.
+        Keys must track the agents/ roster exactly (campaign 2.6)."""
+        roster = {p.stem for p in (_scripts.parent / "agents").glob("*.md")}
+        self.assertEqual(
+            set(_REMINDERS), roster,
+            f"AGENT_REMINDERS out of sync with agents/: "
+            f"missing={sorted(roster - set(_REMINDERS))} "
+            f"stale={sorted(set(_REMINDERS) - roster)}",
+        )
+
 
 # --- Retry-context injection --------------------------------------------------
 # on-subagent-start.py appends the locked task's most recent `### Attempt ❌`
