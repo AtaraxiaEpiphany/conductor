@@ -196,6 +196,8 @@ scratch-track smoke on Rail B + wave smoke at the end.
   machine
 - [[conductor/design/interaction-layer-import]] — the predecessor grill
   session (and this doc's format exemplar)
+- [[conductor/design/planning-as-data]] — the planning-side mirror of this
+  seam (the next grill, same day)
 - [[runtime/contracts/grill-discipline]] — §4 premise challenge, §7
   crystallization writes (this doc IS one)
 - [[runtime/contracts/context-model]] — Tier B (manifest fetch) / Tier C

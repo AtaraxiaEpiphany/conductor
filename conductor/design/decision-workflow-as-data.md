@@ -102,3 +102,5 @@ artifact. Nothing else about dispatch changes.**
   D2's relocation follows, and the deferred-items Non-goals honored here
 - [[conductor/resource/glossary]] — **dispatch manifest**, **workflow
   docfile** settled vocabulary
+- [[conductor/design/decision-planning-as-data]] — the successor decision:
+  the same seam applied one layer up (planning)
