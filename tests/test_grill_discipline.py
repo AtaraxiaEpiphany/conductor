@@ -104,6 +104,27 @@ class GrillDisciplineContractTests(TestCase):
         self.assertIn("Signal grill-done", txt)
         self.assertIn("proxy", txt.lower())
 
+    def test_shared_known_includes_settled_vocabulary_and_decisions(self):
+        # D2: the glossary and decision records are SHARED-KNOWN readable
+        # inputs — settled vocabulary and prior decisions are never re-asked.
+        txt = _read(CONTRACT)
+        self.assertIn("settled vocabulary", txt)
+        self.assertIn("conductor/resource/glossary.md", txt)
+        self.assertIn("conductor/design/decision-*.md", txt)
+
+    def test_crystallization_writes_section_present(self):
+        # D2 §7: the grill writes back — glossary entries on term
+        # crystallization, decision records gated by the sparsity triple.
+        txt = _read(CONTRACT)
+        self.assertIn("Crystallization writes", txt)
+        self.assertIn("Avoid-list", txt)          # rejected synonyms recorded
+        self.assertIn("create the file if missing", txt)  # glossary create-if-missing
+        self.assertIn("hard to reverse", txt)     # sparsity triple — all three
+        self.assertIn("surprising without context", txt)
+        self.assertIn("a real trade-off", txt)
+        self.assertIn("never delete", txt)        # append-only records
+        self.assertIn("small globals", txt)       # read directly, no dispatch
+
     def test_see_also_links_back_to_prose_style(self):
         # Bidirectionality (doc-conventions): prose-style links here, so this links
         # back, and core-contract is the resident sibling.

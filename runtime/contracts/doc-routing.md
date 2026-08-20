@@ -6,7 +6,7 @@ sources:
   - agents/code-reviewer
   - agents/wiki-researcher
   - agents/corpus-writer
-last_verified: 2026-06-26
+last_verified: 2026-08-20
 ---
 
 # Scoped Doc Routing
@@ -28,6 +28,7 @@ previously restated independently — and which had drifted (e.g.
 | Component, service, or data flow; `services/**`, `lib/**`, `src/**` (structural) | `conductor/design/architecture/system-architecture.md` | Component name from directory structure |
 | User-facing feature, screen, UX flow; `components/**`, `pages/**`, `views/**` | `conductor/requirement/ux-ui/design-spec.md` (feature-level requirement: the PRD under `conductor/requirement/`) | Page or component name |
 | Domain term or acronym | `conductor/resource/glossary.md` | Term lookup |
+| Prior decision / rejected alternative | `conductor/design/decision-*.md` | Decision lookup |
 | Technology, framework, or version | `conductor/design/tech-stack.md` | Technology name |
 
 ## Rules

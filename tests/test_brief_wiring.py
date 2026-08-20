@@ -101,6 +101,31 @@ class BriefSkillWiringTests(TestCase):
         txt = _read("skills/brief/SKILL.md")
         self.assertIn("USER_REFERENCES", txt)
 
+    def test_reads_glossary_and_decisions_when_present(self):
+        """D2: §2 reads the settled-vocabulary globals when present — glossary
+        + decision records are SHARED-KNOWN (contract §2/§7), fueling the §3
+        recommendations instead of being re-asked."""
+        txt = _read("skills/brief/SKILL.md")
+        self.assertIn("conductor/resource/glossary.md", txt)
+        self.assertIn("conductor/design/decision-*.md", txt)
+
+    def test_crystallization_hook_cites_contract_section_7(self):
+        """D2: the crystallization write-back is a ONE-LINE hook citing
+        contract §7 — the write discipline stays single-homed there, not
+        restated in the skill (prose-style Bucket B)."""
+        txt = _read("skills/brief/SKILL.md")
+        self.assertIn("Crystallization writes", txt)
+        self.assertIn("§7", txt)
+
+    def test_commit_stages_crystallization_writes_conditionally(self):
+        """D2: §5's scoped git add extends to the glossary/decision files the
+        grill actually touched — the placeholder in the bash block carries
+        only paths written this run (the `never git add -A` rule in the same
+        step stays the scoped-staging guard)."""
+        txt = _read("skills/brief/SKILL.md")
+        self.assertIn("crystallization writes", txt.lower())
+        self.assertIn("[<crystallization_write_paths>]", txt)
+
 
 class BriefGrillConsumerTests(TestCase):
     """brief §2.5 + §3.0 are now a THIN CONSUMER of the single-homed grill

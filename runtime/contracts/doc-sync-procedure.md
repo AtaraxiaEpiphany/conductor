@@ -3,7 +3,7 @@ type: concept
 sources:
   - agents/corpus-writer
   - agents/wiki-synthesizer
-last_verified: 2026-06-26
+last_verified: 2026-08-20
 ---
 
 # Doc Sync Procedure Reference
@@ -51,7 +51,7 @@ Options: "Yes, apply" / "Skip".
 | Database Schema | • tables, columns, indexes, or constraints created, modified, or dropped • new migrations or schema changes that need documentation | base | Database Schema |
 | API Specifications | • API endpoints added, modified, or removed • changes to request/response schemas, authentication, or error codes • if changes exist, also check individual endpoint spec files in `conductor/design/api-specs/` | base | API Specifications |
 | UX/UI Design Spec | • ONLY analyze if the track changes user interface components, layouts, or interaction flows • new screens, components, or navigation changes | base | UX/UI Design Spec |
-| Glossary | • new domain terms, acronyms, or concepts that need defining • terms used in the spec that are not yet in the glossary | terms | Glossary |
+| Glossary | • new domain terms, acronyms, or concepts that need defining • terms used in the spec that are not yet in the glossary • the glossary may already carry grill-stage entries (crystallization writes, [[runtime/contracts/grill-discipline]] §7) — merge alongside, never duplicate or clobber | terms | Glossary |
 
 ## B. Overview Regeneration Spec
 

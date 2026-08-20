@@ -52,9 +52,11 @@ the other doesn't, and each kind of gap closes differently. Hold this 2×2
 points at the mechanism below that implements it:
 
 1. **SHARED-KNOWN** — goals / context / boundaries already in the request, the
-   discovered docs, and `product.md` / `purpose.md` / `tech-stack.md`. **Do not
-   re-ask.** A fact you can read is yours to gather, never a question (§3 rule 2 —
-   look-it-up-first). The decisions are the user's; the facts are yours.
+   discovered docs, and `product.md` / `purpose.md` / `tech-stack.md`, plus the
+   settled vocabulary in `conductor/resource/glossary.md` and the prior
+   decisions in `conductor/design/decision-*.md` (§7's write-backs). **Do not
+   re-ask.** A fact you can read is yours to gather, never a question (§3 rule 2
+   — look-it-up-first). The decisions are the user's; the facts are yours.
 2. **YOUR-KNOWN / USER-UNKNOWN** — context only in the user's head (the real
    motivation, the unspoken deadline, the stakeholder who must sign off). Surface at
    most ONE such question per grill node; if you can state a defensible assumption,
@@ -173,6 +175,30 @@ Signaling explicitly is how you tell the gate *"the grill is genuinely complete;
 low count is skillful look-it-up-first, not a shortcut."* Without it, a well-done
 low-count grill is wrongly blocked. Always emit the surface's done-signal after the
 last question, before the Write.
+
+## 7. Crystallization writes (what the grill gives back)
+
+A grill that only extracts is a one-way pump: the next grill re-asks what this
+one settled. Two write-backs make vocabulary and decisions compound instead:
+
+- **Glossary entries.** When a term **crystallizes** during a grill — the user
+  coins one, or two synonyms collide and one wins — append an entry to
+  `conductor/resource/glossary.md` (create the file if missing): the term, a
+  tight definition, and an **Avoid-list** of the rejected synonyms. A settled
+  name is a decision; once recorded it is SHARED-KNOWN (§2 quadrant 1) for
+  every later grill.
+- **Decision records.** When the premise-challenge (§4) resolves or an
+  Out-of-Scope decision rejects a real alternative, append a record to
+  `conductor/design/decision-*.md` — but **only when ALL THREE hold**: the
+  choice is **hard to reverse**, **surprising without context**, and
+  **a real trade-off** was actually rejected. Miss any one and the record is
+  noise — reversible, obvious, and unopposed choices don't earn one. Append
+  new records; never delete or rewrite a prior record.
+
+Both files are **small globals** — read them directly during the grill (§3
+rule 2's subagent dispatch keeps *large* docs out of context; these two earn
+direct reads by staying small). The write discipline lives here, single-homed;
+grilling surfaces cite this section rather than restating it.
 
 ## See Also
 

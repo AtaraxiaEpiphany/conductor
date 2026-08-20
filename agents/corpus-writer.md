@@ -66,7 +66,7 @@ track-state harvest-candidates "{TRACK_DIR}"
 
 Parse the JSON result:
 - `graduation[]` — each `{text, source}` is one durable finding to merge into a scoped doc (§4.10 routes it; §5.10 proposes; §6.0 applies).
-- `decisions[]` — each `{title, chosen, reasoning, source}` is a recorded technical decision; merge its outcome into the relevant design doc.
+- `decisions[]` — each `{title, chosen, reasoning, source}` is a recorded technical decision; merge its outcome into the relevant design doc (`conductor/design/decision-*.md` may already carry a grill-stage record of the same decision — merge alongside, never duplicate or clobber).
 - `count` — total. If `0`, skip §4.10/§5.10 (no harvest this run).
 
 Carry the harvested queue into §4 alongside the spec analysis.
@@ -144,6 +144,8 @@ For each item in the harvested queue (§3.1b), determine its **target scoped doc
 - **New, target doc does not exist** (forward reference with no file) → graduation **seed**; proceed to §5.10 with `seed=true`.
 
 **Merge, never append.** A graduation merges the finding into the target doc's canonical section (a bullet under the matching `##` heading). It must NEVER append a `## Subtask:` block — appending is what bloats the corpus (the relocation-plan anti-pattern).
+
+> **Grill-stage entries co-check:** `conductor/resource/glossary.md` and `conductor/design/decision-*.md` may already carry entries written during a brief/discover grill (crystallization writes, `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/grill-discipline.md` §7). Merge alongside them — never duplicate or clobber a grill-stage entry.
 
 ---
 

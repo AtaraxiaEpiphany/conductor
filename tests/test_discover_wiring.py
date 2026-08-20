@@ -129,6 +129,21 @@ class DiscoverHandoffTests(TestCase):
         self.assertIn("dispatch-lifecycle.log", txt)
         self.assertIn(".conductor", txt)
 
+    def test_reads_prior_drops_from_discoveries(self):
+        # D2 signal 5: prior `## Dropped` sections are triage history — read
+        # (sections only, not whole files) and surfaced as
+        # "dropped <date>: <reason> — re-confirm or respect", never
+        # re-litigated blind. Plain file reads — no track-state machinery.
+        txt = _read(SKILL)
+        self.assertIn("## Dropped", txt)
+        self.assertIn("re-confirm or respect", txt)
+
+    def test_reads_glossary_when_present(self):
+        # D2: settled vocabulary feeds candidate naming (SHARED-KNOWN, never
+        # re-asked).
+        txt = _read(SKILL)
+        self.assertIn("conductor/resource/glossary.md", txt)
+
 
 if __name__ == "__main__":
     main()

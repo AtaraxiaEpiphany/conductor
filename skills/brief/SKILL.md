@@ -61,6 +61,12 @@ CRITICAL: Validate every tool call. On failure → halt → announce.
 1. **Scan & Match:** Search `conductor/index.md` for file paths semantically related to the track's goal.
 2. **Found relevant docs** → collect paths only (do NOT read contents). These become `CONTEXT_PATHS` for the writer (§4), AND fuel the §3 recommendations.
 3. **Not found** → `CONTEXT_PATHS = N/A`. The §3 interview carries the context instead.
+4. **Settled vocabulary + prior decisions (read when present):** Read
+   `conductor/resource/glossary.md` and `conductor/design/decision-*.md` if
+   they exist. Unlike the scoped docs above (paths only), these two are small
+   globals the grill contract says to read directly (grill-discipline §2
+   quadrant 1 / §7) — settled terms and prior decisions fuel the §3
+   recommendations and are never re-asked.
 
 > The orchestrator may Read the discovered docs itself during §3 to ground its recommended answers (look-it-up-first, see §3). The writer still loads full content itself.
 
@@ -153,6 +159,12 @@ Consolidate the answers (and any carried-over description) into a single
 `USER_ANSWERS` block for §4, structured by the sections above, plus any
 `USER_REFERENCES` captured in node 6.
 
+**Crystallization writes (contract §7).** When a term crystallizes or a
+decision lands with a rejected alternative during the grill, append the
+glossary entry / decision record per the contract you Read at §2.5 — §7 owns
+the write discipline, this skill does not restate it. The §5 commit stages
+whatever was written.
+
 **Signal grill-done before writing.** The moment shared understanding is reached,
 run:
 
@@ -226,10 +238,13 @@ You wrote it inline, so you fix it inline — there is no writer to re-dispatch.
    is a resume hazard — a session clear or worktree switch would lose it. Stage
    **only** the track dir's `brief.md` (plus the per-track `.conductor/` marker
    change that `brief-finalize` just made, which IS tracked — unlike root
-   `/.conductor/`). Same scoped-staging discipline as `setup` §3.6; the
-   `git diff --cached --quiet ||` guard makes it a no-op only if already committed:
+   `/.conductor/`, and plus any crystallization writes §3 made — only the
+   `conductor/resource/glossary.md` / `conductor/design/decision-*.md` paths
+   this run actually touched). Same scoped-staging discipline as `setup` §3.6;
+   the `git diff --cached --quiet ||` guard makes it a no-op only if already
+   committed:
    ```bash
-   git add "<track_dir>/brief.md" "<track_dir>/.conductor/" \
+   git add "<track_dir>/brief.md" "<track_dir>/.conductor/" [<crystallization_write_paths>] \
      && git diff --cached --quiet \
      || git commit -m "docs(<track_id>): brief — grilled shared understanding"
    ```

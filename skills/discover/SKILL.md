@@ -35,6 +35,8 @@ brief is a page. Do not collapse them — triage in discover, specify in brief.
   - `.conductor/subagent-recovery-counters.json` — agents that recover/fail often.
   - `git log` — recent commits (manual rituals, recurring fix classes, churn).
   - `conductor/tracks/` — tracks already in flight (duplicate guard).
+  - `conductor/discoveries/*.md` — prior proposals; their `## Dropped`
+    sections are triage history (§1.0 signal 5).
 
 CRITICAL: Validate every tool call. On failure → halt → announce.
 
@@ -57,6 +59,12 @@ candidate loops — **do NOT grill yet**:
 4. **Duplicate guard** — `ls conductor/tracks/`; a friction already covered by an
    in-flight or archived track is not a new proposal (name it as a duplicate, drop
    it).
+5. **Prior drops** — glob `conductor/discoveries/*.md`; Read the `## Dropped`
+   sections only (not the whole files). A candidate dropped with a reason is
+   history, not noise: surface it at triage as *"dropped <date>: <reason> —
+   re-confirm or respect"*, never re-litigate blind. Also Read
+   `conductor/resource/glossary.md` when present — candidate naming benefits
+   from settled vocabulary (shared-known, never re-asked).
 
 Collect 3–8 **candidate loops**, each as a one-line observed signal + the evidence
 path (the log line, the commit, the counter). These start as YOUR-KNOWN /

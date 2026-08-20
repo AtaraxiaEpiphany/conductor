@@ -38,6 +38,7 @@ Read on demand. Check the Index file first to determine relevance, then open onl
 | API Specs | conductor/design/api-specs/index.md | auto | Match by endpoint path or tags from git diff / task scope |
 | Database | conductor/design/database/index.md | auto | Match by table name from git diff / migration files |
 | Architecture | conductor/design/architecture/system-architecture.md | auto | Match by component name from git diff |
+| Decision Records | conductor/design/decision-*.md | on-demand | Match by topic / rejected alternative (ADR-style; append, never delete) |
 | UX/UI Spec | conductor/requirement/ux-ui/design-spec.md | on-demand | Match by page or component name from task description |
 
 ## Workflow & Resources
