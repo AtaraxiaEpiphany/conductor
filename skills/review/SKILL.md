@@ -108,14 +108,32 @@ The refuter re-opens each finding against the code and **defaults to refuted whe
 
 **Convergence loop (bounded ≤ 2 lens-fan-out rounds total).** A single lensed pass can still self-limit within its own dimension. Up to ONE more time, re-dispatch the full 4-lens fan-out (same lenses, same range + context) with the current `seen` signatures appended to each prompt ("report issues NOT already in this list"), refute that round's Critical/High survivors per lens as above (Medium/Low pass through unrefuted), and compute `NEW = round_signatures − seen`. A round with empty `NEW` is **dry** → stop. Otherwise fold `NEW` into the merged set, update `seen`, and continue. Hard cap at 2 lens-fan-out rounds total (round 0 + one re-run) — the per-lens split + the critic already cover the dimensions this loop was meant to widen, so one re-run is enough; the dry check stops it sooner when converged.
 
-**Finalize.** Overwrite `{track_dir}/.conductor/review-result.json` with the merged set and recompute `stats`, so the §3.0 "Apply Fixes" path consumes one authoritative list. Carry the merged counts into §2.4.
+**Finalize.** Overwrite `{track_dir}/.conductor/review-result.json` with the merged set and recompute `stats`, so the §3.0 "Apply Fixes" path consumes one authoritative list. Also write `lens_verdicts` — one entry per lens with its own verdict + survivor counts (the per-axis record §2.4 renders side by side). Carry the merged counts into §2.4.
 
-### 2.4 Process Result
+### 2.4 Process Result (two axes, side by side — never merged)
 
-1. Present findings. Report format:
+The lens fan-out ran on two axes that answer different questions: the
+**Standards axis** — does the code meet engineering standards (`bugs`,
+`security`, `tests`) — and the **Spec axis** — does it keep the promise it
+planned (`spec-compliance`). Report the axes **side by side** —
+**NEVER merge or re-rank** them into one list. The severity→decision rule
+(step 2) applies WITHIN each axis, and the final `AskUserQuestion` (step 3)
+is the human's consolidation of the two verdicts — not a re-rank.
+
+1. Present the per-lens verdicts side by side (one line per lens from
+   `lens_verdicts`, plus the critic). Report format:
 
 ```
 # Review Report: [Track Name]
+
+## Per-Lens Verdicts (side by side)
+| Lens | Axis | Verdict | C/H/M/L | One-line |
+|---|---|---|---|---|
+| bugs | Standards | [verdict] | c/h/m/l | [one-line] |
+| security | Standards | [verdict] | c/h/m/l | [one-line] |
+| tests | Standards | [verdict] | c/h/m/l | [one-line] |
+| spec-compliance | Spec | [verdict] | c/h/m/l | [one-line] |
+| critic (missed classes) | — | [verdict] | c/h/m/l | [one-line] |
 
 ## Summary
 [One sentence quality assessment]
@@ -128,18 +146,22 @@ The refuter re-opens each finding against the code and **defaults to refuted whe
 
 ## Findings (if any)
 ### [Critical/High/Medium/Low] Description
+- **Lens**: {the finding's lens}
 - **File**: path/to/file (Lines L-L)
 - **Context**: [why]
 - **Suggestion**: diff
 ```
 
-2. Review Decision:
-   - Critical/High → **CHANGES REQUESTED**
+2. Review Decision — apply the SAME rule within each axis:
+   - An axis with any Critical/High finding → that axis is **CHANGES REQUESTED**
    - Medium/Low only → **APPROVE WITH COMMENTS**
    - No issues → **APPROVE**
    - STATUS: FAILURE (agent error) → announce, recommend re-running the review, and continue (non-blocking).
 
 3. Ask user: A) Apply Fixes, B) Manual Fix, C) Complete Despite Warnings.
+   This choice consolidates the two axes — a Standards **CHANGES REQUESTED**
+   against a clean Spec verdict (or the reverse) is the human's call to
+   weigh, not a merge the report performs for them.
 
 ---
 

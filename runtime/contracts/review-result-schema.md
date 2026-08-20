@@ -3,7 +3,7 @@ type: concept
 sources:
   - agents/code-reviewer
   - skills/review
-last_verified: 2026-07-03
+last_verified: 2026-08-20
 ---
 
 # Review Result Schema
@@ -34,7 +34,8 @@ Fixes" path and the post-loop auto-review, both of which parse this exact file.
     {"severity": "Critical|High|Medium|Low", "title": "...", "file": "path", "lines": "L1-L2", "context": "why", "suggestion": "fix"}
   ],
   "state_issues": "None|<description>",
-  "stats": {"critical": 0, "high": 0, "medium": 0, "low": 0}
+  "stats": {"critical": 0, "high": 0, "medium": 0, "low": 0},
+  "lens_verdicts": {"<lens>": {"verdict": "APPROVE|APPROVE_WITH_COMMENTS|CHANGES_REQUESTED", "critical": 0, "high": 0, "medium": 0, "low": 0}}
 }
 ```
 
@@ -61,6 +62,15 @@ sidecar (`review_verdict`) so a completed track's verdict is auditable on disk.
 In `refute` and `critique` the `checks` block is optional (the narrower modes may
 not exercise every checklist item); always emit `"mode"` (and `"lens"`) so the
 orchestrator's synthesis step knows which pass wrote the file.
+
+**`lens_verdicts` (optional — finalized file only):** the orchestrator's
+finalize step (`conductor:review` §2.3) adds one entry per lens —
+`{"verdict": <review judgment>, "critical": n, "high": n, "medium": n,
+"low": n}` — the per-axis record §2.4 renders **side by side**. The two axes
+(Standards: `bugs`/`security`/`tests` — Spec: `spec-compliance`) are never
+merged or re-ranked into one list; `stats` stays the merged totals the
+"Apply Fixes" path consumes. Per-lens producer/refute files do NOT carry this
+field — it is a synthesis product, written once at finalize.
 
 **Stdout is separate and terse** — the 4-line `---REVIEW RESULT---` block lives
 inline in `agents/code-reviewer.md` §4.2; only the full findings live in this JSON.

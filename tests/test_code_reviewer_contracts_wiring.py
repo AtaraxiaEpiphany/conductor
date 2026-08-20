@@ -118,6 +118,29 @@ class CrossReferenceTests(TestCase):
         self.assertIn("[[review-result-schema]]", matrix)
 
 
+class TwoAxisSplitContractTests(TestCase):
+    """D5.4 (reporting-split form): the contracts carry the two-axis framing.
+    The schema documents `lens_verdicts` (finalize-only synthesis product —
+    per-lens files don't carry it), the matrix frames the Standards/Spec axes
+    with the never-merged-or-re-ranked rule, and the agent notes that the
+    finalize merge preserves per-lens verdicts."""
+
+    def test_schema_documents_lens_verdicts(self):
+        schema = SCHEMA_PATH.read_text(encoding="utf-8")
+        self.assertIn('"lens_verdicts"', schema)
+        self.assertIn("finalize", schema.lower())  # finalize-only, not per-lens
+
+    def test_matrix_frames_two_axes(self):
+        matrix = MATRIX_PATH.read_text(encoding="utf-8")
+        self.assertIn("Standards axis", matrix)
+        self.assertIn("Spec axis", matrix)
+        self.assertIn("never merged or re-ranked", matrix)
+
+    def test_agent_notes_merge_preserves_lens_verdicts(self):
+        agent = (AGENTS / "code-reviewer.md").read_text(encoding="utf-8")
+        self.assertIn("lens_verdicts", agent)
+
+
 class AgentInlineInvariantTests(TestCase):
     """The extraction must NOT strip the procedural framing / test-pinned tokens
     that ``test_review_wiring.py`` relies on. Pin them here too so a future

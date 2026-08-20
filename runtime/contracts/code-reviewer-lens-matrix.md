@@ -3,7 +3,7 @@ type: concept
 sources:
   - agents/code-reviewer
   - skills/review
-last_verified: 2026-07-03
+last_verified: 2026-08-20
 ---
 
 # Code-Reviewer Lens Matrix
@@ -26,6 +26,16 @@ over, so the skill's inline lens names and this matrix must stay in sync.
 **LENS × MODE intersection:** a lensed `refute` re-confirms only findings whose
 dimension matches the lens; a lensed `critique` hunts missed classes only within
 the lens dimension.
+
+**Two axes, reported side by side.** The lens set spans two review axes that
+answer different questions: the **Standards axis** — does the code meet
+engineering standards (`bugs`, `security`, `tests`, plus the unlensed Style and
+State items a no-lens `full` pass runs) — and the **Spec axis** — does the code
+keep its promise (`spec-compliance`: §3.4 item 1 Plan Compliance + item 7
+Design Doc Consistency). `conductor:review` §2.4 renders one verdict per axis
+from the same severity rule applied **within** the axis; the axes are
+**never merged or re-ranked** into one list — the final `AskUserQuestion` is
+the human's consolidation.
 
 **Documented scope limit, not a silent gap:** §3.4 items 2 (State Consistency),
 3 (Style Compliance), and 6 (Skipped/Blocked) are mapped to no lens, so a lensed

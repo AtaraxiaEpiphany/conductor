@@ -135,6 +135,35 @@ class ReviewLensedWiringTests(TestCase):
         self.assertIn("review-result.json", self.skill)
 
 
+class TwoAxisReportingSplitTests(TestCase):
+    """D5.4 (reporting-split form): §2.4 renders per-lens verdicts **side by
+    side** and NEVER merges or re-ranks the two axes (Standards vs Spec) into
+    one list — the severity→decision rule applies within each axis, and the
+    final AskUserQuestion is the human's consolidation, not a re-rank. The
+    finalize step persists the per-axis record as `lens_verdicts`."""
+
+    def setUp(self):
+        self.skill = (ROOT / "skills" / "review" / "SKILL.md").read_text(encoding="utf-8")
+
+    def test_side_by_side_per_lens_verdicts_rendered(self):
+        self.assertIn("Per-Lens Verdicts", self.skill)
+        self.assertIn("side by side", self.skill.lower())
+
+    def test_axes_never_merged_or_reranked(self):
+        lower = self.skill.lower()
+        self.assertIn("never merge or re-rank", lower)
+        self.assertIn("Standards", self.skill)
+        self.assertIn("Spec", self.skill)
+
+    def test_final_askuserquestion_is_consolidation(self):
+        # The human consolidates the two verdicts; the report must not merge
+        # them for the user.
+        self.assertIn("consolidat", self.skill.lower())
+
+    def test_finalize_writes_lens_verdicts(self):
+        self.assertIn("lens_verdicts", self.skill)
+
+
 class ReviewVerdictPersistenceTests(TestCase):
     """The review VERDICT (APPROVE / CHANGES_REQUESTED / …) was ephemeral stdout —
     only the agent-RUN ``status`` reached disk, so a completed track's review

@@ -170,6 +170,10 @@ SUMMARY: <single sentence>
 ---END REVIEW RESULT---
 ```
 
+The orchestrator's finalize merge (`conductor:review` §2.3) preserves your
+per-lens verdicts — they land in the final file's `lens_verdicts`, never
+flattened into a single re-ranked list.
+
 ### 4.3 Failure Format
 
 If a tool call fails and you cannot recover:
