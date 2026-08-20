@@ -287,5 +287,3 @@ Options:
 - "No, start later" → end skill. User can manually call `/conductor:implement` later.
 
 **If `$EXECUTION_MODE` is "continuous":** Auto-start `/conductor:implement <track_id>` without asking.
-
-This provides seamless handoff while preserving user control in interactive mode.

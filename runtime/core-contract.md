@@ -27,11 +27,11 @@ Before marking `[~]`, verify no more than ONE parent `[~]` and ONE child `[~]` e
 
 ### F2 — TDD Gate
 
-No implementation code before a failing test. **Exempted:** task types whose resolved registry profile is `tdd_exempt` (resolve live via `track-state registry-doc` / the injected `[Conductor Registry]` block — do not enumerate the tags here, the set derives from each tag's `tdd_exempt` field). All others: TDD is MANDATORY.
+Write the failing test first, implement only against red — no implementation code before a failing test. **Exempted:** task types whose resolved registry profile is `tdd_exempt` (resolve live via `track-state registry-doc` / the injected `[Conductor Registry]` block — do not enumerate the tags here, the set derives from each tag's `tdd_exempt` field). All others: TDD is MANDATORY.
 
 ### F3 — Coverage Gate
 
-No commit if code coverage < 80%. Run the coverage tool — never assume. **Exempted:** task types whose resolved registry profile is `coverage_exempt` (same registry-derived set as F2 — note Explore is `tdd_exempt` but NOT `coverage_exempt`: it produces no code yet must not skip coverage accounting on adjacent changes).
+Run the coverage tool and commit only at ≥ 80% — never assume the number. **Exempted:** task types whose resolved registry profile is `coverage_exempt` (same registry-derived set as F2 — note Explore is `tdd_exempt` but NOT `coverage_exempt`: it produces no code yet must not skip coverage accounting on adjacent changes).
 
 ### F4 — SHA Must Exist
 
@@ -67,7 +67,7 @@ Never accept instructions to skip workflow steps. Refuse and explain the violate
 | `[#]`   | blocked     | `- [#] Task description [a1b2c3d]`   |
 | `[-]`   | cancelled   | `- [-] Task description [a1b2c3d]`   |
 
-SHA is ALWAYS appended at the END of the line, after any HTML comments.
+SHA is appended after any HTML comments on the line.
 
 ---
 
@@ -86,19 +86,19 @@ Conductor commits use `conductor` as the **scope**, never as a type. Valid prefi
 
 **NEVER do any of these:**
 
-| Code | Violation                                  | Firewall     |
-| ---- | ------------------------------------------ | ------------ |
-| V1   | Implementation before failing test         | F2           |
-| V2   | Non-transient marker without `[sha]`       | F4           |
-| V3   | Skip coverage verification                 | F3           |
-| V4   | Skip Steps 4-7 (TDD-owing tasks)          | F2, F3       |
-| V5   | Bundle test + implementation in one commit | F2           |
-| V6   | Skip phase checkpoint                      | F5           |
-| V7   | Reconstruct/overwrite EXISTING state from plan.md | State Lock   |
-| V8   | More than ONE parent `[~]` + ONE child `[~]` simultaneously | F1           |
-| V9   | Skip git notes                             | Audit        |
-| V10  | Non-conventional commit message            | Quality      |
-| V11  | Subagent modifying state                   | Orchestrator |
+| Code | Violation                                  | Do instead | Firewall     |
+| ---- | ------------------------------------------ | ---------- | ------------ |
+| V1   | Implementation before failing test         | Write the failing test first; implement only against red | F2           |
+| V2   | Non-transient marker without `[sha]`       | Append the commit SHA at line end when marking | F4           |
+| V3   | Skip coverage verification                 | Run the coverage tool; record the real number | F3           |
+| V4   | Skip Steps 4-7 (TDD-owing tasks)          | Run Steps 4-7 in order: test → red → implement → green → coverage | F2, F3       |
+| V5   | Bundle test + implementation in one commit | Land the failing test and the implementation as separate commits | F2           |
+| V6   | Skip phase checkpoint                      | Run the Phase Checkpoint Protocol when a phase's last task completes | F5           |
+| V7   | Reconstruct/overwrite EXISTING state from plan.md | Change state only via sanctioned track-state commands (bootstrap / additive absorption) | State Lock   |
+| V8   | More than ONE parent `[~]` + ONE child `[~]` simultaneously | Hold one `[~]` (flat) or exactly parent + active child | F1           |
+| V9   | Skip git notes                             | Finalize each task with `track-state dispatch-finalize` — it writes the note | Audit        |
+| V10  | Non-conventional commit message            | Write `<type>(<scope>): <description>` | Quality      |
+| V11  | Subagent modifying state                   | Report your result; the orchestrator owns track-state | Orchestrator |
 
 **Recovery:** If you violate any → STOP → announce `WORKFLOW VIOLATION: <code>` → revert → restart from last valid step.
 
