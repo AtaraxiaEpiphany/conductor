@@ -4,7 +4,7 @@ description: Executes a single track task via TDD workflow (Steps 3-8). Self-loa
 tools: Bash, Read, Edit, Write, Grep, Glob, NotebookEdit, Agent
 model: sonnet
 effort: high
-# Test stdout is absorbed by the §4.5 test-digester child, so the parent needs no
+# Test stdout is absorbed by the §4.5 command-digester child, so the parent needs no
 # headroom for buffering pytest/cargo/go-test output.
 maxTurns: 64
 permissionMode: acceptEdits
@@ -196,9 +196,9 @@ Follow your manifest's **Workflow path** decision (§1.5) — it is the single r
 
 ## 4.5 TEST EXECUTION VIA DIGESTER (nested)
 
-Dispatch the read-only `test-digester` child to run the suite and digest it — the verbose output stays in **its** sub-context; you receive only a compact `---TEST DIGEST RESULT---` block (`filter-subagent-output` trims the rest).
+Dispatch the read-only `command-digester` child to run the suite and digest it — the verbose output stays in **its** sub-context; you receive only a compact `---TEST DIGEST RESULT---` block (`filter-subagent-output` trims the rest).
 
-**Step 3 (Red), `PURPOSE=red`.** Dispatch `test-digester`, prompt:
+**Step 3 (Red), `PURPOSE=red`.** Dispatch `command-digester`, prompt:
 
 ```
 TRACK_DIR={td}
@@ -207,7 +207,7 @@ TASK={t}
 PURPOSE=red
 ```
 
-**Step 6 (Coverage), `PURPOSE=coverage`.** Dispatch `test-digester`, prompt:
+**Step 6 (Coverage), `PURPOSE=coverage`.** Dispatch `command-digester`, prompt:
 
 ```
 TRACK_DIR={td}
@@ -225,7 +225,7 @@ PURPOSE=coverage
 | `failure` | Unexpected — read `FAILING_TESTS` + `OUTPUT_TAIL`; the test errored rather than asserted-failed. | Suite failed → Step 4 (Green) to fix, then re-dispatch `coverage`. |
 | `error` | Read `REASON`. `no test command resolvable` → record `SPEC_DEVIATION`/surface; otherwise re-dispatch once. | Same. |
 
-> The `Agent` tool is fenced to §4.5 `test-digester` dispatches and the opt-in
+> The `Agent` tool is fenced to §4.5 `command-digester` dispatches and the opt-in
 > §3.0d `doc-probe` fan-out — see the §5.0 firewall. No other nested subagent.
 
 ---
@@ -238,7 +238,7 @@ Prohibited: V1 (code before test), V3 (skip coverage), V8 (modify state).
 SHA handling: orchestrator appends SHAs — you do NOT modify plan markers.
 
 **Nesting fence (the `Agent` tool):** permitted for exactly two dispatch kinds, no other nested subagent:
-1. a §4.5 `test-digester` dispatch per Step 3 / Step 6;
+1. a §4.5 `command-digester` dispatch per Step 3 / Step 6;
 2. the **opt-in** §3.0d `doc-probe` fan-out — only when the gate fires
    (`[Probe]` marker or `CONDUCTOR_TASK_FANOUT=1`), one parallel dispatch per
    matching Layer 0(b) doc.

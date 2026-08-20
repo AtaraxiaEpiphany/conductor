@@ -149,7 +149,7 @@
     ],
     "SubagentStart": [
       {
-        "matcher": "task-executor|code-reviewer|explorer|phase-checker|ac-tracer|build-runner|test-runner|corpus-writer|wiki-synthesizer|doc-linter|skip-analyst|failure-analyst|spec-planner|spec-reviewer|project-analyzer|wiki-differ|wiki-researcher|refuter|log-checker|test-digester|doc-probe|apply-fixes|refactorer|strategy-writer",
+        "matcher": "task-executor|code-reviewer|explorer|phase-checker|ac-tracer|build-runner|test-runner|corpus-writer|wiki-synthesizer|doc-linter|skip-analyst|failure-analyst|spec-planner|spec-reviewer|project-analyzer|wiki-differ|wiki-researcher|refuter|command-digester|doc-probe|apply-fixes|refactorer|strategy-writer",
         "hooks": [
           {
             "type": "command",
@@ -171,7 +171,7 @@
         ]
       },
       {
-        "matcher": "doc-linter|skip-analyst|spec-reviewer|project-analyzer|refuter|log-checker|test-digester|doc-probe",
+        "matcher": "doc-linter|skip-analyst|spec-reviewer|project-analyzer|refuter|command-digester|doc-probe",
         "hooks": [
           {
             "type": "command",

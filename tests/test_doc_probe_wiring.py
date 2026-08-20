@@ -7,8 +7,9 @@ Layer 0(c) replaces the direct reads with a fan-out: one ``doc-probe`` child per
 matching doc (haiku, read-only), each returning a compact ``---PROBE RESULT---``
 digest. The parent assembles N digests instead of reading N full docs.
 
-This is the second task-executor nesting exception after §4.5 test-digester, and
-the third fleet-wide after doc-linter → log-checker. doc-probe is a *child*
+This is the second task-executor nesting exception after §4.5
+command-digester, and the third fleet-wide after doc-linter → command-digester
+(PURPOSE: log-verify). doc-probe is a *child*
 (haiku, no Agent tool) — it does NOT widen ``EXPECTED_AGENT_TOOL_AGENTS`` (still
 ``{doc-linter.md, task-executor.md}``). These tests lock: the child's read-only
 haiku-leaf contract + result block; the parent's opt-in gate + canonical dispatch
@@ -113,10 +114,11 @@ class TaskExecutorNestingTests(unittest.TestCase):
         self.assertIn("continue", TASK_EXECUTOR.lower())
 
     def test_firewall_fences_agent_tool_to_both_children(self):
-        # The Agent tool fence must name BOTH permitted children (§4.5 test-digester
-        # + §3.0d doc-probe) — the exception can't widen to arbitrary nesting, and
-        # the doc-probe branch must be visibly gated, not silent.
-        for child in ("test-digester", "doc-probe"):
+        # The Agent tool fence must name BOTH permitted children (§4.5
+        # command-digester + §3.0d doc-probe) — the exception can't widen to
+        # arbitrary nesting, and the doc-probe branch must be visibly gated,
+        # not silent.
+        for child in ("command-digester", "doc-probe"):
             self.assertIn(child, TASK_EXECUTOR,
                           f"firewall must name permitted child: {child}")
 
@@ -135,7 +137,7 @@ class HookWiringTests(unittest.TestCase):
 
     def test_subagentstop_matcher_includes_doc_probe(self):
         # doc-probe is a leaf analysis child (emits a RESULT block, writes no
-        # result.json) — like test-digester it belongs in a SubagentStop matcher
+        # result.json) — like command-digester it belongs in a SubagentStop matcher
         # (async / no-recovery-contract), NOT the result-file or stdout-block
         # recovery sets. A forced recovery turn on a haiku read-only child would
         # waste budget, not save it.
@@ -146,7 +148,7 @@ class HookWiringTests(unittest.TestCase):
         self.assertIn("doc-probe", stop_agents)
 
     def test_doc_probe_not_in_recovery_groups(self):
-        # Mirror of the test-digester contract: doc-probe must NOT be admitted to
+        # Mirror of the command-digester contract: doc-probe must NOT be admitted to
         # the recovery-contract groups (_RESULT_FILE_INSTRUCTIONS or
         # STDOUT_BLOCK_AGENTS in on-subagent-stop). It is a leaf dispatched by
         # task-executor; reliability is the parent's concern, and a forced recovery

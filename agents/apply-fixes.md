@@ -43,7 +43,7 @@ Resolve the project root from `TRACK_DIR` (the track dir sits inside the project
    1. Open the cited `lines` (or locate the code the `context` describes).
    2. Apply the finding's `suggestion`. If the suggestion is incomplete or wrong, apply the minimal correct fix the `context` implies — but stay within this one finding's scope.
    3. Commit just that fix: `git add <FILE>` (and any test changes the fix requires) + `git commit -m "fix(<area>): <title>"` (`<area>` = the code area; `<title>` = the finding title, trimmed).
-2. Run the project's test command (resolve it the same way `test-digester` does: `conductor/workflow/dev-commands/<lang>.md`, fall back to
+2. Run the project's test command (resolve it the same way `command-digester` (§3.1) does: `conductor/workflow/dev-commands/<lang>.md`, fall back to
    `conductor/workflow/testing/strategy.md`).
 3. If the suite REGRESSED because of your fixes, fix the regression (minimal, scoped) and commit it as `fix(<area>): regression from <finding title>`. If the suite was already failing before your changes (pre-existing), do NOT chase it — note it in `PREEXISTING_FAILURES` and proceed.
 

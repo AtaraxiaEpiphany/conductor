@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """coverage-pct - parse a coverage percentage from captured test/coverage output.
 
-Reads tool stdout from **stdin** (the test-digester agent already ran the
-test+coverage command and captured its output) and prints the parsed coverage
-percentage, or ``N/A`` when it cannot be parsed.
+Reads tool stdout from **stdin** (the command-digester agent, PURPOSE=red|coverage,
+already ran the test+coverage command and captured its output) and prints the
+parsed coverage percentage, or ``N/A`` when it cannot be parsed.
 
-Why this exists: the ``test-digester`` agent is a haiku leaf whose job is to
+Why this exists: the ``command-digester`` agent is a haiku leaf whose job is to
 keep verbose pytest/cargo/go-test output **out** of ``task-executor``'s context.
 Coverage parsing must stay deterministic and shared with the server-side F3
 probe (``on-batch-complete.py``), so the digester pipes captured output here

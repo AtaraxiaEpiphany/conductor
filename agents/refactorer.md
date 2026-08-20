@@ -67,7 +67,7 @@ root that holds `conductor/workflow/`).
    3. Commit it: `git add <files>` + `git commit -m "refactor(<area>): <title>"`.
    4. Run the suite (step 4). If it regressed, `git revert` that commit and
       record the target in `SKIPPED` ("target — regressed").
-4. Run the project's test command (resolve it the same way `test-digester` does:
+4. Run the project's test command (resolve it the same way `command-digester` (§3.1) does:
    `conductor/workflow/dev-commands/<lang>.md`, fall back to
    `conductor/workflow/testing/strategy.md`). **Green required.** If the suite
    was already failing before your changes (pre-existing), do NOT chase it —

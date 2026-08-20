@@ -72,5 +72,5 @@ the Green commit. The separate commit is what makes `git revert` trivial
 Step 5 spawns **no subagent**. The lint run is inline Bash (small output); the
 green-confirm reuses Step 6's existing `PURPOSE=coverage` dispatch. It therefore
 adds no `Agent`-tool dispatch kind, and the §5.0 nesting fence
-(`test-digester` per Step 3/6 + opt-in `doc-probe`) is deliberately **not**
+(`command-digester` per Step 3/6 + opt-in `doc-probe`) is deliberately **not**
 widened for it.

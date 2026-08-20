@@ -28,7 +28,7 @@ from lib.path_utils import find_tracks_registry, extract_track_dirs
 from lib.env import get_data_dir
 from lib.atomic_io import atomic_write_json
 # detect_project_type + the pure coverage parser live in lib.coverage so the
-# test-digester agent (via scripts/coverage-pct.py) shares the exact same
+# command-digester agent (via scripts/coverage-pct.py) shares the exact same
 # per-language parsing the F3 probe uses here. get_coverage_percent below stays
 # in this module (it owns the subprocess run); only the parser is shared.
 from lib.coverage import detect_project_type, parse_coverage_percent
@@ -84,7 +84,7 @@ def get_coverage_percent(cwd: Path) -> Optional[float]:
             return None
 
         output = result.stdout + result.stderr
-        # Per-language parsing is shared with the test-digester agent via
+        # Per-language parsing is shared with the command-digester agent via
         # lib.coverage — one parser, used by both the F3 probe and the
         # implementation-loop digester, so coverage % stays deterministic and
         # can't drift between the two call sites.

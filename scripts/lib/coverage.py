@@ -1,7 +1,7 @@
 """Pure coverage-output parsing (no subprocess).
 
 Shared by ``on-batch-complete.py`` (server-side F3 probe) and the
-``test-digester`` agent (implementation-loop coverage digestion, via
+``command-digester`` agent (implementation-loop coverage digestion, via
 ``scripts/coverage-pct.py``). Keeping the parser pure and process-free lets
 both call sites supply output text they already captured, so parsing is
 deterministic and unit-testable without running real tools — and a haiku
