@@ -7,13 +7,27 @@ sources:
   - scripts/on-brief-grill-tripwire.py
   - scripts/lib/brief_counters.py
   - "~/Documents/wiki/agent-engineering/mattpocock-skills.md (external; read at 2026-08-19, wiki commit 03e6faa)"
-last_verified: 2026-08-19
+last_verified: 2026-08-20
 ---
 
 # Interaction-Layer Import Campaign (grill optimization + skill-design patterns)
 
-Status: **Agreed** (2026-08-19, resolved via grill per
-`runtime/contracts/grill-discipline.md`) — not yet implemented.
+Status: **Implemented** (2026-08-19 agreed via grill per
+`runtime/contracts/grill-discipline.md`; implemented 2026-08-20,
+`84c7e61` → `e7149bb`: Phase 1 grill mechanics D1/D3/D4, Phase 2 docs
+grounding D2, Phase 3 router + description audit + two-axis review split +
+writing-for-agents sweep D5; 2457 tests green). Two user-approved
+adjustments vs this doc's original shape:
+
+- **D5.4 shipped as a reporting split, not a new subagent.** The existing
+  4-lens fan-out + critic + per-lens refuters already isolate the axes; the
+  gap was the tail — §2.4 now renders per-lens verdicts side by side
+  (Standards vs Spec), never merged or re-ranked, persisted as
+  `lens_verdicts` on the finalized review-result.json.
+- **D2's routing landed as a read-row, not a writer-ownership matrix.**
+  `doc-routing.md` gained a decision-lookup row; the write discipline
+  single-homes in grill-discipline §7 (crystallization writes), not in a
+  new doc-routing writer column.
 
 ## Context
 
