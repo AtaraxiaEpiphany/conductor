@@ -15,9 +15,14 @@ last_verified: 2026-08-20
 
 # Dispatch-Manifest Seam (workflow-as-data campaign)
 
-Status: **Agreed** (2026-08-20, resolved via grill per
-`runtime/contracts/grill-discipline.md` — premise challenge + four frontier
-rounds; every decision user-confirmed) — not yet implemented.
+Status: **Implemented** (2026-08-20; Phases 0–D shipped in `99ea55d..a27764e`,
+2482 tests green). The grill record below is the settled design rationale; the
+Phases section reads as executed. D7's operationalized unknown resolved clean:
+scratch e2e on both rails (Rail A `dispatch-next`, Rail B `wave-step`) showed
+identical gate outcomes with the manifest-driven executor — envelope carries
+`WORKFLOW_FILE`, the manifest lands on disk per dispatch (migrate.md decision
+for `[Migrate]`, per-member manifests in worktree track dirs for waves), and is
+reaped at finalize. Roster: 23 (Phase C).
 
 ## Context
 
