@@ -13,9 +13,10 @@ last_verified: 2026-08-20
 
 # Planning-as-Data (planning docfile seam)
 
-Status: **Agreed** (2026-08-20, grill-resolved) — design + ADR recorded, not
-yet implemented. The Phases below are the campaign plan for whenever it is
-scheduled. Decision record:
+Status: **Implemented** (2026-08-20) — Phases A–D landed
+(`eb07bf1` docfile library + `planning_doc`/`signals` fields; `17ab335`
+`propose-shape` + new-track §2.1 swap; `15b077d` `PLAY_FILE` envelope +
+spec-planner docfile collapse; Phase D drift gates). Decision record:
 [[conductor/design/decision-planning-as-data]].
 
 ## Context

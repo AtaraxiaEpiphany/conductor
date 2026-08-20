@@ -93,6 +93,14 @@ WATCHED = [
     *sorted(str(p.relative_to(Path(__file__).resolve().parent.parent))
             for p in (Path(__file__).resolve().parent.parent
                       / "templates" / "workflow" / "steps").glob("*.md")),
+    # The planning-docfile library (templates/planning/*.md) is watched for the
+    # same reason: agent-read bodies that name shapes/tags (each docfile owns
+    # ONE shape's planning doctrine) and could accrete a stale closed-set
+    # enumeration as the library grows. Project-side conductor/planning/
+    # docfiles are NOT watched (project content the plugin does not ship).
+    *sorted(str(p.relative_to(Path(__file__).resolve().parent.parent))
+            for p in (Path(__file__).resolve().parent.parent
+                      / "templates" / "planning").glob("*.md")),
     "skills/new-track/SKILL.md",
     "skills/setup/SKILL.md",
     "skills/review/SKILL.md",

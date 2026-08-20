@@ -200,6 +200,49 @@ class ProposeShapeTests(_ShippedRegistry):
         self.assertIn("missing description", r["error"])
 
 
+class GoldenCorpusTests(_ShippedRegistry):
+    """The golden propose-shape corpus — realistic descriptions pinned to their
+    proposals against the SHIPPED registry. A signal edit that shifts any row
+    is an intentional change: update the row in the SAME commit as the registry
+    edit (the drift gate that keeps ``signals`` honest — they are selection
+    data now, not documentation)."""
+
+    # (description, proposed, confirm_required, candidates[shape, score])
+    GOLDEN = (
+        ("Add a payment retry queue with idempotency keys",
+         "default", False, []),
+        ("Migrate the auth stack from AngularJS to React, porting every "
+         "component behavior-preserving", "migration", True,
+         [("migration", 2)]),
+        ("Onboarding material for the payments team",
+         "deliverable", True, [("deliverable", 1)]),
+        # The 1-1 tie: ambiguity, not a proposal (strict plurality → default
+        # silently).
+        ("investigate the report", "default", False,
+         [("research-first", 1), ("deliverable", 1)]),
+        ("Write the API reference documentation for v2",
+         "deliverable", True, [("deliverable", 1)]),
+        ("Spike: explore the unfamiliar ingestion pipeline before reworking it",
+         "research-first", True, [("research-first", 3)]),
+        # A single migration hit ("upgrade") still proposes — the user confirm
+        # is the bar, not derive_task_tag's >= 2.
+        ("Upgrade the billing service to the new framework",
+         "migration", True, [("migration", 1)]),
+        ("Fix the login redirect loop", "default", False, []),
+    )
+
+    def test_corpus_pins(self):
+        for desc, proposed, confirm, cands in self.GOLDEN:
+            with self.subTest(desc=desc):
+                r, _ = _out_captured(cmd_propose_shape, desc)
+                self.assertTrue(r["ok"])
+                self.assertEqual(r["proposed"], proposed)
+                self.assertEqual(r["confirm_required"], confirm)
+                self.assertEqual(
+                    [(c["shape"], c["score"]) for c in r["candidates"]],
+                    cands)
+
+
 class ProposeShapeCLITests(_ShippedRegistry):
     """The subprocess surface — the cli.py elif arm + the non-resolution of the
     description positional (a free-text description is never a track-dir

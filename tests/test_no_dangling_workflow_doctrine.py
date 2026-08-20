@@ -43,6 +43,13 @@ path is legitimate wherever it appears. The shipped steps docfiles are
 themselves scanned (``templates`` rglob) and self-describe only via the
 project-home path.
 
+The **planning-docfile library** (``templates/planning/<name>.md`` — Phase C of
+planning-as-data) is the same class one layer up: never copied by setup, always
+reached via the resolved absolute path the ``PLAY_FILE`` envelope carries. A
+fourth regex flags a bare ``templates/planning/<name>.md`` ref; a
+``conductor/planning/<name>.md`` ref is NOT an offender (the project's own
+overlay home — project wins over plugin, mirroring the steps contrast above).
+
 Inherent gap (same as the runtime-contracts guard): a brace-expansion ``cp
 "${CLAUDE_PLUGIN_ROOT}/templates/"{task-workflow,...}.md`` is text-scan-opaque.
 This is moot post-D1 (no such cp remains), and a regression there is caught by
@@ -88,6 +95,16 @@ _BARE_STEPS = re.compile(
     r"(?<!\$\{CLAUDE_PLUGIN_ROOT\}/)"
     r"templates/workflow/steps/[\w.-]+\.md")
 
+# `templates/planning/<name>.md` (a PLANNING docfile) NOT immediately preceded
+# by ${CLAUDE_PLUGIN_ROOT}/ . Same dangle class one layer up: the planning
+# library is never copied into a project (the executor passes the resolved
+# absolute path via the PLAY_FILE envelope), so a bare ref resolves
+# project-relative and fails in a foreign project. conductor/planning/ refs are
+# deliberately NOT offenders (project overlay home — project wins).
+_BARE_PLANNING = re.compile(
+    r"(?<!\$\{CLAUDE_PLUGIN_ROOT\}/)"
+    r"templates/planning/[\w.-]+\.md")
+
 
 class NoDanglingWorkflowDoctrineTests(TestCase):
     def test_workflow_doctrine_refs_are_plugin_root_prefixed(self):
@@ -102,10 +119,12 @@ class NoDanglingWorkflowDoctrineTests(TestCase):
                 offenders.append(f"{p.relative_to(REPO)}: BARE {m.group(0)}")
             for m in _BARE_STEPS.finditer(text):
                 offenders.append(f"{p.relative_to(REPO)}: BARE-STEPS {m.group(0)}")
+            for m in _BARE_PLANNING.finditer(text):
+                offenders.append(f"{p.relative_to(REPO)}: BARE-PLANNING {m.group(0)}")
         self.assertEqual(
             offenders, [],
             "the workflow-doctrine templates (task-workflow/phase-checkpoint/"
-            "post-loop + the workflow/steps/ docfiles) must be referenced via "
+            "post-loop + the workflow/steps/ + planning/ docfiles) must be referenced via "
             "${CLAUDE_PLUGIN_ROOT}/templates/... "
             "— setup no longer copies them into conductor/workflow/, and a bare "
             "templates/ or conductor/workflow/ ref dangles in a foreign project. "
