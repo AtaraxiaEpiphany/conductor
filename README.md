@@ -45,6 +45,7 @@ All interaction happens through Claude Code slash commands:
 | `/conductor:reconcile` | Re-sync track-state.json after a hand-edit of plan.md (git reset + tag/split/reorder), preserving commit SHAs |
 | `/conductor:revert` | Reverts work with track-state.json state synchronization |
 | `/conductor:review` | Reviews completed track work using track-state.json for context and commit tracking |
+| `/conductor:route` | Route a described goal to the one /conductor: command that starts it — a thin intent-to-command lookup table ("find work", "plan a track", "implement", "review", "undo", "check progress") that prints the command to run; does not execute it |
 | `/conductor:setup` | Scaffolds the project with Conductor environment, creates initial track with track-state.json |
 | `/conductor:status` | Project status overview — renders the code-owned track-state status backend (authoritative statuses, summary, issues, deferred). Read-only. |
 | `/conductor:wiki` | Reads and builds the Conductor documentation wiki — health/status, topic search with citations, directional intent, single-source ingest, and bulk organize-and-file (build) |
@@ -119,7 +120,7 @@ conductor-plugin/
 │   ├── lib/                Shared library (env, dispatch_inflight, hook_io, logging, recovery, validation …)
 │   ├── track_state/        State machine CLI package (cli + cmd_* modules + *_profiles.py registries)
 │   └── *.py                Hook scripts (session start/end, subagent-start, dispatch-dedupe, tripwire …)
-├── skills/                 17 slash-command skills (implement, new-track, reconcile, re-spec, parallel, wiki …)
+├── skills/                 18 slash-command skills (implement, new-track, reconcile, re-spec, parallel, wiki …)
 ├── templates/
 │   ├── workflow/             The two registries: task-type / workflow-shape profiles (.json)
 │   ├── code-styleguides/     10 language style guides
