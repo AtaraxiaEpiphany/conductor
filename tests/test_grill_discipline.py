@@ -53,13 +53,33 @@ class GrillDisciplineContractTests(TestCase):
         self.assertIn("SHARED-UNKNOWN", txt)
 
     def test_grill_loop_rules_present(self):
-        # One-question-at-a-time via AskUserQuestion; look-it-up-first;
+        # AskUserQuestion-only questioning; look-it-up-first;
         # recommended-answer-first with rationale (not an interrogation).
         txt = _read(CONTRACT)
         self.assertIn("one question at a time", txt.lower())
         self.assertIn("AskUserQuestion", txt)
         self.assertIn("Look it up before you ask", txt)
         self.assertIn("(Recommended)", txt)
+
+    def test_frontier_rounds_rule_present(self):
+        # D1: the loop batches the frontier — the mutually-independent,
+        # currently-unblocked decisions — at most 4 per AskUserQuestion call
+        # (the tool cap). Dependent decisions stay one question at a time.
+        txt = _read(CONTRACT)
+        self.assertIn("frontier", txt.lower())
+        self.assertIn("mutually-independent", txt.lower())
+        self.assertIn("at most 4 questions", txt)
+
+    def test_fact_dispatch_form_present(self):
+        # D3: a non-trivial lookup dispatches a read-only subagent (the
+        # explorer/doc-probe pattern) that runs while the round waits on the
+        # human — facts never block decisions, full doc content never enters
+        # the grill's context. Inline Read/Grep stays fine for one-liners.
+        txt = _read(CONTRACT)
+        self.assertIn("read-only subagent", txt)
+        self.assertIn("explorer", txt)
+        self.assertIn("doc-probe", txt)
+        self.assertIn("one-liners", txt)
 
     def test_premise_challenge_pass_present_and_bounded(self):
         # Q3: pose at most ONE challenge before the convergent grill.

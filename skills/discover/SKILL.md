@@ -3,7 +3,7 @@ name: discover
 description: Find recurring dev frictions worth making tracks for (read git log + dispatch-lifecycle.log + .conductor/ signals first), grill-triage them with the user, then write a proposals.md the user feeds to /conductor:brief one proposal at a time
 when_to_use: User wants to decide WHAT to build next — surfacing recurring toil (manual rituals, retry storms, review debt, recovery spikes) as candidate tracks; produces conductor/discoveries/<date>-proposals.md for /conductor:brief to consume per accepted proposal
 argument-hint: "[focus_area]"
-allowed-tools: Bash, Read, Write, Grep, Glob, AskUserQuestion
+allowed-tools: Bash, Read, Write, Grep, Glob, Agent, AskUserQuestion
 model: sonnet
 ---
 
@@ -78,13 +78,17 @@ turn-cost. The grill's *scope* here is triage, not the 8-node brief tree.
 
 ## 3.0 GRILL TO TRIAGE
 
-> **MUST — one question at a time, via `AskUserQuestion`, no exceptions.**
-> Every decision is a **single** `AskUserQuestion` call; wait for the answer before
-> the next. The full procedure (one-decision loop, look-it-up-first,
-> recommended-answer-first with rationale) is in the contract you Read at §2.
+> **MUST — every question via `AskUserQuestion`, one round at a time.**
+> Each round poses the frontier — the currently-unblocked decisions — in one
+> `AskUserQuestion` call of at most 4 questions, recommended answer first, and
+> waits for the answers before the next round. The full procedure (frontier
+> rounds, look-it-up-first, recommended-answer-first with rationale) is in the
+> contract you Read at §2.
 
-Walk the candidate loops **one at a time**. For each, the triage decisions (pose
-them one `AskUserQuestion` at a time, recommended answer first — do NOT batch):
+Walk the candidate loops. Within one candidate the triage decisions are dependent
+(Q2 only matters if Q1 confirms), so pose those **one question at a time**, alone;
+across candidates they are independent — Q1 for several candidates is a frontier
+round (batch them, ≤4 per call, recommended answer first):
 
 1. **Is it real?** Show the observed signal + its evidence path; recommend
    confirm/drop. A loop the user doesn't recognize may be stale tooling, not toil —

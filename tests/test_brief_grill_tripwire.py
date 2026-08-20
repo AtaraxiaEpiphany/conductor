@@ -27,10 +27,18 @@ _GUARD = _REPO / "scripts" / "on-brief-grill-tripwire.py"
 _MIN_FLOOR = 6
 
 
-def _probe(project_dir, tool, file_path=None, cwd=None):
+def _probe(project_dir, tool, file_path=None, cwd=None, questions=None):
+    """Feed the guard a synthetic hook payload. ``questions`` (int) fabricates a
+    tool_input.questions list of that length — the frontier-round payload the
+    hook counts; None sends no tool_input (a degraded payload that must still
+    count as 1 question, never 0)."""
     payload = {"tool_name": tool, "cwd": cwd or str(project_dir)}
     if file_path is not None:
         payload["tool_input"] = {"file_path": file_path}
+    if questions is not None:
+        payload.setdefault("tool_input", {})["questions"] = [
+            {"question": f"q{i + 1}"} for i in range(questions)
+        ]
     env = dict(os.environ)
     env["CLAUDE_PROJECT_DIR"] = str(project_dir)
     env["CLAUDE_PLUGIN_DATA"] = str(project_dir / ".data")
@@ -86,8 +94,9 @@ class BriefGrillTripwireTests(TestCase):
             self.assertEqual(dec, "deny")
 
     def test_allow_brief_write_after_grill_floor_reached(self):
-        """Once MIN_GRILL_QUESTIONS AskUserQuestion turns are recorded, the
-        brief.md write is allowed — the grill is sufficiently complete."""
+        """Once MIN_GRILL_QUESTIONS questions are recorded, the brief.md write
+        is allowed — the grill is sufficiently complete. The probes carry no
+        payload (degraded input), so each counts 1: the unbatched floor path."""
         with tempfile.TemporaryDirectory() as d:
             td = _track(Path(d))
             _set_marker(td, committed=False)
@@ -97,18 +106,19 @@ class BriefGrillTripwireTests(TestCase):
             self.assertIsNone(dec)  # allow
 
     def test_askuserquestion_increments_counter(self):
-        """The AskUserQuestion matcher must increment the per-track counter —
-        without it the floor can never be reached and every brief write is
-        blocked forever."""
+        """The AskUserQuestion matcher must add the call's question count to
+        the per-track counter — without it the floor can never be reached and
+        every brief write is blocked forever. Probes carry explicit 1-question
+        payloads; the sum crosses the floor exactly at the 6th question."""
         with tempfile.TemporaryDirectory() as d:
             td = _track(Path(d))
             _set_marker(td, committed=False)
             # One short of the floor → still denied.
             for _ in range(_MIN_FLOOR - 1):
-                _probe(Path(d), "AskUserQuestion", cwd=str(td))
+                _probe(Path(d), "AskUserQuestion", cwd=str(td), questions=1)
             self.assertEqual(_probe(Path(d), "Write", str(td / "brief.md")), "deny")
-            # One more AskUserQuestion reaches the floor → allowed.
-            _probe(Path(d), "AskUserQuestion", cwd=str(td))
+            # One more question reaches the floor → allowed.
+            _probe(Path(d), "AskUserQuestion", cwd=str(td), questions=1)
             self.assertIsNone(_probe(Path(d), "Write", str(td / "brief.md")))
 
     def test_allow_brief_write_when_marker_finalized(self):
@@ -143,6 +153,56 @@ class BriefGrillTripwireTests(TestCase):
             cdir.mkdir(parents=True, exist_ok=True)
             (cdir / "brief-progress.json").write_text("{ not json")
             self.assertIsNone(_probe(Path(d), "Write", str(td / "brief.md")))
+
+
+class FrontierRoundCountingTests(TestCase):
+    """D1 semantics: the counter counts QUESTIONS, not calls. A frontier round
+    (grill-discipline §3) batches up to 4 mutually-independent decisions into
+    one AskUserQuestion call; the hook reads ``tool_input.questions`` and bumps
+    by its length. The floor keeps its meaning both ways: a batched grill
+    reaches it in fewer round-trips, and batching can never LOWER it."""
+
+    def test_batched_round_counts_its_questions(self):
+        """2 frontier calls × 4 questions = 8 ≥ 6 → allow in 2 round-trips —
+        the whole point of counting questions: a well-batched grill isn't
+        penalized with extra round-trips to satisfy a call-count floor."""
+        with tempfile.TemporaryDirectory() as d:
+            td = _track(Path(d))
+            _set_marker(td, committed=False)
+            for _ in range(2):
+                _probe(Path(d), "AskUserQuestion", cwd=str(td), questions=4)
+            self.assertIsNone(_probe(Path(d), "Write", str(td / "brief.md")))
+
+    def test_two_single_questions_still_below_floor(self):
+        """2 calls × 1 question = 2 < 6 → deny. Batching does not lower the
+        floor: a shortcut grill stays blocked whether or not it batches."""
+        with tempfile.TemporaryDirectory() as d:
+            td = _track(Path(d))
+            _set_marker(td, committed=False)
+            for _ in range(2):
+                _probe(Path(d), "AskUserQuestion", cwd=str(td), questions=1)
+            self.assertEqual(_probe(Path(d), "Write", str(td / "brief.md")), "deny")
+
+    def test_mixed_batch_sizes_sum_across_calls(self):
+        """1 call × 4 + 1 call × 2 = 6 → allow. The counter sums across calls
+        of different batch sizes (frontiers aren't uniformly full)."""
+        with tempfile.TemporaryDirectory() as d:
+            td = _track(Path(d))
+            _set_marker(td, committed=False)
+            _probe(Path(d), "AskUserQuestion", cwd=str(td), questions=4)
+            self.assertEqual(_probe(Path(d), "Write", str(td / "brief.md")), "deny")  # 4
+            _probe(Path(d), "AskUserQuestion", cwd=str(td), questions=2)
+            self.assertIsNone(_probe(Path(d), "Write", str(td / "brief.md")))  # 6
+
+    def test_empty_question_list_counts_one(self):
+        """An empty ``questions[]`` is a malformed payload — it must count 1,
+        not 0, or omitting the list would bypass the floor entirely."""
+        with tempfile.TemporaryDirectory() as d:
+            td = _track(Path(d))
+            _set_marker(td, committed=False)
+            for _ in range(_MIN_FLOOR - 1):
+                _probe(Path(d), "AskUserQuestion", cwd=str(td), questions=0)
+            self.assertEqual(_probe(Path(d), "Write", str(td / "brief.md")), "deny")  # 5
 
 
 class BriefGrillCompleteSignalTests(TestCase):
@@ -214,15 +274,17 @@ class BriefCounterKeyFallbackTests(TestCase):
     def test_project_root_cwd_still_records_counter(self):
         """AskUserQuestion fired from the PROJECT ROOT (cwd = project dir, not the
         track dir) must still land a counter under the track_id the Write gate
-        reads. Without the registry fallback, this was the '0 of 6' bug."""
+        reads — counting its questions, batched or not. Without the registry
+        fallback, this was the '0 of 6' bug."""
         with tempfile.TemporaryDirectory() as d:
             project = Path(d)
             _make_registry(project)  # conductor/tracks.md present
             td = _track(project)
             _set_marker(td, committed=False)
-            # Fire AskUserQuestion from the PROJECT ROOT — the bug scenario.
-            for _ in range(_MIN_FLOOR):
-                _probe(project, "AskUserQuestion", cwd=str(project))
+            # Fire two batched AskUserQuestion rounds from the PROJECT ROOT —
+            # the bug scenario, now with a frontier payload.
+            for _ in range(2):
+                _probe(project, "AskUserQuestion", cwd=str(project), questions=3)
             # Now the brief Write from the project root must be ALLOWED — the
             # counter landed under the track_id (resolved via the registry) and
             # the Write gate reads it back. Pre-fix this asserted 'deny' (0 of 6).

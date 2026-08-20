@@ -32,7 +32,7 @@ All interaction happens through Claude Code slash commands:
 <!-- conductor:begin:commands-table -->
 | Command | Description |
 |---------|-------------|
-| `/conductor:brief` | Grill the user one question at a time to reach shared understanding of a track, then write a brief.md that /conductor:new-track consumes as authoritative planning input |
+| `/conductor:brief` | Grill the user (frontier rounds of up to 4 questions per call) to reach shared understanding of a track, then write a brief.md that /conductor:new-track consumes as authoritative planning input |
 | `/conductor:dashboard` | Live resolved-workflow dashboard — renders the track's resolved shape (nodes, checkpoint verifier fan-out, gates) with the current position, the task tree, and quality gauges. Read-only in-chat snapshot. |
 | `/conductor:discover` | Find recurring dev frictions worth making tracks for (read git log + dispatch-lifecycle.log + .conductor/ signals first), grill-triage them with the user, then write a proposals.md the user feeds to /conductor:brief one proposal at a time |
 | `/conductor:implement` | Orchestrates track task execution via subagents with track-state.json synchronization |

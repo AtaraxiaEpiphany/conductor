@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """lint-grill-contract-drift — drift gate for a second, restated grill home.
 
-The grill discipline (four-quadrant stance, one-question-at-a-time grill loop,
+The grill discipline (four-quadrant stance, frontier-rounds grill loop,
 premise-challenge pass, operationalize-unknowns, signal-done) is single-homed in
 ``runtime/contracts/grill-discipline.md``. brief, spec-reviewer, and discover all
 adopt it by **Reading that contract on demand and following it** — none restates
@@ -98,7 +98,7 @@ def main() -> int:
             print(f"  {rel}: `{hit}`")
         print(
             "\nFix: do NOT restate the grill discipline (four-quadrant stance,\n"
-            "one-question-at-a-time loop, premise-challenge, operationalize-unknowns)\n"
+            "frontier-rounds loop, premise-challenge, operationalize-unknowns)\n"
             "in prompt prose. Read `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/\n"
             "grill-discipline.md` on demand and FOLLOW it — that contract is the one\n"
             "home; a second restated home silently drifts (prose-style Bucket B).\n"

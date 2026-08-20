@@ -72,9 +72,9 @@ CRITICAL: Validate every tool call. On failure → halt → announce.
 
 1. **Scan & Match:** Search `conductor/index.md` for file paths semantically related to track's goal.
 2. **Found relevant docs** → collect paths only (do NOT read contents). Pass paths to spec-planner as `RELATED_DOCS`.
-3. **Not found** → no discovered docs *and* (per §2.2b) no brief — this is the only path where new-track does its own grilling, and it is the weak legacy path (bare sequential Q&A: no recommended-first, no look-it-up, no premise-challenge). Offer a single `AskUserQuestion`: *"No brief found — run `/conductor:brief <track_id>` for a grilled shared understanding (recommended), or proceed with minimal Q&A now?"*
+3. **Not found** → no discovered docs *and* (per §2.2b) no brief — the only path where new-track does its own questioning. It runs the **batch-confirm** posture (a legitimate light posture per `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/grill-discipline.md` §1 — for a trivial track a wrong call is one spec edit to fix), keeping two baseline rules mandatory: **look-it-up-first** (never ask what a doc or the codebase answers) and **recommended-answer-first** (every question leads with a recommended option). Offer a single `AskUserQuestion`: *"No brief found — run `/conductor:brief <track_id>` for a grilled shared understanding (recommended), or proceed with minimal Q&A now?"*
    - **Run `/conductor:brief`** → halt new-track and hand off. The user runs `/conductor:brief <track_id>`, then re-invokes `/conductor:new-track <track_id>` (existing-track adoption in §2.1 picks up the same dir + its new `brief.md`, which §2.2b then consumes). A brief is the last input before spec-planner freezes the plan — it earns the grill's turn-cost where ad-hoc Q&A does not.
-   - **Proceed with Q&A** → the low-friction escape hatch for trivial tracks; keep it. 2-5 questions sequentially, manual context, or correct paths. Pass answers as `USER_ANSWERS`.
+   - **Proceed with Q&A** → the low-friction escape hatch for trivial tracks; keep it. A few batched-confirm questions covering problem, scope, and constraints — look up what docs can answer first, and lead each question with a recommendation. Pass answers as `USER_ANSWERS`.
 
 > Context content is loaded by spec-planner itself. The orchestrator handles only paths and summaries.
 

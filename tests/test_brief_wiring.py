@@ -3,8 +3,9 @@
 The skill prose can't be executed directly, but the *contract* it depends on is
 testable: the scaffold has the machine-anchor headings spec-planner keys on, the
 skill writes brief.md INLINE (no writer subagent — collapsed), references the CLI
-+ the hand-off to new-track, the grill is one-question-at-a-time via
-AskUserQuestion, user references get a home, new-track §2.2b detects the brief,
++ the hand-off to new-track, the grill runs frontier rounds via AskUserQuestion
+(batch ≤4 mutually-independent decisions; dependent decisions stay solo), user
+references get a home, new-track §2.2b detects the brief,
 and spec-planner §3.0 reads it first. These grep-style assertions catch drift the
 way the repo's other ``test_*_wiring.py`` files do.
 """
@@ -80,14 +81,18 @@ class BriefSkillWiringTests(TestCase):
         txt = _read("skills/brief/SKILL.md")
         self.assertIn("auto-detect", txt.lower())
 
-    def test_skill_grill_is_one_question_at_a_time_via_askuserquestion(self):
-        """The grill MUST pose one decision per AskUserQuestion call and wait for
-        the answer before the next — never batch, never free-text. Front-loaded
-        as a MUST imperative so the model can't miss it buried in loop prose."""
+    def test_skill_grill_is_frontier_rounds_via_askuserquestion(self):
+        """The grill MUST pose decisions via AskUserQuestion in frontier rounds —
+        batch only the currently-unblocked decisions, at most 4 questions per
+        call, recommended-answer-first; a dependent decision stays one question
+        at a time, alone. Front-loaded as a MUST imperative so the model can't
+        miss it buried in loop prose."""
         txt = _read("skills/brief/SKILL.md")
         self.assertIn("MUST", txt)
-        self.assertIn("one question at a time", txt.lower())
         self.assertIn("AskUserQuestion", txt)
+        self.assertIn("frontier", txt.lower())
+        self.assertIn("at most 4 questions", txt)
+        self.assertIn("one question at a time", txt.lower())  # dependent-decision exception
 
     def test_skill_has_user_references_decision(self):
         """User-named files/URLs get a canonical home: a References decision in
@@ -103,7 +108,7 @@ class BriefGrillConsumerTests(TestCase):
     (Read-on-demand, like task-executor loads refactor.md) and must NOT restate
     the discipline — a second restated home silently drifts (prose-style Bucket B).
     What stays brief-owned is pinned here: the decision tree's anchor labels, the
-    one-question-at-a-time salience hook, and the brief-grill-done signal."""
+    frontier-rounds salience hook, and the brief-grill-done signal."""
 
     def test_section_2_5_points_at_grill_contract(self):
         # §2.5 keeps the brief-specific framing + a Read-on-demand pointer to the
@@ -126,10 +131,9 @@ class BriefGrillConsumerTests(TestCase):
         self.assertIn("Acceptance Signals", txt)
         self.assertIn("None identified.", txt)  # honest-empty still valid
 
-    def test_grill_one_at_a_time_rule_preserved(self):
-        # Regression guard: the consumer refactor must NOT weaken the
-        # one-question-at-a-time rule or the grill-done gate. grill_complete is
-        # still the real gate (contract §6).
+    def test_grill_done_signal_rule_preserved(self):
+        # Regression guard: the consumer refactor must NOT weaken the grill-done
+        # gate. grill_complete is still the real gate (contract §6).
         txt = _read("skills/brief/SKILL.md")
         self.assertIn("brief-grill-done", txt)
         self.assertIn("grill_complete", txt)
@@ -172,12 +176,19 @@ class NewTrackConsumesBriefTests(TestCase):
     def test_new_track_recommends_brief_before_qa_fallback(self):
         """When no brief is found, §2.2 step 3 must recommend /conductor:brief
         FIRST (the grilled path) before falling back to minimal Q&A — grilling is
-        consolidated to one surface (the brief skill), rather than the weak legacy
-        sequential Q&A. The Q&A escape hatch stays for trivial tracks."""
+        consolidated to one surface (the brief skill), rather than an uncited
+        bespoke Q&A script. The Q&A escape hatch stays for trivial tracks, but
+        D4 folds it under the grill contract: it cites grill-discipline.md,
+        declares its batch-confirm posture, and keeps look-it-up-first +
+        recommended-answer-first mandatory (baseline competence, not full-grill
+        extras)."""
         txt = _read("skills/new-track/SKILL.md")
         self.assertIn("/conductor:brief", txt)
         self.assertIn("recommended", txt)         # brief-first is the recommended option
         self.assertIn("escape hatch", txt)        # minimal Q&A remains reachable
+        self.assertIn("grill-discipline", txt)    # D4: the fallback cites the contract
+        self.assertIn("batch-confirm", txt)       # ...and names its posture
+        self.assertIn("recommended-answer-first", txt)  # baseline rules stay mandatory
 
     def test_spec_planner_reads_brief_first(self):
         txt = _read("agents/spec-planner.md")

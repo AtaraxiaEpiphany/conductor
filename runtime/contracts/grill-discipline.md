@@ -2,7 +2,8 @@
 type: concept
 sources:
   - skills/brief
-last_verified: 2026-08-04
+  - skills/discover
+last_verified: 2026-08-20
 ---
 
 # Grill Discipline
@@ -15,12 +16,15 @@ than restating the rules (see [[runtime/contracts/prose-style]] Bucket B — a s
 restated home silently drifts, and a grill is exactly the kind of load-bearing
 procedure that drifts badly).
 
-**Loaded on demand by:** `skills/brief` (the grill before `spec.md`). Future grill
-surfaces adopt the same pointer. **Not loaded by:** executors that receive
-already-resolved answers (`spec-planner` takes `USER_ANSWERS`), config writers that
-batch-confirm (`strategy-writer` §4), or read-only auditors that hold the
-four-quadrant stance as a *lens*, not a grill (`spec-reviewer`) — those pick a
-lighter posture (§1) and skip the grill loop (§3).
+**Loaded on demand by:** `skills/brief` (the grill before `spec.md`) and
+`skills/discover` (the triage grill before proposals.md). Future grill surfaces
+adopt the same pointer; `skills/new-track`'s brief-absent fallback cites §1's
+batch-confirm posture without loading the full contract. **Not loaded by:**
+executors that receive already-resolved answers (`spec-planner` takes
+`USER_ANSWERS`), config writers that batch-confirm (`strategy-writer` §4), or
+read-only auditors that hold the four-quadrant stance as a *lens*, not a grill
+(`spec-reviewer`) — those pick a lighter posture (§1) and skip the grill loop
+(§3).
 
 ## 1. The posture spectrum (choose your interaction posture FIRST)
 
@@ -70,32 +74,43 @@ where an expert collaborator earns its keep (challenge the wrong, operationalize
 unknown). A grill that only transcribes what the user already knows wastes the
 asymmetric knowledge.
 
-## 3. The grill loop (one decision per iteration)
+## 3. The grill loop (frontier rounds)
 
-> **MUST — one question at a time, via `AskUserQuestion`, no exceptions.**
-> Every decision is posed as a **single** `AskUserQuestion` call, and you **wait
-> for the answer before posing the next one.** Never batch two decisions into one
-> prompt; never free-text a question as plain prose instead of calling the tool.
-> Asking several at once is bewildering — the user can't give each decision the
-> thought it deserves.
+> **MUST — every question goes through `AskUserQuestion`, one round at a time.**
+> Each round poses the **frontier** — the currently-unblocked, mutually-independent
+> decisions — in a single `AskUserQuestion` call of **at most 4 questions** (the
+> tool's cap), and you **wait for the round's answers before posing the next
+> round.** Never free-text a question as plain prose instead of calling the tool.
+> The exception: a decision whose input depends on another question in the same
+> round is not on the frontier — pose dependent decisions **one question at a time**,
+> alone. (The old never-batch rule guarded against prose-list questionnaires; the
+> structured tool form — ≤4 questions, each with its own option chips and a
+> recommended first option — is a different medium.)
 
 Walk the grill's decision tree (the surface owns its own tree — `brief` owns the
-brief-section tree) resolving dependencies one-by-one so each answer informs the
-next:
+brief-section tree) round by round, each round's answers widening the frontier:
 
-1. **Pick the next decision** — the first not-yet-resolved node in dependency order.
-   Don't jump ahead; later questions depend on earlier ones.
+1. **Pick the frontier** — every not-yet-resolved decision whose prerequisites are
+   all settled (resolved in an earlier round, or pre-resolved by reading). A
+   decision still blocked by an unresolved dependency waits for a later round;
+   don't pose one whose input you'd have to guess.
 2. **Look it up before you ask.** If a fact can be found by exploring the
    environment — discovered docs, `product.md`, `tech-stack.md`, the codebase,
    `purpose.md` — look it up rather than asking. The *decisions* are the user's; the
    *facts* are yours to gather. Never ask a question you could answer by reading.
-3. **Pose ONE question** via `AskUserQuestion`, and **provide your recommended answer
-   as the first option** (marked "(Recommended)") with a one-line rationale grounded
-   in what you read. The user confirms, corrects, or picks "Other." A grilling
-   without recommendations is just an interrogation — you are an expert collaborator,
-   not a stenographer.
-4. **Record the answer**, note any new dependency it opens (an Out-of-Scope decision
-   may raise a fresh Open Question), and loop to step 1.
+   A **non-trivial lookup dispatches a read-only subagent** (the `explorer` /
+   `doc-probe` pattern) that runs while the current round waits on the human —
+   facts never block decisions, and full doc content never enters the grill's
+   context; fold the result into the next round's recommendations. Inline
+   Read/Grep is fine for one-liners.
+3. **Pose the round** via one `AskUserQuestion` call (at most 4 questions), and
+   **provide your recommended answer as the first option** of each (marked
+   "(Recommended)") with a one-line rationale grounded in what you read. The user
+   confirms, corrects, or picks "Other." A grilling without recommendations is
+   just an interrogation — you are an expert collaborator, not a stenographer.
+4. **Record the answers**, note any new dependencies they open (an Out-of-Scope
+   decision may raise a fresh Open Question), and loop to step 1 — the frontier
+   is now wider.
 
 **Informed, not generic.** Surface what you observed ("Found `X` — recommend treating
 its boundary as out-of-scope. Confirm?") and let the user confirm or correct. Informed

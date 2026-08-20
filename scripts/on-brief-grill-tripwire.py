@@ -3,29 +3,31 @@
 
 The problem this solves
 -----------------------
-The brief skill's §3 grill is a **one-question-at-a-time** interview via
-``AskUserQuestion`` — a model-compliance discipline (ask one decision, wait,
-then the next) that sonnet under pressure routinely violates by batching
-questions or free-texting them, then jumping straight to writing ``brief.md``
-from guesses. The brief is the *input* to all downstream planning, so a brief
-written from guesses (not a completed grill) pollutes everything downstream.
+The brief skill's §3 grill is a **frontier-round** interview via
+``AskUserQuestion`` — batch the currently-unblocked decisions, at most 4 per
+call, wait for the round before the next — a model-compliance discipline that
+sonnet under pressure routinely violates by free-texting questions or jumping
+straight to writing ``brief.md`` from guesses. The brief is the *input* to all
+downstream planning, so a brief written from guesses (not a completed grill)
+pollutes everything downstream.
 
-Prose in the SKILL ("MUST — one question at a time") raises salience but can't
-*guarantee* it — the same prose-invariant-a-model-ignores gap that
-``on-write-result-clean-tree.py``, ``on-dispatch-dedupe.py``, and
-``on-category-write-guard.py`` close. This hook makes the invariant
-deterministic: while a brief's resume marker is ``committed:false`` (the grill
-is in progress), a ``Write``/``Edit`` to that track's ``brief.md`` is **denied**
-until the orchestrator has EITHER signaled ``grill_complete`` on the marker
-(the real invariant — shared understanding reached) OR recorded at least
-``MIN_GRILL_QUESTIONS`` ``AskUserQuestion`` turns (the legacy lower bound).
+Prose in the SKILL ("MUST — every question via AskUserQuestion, one round at a
+time") raises salience but can't *guarantee* it — the same
+prose-invariant-a-model-ignores gap that ``on-write-result-clean-tree.py``,
+``on-dispatch-dedupe.py``, and ``on-category-write-guard.py`` close. This hook
+makes the invariant deterministic: while a brief's resume marker is
+``committed:false`` (the grill is in progress), a ``Write``/``Edit`` to that
+track's ``brief.md`` is **denied** until the orchestrator has EITHER signaled
+``grill_complete`` on the marker (the real invariant — shared understanding
+reached) OR recorded at least ``MIN_GRILL_QUESTIONS`` posed questions (the
+legacy lower bound).
 
 Why two signals, not just the count
 -----------------------------------
 The count alone is a **proxy** for "shared understanding reached," and a proxy
 that's wrong exactly when the skill is used *well*: §3 explicitly says many
 decisions are pre-resolved by reading docs / carried by ``$ARGUMENTS``, which
-legitimately produces *fewer* than ``MIN_GRILL_QUESTIONS`` turns. So the
+legitimately produces *fewer* than ``MIN_GRILL_QUESTIONS`` questions. So the
 explicit ``grill_complete`` flag (set via ``track-state brief-grill-done``) is
 the primary gate, and the count floor is the backstop for a model that writes
 without signaling. Either satisfies the gate.
@@ -35,8 +37,9 @@ How it fires (two matchers, one file)
 Registered for both ``Write|Edit`` and ``AskUserQuestion`` in hooks.json. It
 branches on ``tool_name``:
 
-- ``AskUserQuestion`` → increment a per-track counter (sidecar under
-  ``get_data_dir()``), keyed by track_id derived from cwd. Always allow.
+- ``AskUserQuestion`` → add the call's question count to a per-track counter
+  (sidecar under ``get_data_dir()``), keyed by track_id derived from cwd.
+  Always allow.
 - ``Write``/``Edit`` → if the target resolves to ``<track_dir>/brief.md`` AND
   that track's brief marker is ``committed:false`` AND the counter is below the
   floor → **deny** with a reason prescribing "finish the §3 grill first." Else
@@ -70,9 +73,10 @@ _BRIEF_GUARD = "[Conductor Brief Guard]"
 
 # The floor: the brief grill's §3 decision tree has seven core nodes (Problem,
 # Goals, Out-of-Scope, Constraints, Stakeholders, References, Open Qs / ACs).
-# A completed grill asks at least this many AskUserQuestion turns. Set just
-# below the node count so a grill that confirms two nodes in one turn (legit)
-# isn't falsely blocked, but a 2-question shortcut is.
+# A completed grill surfaces at least this many QUESTIONS (summed across calls
+# — a frontier round contributes its batch size, per grill-discipline §3). Set
+# just below the node count so a grill that confirms two nodes in one question
+# (legit) isn't falsely blocked, but a 2-question shortcut is.
 MIN_GRILL_QUESTIONS = 6
 # Counter sidecar vocabulary (file name, schema, TTL reap, finalize clear) is
 # single-homed in lib/brief_counters.py — shared with track_state.brief's
@@ -191,8 +195,17 @@ def main():
     cwd = input_data.get("cwd") or str(Path.cwd())
     log_file = init_logging("on-brief-grill-tripwire")
 
-    # --- AskUserQuestion: count the grill turn, always allow. ---
+    # --- AskUserQuestion: count the grill's questions, always allow. ---
     if tool == "AskUserQuestion":
+        # Count QUESTIONS, not calls: a frontier round batches up to 4
+        # mutually-independent decisions into one call (grill-discipline §3),
+        # and the floor is about decisions surfaced, not round-trips. The hook
+        # payload carries the posed questions under tool_input.questions; a
+        # missing/malformed payload counts 1 — degraded input never yields a
+        # free zero (the floor keeps its meaning for unbatched calls too).
+        questions = (input_data.get("tool_input") or {}).get("questions")
+        n = len(questions) if isinstance(questions, list) else 0
+        n = max(n, 1)
         # Resolve the counter key robustly: cwd-derived id FIRST (cheap, exact
         # when the orchestrator is cd'd into the track dir), then fall back to
         # the active in-progress brief marker (handles the project-root-cwd case
@@ -205,8 +218,9 @@ def main():
             if active_dir:
                 track_id = Path(active_dir).name
         if track_id:
-            count = bump_counter(track_id)
-            log_entry(log_file, f"event=grill_question track={track_id} count={count}")
+            count = bump_counter(track_id, n)
+            log_entry(log_file, f"event=grill_question track={track_id} "
+                                f"questions={n} count={count}")
         write_hook_output()
         return
 
@@ -254,16 +268,17 @@ def main():
     # Deny and prescribe finishing it (or signaling grill-done if it genuinely is).
     reason = (
         f"{_BRIEF_GUARD} brief.md write blocked — the §3 grill is incomplete "
-        f"(only {count} of {MIN_GRILL_QUESTIONS} required AskUserQuestion turns "
-        f"recorded for track '{track_id}', whose brief-progress marker is "
+        f"(only {count} of {MIN_GRILL_QUESTIONS} required questions recorded for "
+        f"track '{track_id}', whose brief-progress marker is "
         f"committed:false, and no grill-complete signal is set). A brief written "
         f"from guesses pollutes all downstream planning. Either:\n"
-        f"  (a) finish the §3 decision tree one question at a time via "
-        f"AskUserQuestion (Problem → Goals → Out-of-Scope → Constraints → "
-        f"Stakeholders → References → Open Qs / ACs), reach shared understanding, "
+        f"  (a) finish the §3 decision tree via AskUserQuestion frontier rounds "
+        f"(batch the currently-unblocked decisions, at most 4 questions per call: "
+        f"Problem → Goals → Out-of-Scope → Constraints → Stakeholders → "
+        f"References → Open Qs / ACs), reach shared understanding, "
         f"THEN write brief.md in §4; OR\n"
         f"  (b) if the grill genuinely is complete (you reached shared "
-        f"understanding in FEWER than {MIN_GRILL_QUESTIONS} turns because "
+        f"understanding in FEWER than {MIN_GRILL_QUESTIONS} questions because "
         f"decisions were pre-resolved by reading docs / carried by $ARGUMENTS), "
         f"emit the grill-done signal before writing:\n"
         f"      track-state brief-grill-done \"{track_dir}\"\n"

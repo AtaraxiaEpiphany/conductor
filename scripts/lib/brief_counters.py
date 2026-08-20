@@ -1,13 +1,15 @@
 """Shared grill-counter vocabulary for the brief tripwire pair.
 
 The counter sidecar ``brief-grill-counters.json`` (under ``get_data_dir()``,
-project-scoped, gitignored) counts per-track ``AskUserQuestion`` turns while a
-brief's grill is in progress. Two consumers share this module so the file
-format and its lifecycle are single-homed:
+project-scoped, gitignored) counts the ``AskUserQuestion`` QUESTIONS posed to a
+track while a brief's grill is in progress — a frontier round of up to 4
+batched questions (grill-discipline §3) bumps once by its question count. Two
+consumers share this module so the file format and its lifecycle are
+single-homed:
 
-- ``scripts/on-brief-grill-tripwire.py`` — bumps on ``AskUserQuestion``,
-  reads on the ``Write``/``Edit`` gate. Best-effort like the rest of the
-  guard: a counter glitch never blocks a legitimate write.
+- ``scripts/on-brief-grill-tripwire.py`` — bumps on ``AskUserQuestion`` (by
+  the call's question count), reads on the ``Write``/``Edit`` gate. Best-effort
+  like the rest of the guard: a counter glitch never blocks a legitimate write.
 - ``track_state.brief.cmd_brief_finalize`` — clears the counter when a brief
   run finalizes, so a later brief for the same track_id starts at a fresh
   grill budget.
@@ -74,12 +76,18 @@ def _write(path, data):
     path.write_text(json.dumps(data, ensure_ascii=False))
 
 
-def bump_counter(track_id):
-    """Increment the AskUserQuestion counter for a track, reaping stale
-    entries on the write. Best-effort, always returns the new count (>= 1) so
-    the caller never blocks on a write glitch."""
+def bump_counter(track_id, n=1):
+    """Add ``n`` questions to the track's grill counter (the tripwire passes
+    the AskUserQuestion call's question count — the counter counts questions,
+    not calls), reaping stale entries on the write. Best-effort, always
+    returns the new count (>= 1) so the caller never blocks on a write
+    glitch."""
+    try:
+        n = max(int(n), 1)
+    except (TypeError, ValueError):
+        n = 1
     if not track_id:
-        return 1
+        return n
     try:
         path = counter_path()
         data = read_counters()
@@ -88,12 +96,12 @@ def bump_counter(track_id):
             ts = data[tid].get("ts")
             if not isinstance(ts, (int, float)) or now - ts > BRIEF_COUNTER_TTL:
                 del data[tid]
-        count = read_count(data, track_id) + 1
+        count = read_count(data, track_id) + n
         data[track_id] = {"count": count, "ts": now}
         _write(path, data)
         return count
     except Exception:
-        return 1
+        return n
 
 
 def clear_counter(track_id):

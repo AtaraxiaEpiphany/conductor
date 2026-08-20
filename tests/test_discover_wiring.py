@@ -2,8 +2,9 @@
 
 discover is the front door before specification: it reads the git log +
 ``dispatch-lifecycle.log`` + ``.conductor/`` signals to find recurring frictions,
-grill-triages them one question at a time (per the single-homed grill-discipline
-contract), and writes ``conductor/discoveries/<date>-proposals.md`` — a triage
+grill-triages them in frontier rounds via AskUserQuestion (per the single-homed
+grill-discipline contract; dependent decisions stay one question at a time), and
+writes ``conductor/discoveries/<date>-proposals.md`` — a triage
 list the user feeds to ``/conductor:brief`` per accepted proposal. These
 grep-style assertions pin the load-bearing contract: the output surface, the
 Read-on-demand pointer to the grill contract, the brief hand-off (NOT auto-chain),
@@ -39,14 +40,16 @@ class DiscoverFrontmatterTests(TestCase):
         self.assertIn("argument-hint:", txt)
         self.assertIn("when_to_use:", txt)
 
-    def test_grills_via_askuserquestion_single_context(self):
-        # discover grills (needs AskUserQuestion) but stays single-context — no
-        # Agent/writer subagent (mirrors brief post-collapse). Asserted on the
-        # allowed-tools line so prose mentions of "agents" don't false-trip.
+    def test_grill_tools_include_agent_for_read_only_fact_dispatch(self):
+        # discover grills (needs AskUserQuestion) and may dispatch READ-ONLY
+        # fact subagents (Agent — the D3 explorer/doc-probe pattern: a
+        # non-trivial lookup runs while the round waits on the human). Still no
+        # WRITER subagent — the orchestrator writes proposals.md itself.
+        # Asserted on the allowed-tools line so prose mentions don't false-trip.
         at = _allowed_tools(_read(SKILL))
         self.assertIn("AskUserQuestion", at)
         self.assertIn("Bash", at)
-        self.assertNotIn("Agent", at)  # no writer/dispatch subagent
+        self.assertIn("Agent", at)  # D3: read-only fact dispatch sanctioned
 
     def test_no_edit_tool(self):
         # Each run writes a fresh dated proposals.md — Edit is not needed.
@@ -63,10 +66,13 @@ class DiscoverGrillConsumerTests(TestCase):
         txt = _read(SKILL)
         self.assertIn("runtime/contracts/grill-discipline", txt)
 
-    def test_grill_is_one_question_at_a_time(self):
+    def test_grill_is_frontier_rounds_with_dependent_exception(self):
+        # D1: batch the frontier (≤4 per call); within one candidate the triage
+        # decisions are dependent and stay one question at a time.
         txt = _read(SKILL)
-        self.assertIn("one question at a time", txt.lower())
+        self.assertIn("frontier", txt.lower())
         self.assertIn("AskUserQuestion", txt)
+        self.assertIn("one question at a time", txt.lower())
 
     def test_does_not_restate_grill_labels(self):
         # The canonical four-quadrant labels live in the contract, not here.

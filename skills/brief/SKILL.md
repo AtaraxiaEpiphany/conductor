@@ -1,6 +1,6 @@
 ---
 name: brief
-description: Grill the user one question at a time to reach shared understanding of a track, then write a brief.md that /conductor:new-track consumes as authoritative planning input
+description: Grill the user (frontier rounds of up to 4 questions per call) to reach shared understanding of a track, then write a brief.md that /conductor:new-track consumes as authoritative planning input
 when_to_use: User wants to capture full track context before planning, or has comprehensive track info and wants a durable brief; produces conductor/tracks/<id>/brief.md for /conductor:new-track to auto-detect
 argument-hint: "[track_description]"
 allowed-tools: Bash, Read, Edit, Write, Grep, Glob, Agent, AskUserQuestion
@@ -79,19 +79,23 @@ done-signal in §3.
 
 ## 3.0 GRILL TO SHARED UNDERSTANDING
 
-> **MUST — one question at a time, via `AskUserQuestion`, no exceptions.**
-> Every decision is a **single** `AskUserQuestion` call; wait for the answer before
-> the next. A `Write` to `brief.md` is denied by the `on-brief-grill-tripwire` hook
-> until every tree node is resolved (the marker is `committed:false`), so skipping
-> the grill cannot reach the write — but the grill's *quality* still depends on you
-> asking one at a time. The full procedure (one-decision loop, look-it-up-first,
+> **MUST — every question via `AskUserQuestion`, one round at a time.**
+> Each round poses the frontier — the currently-unblocked decisions — in one
+> `AskUserQuestion` call of at most 4 questions, recommended-answer first, and
+> waits for the answers before the next round. A decision that depends on
+> another question in the same round is not on the frontier: pose dependent
+> decisions **one question at a time**, alone. A `Write` to `brief.md` is
+> denied by the `on-brief-grill-tripwire` hook until every tree node is
+> resolved (the marker is `committed:false`), so skipping the grill cannot
+> reach the write — but the grill's *quality* still depends on the rounds
+> being well-formed. The full procedure (frontier rounds, look-it-up-first,
 > recommended-answer-first) is in the contract you Read at §2.5.
 
 Goal: reach a **shared understanding** of the track before anything is written.
 Per `grill-discipline.md`: run the **premise-challenge pass first (contract §4)** —
-one bounded challenge to the brief's central premise — then walk the tree below one
-question at a time (contract §3), resolving dependencies one-by-one so each answer
-informs the next.
+one bounded challenge to the brief's central premise — then walk the tree below in
+frontier rounds (contract §3): each round batches the decisions whose dependencies
+are settled, and each round's answers widen the next round's frontier.
 
 ### The decision tree (resolve top-to-bottom — parents before children)
 
