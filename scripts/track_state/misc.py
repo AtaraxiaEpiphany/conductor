@@ -731,6 +731,122 @@ def cmd_derive_name(shortname):
     ))
 
 
+def _propose_rationale(shape):
+    """Deterministic one-line consequence statement for ``shape`` vs ``default``.
+
+    Composed purely from resolved registry fields (never hand-authored per
+    shape — a second prose home would drift the moment a registry row changes):
+    dropped gates, dropped checkpoint verifiers, shifted AC grounding, or the
+    explicit "keeps the full default" when nothing differs.
+    """
+    from . import workflow_shapes as ws
+
+    parts = []
+    dropped_gates = [g for g in ws.gates_for("default")
+                     if g not in ws.gates_for(shape)]
+    if dropped_gates:
+        parts.append("drops the " + "/".join(dropped_gates)
+                     + " gate(s) track-wide")
+    dropped_verifiers = [v for v in ws.verifiers_for("default")
+                         if v not in ws.verifiers_for(shape)]
+    if dropped_verifiers:
+        parts.append("drops " + "/".join(dropped_verifiers)
+                     + " from the checkpoint fan-out")
+    grounding = ws.ac_grounding_for(shape)
+    if grounding != ws.ac_grounding_for("default"):
+        parts.append(f"grounds ACs by {grounding} instead of tests")
+    if not parts:
+        parts.append("keeps the full default gates and verifier fan-out")
+    return "; ".join(parts)
+
+
+def cmd_propose_shape(description, brief_path=None):
+    """Propose the workflow shape for a track description — planning-as-data D2/D3.
+
+    The planning front door's selection step: pure signal-matching over
+    (description ⊕ brief when readable) via :func:`workflow_shapes.rank_shapes`
+    — deterministic, no model call, no filesystem writes. Mirrors
+    ``derive_task_tag`` one layer down (task tags) with the safety inverted: a
+    tag silently exempts gates (hence its >=2-hit bar), while a proposed shape
+    is always confirmed by the user before it takes effect — ``confirm_required``
+    is the guard, so a single distinct hit suffices to SURFACE a candidate.
+
+    Output contract (the new-track skill consumes this, never re-derives):
+
+    - ``proposed`` — ``default``, or the strict-plurality winner. A top score
+      tied with the runner-up is ambiguity, not a proposal: default wins
+      silently (``set-workflow-shape`` remains the override).
+    - ``confirm_required`` — ``proposed != "default"``. ``false`` → the skill
+      proceeds silently; ``true`` → ONE ``AskUserQuestion`` (recommended =
+      ``proposed``, alternative = ``default``) — the generic D3 confirm.
+    - ``chosen`` — the full entry for the proposed shape (gates / verifiers /
+      ac_grounding / planning_doc + resolved path / rationale), so the skill
+      records ``$WORKFLOW_SHAPE``/``$AC_GROUNDING``/``$PLAY_PATH`` from ONE
+      object whichever branch runs. ``candidates`` carries every scored shape
+      (score + hits for transparency); ``default`` carries the fallback entry
+      for the confirm's alternative option.
+
+    ``--brief`` is fail-open: an absent/unreadable brief never blocks the
+    proposal (``brief_used`` reports whether it landed).
+    """
+    from . import workflow_shapes as ws
+
+    desc = (description or "").strip()
+    if not desc:
+        out(dict(ok=False, error="missing description",
+                 hint='track-state propose-shape "<description>" '
+                      "[--brief <track_dir>/brief.md]"))
+        return
+
+    text = desc
+    brief_used = False
+    if brief_path:
+        try:
+            text = desc + "\n" + Path(brief_path).read_text(encoding="utf-8")
+            brief_used = True
+        except OSError:
+            # Fail-open: a missing/unreadable brief ranks on the description
+            # alone — selection must never halt on a stale pointer.
+            pass
+
+    def _entry(shape):
+        return dict(
+            shape=shape,
+            gates=list(ws.gates_for(shape)),
+            verifiers=list(ws.verifiers_for(shape)),
+            ac_grounding=ws.ac_grounding_for(shape),
+            planning_doc=ws.planning_doc_for(shape) or ws.DEFAULT_PLANNING_DOC,
+            planning_doc_path=str(ws.resolve_planning_doc(shape)),
+            rationale=_propose_rationale(shape),
+        )
+
+    default_entry = _entry("default")
+    candidates = []
+    for cand in ws.rank_shapes(text):
+        entry = _entry(cand["shape"])
+        entry["score"] = cand["score"]
+        entry["hits"] = cand["hits"]
+        candidates.append(entry)
+
+    proposed = "default"
+    if candidates and (len(candidates) == 1
+                       or candidates[0]["score"] > candidates[1]["score"]):
+        proposed = candidates[0]["shape"]
+
+    out(dict(
+        ok=True,
+        proposed=proposed,
+        confirm_required=proposed != "default",
+        brief_used=brief_used,
+        chosen=_entry(proposed),
+        candidates=candidates,
+        default=default_entry,
+        hint="confirm_required=false → proceed silently with `proposed`; "
+             "true → ONE AskUserQuestion (recommended=proposed, "
+             "alternative=default). set-workflow-shape overrides later.",
+    ))
+
+
 def _candidate_roots(conductor_root):
     """Base dirs to probe when resolving a track dir, given the conductor root
     (the directory holding ``tracks.md`` = ``reg.parent``).

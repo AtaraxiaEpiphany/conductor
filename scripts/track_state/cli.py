@@ -27,7 +27,8 @@ from .misc import (
     cmd_deferred_report, cmd_phase_done, cmd_registry_update, cmd_registry_add,
     cmd_registry_doc,
     cmd_record_summary, cmd_preflight, cmd_quality_snapshot,
-    cmd_spec_integrity, cmd_view, cmd_status, cmd_derive_name, cmd_post_loop_status,
+    cmd_spec_integrity, cmd_view, cmd_status, cmd_derive_name, cmd_propose_shape,
+    cmd_post_loop_status,
     cmd_resolve_track, cmd_check, _resolve_track_dir_or_halt,
 )
 from .spec_integrity import cmd_spec_anchors
@@ -72,6 +73,9 @@ _BOOL_FLAGS = {"--full", "--fix", "--check", "--force", "--verify"}
 #   * ``derive-name``: its positional is a shortname to derive a track name
 #     from, not a track to locate — resolving a bare shortname would exit 1
 #     with ``no_match`` (the track it names doesn't exist yet).
+#   * ``propose-shape``: its positional is a free-text track DESCRIPTION fed to
+#     the signal matcher — the same "not a track to locate" shape as
+#     ``derive-name`` (a description is never a track_dir lookup).
 # Every OTHER command with a <track-dir> positional resolves a bare track_id /
 # shortname through ``_resolve_track_dir_or_halt`` (existing-path fast path
 # skips resolution), so ``track-state next auth``, ``indices auth``,
@@ -79,6 +83,7 @@ _BOOL_FLAGS = {"--full", "--fix", "--check", "--force", "--verify"}
 _TD_NO_RESOLUTION_COMMANDS = {
     "init-from-plan", "new-track-init", "new-track-step",
     "new-track-set-mode", "new-track-finalize", "preflight", "derive-name",
+    "propose-shape",
     "brief-init", "brief-finalize", "brief-grill-done",
 }
 
@@ -444,6 +449,12 @@ COMMAND_HELP = {
     "derive-name": ("derive-name <shortname>",
                     "Derive canonical track_id (<shortname>_<YYYYMMDD>) and track_dir for "
                     "today; idempotent. Uniqueness is the skill's job (new-track §2.6)."),
+    "propose-shape": ('propose-shape "<description>" [--brief <path>]',
+                      "Propose the workflow shape for a track description (pure signal-match "
+                      "over description ⊕ optional brief — deterministic, no model call). "
+                      "proposed/confirm_required + chosen entry (gates/verifiers/ac_grounding/"
+                      "planning_doc path) — new-track §2.1's selection step; default is silent, "
+                      "non-default asks one confirm. set-workflow-shape overrides later."),
     "resolve-track": ("resolve-track [<query>] [--registry <path>]",
                       "Resolve a track_dir from conductor/tracks.md (exact id / shortname "
                       "prefix / auto-select the single active track). ALWAYS exits 0 — "
@@ -846,6 +857,10 @@ def main():
             cmd_preflight(track_dir)
         elif cmd == "derive-name":
             cmd_derive_name(sys.argv[2])  # shortname — the one positional that isn't a track-dir
+        elif cmd == "propose-shape":
+            # description — the other non-track-dir positional (see
+            # _TD_NO_RESOLUTION_COMMANDS); --brief takes a value (flag()).
+            cmd_propose_shape(sys.argv[2], flag(args, "--brief"))
         elif cmd == "new-track-init":
             cmd_new_track_init(track_dir,
                                flag(args, "--track-id") or "track",

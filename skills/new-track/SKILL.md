@@ -49,14 +49,14 @@ CRITICAL: Validate every tool call. On failure → halt → announce.
 
 1. Get description from `$ARGUMENTS` or `AskUserQuestion`.
 2. Infer track type (feature/bugfix/chore) — do NOT ask user.
-3. **Derive the workflow shape** (confirm only when non-default). Infer from the description, in this order:
-   - **`migration`** — a behavior-preservation *migration* (keywords: migrate/migration/upgrade, framework/library bump, rename/port/rewrite-for-parity, backfill, retire-and-replace) where correctness is witnessed by the EXISTING suite.
-   - **`deliverable`** — a non-code *deliverable* (keywords: document/docs/documentation/design/spec/runbook/report/research/guide/onboarding, "write the X doc") whose output is an artifact a reviewer attests, NOT tested code.
-   - **`default`** — everything else (the common case: tested code).
-   - `default` → no prompt; set `$WORKFLOW_SHAPE=default` and `$AC_GROUNDING=test`.
-   - `migration` → a consequential choice (the shape drops the `tdd`/`coverage` gates at the track level — tasks owe a green existing suite, not new tests), so confirm via ONE `AskUserQuestion`: *"This reads like a behavior-preservation migration. Use the `migration` shape (drops TDD/coverage gates; pair tasks with `[Migrate]`, whose workflow the executor fetches instead of TDD)?"* Options: **Yes, `migration` shape (Recommended)** / **No, `default` shape (full TDD)**. Store the choice as `$WORKFLOW_SHAPE`; `$AC_GROUNDING=test` either way (a migration grounds ACs in the existing suite).
-   - `deliverable` → a consequential choice (the shape grounds ACs by **review** — artifact anchors + review attestations instead of tests — and drops the `test-runner` verifier from the checkpoint), so confirm via ONE `AskUserQuestion`: *"This reads like a non-code deliverable (a doc/design/report/runbook). Use the `deliverable` shape (ACs grounded by an artifact anchor + a review attestation, not tests; test-runner dropped from the checkpoint)?"* Options: **Yes, `deliverable` shape (Recommended)** / **No, `default` shape (tested code)**. Store `$WORKFLOW_SHAPE` + `$AC_GROUNDING` from the choice (`deliverable`→`review`; `default`→`test`).
-   Override either way later via `track-state set-workflow-shape "<track_dir>" --shape <name>`. The conductor runs one track per session, so a mis-inferred shape is one command to fix.
+3. **Propose the workflow shape** (data-driven; confirm only when non-default). Never hand-scan the description for keywords — the registry owns selection. Run the pure matcher:
+   ```bash
+   track-state propose-shape "<description>" [--brief "<track_dir>/brief.md" when adopting an existing track dir that has one]
+   ```
+   Parse the JSON. Switch on `confirm_required`:
+   - `false` (proposed `default`) → no prompt. Record from the JSON: `$WORKFLOW_SHAPE=default`, `$AC_GROUNDING` = the `chosen` entry's `ac_grounding`, `$PLAY_PATH` = its `planning_doc_path`.
+   - `true` → a consequential choice (the proposal's `rationale` names exactly what changes), so confirm via ONE `AskUserQuestion`: *"This reads like a `<proposed>` track — <rationale from the JSON>. Use the `<proposed>` shape?"* Options: **Yes, `<proposed>` shape (Recommended)** / **No, `default` shape (full gates)**. Record `$WORKFLOW_SHAPE`, `$AC_GROUNDING`, and `$PLAY_PATH` from the chosen entry (`chosen` for the proposal, `default` for the fallback) — never hand-derive them.
+   Override either way later via `track-state set-workflow-shape "<track_dir>" --shape <name>`. The conductor runs one track per session, so a mis-proposed shape is one command to fix.
 4. **Derive the track id deterministically** — pick a short slug (1–3 lowercase words) summarizing the track, then run:
    ```bash
    track-state derive-name <slug>
@@ -120,6 +120,8 @@ Before the §2.2 Q&A branch above, check for a **Track Brief** at `<track_dir>/b
      `AskUserQuestion`: **Regenerate** (dispatch spec-planner below) or
      **Cancel** (halt). Never reuse a broken plan.
 
+**Shape Prelude (pre-planning steps).** If `$WORKFLOW_SHAPE` is non-default, Read `$PLAY_PATH` (the chosen shape's planning docfile — §2.1) and run its `## Prelude (orchestrator)` section NOW, before the dispatch. The Prelude is authoritative: it may dispatch a subagent (e.g. `conductor:explorer`) and name an envelope field its output adds (e.g. `RESEARCH_NOTES`) — forward that into the envelope below. A Prelude marked "None" is a no-op — dispatch directly. A FAILED Prelude dispatch never blocks planning: announce it and dispatch spec-planner without the Prelude's envelope field.
+
 Dispatch `conductor:spec-planner`, prompt:
 
 ```
@@ -131,6 +133,7 @@ AC_GROUNDING={$AC_GROUNDING}
 USER_ANSWERS={answers or N/A}
 RELATED_DOCS={paths or N/A}
 USER_CONTEXT={brief or N/A}
+RESEARCH_NOTES={exploration-notes path or N/A}
 ```
 
 Parse `---SPEC PLAN RESULT---` block. Confirm `STATUS: SUCCESS` (halt on FAILURE and announce `SUMMARY`).
@@ -158,6 +161,7 @@ AC_GROUNDING={$AC_GROUNDING}
 USER_ANSWERS={answers or N/A}
 RELATED_DOCS={paths or N/A}
 USER_CONTEXT={brief or N/A}
+RESEARCH_NOTES={same value as the first dispatch — carry it forward}
 PREVIOUS_ERRORS:
 {the format errors[], the spec-anchors errors[], and/or the AC-integrity gate string, verbatim}
 REGEN_FOCUS: The prior plan.md/spec.md failed validation. FORMAT: every task/subtask line begins with `- [ ]`; every phase begins with `## Phase N: Name`. SPEC-ANCHOR: spec.md has `## Acceptance Criteria` with `- AC-N:` bullets AND its grounding substrate — `## Test Scenarios` with `| TC-N.M | AC-N |` rows (test-grounded, `$AC_GROUNDING=test`) OR `## Artifact Anchors` with `| AC-N | <artifact> | <location> |` rows (review-grounded, `$AC_GROUNDING=review`). These headings + ID tokens are machine anchors, keep them ASCII even when prose is another language. AC-INTEGRITY: every AC-n appears in some task's `<!-- AC-n -->` AND is grounded — maps to a `TC-{n}.{m} | AC-n` row (test-grounded) OR an `| AC-n | … |` artifact-anchor row (review-grounded). Re-read `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/plan-format-contract.md` and `${CLAUDE_PLUGIN_ROOT}/templates/spec-scaffold.md`, then regenerate a conforming plan.md/spec.md.

@@ -420,16 +420,14 @@ class CheckpointPolicyControlSurfaceTests(TestCase):
         # substitute that lets a skip-if-declared freedom waive the checkpoint.
         self.assertIn("checkpoint_policy", ss._vocab()["shapes"]["load_bearing"])
         self.assertIn("ac_grounding", ss._vocab()["shapes"]["load_bearing"])
-        # verifiers + gates + checkpoint_policy + ac_grounding + planning_doc
-        # = the five drives. planning_doc (planning-as-data) drives the
-        # planning layer — the shape's tracks follow that docfile's procedure.
+        # verifiers + gates + checkpoint_policy + ac_grounding + planning_doc +
+        # signals = the six drives. planning_doc (planning-as-data) drives the
+        # planning layer; signals drives it too since Phase B — propose-shape
+        # ranks the description against them (new-track §2.1's selection step).
         self.assertEqual(
             set(ss._vocab()["shapes"]["load_bearing"]),
             {"verifiers", "gates", "checkpoint_policy", "ac_grounding",
-             "planning_doc"})
-        # signals is ADVISORY in this phase: matcher data the selection
-        # proposal consumes — it declares intent, it does not (yet) drive.
-        self.assertIn("signals", ss._vocab()["shapes"]["advisory"])
+             "planning_doc", "signals"})
 
     def test_vocab_exposes_checkpoint_policy_scalar(self):
         self.assertEqual(

@@ -31,8 +31,10 @@ attaches an advisory ``shape_violation`` disclosure to the emitted leaf envelope
 topology; ``verifiers`` are its checkpoint CHILDREN (declared in the same row) —
 two distinct lists, never conflated. The other accessors (:func:`nodes_for`,
 :func:`verify_policy_for`, :func:`stop_condition_for`, :func:`instruction_for`,
-:func:`planning_doc_for`) are consumed **only** by ``registry-doc`` display and
-the PLANNING layer, never by dispatch ordering, wave.py, handoff.py, or any
+:func:`planning_doc_for`, :func:`signals_for`) are consumed **only** by
+``registry-doc`` display and the PLANNING layer (:func:`rank_shapes` is the
+selection engine ``propose-shape`` calls), never by dispatch ordering,
+wave.py, handoff.py, or any
 SubagentStart injection. ``instruction_for`` in particular is NOT injected into
 an orchestrator prompt (contrast the task-type ``workflow`` field, which IS
 injected). ``research-first``'s explore-before-plan intent is honored at the
@@ -468,6 +470,71 @@ def resolve_planning_doc(shape: str) -> Path:
     # The default docfile itself is missing (plugin install damage) — return
     # the plugin path anyway; the caller's read fails open downstream.
     return plugin_default
+
+
+def signals_for(shape: str) -> tuple[str, ...]:
+    """The shape's EXPLICIT ``signals`` keyword tuple — the selection data
+    ``propose-shape`` matches a track description against.
+
+    Only a row that DECLARES ``signals`` returns a non-empty tuple; ``default``
+    deliberately omits it (the fail-open fallback is never a competitor —
+    mirrors an opt-in task tag omitting ``signals`` so it is never goal-detected).
+    No derived fallback from ``when_to_use`` here, unlike
+    :func:`task_profiles._signals_for`: shape selection is consequential (it
+    changes gates and verifiers for the WHOLE track), so a shape without
+    authored signals is simply not a candidate — never guessed.
+    """
+    raw = _shape(shape).get("signals")
+    if not isinstance(raw, list) or not raw:
+        return ()
+    # Lowercased + deduped (a duplicate would double-count one hit in the
+    # plurality score) — the same normalization _dedupe_signals applies.
+    out: list[str] = []
+    for s in raw:
+        k = str(s).lower()
+        if k and k not in out:
+            out.append(k)
+    return tuple(out)
+
+
+def rank_shapes(text: str) -> list[dict]:
+    """Rank candidate shapes by distinct ``signals`` hits over ``text``.
+
+    The pure core of ``track-state propose-shape`` (D2: deterministic, no model
+    call — the registry-driven selection engine for the PLANNING layer, the
+    mirror of :func:`task_profiles.derive_task_tag` one axis over). Returns a
+    list of ``{"shape", "score", "hits"}`` dicts, score-descending, registry
+    order stable within a tie (deterministic output). Each entry clears the
+    minimum bar of **>= 1 distinct hit** — deliberately lower than
+    ``derive_task_tag``'s >= 2, because a tag silently exempts gates (needs the
+    conservative bar) while a proposed shape is ALWAYS confirmed by the user
+    before it takes effect (``confirm_required`` — the human is the bar). The
+    caller applies the strict-plurality rule: a top score TIED with the runner-up
+    is ambiguity, not a proposal (fall back to ``default``).
+
+    Only shapes with authored ``signals`` compete (see :func:`signals_for`);
+    text is lowercased before matching, and each signal matches via the
+    word-boundary-aware matcher (:func:`task_profiles._signal_in` — imported,
+    not copied: one matcher, one home).
+    """
+    # Lazy import keeps this module import-cheap for the standalone hook
+    # scripts; task_profiles does not import this module (no cycle).
+    from .task_profiles import _signal_in
+
+    if not text or not text.strip():
+        return []
+    lowered = text.lower()
+    candidates: list[dict] = []
+    for shape in SHAPES_VOCAB():
+        signals = signals_for(shape)
+        if not signals:
+            continue
+        hits = [sig for sig in signals if _signal_in(sig, lowered)]
+        if hits:
+            candidates.append(dict(shape=shape, score=len(hits), hits=hits))
+    # Score-descending; Python's stable sort preserves registry order on a tie.
+    candidates.sort(key=lambda c: -c["score"])
+    return candidates[:3]
 
 
 def gates_for(shape: str) -> tuple[str, ...]:

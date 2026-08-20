@@ -35,6 +35,7 @@ The orchestrator supplies these parameters:
 | `USER_ANSWERS`      | Collected answers from the no-brief interactive Q&A (or empty / `N/A` when a Brief is present). |
 | `RELATED_DOCS`      | Paths to semantically related documents found during context discovery |
 | `USER_CONTEXT`      | Optional. `brief` signals a Brief is present (read §3.0 first); `N/A` otherwise. |
+| `RESEARCH_NOTES`    | Optional. Path to pre-planning Exploration Notes (a shape Prelude's explorer dispatch). When a path (not `N/A`): read it FIRST, before the codebase scan, as primary context alongside the Brief — the shape's planning docfile (`track-state registry-doc --shape <WORKFLOW_SHAPE>` renders it) carries the full planning procedure for the shape. |
 | `WORKFLOW_SHAPE`    | The track's workflow shape (`default` / `migration` / `deliverable` / a project overlay shape). Defaults to `default` when absent. Determines AC grounding (below) + the verifier fan-out; the substrate you emit in §4.1 keys off `AC_GROUNDING`, not this name directly. |
 | `AC_GROUNDING`      | How ACs are grounded: `test` (default — `test_TC_*` functions) or `review` (a non-code deliverable — artifact anchors + review attestations). Derived from `WORKFLOW_SHAPE` by the orchestrator. **§4.1 branches on this:** `review` → emit `## Artifact Anchors`; `test` → emit `## Test Scenarios`. |
 | `PREVIOUS_ERRORS`   | **Retry only.** Format errors from `init-from-plan --check` on a prior attempt (absent on a fresh generation). If present, the previous `plan.md` violated `plan-format-contract.md` — re-read the contract and regenerate a **conforming** `plan.md` (every task/subtask line begins with `- [ ]`; every phase begins with `## Phase N:`) before emitting SUCCESS. Context discovery (§3) can be skipped on retry — only the format is broken. |
@@ -54,6 +55,8 @@ If `USER_CONTEXT` is `brief`, a comprehensive human-authored Track Brief exists 
 - **Open Questions** → resolve them in the spec/plan where possible, or surface as explicit Out-of-Scope/constraints if they remain open.
 
 If `USER_CONTEXT` is `N/A` (no Brief), proceed to §3.1 as before — the codebase scan and docs are the primary source.
+
+**Exploration Notes (if present).** If `RESEARCH_NOTES` is a path, read it FIRST — before the codebase scan — as primary context alongside the Brief: it is the pre-planning exploration map (a shape's Prelude ran `conductor:explorer` before you were dispatched). Anchor the plan in the structure it found; the shape's planning docfile (fetch via `track-state registry-doc --shape <WORKFLOW_SHAPE>`) carries the full planner-facing procedure.
 
 ### 3.1 Context Discovery (Self-Load)
 
