@@ -1,6 +1,6 @@
 ---
 name: parallel
-description: Orchestrates opt-in within-track worktree wave parallelism — fans out file-disjoint deps-declared tasks concurrently, then serially integrates each member's commit back
+description: Parallelize opt-in within-track worktree waves — fans out file-disjoint, deps-declared tasks concurrently, then serially integrates each member's commit back
 when_to_use: User wants to parallelize a track's independent tasks (deps-declared, file-disjoint) into concurrent worktree-isolated task-executor agents instead of strict serial execution
 argument-hint: "[track_name]"
 allowed-tools: Bash, Read, Edit, Write, Grep, Glob, Agent, NotebookEdit, AskUserQuestion

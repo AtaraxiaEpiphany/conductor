@@ -35,13 +35,13 @@ All interaction happens through Claude Code slash commands:
 | `/conductor:brief` | Grill the user (frontier rounds of up to 4 questions per call) to reach shared understanding of a track, then write a brief.md that /conductor:new-track consumes as authoritative planning input |
 | `/conductor:dashboard` | Live resolved-workflow dashboard — renders the track's resolved shape (nodes, checkpoint verifier fan-out, gates) with the current position, the task tree, and quality gauges. Read-only in-chat snapshot. |
 | `/conductor:discover` | Find recurring dev frictions worth making tracks for (read git log + dispatch-lifecycle.log + .conductor/ signals first), grill-triage them with the user, then write a proposals.md the user feeds to /conductor:brief one proposal at a time |
-| `/conductor:implement` | Orchestrates track task execution via subagents with track-state.json synchronization |
+| `/conductor:implement` | Execute a planned track task-by-task — dispatches each task to a subagent, tracks results and retries through track-state.json, and runs the loop to archive |
 | `/conductor:implement-step` | Rail B-min dispatch loop — a teleoperator that runs `track-state step` and relays exactly the leaf action it emits (dispatch one subagent / ask / done). Thin alternative to /conductor:implement for small-window models. |
-| `/conductor:new-track` | Creates a new track with spec, plan, and track-state.json for orchestrator-driven execution |
-| `/conductor:parallel` | Orchestrates opt-in within-track worktree wave parallelism — fans out file-disjoint deps-declared tasks concurrently, then serially integrates each member's commit back |
+| `/conductor:new-track` | Create a new track — writes spec.md, plan.md, and track-state.json for orchestrator-driven execution; consumes a brief.md when present (skipping its own Q&A) |
+| `/conductor:parallel` | Parallelize opt-in within-track worktree waves — fans out file-disjoint, deps-declared tasks concurrently, then serially integrates each member's commit back |
 | `/conductor:parallel-step` | Rail B-min wave loop — a teleoperator that runs `track-state wave-step` and relays exactly the leaf action it emits (fan out a batch / integrate one member / ask / done). Thin alternative to /conductor:parallel for small-window models. |
 | `/conductor:post-loop-step` | Rail B-min post-loop teleoperator — runs `track-state post-loop-step` and relays exactly the leaf action it emits (resolve deferred / finalize / dispatch a doc-sync or review agent / digest / archive / done). Thin alternative to the prose post-loop template (§5.0–§8.0) for small-window models. |
-| `/conductor:re-spec` | Mid-track re-plan/re-spec after git reset — edit spec.md (AC/constraint/workflow), surface which completed SHAs a changed AC puts at risk, re-validate, commit, then hand off to /conductor:reconcile |
+| `/conductor:re-spec` | Edit a spec mid-track (AC/constraint/workflow in spec.md) — surface which completed SHAs a changed AC puts at risk, re-validate, commit, then hand off to /conductor:reconcile |
 | `/conductor:reconcile` | Re-sync track-state.json after a hand-edit of plan.md (git reset + tag/split/reorder), preserving commit SHAs |
 | `/conductor:revert` | Reverts work with track-state.json state synchronization |
 | `/conductor:review` | Reviews completed track work using track-state.json for context and commit tracking |

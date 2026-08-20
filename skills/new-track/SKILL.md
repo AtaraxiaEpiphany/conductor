@@ -1,6 +1,6 @@
 ---
 name: new-track
-description: Creates a new track with spec, plan, and track-state.json for orchestrator-driven execution
+description: Create a new track — writes spec.md, plan.md, and track-state.json for orchestrator-driven execution; consumes a brief.md when present (skipping its own Q&A)
 when_to_use: User wants to create a new feature track, bug fix track, or chore track with specification and plan
 argument-hint: "[track_description]"
 allowed-tools: Bash, Read, Edit, Write, Grep, Glob, Agent, NotebookEdit, AskUserQuestion

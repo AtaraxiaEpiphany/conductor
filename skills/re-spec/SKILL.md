@@ -1,6 +1,6 @@
 ---
 name: re-spec
-description: Mid-track re-plan/re-spec after git reset — edit spec.md (AC/constraint/workflow), surface which completed SHAs a changed AC puts at risk, re-validate, commit, then hand off to /conductor:reconcile
+description: Edit a spec mid-track (AC/constraint/workflow in spec.md) — surface which completed SHAs a changed AC puts at risk, re-validate, commit, then hand off to /conductor:reconcile
 when_to_use: User did a git reset --hard to undo divergent work, then wants to re-spec the remaining work — change an Acceptance Criterion, add a constraint, reword an FR, or inject workflow guidance for the remaining tasks — before continuing. This is the spec.md half; /conductor:reconcile is the plan.md/state half. Use THIS when the user is editing spec.md (not just plan.md).
 argument-hint: "[track] [--add-constraint \"...\"] [--edit-ac AC-n \"...\"]"
 allowed-tools: Bash, Read, Edit, Write, Grep, Glob

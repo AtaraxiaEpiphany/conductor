@@ -1,6 +1,6 @@
 ---
 name: implement
-description: Orchestrates track task execution via subagents with track-state.json synchronization
+description: Execute a planned track task-by-task — dispatches each task to a subagent, tracks results and retries through track-state.json, and runs the loop to archive
 when_to_use: User wants to implement a track, execute pending tasks, or run the conductor implementation workflow
 argument-hint: "[track_name]"
 allowed-tools: Bash, Read, Edit, Write, Grep, Glob, Agent, NotebookEdit, AskUserQuestion
