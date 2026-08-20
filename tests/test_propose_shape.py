@@ -286,5 +286,50 @@ class NewTrackSwapWiringTests(TestCase):
         self.assertIn("read it FIRST", self.planner)
 
 
+class SpecPlannerDocfileCollapseTests(TestCase):
+    """Phase C pins — the PLAY_FILE envelope flows into BOTH spec-planner
+    dispatches, and the planner now READS its per-shape doctrine from the
+    docfile instead of re-encoding it (the shape enumeration and the
+    grounding doctrine were the drift liabilities this collapse deletes)."""
+
+    def setUp(self):
+        self.skill = SKILL.read_text(encoding="utf-8")
+        self.planner = PLANNER.read_text(encoding="utf-8")
+
+    def test_play_file_in_both_envelopes(self):
+        # First dispatch AND the regen retry both carry the docfile path — a
+        # retry must not silently lose the planning procedure (the same pin
+        # RESEARCH_NOTES holds).
+        self.assertEqual(self.skill.count("PLAY_FILE="), 2)
+
+    def test_play_file_row_names_the_fallback_chain(self):
+        # The envelope row: PLAY_FILE → registry-doc --shape → default
+        # tested-code procedure (fail-open every step).
+        self.assertIn("`PLAY_FILE`", self.planner)
+        self.assertIn("planning docfile", self.planner)
+        self.assertIn("registry-doc --shape", self.planner)
+
+    def test_planner_reads_docfile_first(self):
+        self.assertIn("Read your planning docfile FIRST", self.planner)
+        # The conflict rule: format contract owns machine anchors, docfile
+        # owns procedure.
+        self.assertIn(
+            "format contract wins on machine anchors and the docfile wins "
+            "on procedure", self.planner)
+
+    def test_shape_row_stays_de_enumerated(self):
+        # The closed shape set lives in the registry — an enumerated ladder in
+        # the agent body is the second home this collapse deletes.
+        self.assertIn("never enumerated here", self.planner)
+        self.assertNotIn("`default` / `migration`", self.planner)
+
+    def test_grounding_doctrine_delegated_to_docfile(self):
+        # The substrate contract (which anchors to emit) stays in §4.1; HOW to
+        # ground well is single-homed in the docfiles.
+        self.assertIn("How to ground WELL is the planning docfile's job",
+                      self.planner)
+        self.assertIn("AC grounding keys off `AC_GROUNDING`", self.planner)
+
+
 if __name__ == "__main__":
     main()

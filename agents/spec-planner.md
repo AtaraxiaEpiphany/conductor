@@ -36,8 +36,9 @@ The orchestrator supplies these parameters:
 | `RELATED_DOCS`      | Paths to semantically related documents found during context discovery |
 | `USER_CONTEXT`      | Optional. `brief` signals a Brief is present (read §3.0 first); `N/A` otherwise. |
 | `RESEARCH_NOTES`    | Optional. Path to pre-planning Exploration Notes (a shape Prelude's explorer dispatch). When a path (not `N/A`): read it FIRST, before the codebase scan, as primary context alongside the Brief — the shape's planning docfile (`track-state registry-doc --shape <WORKFLOW_SHAPE>` renders it) carries the full planning procedure for the shape. |
-| `WORKFLOW_SHAPE`    | The track's workflow shape (`default` / `migration` / `deliverable` / a project overlay shape). Defaults to `default` when absent. Determines AC grounding (below) + the verifier fan-out; the substrate you emit in §4.1 keys off `AC_GROUNDING`, not this name directly. |
-| `AC_GROUNDING`      | How ACs are grounded: `test` (default — `test_TC_*` functions) or `review` (a non-code deliverable — artifact anchors + review attestations). Derived from `WORKFLOW_SHAPE` by the orchestrator. **§4.1 branches on this:** `review` → emit `## Artifact Anchors`; `test` → emit `## Test Scenarios`. |
+| `WORKFLOW_SHAPE`    | The track's workflow shape name (a registry key — the closed set lives in the registry, never enumerated here). Defaults to `default` when absent. A routing label for you: the load-bearing derivations (gates, verifier fan-out) happen dispatch-side; your planning procedure comes from the planning docfile (`PLAY_FILE`), and your grounding substrate keys off `AC_GROUNDING` — never re-derive either from this name. |
+| `AC_GROUNDING`      | How ACs are grounded: `test` (default — `test_TC_*` functions) or `review` (a non-code deliverable — artifact anchors + review attestations). Resolved from the shape's registry `ac_grounding` field by the orchestrator. **§4.1 branches on this:** `review` → emit `## Artifact Anchors`; `test` → emit `## Test Scenarios`. |
+| `PLAY_FILE`         | Optional. Absolute path to the track's **planning docfile** — the shape's full planning procedure (the same docfile whose Prelude ran pre-planning). Read it before §4.0; its `## Planning procedure (spec-planner)` section is the authoritative per-shape doctrine (how ACs are grounded well, how work decomposes). Absent → fetch the same content via `track-state registry-doc --shape <WORKFLOW_SHAPE>`; if neither resolves, the default tested-code procedure applies. |
 | `PREVIOUS_ERRORS`   | **Retry only.** Format errors from `init-from-plan --check` on a prior attempt (absent on a fresh generation). If present, the previous `plan.md` violated `plan-format-contract.md` — re-read the contract and regenerate a **conforming** `plan.md` (every task/subtask line begins with `- [ ]`; every phase begins with `## Phase N:`) before emitting SUCCESS. Context discovery (§3) can be skipped on retry — only the format is broken. |
 
 ---
@@ -56,7 +57,7 @@ If `USER_CONTEXT` is `brief`, a comprehensive human-authored Track Brief exists 
 
 If `USER_CONTEXT` is `N/A` (no Brief), proceed to §3.1 as before — the codebase scan and docs are the primary source.
 
-**Exploration Notes (if present).** If `RESEARCH_NOTES` is a path, read it FIRST — before the codebase scan — as primary context alongside the Brief: it is the pre-planning exploration map (a shape's Prelude ran `conductor:explorer` before you were dispatched). Anchor the plan in the structure it found; the shape's planning docfile (fetch via `track-state registry-doc --shape <WORKFLOW_SHAPE>`) carries the full planner-facing procedure.
+**Exploration Notes (if present).** If `RESEARCH_NOTES` is a path, read it FIRST — before the codebase scan — as primary context alongside the Brief: it is the pre-planning exploration map (a shape's Prelude ran `conductor:explorer` before you were dispatched). Anchor the plan in the structure it found; the shape's planning docfile (`PLAY_FILE`, §4.0) carries the full planner-facing procedure.
 
 ### 3.1 Context Discovery (Self-Load)
 
@@ -98,19 +99,23 @@ Synthesize:
 
 ## 4.0 GENERATE ARTIFACTS
 
+**Read your planning docfile FIRST** — `PLAY_FILE` from the envelope (or `track-state registry-doc --shape <WORKFLOW_SHAPE>` when absent; the default tested-code procedure if neither resolves). Its `## Planning procedure (spec-planner)` section is the authoritative **per-shape doctrine** — how ACs are grounded well, how work decomposes, what the shape's discipline is. The sections below are the **universal format contract every shape shares** (scaffold, anchors, grammar, tags, deps); when a docfile procedure and a universal rule ever seem to conflict, the format contract wins on machine anchors and the docfile wins on procedure.
+
 ### 4.1 Generate `spec.md`
 
 Read `${CLAUDE_PLUGIN_ROOT}/templates/spec-scaffold.md` and **fill its skeleton** — every section, in the track's chosen language.
 
-**AC grounding branches on `AC_GROUNDING`** (derived from `WORKFLOW_SHAPE`):
-- **`test`** (default — `default`/`migration` shapes): emit the `## Test Scenarios` table. Every AC maps to ≥1 TC (`TC-{AC_NUMBER}.{SCENARIO_INDEX}`) that a `test_TC_*` function will ground. The standard code-track substrate.
-- **`review`** (`deliverable` shape — a non-code artifact): emit `## Artifact Anchors` **instead of** `## Test Scenarios`. Every AC maps to a concrete deliverable anchor — a `| AC-N | <artifact> | <location> |` row naming what the deliverable IS (a doc section, report chapter, data file) and where it lives. There are **no** TCs and no `test_TC_*` functions; the AC is grounded by the anchor existing AND a review attesting it satisfies the criterion (the spec-reviewer writes the attestation at the checkpoint). The ac-tracer still runs — ACs are still declared and traced to tasks; only the grounding substrate differs.
+**AC grounding keys off `AC_GROUNDING`** — a resolved registry value (the shape's `ac_grounding` field), never something you re-derive from a shape name:
+- **`test`**: emit the `## Test Scenarios` table. Every AC maps to ≥1 TC (`TC-{AC_NUMBER}.{SCENARIO_INDEX}`) that a `test_TC_*` function will ground.
+- **`review`**: emit `## Artifact Anchors` **instead of** `## Test Scenarios`. Every AC maps to a `| AC-N | <artifact> | <location> |` row naming what the deliverable IS and where it lives; there are **no** TCs and no `test_TC_*` functions — the AC is grounded by the anchor existing AND a review attesting it satisfies the criterion (the spec-reviewer writes the attestation at the checkpoint). The ac-tracer still runs — ACs are still declared and traced to tasks; only the grounding substrate differs.
+
+**How to ground WELL is the planning docfile's job** (`PLAY_FILE`, §4.0): the per-shape discipline — happy+edge scenario coverage, the preservation map a behavior-preserving track's TC rows form, the artifact-anchor discipline a review-grounded deliverable's rows follow — is single-homed there. This section carries only the substrate contract every shape shares.
 
 **Machine anchors stay ASCII.** The headings (`## Acceptance Criteria`, `## Test Scenarios` / `## Artifact Anchors`, …) and ID tokens (`FR-N`, `NFR-N`, `AC-N`, `TC-N.M`, the table `|`-syntax) are machine anchors the parser keys on — keep them in English/ASCII even when the prose is another language. Fill only the body text, in any language. **A `spec.md` missing `## Acceptance Criteria` (with `- AC-N:` bullets) OR missing its grounding substrate (`## Test Scenarios` for test-grounded, `## Artifact Anchors` for review-grounded) is rejected by `track-state spec-anchors`** — do not localize the anchors, localize only the body.
 
 **Rules:**
 - EARS syntax for every FR/NFR — mandatory `shall` (or a localized equivalent: `doit`/`muss`/`应`/`すること`…; extend via `CONDUCTOR_EARS_VERBS`); one requirement per statement; prefer positive recovery over `shall not`. The `spec-integrity` EARS lint surfaces violations as a WARN.
-- The grounding substrate covers every AC: test-grounded → Test Scenarios cover every AC (happy path + ≥1 edge case; TC IDs `TC-{AC_NUMBER}.{SCENARIO_INDEX}`); review-grounded → Artifact Anchors cover every AC (one concrete deliverable anchor per AC).
+- The grounding substrate covers every AC: test-grounded → every AC has ≥1 TC row (`TC-{AC_NUMBER}.{SCENARIO_INDEX}`); review-grounded → every AC has one anchor row. The per-shape discipline FOR those rows is the planning docfile's (`PLAY_FILE`).
 - Measurable, testable ACs; atomic FRs. Markdown links for references (group when 3+). Paths relative to project root.
 
 ### 4.2 Generate `plan.md`

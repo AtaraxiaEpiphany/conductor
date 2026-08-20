@@ -53,6 +53,18 @@ class ShippedDocfileTests(TestCase):
             self.assertTrue((PLANNING / name).is_file(),
                             f"planning library missing {name}")
 
+    def test_every_docfile_carries_both_consumer_sections(self):
+        # spec-planner §4.0 and the new-track Prelude rule dispatch against
+        # these two headings BY NAME — a docfile missing one breaks the
+        # contract silently (the planner reads "the docfile wins on procedure"
+        # but finds no procedure section).
+        for doc in sorted(PLANNING.glob("*.md")):
+            body = doc.read_text(encoding="utf-8")
+            self.assertIn("## Prelude (orchestrator)", body,
+                          f"{doc.name} missing the Prelude section")
+            self.assertIn("## Planning procedure (spec-planner)", body,
+                          f"{doc.name} missing the planner procedure section")
+
     def test_default_shape_signals_absent(self):
         # The default shape is the fail-open FALLBACK, never a competitor:
         # it deliberately declares no `signals` (only candidate shapes carry
