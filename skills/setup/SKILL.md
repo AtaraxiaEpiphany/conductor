@@ -75,7 +75,7 @@ Save state: `2.3_tech_stack_styleguides`.
 
 ### 2.4 Workflow
 
-Seed `conductor/workflow/` with the dev-command files and generate its index. The doctrine files (`task-workflow.md`, `phase-checkpoint.md`, `post-loop.md`) are NOT copied here — agents and skills read them directly from `${CLAUDE_PLUGIN_ROOT}/templates/` at runtime (one home, auto-updates with the plugin, no drift), mirroring how `runtime/contracts/*.md` are consumed. The dev-command files ARE pure copies (no tokens), so `cp` keeps their bodies out of the orchestrator context.
+Seed `conductor/workflow/` with the dev-command files and generate its index. The doctrine files (`task-workflow.md`, `phase-checkpoint.md`, `post-loop.md`, and the `workflow/steps/` docfile library) are NOT copied here — agents and skills read them directly from `${CLAUDE_PLUGIN_ROOT}/templates/` at runtime (one home, auto-updates with the plugin, no drift), mirroring how `runtime/contracts/*.md` are consumed. A project's OWN docfiles (overriding or extending the library) live at `conductor/workflow/steps/` by contrast — those are project content, not plugin doctrine. The dev-command files ARE pure copies (no tokens), so `cp` keeps their bodies out of the orchestrator context.
 
 1. **Dev commands:** copy the detected languages' dev-command files into `conductor/workflow/dev-commands/` — the path task-runner / build-runner / refactorer / apply-fixes / phase-checker read at runtime (pure Bash keeps the lang files out of context). No `general.md` (unlike styleguides) — detected languages only:
    ```bash

@@ -19,9 +19,11 @@ class TaskExecutorWorkflowPointerTests(TestCase):
     def setUp(self):
         self.agent = (AGENTS / "task-executor.md").read_text(encoding="utf-8")
 
-    def test_points_at_task_workflow_steps_3_8(self):
-        # §4.0 defers the canonical TDD cycle to the workflow doc instead of restating it.
-        self.assertIn("task-workflow.md", self.agent)
+    def test_points_at_workflow_steps_library(self):
+        # §4.0/Layer 3 defer the canonical TDD cycle to the steps library's
+        # default docfile instead of restating it (task-workflow.md now holds
+        # only the orchestrator-owned steps + the ownership split).
+        self.assertIn("templates/workflow/steps/default-tdd.md", self.agent)
         self.assertIn("Steps 3-8", self.agent)
 
     def test_keeps_git_notes_invariant(self):
@@ -47,6 +49,7 @@ class TaskExecutorWorkflowPointerTests(TestCase):
 class TaskWorkflowDriftGuardTests(TestCase):
     def setUp(self):
         self.doc = (TEMPLATES / "task-workflow.md").read_text(encoding="utf-8")
+        self.default_doc = (TEMPLATES / "workflow" / "steps" / "default-tdd.md").read_text(encoding="utf-8")
 
     def test_git_notes_are_orchestrator_owned(self):
         # The drift: Step 9 used to tell the agent to run `git notes add`. It must now state
@@ -59,6 +62,18 @@ class TaskWorkflowDriftGuardTests(TestCase):
         # agent performs only Steps 3-8 (orchestrator owns 1, 2, 9, 10, 11).
         self.assertIn("Steps 3-8", self.doc)
         self.assertIn("9, 10, 11", self.doc)
+
+    def test_executor_steps_relocated_not_duplicated(self):
+        # The Steps 3-8 prose MOVED home (Delete→Point rung): the shrunken
+        # template points at the steps library and carries a pointer, while
+        # the default docfile holds the verbatim cycle. Neither restates the
+        # other's steps in full.
+        self.assertIn("templates/workflow/steps/", self.doc)
+        self.assertIn("default-tdd.md", self.doc)
+        self.assertIn("3. **Write Failing Tests (Red)**", self.default_doc)
+        self.assertIn("8. **Commit Code Changes**", self.default_doc)
+        # The template no longer restates the executor steps' bodies.
+        self.assertNotIn("**diff-scoped**", self.doc)
 
 
 class PhaseCheckerWorkflowPointerTests(TestCase):
@@ -107,8 +122,11 @@ class TaskExecutorRefactorStepTests(TestCase):
 
 
 class TaskWorkflowRefactorStepTests(TestCase):
+    """The Step-5 guardrails relocated WITH Steps 3-8 into the default docfile
+    (task-workflow.md now carries only the one-line Steps 3-8 summary)."""
+
     def setUp(self):
-        self.doc = (TEMPLATES / "task-workflow.md").read_text(encoding="utf-8")
+        self.doc = (TEMPLATES / "workflow" / "steps" / "default-tdd.md").read_text(encoding="utf-8")
 
     def test_step5_no_longer_optional(self):
         # "(optional)" with no mechanism meant never; the step is now a real, bounded step.

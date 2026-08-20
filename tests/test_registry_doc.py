@@ -130,12 +130,29 @@ class RegistryDocMigration(TestCase):
     def test_tag_migrate_renders_workflow_prose(self):
         out = self._run("--tag", "Migrate")
         self.assertIn("`Migrate`", out)
-        # The on-demand path emits the workflow prose verbatim — this is what
-        # the executor fetches instead of TDD on a migration track.
-        self.assertIn("`workflow` for `Migrate`", out)
+        # The on-demand path renders the tag's resolved workflow DOCFILE
+        # verbatim (registry row declares workflow_doc: migrate.md) — this is
+        # what the executor fetches instead of TDD on a migration track.
+        self.assertIn("Workflow docfile for `Migrate`: `migrate.md`", out)
         self.assertIn("EXISTING", out.upper())
+        self.assertIn("DO NOT write new tests", out)  # docfile body, verbatim
         # [Migrate] is opt-in (no signals): the render says so explicitly.
         self.assertIn("opt-in", out.lower())
+
+    def test_tag_default_renders_default_docfile(self):
+        # A tag with NO bespoke workflow and NO exemption renders the default
+        # docfile verbatim (one fetch = complete actionable step prose).
+        out = self._run("--tag", "Refactor")
+        self.assertIn(
+            f"Workflow docfile for `Refactor`: `default-tdd.md`", out)
+        self.assertIn("3. **Write Failing Tests (Red)**", out)
+
+    def test_tag_exempt_renders_fast_path_pointer(self):
+        # A TDD-exempt tag renders the Step-8 fast-path pointer, NOT the full
+        # default TDD cycle (exempt tasks skip Steps 3-7).
+        out = self._run("--tag", "Docs")
+        self.assertIn("TDD-exempt fast path", out)
+        self.assertNotIn("3. **Write Failing Tests (Red)**", out)
 
     def test_shape_migration_renders_checkpoint_only_paradigm(self):
         out = self._run("--shape", "migration")

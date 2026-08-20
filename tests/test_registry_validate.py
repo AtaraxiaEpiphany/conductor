@@ -283,5 +283,57 @@ class MergedRequiresDefault(TestCase):
         self.assertTrue(any("default" in e for e in errs), errs)
 
 
+class WorkflowDocField(TestCase):
+    """The ``workflow_doc`` registry field — the steps-library pointer.
+
+    Strict-write rules: the value must be a STRING and a BARE ``.md`` filename
+    (no path separators — a path-y value is a typo or traversal attempt). The
+    EXISTENCE cross-check (a declared docfile must resolve in the plugin or
+    project steps dir) is I/O-bound, so it lives at read time
+    (``task_profiles.resolve_workflow_doc`` fail-open warning) plus the
+    shipped-registry pin below, not in this pure module.
+    """
+
+    def _doc(self, doc_value):
+        return {"default": {}, "tags": {"Custom": {"workflow_doc": doc_value}}}
+
+    def test_valid_docfile_name_passes(self):
+        self.assertEqual(
+            rv.validate_task_types(self._doc("rollout.md")), [], )
+
+    def test_path_separator_rejected(self):
+        errs = rv.validate_task_types(self._doc("steps/rollout.md"))
+        self.assertTrue(any("workflow_doc" in e and "bare" in e for e in errs),
+                        errs)
+
+    def test_parent_traversal_rejected(self):
+        errs = rv.validate_task_types(self._doc("../../etc/passwd.md"))
+        self.assertTrue(any("workflow_doc" in e for e in errs), errs)
+
+    def test_non_string_rejected(self):
+        errs = rv.validate_task_types({"default": {},
+                                       "tags": {"Custom": {"workflow_doc": 7}}})
+        self.assertTrue(any("workflow_doc must be a string" in e for e in errs),
+                        errs)
+
+    def test_shipped_declared_docfiles_resolve(self):
+        # The existence gate for the SHIPPED registry (test-side I/O): every
+        # declared workflow_doc must name a real file in the plugin steps dir,
+        # and resolve_workflow_doc must point at it (not fail-open to default).
+        from track_state import task_profiles as tp
+        for tag, row in _tags_baseline()["tags"].items():
+            declared = row.get("workflow_doc")
+            if not declared:
+                continue
+            plugin_cand = (_TEMPLATES / "steps" / declared)
+            self.assertTrue(
+                plugin_cand.is_file(),
+                f"{tag} declares workflow_doc {declared!r} but the plugin "
+                f"steps dir has no such file")
+            resolved = tp.resolve_workflow_doc(tag)
+            self.assertEqual(resolved.name, declared)
+            self.assertTrue(resolved.is_file())
+
+
 if __name__ == "__main__":
     main()

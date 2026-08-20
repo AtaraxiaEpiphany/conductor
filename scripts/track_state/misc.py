@@ -1620,8 +1620,9 @@ def cmd_registry_doc(tag=None, shape=None):
         cov = _yesno(tp.is_coverage_exempt([tag]))
         when = tp.when_to_use_for(tag).strip().replace("\n", " ")
         markers = []
-        if tp.workflow_for(tag):
-            markers.append("workflow")
+        doc = tp.workflow_doc_for(tag)
+        if tp.workflow_for(tag) or doc:
+            markers.append(f"workflow: {doc}" if doc else "workflow")
         if tp.refactor_for(tag):
             markers.append("refactor")
         marker = f" *({', '.join(markers)})*" if markers else ""
@@ -1662,12 +1663,44 @@ def cmd_registry_doc(tag=None, shape=None):
             print(_tag_row(tag))
             print()
             wf = tp.workflow_for(tag)
-            if wf:
+            doc = tp.workflow_doc_for(tag)
+            if doc:
+                # The docfile form (preferred for bespoke workflows): render
+                # the resolved steps-library file verbatim. Project steps dir
+                # wins the plugin one (resolve_workflow_doc), so an overlay
+                # docfile renders here with zero plugin edits.
+                path = tp.resolve_workflow_doc(tag)
+                print(f"## Workflow docfile for `{tag}`: `{doc}` "
+                      f"(follow it instead of default TDD)")
+                print()
+                try:
+                    print(path.read_text(encoding="utf-8").rstrip("\n"))
+                except OSError as exc:  # fail-open render, never a crash
+                    print(f"_(docfile unreadable at {path}: {exc} — "
+                          f"fall back to default TDD: "
+                          f"`templates/workflow/steps/default-tdd.md`)_")
+            elif wf:
+                # The inline `workflow` form (small overlays): render the
+                # registry prose verbatim, unchanged.
                 print(f"## `workflow` for `{tag}` (follow this prose instead of default TDD)")
                 print()
                 print(wf)
+            elif tp.is_tdd_exempt([tag]):
+                print(f"_(no bespoke workflow for `{tag}` → TDD-exempt fast "
+                      f"path: go straight to Step 8 of "
+                      f"`templates/workflow/steps/default-tdd.md`)_")
             else:
-                print(f"_(no `workflow` for `{tag}` → default TDD, Steps 3-8)_")
+                # The default arm renders the default docfile verbatim so a
+                # single `--tag` fetch always returns the tag's complete
+                # actionable step prose (Tier B fetch, context-model).
+                path = tp.resolve_workflow_doc(tag)
+                print(f"## Workflow docfile for `{tag}`: "
+                      f"`{tp.DEFAULT_WORKFLOW_DOC}` (default TDD, Steps 3-8)")
+                print()
+                try:
+                    print(path.read_text(encoding="utf-8").rstrip("\n"))
+                except OSError as exc:  # fail-open render, never a crash
+                    print(f"_(default docfile unreadable at {path}: {exc})_")
             if tp.refactor_for(tag):
                 print()
                 print(f"## `refactor` for `{tag}`: **true**")

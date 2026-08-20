@@ -32,7 +32,10 @@ their regex from :data:`TAG_VOCAB`), (b) routed correctly by
 :func:`is_tdd_exempt`/:func:`is_coverage_exempt`, (d) surfaced to spec-planner
 with its ``when_to_use`` hint via :func:`when_to_use_for`, and — if it carries
 a ``workflow`` — (e) injected into task-executor via :func:`workflow_for`; all
-with **zero** Python edits.
+with **zero** Python edits. A tag whose executor behavior needs a full bespoke
+workflow declares ``workflow_doc`` instead (a docfile in the steps library —
+see :func:`workflow_doc_for`/:func:`resolve_workflow_doc`): one docfile + one
+registry row, still zero Python edits.
 """
 
 from __future__ import annotations
@@ -417,9 +420,87 @@ def workflow_for(tag: str) -> str:
 
     A project overlay may add a ``workflow`` for a project-specific tag (e.g.
     ``[K8sRollout]`` with bespoke rollout prose) and it flows to task-executor
-    at dispatch with zero plugin edits.
+    at dispatch with zero plugin edits. For a full bespoke workflow prefer the
+    docfile form (:func:`workflow_doc_for`) — prose lives in a steps-library
+    markdown file, not a JSON string; a declared ``workflow_doc`` wins over
+    inline ``workflow`` prose at render time.
     """
     return _profile(tag).get("workflow", "")
+
+
+#: The docfile every tag without a bespoke ``workflow_doc`` resolves to — the
+#: default TDD cycle (Steps 3-8), relocated verbatim from
+#: ``templates/task-workflow.md`` into the steps library.
+DEFAULT_WORKFLOW_DOC = "default-tdd.md"
+
+
+def workflow_doc_for(tag: str) -> str:
+    """The ``workflow_doc`` docfile NAME for a tag, or ``""`` (default TDD).
+
+    The registry-driven pointer into the **workflow steps library**: a tag row
+    declaring ``workflow_doc: "<name>.md"`` gets its step prose from that
+    docfile instead of the default TDD cycle. Absent (the common case) = the
+    default docfile (:data:`DEFAULT_WORKFLOW_DOC`). Use
+    :func:`resolve_workflow_doc` for the actual path — this accessor mirrors
+    :func:`workflow_for`'s bare-string shape so presence checks and renders
+    treat the two fields uniformly.
+
+    Resolution order (project wins, mirroring the registry overlay rule):
+    ``<project>/conductor/workflow/steps/<name>`` over
+    ``<plugin>/templates/workflow/steps/<name>`` — a project overrides a
+    shipped docfile (or adds a bespoke one) with zero plugin edits.
+    """
+    doc = _profile(tag).get("workflow_doc", "")
+    return doc if isinstance(doc, str) else ""
+
+
+def resolve_workflow_doc(tag: str) -> Path:
+    """The resolvable PATH to a tag's workflow docfile (fail-open to default).
+
+    Resolution: the declared ``workflow_doc`` name — project steps dir over
+    plugin steps dir — falling back to :data:`DEFAULT_WORKFLOW_DOC` (plugin
+    copy) when the tag declares none, the name is malformed (not a bare
+    ``.md`` filename — a path-y name is a typo or traversal attempt, never a
+    docfile), or no steps dir holds it. Fail-open with a loud stderr warning,
+    never a raise: a bad overlay docfile must not crash dispatch (the same
+    contract as :func:`_load_baseline`).
+    """
+    # Lazy import: the name grammar is single-homed in registry_validate (the
+    # strict-write gate enforces the same shape); the same lazy-relative-
+    # import pattern as `from .helpers import extract_tags` above.
+    from .registry_validate import DOCFILE_NAME_RE
+
+    name = workflow_doc_for(tag)
+    if name and not DOCFILE_NAME_RE.match(name):
+        print(
+            f"WARNING: workflow_doc {name!r} for tag {tag!r} is not a bare "
+            f".md filename; falling back to {DEFAULT_WORKFLOW_DOC}.",
+            file=sys.stderr,
+        )
+        name = ""
+    if not name:
+        name = DEFAULT_WORKFLOW_DOC
+
+    root = _project_root()
+    candidates = []
+    if root is not None:
+        candidates.append(root / "conductor" / "workflow" / "steps" / name)
+    plugin_default = (_plugin_root() / "templates" / "workflow" / "steps"
+                      / DEFAULT_WORKFLOW_DOC)
+    candidates.append(_plugin_root() / "templates" / "workflow" / "steps" / name)
+    for cand in candidates:
+        if cand.is_file():
+            return cand
+    if name != DEFAULT_WORKFLOW_DOC:
+        print(
+            f"WARNING: workflow docfile {name!r} (tag {tag!r}) not found in "
+            f"any steps dir; falling back to {DEFAULT_WORKFLOW_DOC}.",
+            file=sys.stderr,
+        )
+        return plugin_default
+    # The default docfile itself is missing (plugin install damage) — return
+    # the plugin path anyway; the caller's read fails open downstream.
+    return plugin_default
 
 
 def refactor_for(tag: str) -> bool:

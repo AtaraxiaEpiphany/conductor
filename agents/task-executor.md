@@ -122,11 +122,11 @@ If `errors`/`warnings` are present (e.g. a dangling AC ref, or spec.md absent), 
 Check the `tag_profile` from the Layer 1 task-context fetch (the injected `[Conductor Registry]` block carries the same profile + exemption sets as the deterministic floor). If `tag_profile.tdd_exempt` is **true** AND `tag_profile.workflow` is **absent** → the config/docs/chore-style fast path (§4.0 → Step 8 only; §5.0 exempts F2/F3). For such a tag:
 
 - **Skip Layer 2** — no AC/TC annotations, so spec.md AC extraction doesn't apply.  (If the task description or Layer 0 notes name an out-of-scope boundary, honor it directly.)
-- **In Layer 3, skip `testing/strategy.md` and the styleguide** — read only `task-workflow.md` Step 8 (commit-message format).
+- **In Layer 3, skip `testing/strategy.md` and the styleguide** — read only Step 8 (commit-message format) of the default workflow docfile, `${CLAUDE_PLUGIN_ROOT}/templates/workflow/steps/default-tdd.md`.
 
 Then go **straight to §4.0 Step 8**. For any other tag → continue to Layer 2.
 
-**A tag whose `workflow` is `present` is NOT this fast path** (e.g. a project-overlay migration tag). Such a task loads Layers 1-3 normally (reads spec.md ACs, the styleguide, and `task-workflow.md`) — it needs AC context for the checkpoint's `ac-tracer` trace and it commits real code. It diverges only at §4.0, where it fetches `track-state registry-doc --tag <Tag>` and follows that `workflow` prose instead of full TDD. Continue to Layer 2 when `tag_profile.workflow` is `present`.
+**A tag whose `workflow` is `present` is NOT this fast path** (e.g. a project-overlay migration tag). Such a task loads Layers 1-3 normally (reads spec.md ACs, the styleguide, and its workflow docfile — bespoke for the tag, else the default) — it needs AC context for the checkpoint's `ac-tracer` trace and it commits real code. It diverges only at §4.0, where it fetches `track-state registry-doc --tag <Tag>` and follows that docfile/prose instead of full TDD. Continue to Layer 2 when `tag_profile.workflow` is `present`.
 
 ### Layer 2: Acceptance Criteria (READ BEFORE Step 3)
 
@@ -143,7 +143,7 @@ The AC text + TC rows are already in the Layer 1 task-context JSON (`acs` and `t
 
 ### Layer 3: Workflow + Style (READ BEFORE Step 3)
 
-Read `${CLAUDE_PLUGIN_ROOT}/templates/task-workflow.md` — Steps 3-8 section only (skip Steps 1-2, 10-11).
+Read your **workflow docfile** — `${CLAUDE_PLUGIN_ROOT}/templates/workflow/steps/default-tdd.md` (Steps 3-8) unless your leading tag declares a bespoke `workflow_doc` (§4.0's registry fetch resolves it; a project override lives at `conductor/workflow/steps/`).
 Read `conductor/workflow/testing/strategy.md` — test file placement policy and naming conventions.
 Read the relevant style guide from `conductor/workflow/code-styleguides/`.
 
@@ -173,7 +173,7 @@ Branch on **this task's leading tag**, resolved from the registry (the `[Conduct
 - **`route: explore`** (`[Explore]`) → **ERROR**: report **FAILURE**. Exploration routes to the `explorer` agent, not you — you produce no findings, only code.
 - **Default (no tag / untagged)** → **Full TDD (Steps 3-8)** below. This is the path for the majority of tasks.
 
-**Canonical TDD cycle (Steps 3-8):** `${CLAUDE_PLUGIN_ROOT}/templates/task-workflow.md` is authoritative — read its **Steps 3-8 section only** (skip Steps 1-2, 9-11, orchestrator-owned). Agent-specific bindings below override/extend the template.
+**Canonical TDD cycle (Steps 3-8):** the workflow steps library is authoritative — `${CLAUDE_PLUGIN_ROOT}/templates/workflow/steps/default-tdd.md` (Steps 3-8 verbatim; project-overridable at `conductor/workflow/steps/default-tdd.md`). Orchestrator-owned Steps 1-2/9-11 are NOT yours (see `${CLAUDE_PLUGIN_ROOT}/templates/task-workflow.md` for the ownership split). Agent-specific bindings below override/extend the docfile.
 
 **Agent-specific bindings:**
 

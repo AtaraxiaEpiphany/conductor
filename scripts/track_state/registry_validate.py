@@ -27,6 +27,8 @@ typos); the ``_comment`` / ``_fields`` documentation blocks are preserved
 
 from __future__ import annotations
 
+import re
+
 # --- closed vocabularies (single source) --------------------------------------
 # Mirrors the `_fields` documentation in templates/workflow/*.json and the
 # accessors in workflow_shapes.py / task_profiles.py. The editor's dropdowns and
@@ -76,6 +78,14 @@ CHECKPOINT_POLICIES = ("run", "skip-if-declared")
 #: Dispatch category for a task type (`route` field).
 ROUTES = ("manual", "explore", "executor")
 
+#: The name grammar for a `workflow_doc` row field: a BARE ``.md`` filename in
+#: the workflow steps library (``templates/workflow/steps/`` plugin side,
+#: ``conductor/workflow/steps/`` project side). No path separators, no leading
+#: dot — a path-y value is a typo or a traversal attempt, never a docfile.
+#: Single home: ``task_profiles.resolve_workflow_doc`` enforces the same shape
+#: at read time (fail-open); this is the strict-write form.
+DOCFILE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\.md$")
+
 
 # Known per-row fields (everything else on a row is a typo → error).
 _KNOWN_SHAPE_FIELDS = frozenset({
@@ -84,7 +94,8 @@ _KNOWN_SHAPE_FIELDS = frozenset({
 })
 _KNOWN_TAG_FIELDS = frozenset({
     "route", "tdd_exempt", "coverage_exempt", "when_to_use",
-    "workflow", "refactor", "auto_propose", "over_tag_risk", "signals",
+    "workflow", "workflow_doc", "refactor", "auto_propose", "over_tag_risk",
+    "signals",
 })
 
 # Tag fields that must be booleans.
@@ -165,9 +176,15 @@ def validate_tag_row(name: str, row) -> list[str]:
         if b in row and not isinstance(row[b], bool):
             errs.append(f"tag {name!r}: {b} must be a boolean")
 
-    for s in ("when_to_use", "workflow"):
+    for s in ("when_to_use", "workflow", "workflow_doc"):
         if s in row and not isinstance(row[s], str):
             errs.append(f"tag {name!r}: {s} must be a string")
+
+    if "workflow_doc" in row and isinstance(row["workflow_doc"], str) \
+            and not DOCFILE_NAME_RE.match(row["workflow_doc"]):
+        errs.append(
+            f"tag {name!r}: workflow_doc must be a bare .md filename in the "
+            f"steps library (no path separators), got {row['workflow_doc']!r}")
 
     if "signals" in row:
         val = row["signals"]
