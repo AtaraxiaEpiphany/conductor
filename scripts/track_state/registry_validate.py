@@ -91,6 +91,7 @@ DOCFILE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\.md$")
 _KNOWN_SHAPE_FIELDS = frozenset({
     "nodes", "verifiers", "gates", "verify_policy", "stop_condition",
     "ac_grounding", "checkpoint_policy", "instruction", "when_to_use", "requires",
+    "planning_doc", "signals",
 })
 _KNOWN_TAG_FIELDS = frozenset({
     "route", "tdd_exempt", "coverage_exempt", "when_to_use",
@@ -156,6 +157,33 @@ def validate_shape_row(name: str, row) -> list[str]:
 
     if "requires" in row and not isinstance(row["requires"], list):
         errs.append(f"shape {name!r}: requires must be a list")
+
+    # The planning-library pointer: a bare `.md` filename (the same grammar as
+    # the task-type `workflow_doc` steps-library pointer — a path-y value is a
+    # typo or a traversal attempt, never a docfile).
+    if "planning_doc" in row:
+        if not isinstance(row["planning_doc"], str):
+            errs.append(f"shape {name!r}: planning_doc must be a string")
+        elif not DOCFILE_NAME_RE.match(row["planning_doc"]):
+            errs.append(
+                f"shape {name!r}: planning_doc must be a bare .md filename in "
+                f"the planning library (no path separators), got "
+                f"{row['planning_doc']!r}")
+
+    # Two-homes guard: a row carrying BOTH the inline `instruction` prose and
+    # a `planning_doc` docfile holds the same planning procedure in two places
+    # (the docfile is the home — the inline copy silently rots). Mirrors the
+    # task-type `workflow`/`workflow_doc` guard exactly.
+    if "instruction" in row and "planning_doc" in row:
+        errs.append(
+            f"shape {name!r}: carries both `instruction` (inline prose) and "
+            f"`planning_doc` ({row['planning_doc']!r}) — two homes for one "
+            f"planning procedure; keep the docfile and drop the inline string")
+
+    if "signals" in row:
+        val = row["signals"]
+        if not isinstance(val, list) or not all(isinstance(x, str) for x in val):
+            errs.append(f"shape {name!r}: signals must be a list of strings")
 
     return errs
 

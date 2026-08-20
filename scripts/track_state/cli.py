@@ -281,7 +281,7 @@ COMMAND_HELP = {
     "registry-add": ("registry-add <track-dir> [<tracks-md-path>]",
                      "Append the canonical entry for a track to tracks.md (idempotent; auto-locates registry)"),
     "registry-doc": ("registry-doc [--tag <Name>] [--shape <name>]",
-                     "Render the resolved task-type + workflow-shape registries (baseline ⊕ overlay) as tables. Read-only — no track-dir, no writes. --tag/--shape render ONE entity's row plus its workflow/protocol/instruction prose (the on-demand payload agents fetch)."),
+                     "Render the resolved task-type + workflow-shape registries (baseline ⊕ overlay) as tables. Read-only — no track-dir, no writes. --tag/--shape render ONE entity's row plus its workflow/planning-docfile prose (the on-demand payload agents fetch)."),
     "shape-studio": ("shape-studio [--port <n>] [--host <addr>] [--project-dir <dir>]\n"
                      "             [--baseline] [--no-browser]",
                      "Launch the read/write workflow-registry visualizer — a local stdlib web UI "
@@ -648,7 +648,7 @@ def main():
             # Read-only render of the resolved task-type + workflow-shape
             # registries (baseline ⊕ overlay). No track-dir, no writes. Optional
             # --tag/--shape filters render ONE entity's row plus its workflow/
-            # protocol/instruction prose verbatim — the on-demand payload agents
+            # planning-docfile prose verbatim — the on-demand payload agents
             # fetch instead of having it always injected.
             #
             # registry-doc takes NO track-dir, so its flags start at argv[2] —

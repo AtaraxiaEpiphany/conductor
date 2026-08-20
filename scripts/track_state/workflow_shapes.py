@@ -30,13 +30,16 @@ attaches an advisory ``shape_violation`` disclosure to the emitted leaf envelope
 (no-silent-caps) and the dispatch still proceeds. ``nodes`` is the SPINE
 topology; ``verifiers`` are its checkpoint CHILDREN (declared in the same row) —
 two distinct lists, never conflated. The other accessors (:func:`nodes_for`,
-:func:`verify_policy_for`, :func:`stop_condition_for`, :func:`instruction_for`)
-are consumed **only** by ``registry-doc`` display, never by dispatch ordering,
-wave.py, handoff.py, or any SubagentStart injection. ``instruction_for`` in
-particular is NOT injected into an orchestrator prompt (contrast the task-type
-``workflow`` field, which IS injected). So setting ``research-first`` surfaces
-``shape_violation`` disclosures but does not run ``explorer`` first — only the
-verifier set it declares actually drives dispatch.
+:func:`verify_policy_for`, :func:`stop_condition_for`, :func:`instruction_for`,
+:func:`planning_doc_for`) are consumed **only** by ``registry-doc`` display and
+the PLANNING layer, never by dispatch ordering, wave.py, handoff.py, or any
+SubagentStart injection. ``instruction_for`` in particular is NOT injected into
+an orchestrator prompt (contrast the task-type ``workflow`` field, which IS
+injected). ``research-first``'s explore-before-plan intent is honored at the
+PLANNING layer via its planning docfile's Prelude — the dispatch spine never
+reorders, so setting the shape still surfaces ``shape_violation`` disclosures
+when dispatch drifts off ``nodes``; only the verifier set a shape declares
+actually drives dispatch.
 
 Adding a shape after this module exists is a one-row registry edit: it is
 automatically (a) resolvable via :func:`nodes_for`/:func:`verify_policy_for`,
@@ -380,8 +383,91 @@ def instruction_for(shape: str) -> str:
     """The optional prompt-shaping prose for the orchestrator when this shape is
     active (mirrors task-type ``workflow``). Absent (the common case) = ``""`` =
     the default §3.0 dispatch loop.
+
+    The LEGACY small form: the home for a shape's planning procedure is a
+    planning-library docfile (:func:`planning_doc_for` /
+    :func:`resolve_planning_doc`); a row carrying both is a two-homes drift the
+    strict-write validator rejects. No shipped shape carries ``instruction``
+    anymore — kept for a small project overlay, the same status as the
+    task-type registry's inline ``workflow`` field.
     """
     return _shape(shape).get("instruction", "")
+
+
+#: The docfile every shape without a bespoke ``planning_doc`` resolves to — the
+#: default tested-code planning procedure, relocated verbatim from the three
+#: former prose homes (new-track §2.1 arms, spec-planner §4.1 branches, the
+#: shape ``instruction`` fields) into the planning library.
+DEFAULT_PLANNING_DOC = "default.md"
+
+
+def planning_doc_for(shape: str) -> str:
+    """The ``planning_doc`` docfile NAME for a shape, or ``""`` (default play).
+
+    The registry-driven pointer into the **planning library**: a shape row
+    declaring ``planning_doc: "<name>.md"`` gets its planning procedure (the
+    orchestrator-facing Prelude + the planner-facing body) from that docfile.
+    Absent (a custom overlay row that omits it) = the default docfile via
+    default-inheritance (:func:`_shape` merges the ``default`` row under every
+    named shape, and ``default`` declares ``default.md``). Mirrors
+    :func:`task_profiles.workflow_doc_for`'s bare-string shape so presence
+    checks and renders treat the two registries' docfile fields uniformly. Use
+    :func:`resolve_planning_doc` for the actual path.
+    """
+    doc = _shape(shape).get("planning_doc", "")
+    return doc if isinstance(doc, str) else ""
+
+
+def resolve_planning_doc(shape: str) -> Path:
+    """The resolvable PATH to a shape's planning docfile (fail-open to default).
+
+    Resolution: the declared ``planning_doc`` name — project planning dir over
+    plugin planning dir (``<project>/conductor/planning/<name>`` over
+    ``<plugin>/templates/planning/<name>``; a project overrides a shipped
+    docfile or adds a bespoke one with zero plugin edits) — falling back to
+    :data:`DEFAULT_PLANNING_DOC` (plugin copy) when the shape declares none,
+    the name is malformed (not a bare ``.md`` filename — a path-y name is a
+    typo or traversal attempt, never a docfile), or no planning dir holds it.
+    Fail-open with a loud stderr warning, never a raise — the exact contract
+    :func:`task_profiles.resolve_workflow_doc` holds one layer down (a bad
+    overlay docfile must not crash the skill that renders it).
+    """
+    # Lazy import: the name grammar is single-homed in registry_validate (the
+    # strict-write gate enforces the same shape) — the same pattern as
+    # resolve_workflow_doc.
+    from .registry_validate import DOCFILE_NAME_RE
+
+    name = planning_doc_for(shape)
+    if name and not DOCFILE_NAME_RE.match(name):
+        print(
+            f"WARNING: planning_doc {name!r} for shape {shape!r} is not a bare "
+            f".md filename; falling back to {DEFAULT_PLANNING_DOC}.",
+            file=sys.stderr,
+        )
+        name = ""
+    if not name:
+        name = DEFAULT_PLANNING_DOC
+
+    root = _project_root()
+    candidates = []
+    if root is not None:
+        candidates.append(root / "conductor" / "planning" / name)
+    plugin_default = (_plugin_root() / "templates" / "planning"
+                      / DEFAULT_PLANNING_DOC)
+    candidates.append(_plugin_root() / "templates" / "planning" / name)
+    for cand in candidates:
+        if cand.is_file():
+            return cand
+    if name != DEFAULT_PLANNING_DOC:
+        print(
+            f"WARNING: planning docfile {name!r} (shape {shape!r}) not found "
+            f"in any planning dir; falling back to {DEFAULT_PLANNING_DOC}.",
+            file=sys.stderr,
+        )
+        return plugin_default
+    # The default docfile itself is missing (plugin install damage) — return
+    # the plugin path anyway; the caller's read fails open downstream.
+    return plugin_default
 
 
 def gates_for(shape: str) -> tuple[str, ...]:

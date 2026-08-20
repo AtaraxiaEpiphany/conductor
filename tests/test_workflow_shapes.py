@@ -9,7 +9,7 @@ for an off-topology action, and ``registry-doc`` renders it. These tests pin
 that contract:
 
 - the registry data file exists and carries every shape's topology;
-- ``SHAPES_VOCAB``/``nodes_for``/``verify_policy_for``/``instruction_for`` flow;
+- ``SHAPES_VOCAB``/``nodes_for``/``verify_policy_for``/``planning_doc_for`` flow;
 - the project overlay layer (``conductor/workflow/workflow-shapes.json``)
   adds/overrides a shape with ZERO plugin edits, fail-open on malformed overlay;
 - ``resolve_shape`` fails open to ``default`` on unknown/absent;
@@ -80,17 +80,42 @@ class RegistryShapeTests(TestCase):
                          ("explorer", "spec-planner", "task-executor"))
         self.assertEqual(ws.verify_policy_for("research-first"), "none")
 
-    def test_instruction_for_returns_registry_prose(self):
-        # instruction_for is the mirror of task-type workflow_for: shape-level
-        # prose. ADVISORY TODAY — it is rendered by
-        # registry-doc --shape for reference but NOT injected into the orchestrator
-        # prompt, and dispatch does not reorder to honor it. Pin the honest
-        # literals: the intent (explorer before planner) + the advisory caveat.
-        instr = ws.instruction_for("research-first")
-        self.assertIn("explorer", instr)
-        self.assertIn("before spec-planner", instr)
-        self.assertIn("ADVISORY", instr)
-        self.assertIn("NOT injected", instr)
+    def test_planning_doc_for_returns_docfile_pointer(self):
+        # planning_doc_for is the mirror of task-type workflow_doc_for: the
+        # registry-driven pointer into the planning library. Every shipped
+        # shape declares its docfile EXPLICITLY (honest data — the same pin
+        # every-shape-declares-verifiers makes); an unknown shape fails open
+        # to the default row's pointer.
+        for shape, doc in (("default", "default.md"),
+                           ("research-first", "research-first.md"),
+                           ("migration", "migration.md"),
+                           ("deliverable", "deliverable.md")):
+            self.assertEqual(ws.planning_doc_for(shape), doc)
+        self.assertEqual(ws.planning_doc_for("typo-shape"), "default.md")
+
+    def test_shipped_shapes_carry_no_instruction(self):
+        # D5 relocation: the shape `instruction` fields MOVED home into the
+        # planning docfiles (Delete→Point rung). No shipped row carries the
+        # legacy inline form anymore — a row carrying BOTH instruction and
+        # planning_doc is a two-homes drift the strict-write validator rejects
+        # (test_registry_validate.PlanningDocField pins that guard).
+        data = json.loads(REGISTRY.read_text(encoding="utf-8"))
+        for shape, prof in data["shapes"].items():
+            self.assertNotIn(
+                "instruction", prof,
+                f"shape [{shape}] still carries legacy `instruction` — the "
+                f"planning procedure lives in its planning docfile")
+
+    def test_research_first_planning_doc_carries_explorer_prelude(self):
+        # The D4 mechanism: research-first goes live at the PLANNING layer —
+        # its docfile Prelude has the orchestrator dispatch explorer BEFORE
+        # spec-planner (planning-side ordering; nodes stays advisory).
+        doc = ws.resolve_planning_doc("research-first").read_text(
+            encoding="utf-8")
+        self.assertIn("Prelude", doc)
+        self.assertIn("explorer", doc)
+        self.assertIn("BEFORE", doc)
+        self.assertIn("RESEARCH_NOTES", doc)
 
     def test_vocab_matches_registry_keys(self):
         data = json.loads(REGISTRY.read_text(encoding="utf-8"))

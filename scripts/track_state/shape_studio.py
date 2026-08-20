@@ -103,8 +103,10 @@ _SHAPE_FIELD_EFFECTS = {
     "verify_policy": ("display", "Whether a checkpoint phase runs at all (checkpoint vs none). Read by registry-doc; not injected into any prompt."),
     "stop_condition": ("display", "What marks the shape done. Display-only today."),
     "ac_grounding": ("drives", "How acceptance criteria are grounded: test (the default — spec-integrity measures AC→test coverage) or review (a non-code deliverable — spec-integrity measures AC→anchor + review attestation). LOAD-BEARING: it switches the grounding scan AND is the declared substitute that lets a shape drop the build/test tiers (a review shape owes no compile; a test shape owes the build tier)."),
-    "instruction": ("display", "Human/tooling reference prose. NOT injected into the orchestrator prompt (contrast the task-type `workflow` field, which IS)."),
-    "when_to_use": ("display", "Human/tooling reference prose. NOT injected into the orchestrator prompt."),
+    "planning_doc": ("drives", "Names the planning-library docfile carrying this shape's planning procedure — the orchestrator-facing Prelude (pre-planning steps) + planner-facing body (templates/planning/<name>.md, or conductor/planning/<name>.md project-side, project wins). registry-doc --shape renders it. The preferred form: `instruction` inline prose is the LEGACY small form, and a row carrying both is a two-homes drift the save gate rejects."),
+    "signals": ("intent", "Keyword list the track-description matcher ranks this shape by (mirrors task-type signals / derive_task_tag). Only shapes that declare signals are candidates; absent = not a candidate (the default shape is the fail-open fallback, never a competitor)."),
+    "instruction": ("display", "LEGACY inline planning prose (the pre-docfile small form). NOT injected into any prompt. For a full planning procedure prefer `planning_doc`; a row carrying both is rejected as a two-homes drift."),
+    "when_to_use": ("display", "Human/tooling reference prose — the rationale gloss for the machine `signals`. NOT injected into any prompt."),
 }
 # Task-type fields: most of these DO drive behavior (routing, exemptions,
 # injected workflow prose) — the honesty story here is "nearly everything
@@ -144,6 +146,7 @@ def _vocab():
                 "nodes": list(rv.SPINE_NODES),
                 "verifiers": list(rv.VERIFIERS),
                 "gates": list(rv.GATES),
+                "signals": None,  # free-form keyword strings (matcher data)
             },
             "scalar_fields": {
                 "verify_policy": list(rv.VERIFY_POLICIES),
@@ -151,7 +154,7 @@ def _vocab():
                 "ac_grounding": list(rv.AC_GROUNDINGS),
                 "checkpoint_policy": list(rv.CHECKPOINT_POLICIES),
             },
-            "text_fields": ["instruction", "when_to_use"],
+            "text_fields": ["instruction", "when_to_use", "planning_doc"],
             # LOAD-BEARING (drives dispatch) vs ADVISORY (records intent only) is
             # derived from _SHAPE_FIELD_EFFECTS so the badge, the field guide, and
             # these lists share one taxonomy and can't drift apart.

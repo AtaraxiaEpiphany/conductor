@@ -346,5 +346,59 @@ class WorkflowDocField(TestCase):
             self.assertTrue(resolved.is_file())
 
 
+class PlanningDocField(TestCase):
+    """The shape registry's ``planning_doc`` + ``signals`` fields — the
+    planning-library pointer and the selection keywords (planning-as-data).
+
+    Strict-write rules mirror the task-type ``workflow_doc`` field exactly: a
+    bare ``.md`` filename (no path separators), string-typed, and never BOTH
+    the inline ``instruction`` prose and the docfile on one row (two homes).
+    The EXISTENCE cross-check is I/O-bound → read time
+    (``workflow_shapes.resolve_planning_doc`` fail-open warning) plus the
+    shipped-registry pins in test_planning_doc_wiring.
+    """
+
+    def _shape(self, row):
+        return {"default": {}, "shapes": {"custom": row}}
+
+    def test_valid_docfile_name_passes(self):
+        self.assertEqual(
+            rv.validate_shapes(self._shape({"planning_doc": "rollout.md"})),
+            [], )
+
+    def test_path_separator_rejected(self):
+        errs = rv.validate_shapes(self._shape({"planning_doc":
+                                               "planning/rollout.md"}))
+        self.assertTrue(any("planning_doc" in e and "bare" in e for e in errs),
+                        errs)
+
+    def test_non_string_rejected(self):
+        errs = rv.validate_shapes(self._shape({"planning_doc": 7}))
+        self.assertTrue(any("planning_doc must be a string" in e for e in errs),
+                        errs)
+
+    def test_both_planning_forms_rejected(self):
+        # Two-homes guard: inline `instruction` prose AND a `planning_doc`
+        # docfile on one row is one planning procedure held in two places
+        # (render prefers the docfile; the inline copy silently rots).
+        doc = self._shape({"instruction": "inline prose",
+                           "planning_doc": "rollout.md"})
+        errs = rv.validate_shapes(doc)
+        self.assertTrue(any("two homes" in e for e in errs), errs)
+
+    def test_signals_must_be_string_list(self):
+        errs = rv.validate_shapes(self._shape({"signals": ["ok", 7]}))
+        self.assertTrue(any("signals must be a list of strings" in e
+                            for e in errs), errs)
+
+    def test_shipped_registry_validates_clean_with_new_fields(self):
+        # The regression floor extends to the new fields: the shipped
+        # registry (planning_doc + signals on rows, instruction deleted)
+        # validates with ZERO errors.
+        self.assertEqual(rv.validate_shapes(_shapes_baseline()), [])
+        self.assertEqual(
+            rv.validate_merged_shapes(_shapes_baseline()), [])
+
+
 if __name__ == "__main__":
     main()

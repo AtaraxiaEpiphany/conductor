@@ -1743,13 +1743,39 @@ def cmd_registry_doc(tag=None, shape=None):
             print("|---|---|---|---|---|")
             print(_shape_row(shape))
             print()
-            instr = ws.instruction_for(shape)
-            if instr:
-                print(f"## `instruction` for `{shape}` (the orchestrator's shape prose)")
+            # The planning docfile (preferred form): render the resolved
+            # planning-library file verbatim — the shape's planning procedure
+            # (orchestrator-facing Prelude + planner-facing body). Project
+            # planning dir wins the plugin one (resolve_planning_doc), so an
+            # overlay docfile renders here with zero plugin edits. The legacy
+            # inline `instruction` prose renders only when a row carries it
+            # (none shipped does).
+            doc = ws.planning_doc_for(shape) or ws.DEFAULT_PLANNING_DOC
+            path = ws.resolve_planning_doc(shape)
+            print(f"## Planning docfile for `{shape}`: `{doc}` "
+                  f"(the shape's planning procedure — Prelude + body)")
+            print()
+            try:
+                print(path.read_text(encoding="utf-8").rstrip("\n"))
+            except OSError as exc:  # fail-open render, never a crash
+                print(f"_(docfile unreadable at {path}: {exc} — fall back: "
+                      f"`templates/planning/{ws.DEFAULT_PLANNING_DOC}`)_")
+            legacy = ws.instruction_for(shape)
+            if legacy:
                 print()
-                print(instr)
-            else:
-                print(f"_(no `instruction` for `{shape}` → the default §3.0 dispatch loop)_")
+                print(f"## `instruction` for `{shape}` (LEGACY inline prose)")
+                print()
+                print(legacy)
+            # when_to_use is the human-facing rationale — the gloss for the
+            # machine `signals` propose-shape matches (mirrors the tag arm's
+            # when_to_use column).
+            when = ws._shape(shape).get("when_to_use", "")  # noqa: SLF001 — registry-internal shape lookup
+            if when:
+                print()
+                print(f"## `when_to_use` for `{shape}` "
+                      f"(rationale — the gloss for the machine `signals`)")
+                print()
+                print(when)
             # The shape-controlled paradigm (the portability axis): which gates
             # the shape enforces, the executor's default workflow, and how ACs
             # are grounded. `registry-doc --shape <name>` shows the full shape
