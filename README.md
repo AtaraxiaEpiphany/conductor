@@ -8,7 +8,7 @@ Conductor coordinates software construction by managing the full lifecycle of de
 
 - **Track-based project management** — Work is organized into tracks (feature / bugfix / chore / docs), each with spec, plan, state, and handoff files
 - **TDD enforcement** — Mandatory test-driven development with an 80 % coverage gate (server-side verification, not agent self-report)
-- **Registry-driven workflow** — The tag/shape vocabulary that drives routing, gating, and topology is *data*, resolved as **plugin baseline ⊕ project overlay** (one JSON row to add a task type or a workflow shape — zero plugin edits)
+- **Registry-driven workflow** — The tag/shape vocabulary that drives routing, gating, and topology is *data*, resolved as **plugin baseline ⊕ project overlay** (one JSON row to add a task type or a workflow shape — zero plugin edits). A full bespoke workflow is one docfile in the steps library + one registry row; each dispatch pins the resolved gates + workflow path in a code-composed **dispatch manifest** (`WORKFLOW_FILE` in the executor's envelope)
 - **Subagent orchestration** — A main orchestrator dispatches 23 specialized AI agents for isolated, focused work
 - **State machine CLI** — `track-state` manages all state mutations atomically; `plan.md` stays in sync as the human-readable mirror
 - **Execution firewall** — Six mandatory pre-action checks (F1–F6) and eleven anti-patterns (V1–V11) prevent workflow violations
@@ -84,13 +84,13 @@ The conductor's routing vocabulary is **data, not code.** Two registries, each a
 
 | Axis | What it declares | Source of the *name* | Mutable? |
 |------|------------------|----------------------|----------|
-| **Task-type** (`task-type-profiles.json`) | What a tag *means* — route, TDD/coverage exemption, when-to-use hint, optional executor `workflow`, optional `refactor: true` (tactical-refactor opt-in) | Re-derived from the task name's leading tag | No (re-parsed at every read; `task_type` is a typed cache) |
+| **Task-type** (`task-type-profiles.json`) | What a tag *means* — route, TDD/coverage exemption, when-to-use hint, optional executor workflow (`workflow_doc` docfile — preferred — or legacy inline `workflow`), optional `refactor: true` (tactical-refactor opt-in) | Re-derived from the task name's leading tag | No (re-parsed at every read; `task_type` is a typed cache) |
 | **Workflow shape** (`workflow-shapes.json`) | The **topology** — which dispatch agents run, in what order, its stop condition | The `workflow_shape` field on `track-state.json` | **Yes** — the one declaration/knob axis (`set-workflow-shape`). Advisory today: declares intended topology and surfaces `shape_violation` drift, but does not reorder dispatch (both built-in shapes plan-first) |
 
 **Adding a task type or workflow shape is one row in the registry.** Tag extraction, TDD-gating, dispatch routing, the `[Conductor Registry]` block injected into agents, and the `registry-doc` render all derive from it automatically.
 
 - **Inspect the resolved registry** — `track-state registry-doc` prints the full resolved tables (baseline + your overlay); `registry-doc --tag <Name>` / `--shape <s>` prints one row plus its prompt-shaping prose verbatim.
-- **Project overlay** — drop `conductor/workflow/task-type-profiles.json` (or the workflow-shape equivalent) next to the files `setup` scaffolds there. Absent = plugin defaults, no behavior change.
+- **Project overlay** — drop `conductor/workflow/task-type-profiles.json` (or the workflow-shape equivalent) next to the files `setup` scaffolds there. Absent = plugin defaults, no behavior change. A project's own workflow docfiles live at `conductor/workflow/steps/<name>.md` and win over the plugin's `templates/workflow/steps/` — a full custom workflow is one docfile + one registry row.
 - **Unknown values** — an unknown task tag is a **hard error** at `init-from-plan` (a wrong tag means wrong executor behavior). `workflow_shape` reads **fail-open** to `default` but `set-workflow-shape` **hard-rejects** an unknown shape so a deliberate set never silently no-ops.
 - **Guardrails** — every cap is disclosed rather than silently enforced, the "definition of done" is read-only to the executing agent, and a drift-killer lint (`scripts/check-contract-registry-sync.py`) forbids a second hand-maintained vocabulary home in the contract.
 
@@ -122,7 +122,7 @@ conductor-plugin/
 │   └── *.py                Hook scripts (session start/end, subagent-start, dispatch-dedupe, tripwire …)
 ├── skills/                 18 slash-command skills (implement, new-track, reconcile, re-spec, parallel, wiki …)
 ├── templates/
-│   ├── workflow/             The two registries: task-type / workflow-shape profiles (.json)
+│   ├── workflow/             The two registries: task-type / workflow-shape profiles (.json) + steps/ docfile library
 │   ├── code-styleguides/     10 language style guides
 │   ├── dev-commands/         8 language dev-command templates
 │   └── testing/              Testing strategy template

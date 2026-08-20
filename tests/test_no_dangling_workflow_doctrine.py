@@ -30,6 +30,19 @@ Known non-offenders that the regexes correctly skip:
 - setup/SKILL.md's ``cp ${CLAUDE_PLUGIN_ROOT}/templates/{dev-commands,
   code-styleguides}/`` sources are prefixed AND non-doctrine.
 
+The **workflow steps library** (``templates/workflow/steps/<name>.md`` —
+docfiles like ``default-tdd.md``/``migrate.md``) is plugin doctrine of the same
+class: never copied by setup, always read from the plugin tree (or shadowed by
+a project file — see below). A third regex flags a bare
+``templates/workflow/steps/<name>.md`` ref in a scanned surface; the prefixed
+form resolves in any project. NOTE the deliberate contrast with
+``_OLD_FORM``: a ``conductor/workflow/steps/<name>.md`` ref is NOT an offender
+here — unlike the pre-D1 doctrine copies, ``conductor/workflow/steps/`` is the
+project's OWN overlay home for docfiles (project wins over plugin), so that
+path is legitimate wherever it appears. The shipped steps docfiles are
+themselves scanned (``templates`` rglob) and self-describe only via the
+project-home path.
+
 Inherent gap (same as the runtime-contracts guard): a brace-expansion ``cp
 "${CLAUDE_PLUGIN_ROOT}/templates/"{task-workflow,...}.md`` is text-scan-opaque.
 This is moot post-D1 (no such cp remains), and a regression there is caught by
@@ -66,6 +79,15 @@ _BARE_TEMPLATE = re.compile(
     r"(?<!\$\{CLAUDE_PLUGIN_ROOT\}/)"
     r"templates/(?:task-workflow|phase-checkpoint|post-loop)\.md")
 
+# `templates/workflow/steps/<name>.md` (a workflow DOCFILE) NOT immediately
+# preceded by ${CLAUDE_PLUGIN_ROOT}/ . Same dangle class as _BARE_TEMPLATE: the
+# steps library is never copied into a project, so the bare form resolves
+# project-relative and fails in a foreign project. conductor/workflow/steps/
+# refs are deliberately NOT offenders (project overlay home — project wins).
+_BARE_STEPS = re.compile(
+    r"(?<!\$\{CLAUDE_PLUGIN_ROOT\}/)"
+    r"templates/workflow/steps/[\w.-]+\.md")
+
 
 class NoDanglingWorkflowDoctrineTests(TestCase):
     def test_workflow_doctrine_refs_are_plugin_root_prefixed(self):
@@ -78,10 +100,13 @@ class NoDanglingWorkflowDoctrineTests(TestCase):
                 offenders.append(f"{p.relative_to(REPO)}: OLD {m.group(0)}")
             for m in _BARE_TEMPLATE.finditer(text):
                 offenders.append(f"{p.relative_to(REPO)}: BARE {m.group(0)}")
+            for m in _BARE_STEPS.finditer(text):
+                offenders.append(f"{p.relative_to(REPO)}: BARE-STEPS {m.group(0)}")
         self.assertEqual(
             offenders, [],
-            "the 3 workflow-doctrine templates (task-workflow/phase-checkpoint/"
-            "post-loop) must be referenced via ${CLAUDE_PLUGIN_ROOT}/templates/... "
+            "the workflow-doctrine templates (task-workflow/phase-checkpoint/"
+            "post-loop + the workflow/steps/ docfiles) must be referenced via "
+            "${CLAUDE_PLUGIN_ROOT}/templates/... "
             "— setup no longer copies them into conductor/workflow/, and a bare "
             "templates/ or conductor/workflow/ ref dangles in a foreign project. "
             "Offenders:\n  " + "\n  ".join(offenders))

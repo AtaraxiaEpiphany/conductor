@@ -37,10 +37,15 @@ one `track-state` call when it needs them. Today: the resolved tag + shape
 registry (`registry-doc`, fetched by `spec-planner` at planning start), a single
 tag's `workflow` prose (`registry-doc --tag <Tag>`, fetched by `task-executor`
 only when the leading tag carries one), the per-task plan↔spec AC/TC join
-(`task-context`), and the retry handoff (`get-handoff`).
+(`task-context`), and the retry handoff (`get-handoff`). Same tier, file-delivered:
+the **per-dispatch workflow manifest** (`WORKFLOW_FILE` in `task-executor`'s
+envelope — a code-composed join of shape gates ⊕ tag exemptions ⊕ the workflow
+path decision; small, per-task, resolved, and byte-stable across retries).
 
 **Tier C — self-load Read.** **Durable file content** — the project's own
-artifacts (`brief.md`, `spec.md`, `plan.md`, the workflow/styleguide docs). The
+artifacts (`brief.md`, `spec.md`, `plan.md`, the workflow/styleguide docs) and
+the **workflow docfile** the manifest's path decision names (plugin steps
+library or its project override). The
 prompt carries a **path**; the agent `Read`s the file itself, just in time, so
 the content never enters the orchestrator's context and never goes stale inside
 a prompt. A prompt that inlines a durable file's content (instead of naming its
@@ -69,9 +74,11 @@ The discriminator is *size + scope*, not format:
 - `spec-planner` needs the **full tag catalog** to author plan.md → Tier B:
   `track-state registry-doc` (§3.1). It is NOT in `_REGISTRY_AGENTS`.
 - `task-executor` needs **its own task's** leading-tag profile → Tier A
-  (injected), AND that tag's `workflow` prose (large, conditional) → Tier B
-  pointer (`registry-doc --tag`), AND the task's AC text → Tier B
-  (`task-context`), AND `spec.md`'s Out-of-Scope → Tier C (self-load).
+  (injected), AND the per-dispatch workflow manifest (resolved gates + workflow
+  path) → Tier B (`WORKFLOW_FILE`), AND the leading tag's `workflow` prose when
+  the path decision is `inline` → Tier B pointer (`registry-doc --tag`), AND the
+  docfile the manifest names → Tier C (self-load), AND the task's AC text →
+  Tier B (`task-context`), AND `spec.md`'s Out-of-Scope → Tier C (self-load).
 - Every agent reads `brief.md` / `spec.md` / `plan.md` by path (Tier C) — never
   inlined. A `USER_CONTEXT: brief` signal names the file; it does not carry the
   file's content.

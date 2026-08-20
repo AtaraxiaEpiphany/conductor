@@ -84,6 +84,15 @@ WATCHED = [
     "skills/implement/SKILL.md",
     "skills/parallel/SKILL.md",
     "templates/task-workflow.md",
+    # The workflow-docfile library (templates/workflow/steps/*.md) is watched
+    # DELIBERATELY: same doctrine-template class as templates/task-workflow.md
+    # above — agent-read bodies that name tags (each docfile owns ONE tag's
+    # workflow prose) and could accrete a stale closed-set enumeration as the
+    # library grows. Project-side conductor/workflow/steps/ docfiles are NOT
+    # watched: they are project content the plugin does not ship.
+    *sorted(str(p.relative_to(Path(__file__).resolve().parent.parent))
+            for p in (Path(__file__).resolve().parent.parent
+                      / "templates" / "workflow" / "steps").glob("*.md")),
     "skills/new-track/SKILL.md",
     "skills/setup/SKILL.md",
     "skills/review/SKILL.md",

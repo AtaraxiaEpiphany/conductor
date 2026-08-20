@@ -155,8 +155,9 @@ def compose_manifest(track_dir, state, pre) -> str:
     if kind == "fast-path":
         lines += [
             "- path: fast-path (tdd-exempt tag → Step 8 commit only)",
-            "- read Step 8 of templates/workflow/steps/"
-            f"{DEFAULT_WORKFLOW_DOC} for the commit-message format; skip Steps 3-7",
+            "- read Step 8 of ${CLAUDE_PLUGIN_ROOT}/templates/workflow/steps/"
+            f"{DEFAULT_WORKFLOW_DOC} for the commit-message format (a project "
+            "override at conductor/workflow/steps/ wins); skip Steps 3-7",
         ]
     elif kind == "inline":
         lines += [
@@ -178,21 +179,29 @@ def compose_manifest(track_dir, state, pre) -> str:
             resolved = None
             home, rel = "plugin", str(
                 Path("templates/workflow/steps") / DEFAULT_WORKFLOW_DOC)
+        # Readable form of the docfile: the project home is already valid
+        # project-relative; the plugin home gets the runtime-resolvable
+        # ${CLAUDE_PLUGIN_ROOT} token (NOT an absolute install path —
+        # byte-stability across installs/upgrades is preserved).
+        read_path = rel if home == "project" else f"${{CLAUDE_PLUGIN_ROOT}}/{rel}"
         if resolved is not None and resolved.name != detail:
             # resolve fail-opened (the declared docfile exists in no steps
             # dir) — surface the FALLBACK honestly rather than pointing the
             # executor at a file that doesn't match the decision.
             lines += [
                 f"- path: docfile `{detail}` NOT FOUND in any steps dir — "
-                f"falling back to `{resolved.name}` ({home} home: {rel})",
-                f"- follow `{resolved.name}` verbatim; report the missing "
-                f"`{detail}` as a SPEC_DEVIATION",
+                f"falling back to `{resolved.name}`; read {read_path} and "
+                f"report the missing `{detail}` as a SPEC_DEVIATION",
+            ]
+        elif home == "project":
+            lines += [
+                f"- path: docfile `{detail}` — read {rel} (project home wins)",
             ]
         else:
             lines += [
-                f"- path: docfile `{detail}` ({home} home: {rel})",
-                f"- follow it verbatim{' — Steps 3-8' if detail == DEFAULT_WORKFLOW_DOC else ''}; "
-                "a project override at conductor/workflow/steps/ wins at read time",
+                f"- path: docfile `{detail}` — read {read_path}"
+                f"{' — Steps 3-8' if detail == DEFAULT_WORKFLOW_DOC else ''}"
+                "; a project override at conductor/workflow/steps/ wins at read time",
             ]
     lines += [
         "",
