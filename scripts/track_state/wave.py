@@ -40,6 +40,7 @@ from .mutations import _lock_inplace
 from lib.atomic_io import atomic_write_json
 from lib.json_utils import load_json_safe
 from .dispatch import _classify_task, _finalize_task, _emit_quiescent_leaf
+from .dispatch_manifest import manifest_path, write_manifest
 from .validate import ensure_healthy
 from .plan_parse import parse_plan, collect_deps
 from .git_ops import (
@@ -496,6 +497,15 @@ def prepare_wave(track_dir):
             return dict(error=f"git worktree add failed for P{p}.T{t}", status="error")
         wt_td = _wt_track_dir(worktree, track_dir, repo_root)
         _write_marker(wt_td, {**m, "track_id": slug}, branch)
+        # Per-member workflow manifest (design D4): composed against the MAIN
+        # track state (the worktree's committed track-state.json predates the
+        # member locks) and written into the member's worktree — the member's
+        # WORKFLOW_FILE envelope line points here, and worktree teardown reaps
+        # it with the tree (no separate reap path).
+        write_manifest(wt_td, state, {
+            "phase": p, "task": t, "subtask": None,
+            "name": m["name"], "tags": extract_tags(m.get("name", "")),
+        })
         members.append({
             "phase": p, "task": t, "name": m["name"], "track_id": slug,
             "worktree": worktree, "branch": branch, "base_sha": base_sha,
@@ -763,6 +773,7 @@ def _wave_assemble_member_prompt(member, attempt=1):
         f"NAME={member.get('name', '?')}",
         f"ATTEMPT={attempt}",
         f"MAX_RETRIES={MAX_RETRIES}",
+        f"WORKFLOW_FILE={manifest_path(member['worktree_track_dir'])}",
     ]
     return "\n".join(lines)
 

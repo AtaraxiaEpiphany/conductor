@@ -193,7 +193,11 @@ class ResolveTrack(TestCase):
             migrate = cards[0]
             self.assertEqual(migrate["tag"], "Migrate")
             self.assertTrue(migrate["known"])
-            self.assertTrue(migrate["workflow"].startswith("You are MIGRATING"))
+            # The bespoke workflow's single home is the steps-library docfile
+            # (workflow-as-data): the card carries the docfile NAME, and the
+            # inline `workflow` string stays empty (two homes = drift).
+            self.assertEqual(migrate["workflow_doc"], "migrate.md")
+            self.assertEqual(migrate["workflow"], "")
             self.assertFalse(migrate["coverage_exempt"])
             self.assertEqual(migrate["phase"], 1)
             self.assertEqual(migrate["task"], 1)
@@ -202,6 +206,7 @@ class ResolveTrack(TestCase):
             self.assertIsNone(plain["tag"])          # no brackets → no tag
             self.assertFalse(plain["known"])
             self.assertEqual(plain["workflow"], "")   # default TDD
+            self.assertEqual(plain["workflow_doc"], "")
 
 
 class SaveEndpoint(TestCase):
@@ -374,7 +379,10 @@ class TaskProfileEndpoint(TestCase):
         self.assertEqual(prof["route"], "executor")
         self.assertFalse(prof["tdd_exempt"])
         self.assertFalse(prof["coverage_exempt"])
-        self.assertTrue(prof["workflow"].startswith("You are MIGRATING"))
+        # The bespoke workflow's single home is the docfile (workflow-as-data);
+        # the inline `workflow` string stays empty.
+        self.assertEqual(prof["workflow_doc"], "migrate.md")
+        self.assertEqual(prof["workflow"], "")
         # [Migrate] is opt-in (authored, never goal-detected).
         self.assertFalse(prof["auto_propose"])
 

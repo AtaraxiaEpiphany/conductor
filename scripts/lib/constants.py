@@ -87,6 +87,7 @@ BRIEF_PROGRESS_MARKER = "brief-progress.json"      # brief resume marker (brief.
 FAILURE_ANALYSIS_MARKER = "failure-analysis.json"  # failure-analyst handshake (dispatch.py)
 PHASE_RECOVERY_MARKER = "phase-recovery.json"      # phase-checkpoint recovery (dispatch.py)
 AMENDMENT_STAGED_MARKER = "amendment-staged.json"  # spec-amendment staging (dispatch.py)
+DISPATCH_MANIFEST_MARKER = "dispatch-manifest.md"  # per-dispatch workflow manifest (dispatch_manifest.py)
 
 # Path templates. ``{sub}`` interpolates to ``-N`` or ``""``; the other fields
 # are indices. quality.py derives each family's gitignore glob from the

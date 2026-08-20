@@ -83,10 +83,15 @@ def compute_task_context(track_dir, phase, task):
             "route": prof.get("route", "executor"),
             "tdd_exempt": bool(prof.get("tdd_exempt")),
             "coverage_exempt": bool(prof.get("coverage_exempt")),
-            # The workflow prose is large + conditional → fetched on demand via
-            # registry-doc --tag (tier B), not inlined here. "present"/"absent"
-            # is the pointer, mirroring task-executor's injected block.
-            "workflow": "present" if tp.workflow_for(leading) else "absent",
+            # The workflow prose/docfile is large + conditional → fetched on
+            # demand (the dispatch manifest / registry-doc --tag, tier B), not
+            # inlined here. "present"/"absent" is the pointer, mirroring
+            # task-executor's injected block; workflow_doc names the docfile
+            # when the tag declares one (else None — inline prose or absent).
+            "workflow": ("present" if (tp.workflow_for(leading)
+                                       or tp.workflow_doc_for(leading))
+                         else "absent"),
+            "workflow_doc": tp.workflow_doc_for(leading) or None,
             "refactor": bool(tp.refactor_for(leading)),
         }
 

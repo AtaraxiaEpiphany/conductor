@@ -372,6 +372,14 @@ def cmd_dispatch_next(track_dir, compact=True):
                        tags=result.get("tags", []), max_retries=max_retries)
             agent, prompt = build_dispatch_prompt(
                 "dispatch_executor", track_dir, pre=pre, attempt=attempt)
+            if agent == "task-executor":
+                # The envelope's WORKFLOW_FILE line needs the manifest on disk.
+                # dispatch-prepare normally wrote it (prepare_dispatch); this
+                # idempotent ensure covers a caller that reached dispatch-next
+                # without a prepare (byte-identical rewrite — same compose, so
+                # it can never disagree with the prepared copy).
+                from .dispatch_manifest import write_manifest
+                write_manifest(track_dir, state, pre)
             result["agent"] = agent
             result["prompt"] = prompt
             result["attempt"] = attempt
@@ -741,6 +749,11 @@ def cmd_recover(track_dir, compact=True):
         emit(dict(status="wave_active", phase=wave.get("phase")), "recover", compact)
         return
 
+    # Every orphan path below reaps a spent/stale dispatch manifest beside its
+    # inflight-marker cleanup (a manifest outliving its dispatch could mislead
+    # the next executor into following the previous task's workflow).
+    from .dispatch_manifest import reap_manifest
+
     state, fixes, verrors = ensure_healthy(track_dir)
     if state is None:
         result = dict(status="error", errors=verrors)
@@ -760,6 +773,7 @@ def cmd_recover(track_dir, compact=True):
         # file as this run's result.
         _clear_stale_result(track_dir)
         _dispatch_inflight_clear_all(track_dir)  # cursor invalid → reap any stale marker
+        reap_manifest(track_dir)                 # …and its orphaned manifest
         _emit_no_active_or_decision(track_dir, state, fixes, compact)
         return
 
@@ -768,6 +782,7 @@ def cmd_recover(track_dir, compact=True):
     except IndexError:
         _clear_stale_result(track_dir)
         _dispatch_inflight_clear_all(track_dir)  # cursor invalid → reap any stale marker
+        reap_manifest(track_dir)                 # …and its orphaned manifest
         _emit_no_active_or_decision(track_dir, state, fixes, compact)
         return
 
@@ -792,6 +807,7 @@ def cmd_recover(track_dir, compact=True):
         # marker too, so a crashed run can't leave the dedupe hook guarding a
         # task that's no longer in flight.
         _dispatch_inflight_clear(track_dir, pi, ti, si)
+        reap_manifest(track_dir)
 
     # Best-effort: recover missing git notes for completed tasks
     _recover_git_notes(track_dir, state)
@@ -1022,13 +1038,23 @@ def prepare_dispatch(track_dir):
     # lib/dispatch_inflight.
     _dispatch_inflight_write(track_dir, pi, ti, si, _git_head_sha(track_dir), now_iso())
 
-    return dict(action=action, phase=pi, task=ti, subtask=si, name=name,
-                tags=tags, sync_count=synced, is_resume=is_resume,
-                retry_count=tgt.get("retry_count", 0),
-                max_retries=task_max_retries(tgt),
-                last_failure_summary=tgt.get("last_failure_summary"),
-                execution_mode=nxt.get("execution_mode", "interactive"),
-                next=nxt)
+    pre = dict(action=action, phase=pi, task=ti, subtask=si, name=name,
+               tags=tags, sync_count=synced, is_resume=is_resume,
+               retry_count=tgt.get("retry_count", 0),
+               max_retries=task_max_retries(tgt),
+               last_failure_summary=tgt.get("last_failure_summary"),
+               execution_mode=nxt.get("execution_mode", "interactive"),
+               next=nxt)
+
+    # The per-dispatch workflow manifest (design D4): executor-classified
+    # dispatches only — explorers owe no workflow. Written (deterministically
+    # overwriting any prior copy) beside the inflight marker; reaped at
+    # finalize/recover. Lazy import per the resolve_phase_gate pattern.
+    if action == "execute":
+        from .dispatch_manifest import write_manifest
+        write_manifest(track_dir, state, pre)
+
+    return pre
 
 
 def cmd_dispatch_prepare(track_dir, compact=True):
@@ -1427,6 +1453,11 @@ def finalize_dispatch(track_dir):
     # guarding until a real finalize advances state). See lib/dispatch_inflight.
     if result.get("status") != "error":
         _dispatch_inflight_clear(track_dir, p, t, s)
+        # The dispatch settled → its manifest is spent. Same condition as the
+        # inflight clear above (an error outcome leaves the dispatch in
+        # flight, and its manifest stays valid for the retry).
+        from .dispatch_manifest import reap_manifest
+        reap_manifest(track_dir)
 
     return _attach_rail_a_next(result, track_dir)
 
@@ -1489,6 +1520,11 @@ def _build_executor(track_dir, pre, attempt):
     # didn't supply one — never silently hardcode the global, or a raised-budget
     # task would perceive itself past budget on a late attempt.
     lines.append(f"MAX_RETRIES={pre.get('max_retries', MAX_RETRIES)}")
+    # The per-dispatch workflow manifest (design D4) — resolved gates + the
+    # docfile/path decision, composed at dispatch-prepare time. Executor arm
+    # only: explorers owe no workflow (and no manifest is written for them).
+    from .dispatch_manifest import manifest_path
+    lines.append(f"WORKFLOW_FILE={manifest_path(td)}")
     return "task-executor", "\n".join(lines)
 
 

@@ -110,7 +110,8 @@ _SHAPE_FIELD_EFFECTS = {
 # injected workflow prose) — the honesty story here is "nearly everything
 # matters except the hint," the inverse of the shapes story.
 _TAG_FIELD_EFFECTS = {
-    "workflow": ("drives", "Injected into task-executor as the per-task workflow prose; replaces default TDD when present (e.g. [Migrate]'s preservation loop)."),
+    "workflow": ("drives", "Inline bespoke workflow prose, fetched on demand via registry-doc --tag (tier B). The LEGACY small-overlay form — for a full bespoke workflow prefer `workflow_doc`, which wins at render time; a row carrying both is a two-homes drift (the strict-write lint rejects new ones)."),
+    "workflow_doc": ("drives", "Names the steps-library docfile the executor follows instead of default TDD (e.g. [Migrate] → migrate.md). The docfile lives in the plugin's templates/workflow/steps/ or the project's conductor/workflow/steps/ (project wins); registry-doc --tag renders it. The preferred form for a full bespoke workflow."),
     "route": ("drives", "Determines the dispatch category: manual (deferred) | explore (explorer) | executor (task-executor)."),
     "tdd_exempt": ("drives", "Per-task exemption from the TDD (red/green/refactor) gate, composed with the shape's gates."),
     "coverage_exempt": ("drives", "Per-task exemption from the coverage (F2/F3) gate, composed with the shape's gates."),
@@ -165,7 +166,7 @@ def _vocab():
             "scalar_fields": {"route": list(rv.ROUTES)},
             "bool_fields": ["tdd_exempt", "coverage_exempt", "refactor",
                             "auto_propose", "over_tag_risk"],
-            "text_fields": ["when_to_use", "workflow"],
+            "text_fields": ["when_to_use", "workflow", "workflow_doc"],
             "list_fields": {"signals": None},  # free-form keyword strings
             "effects": _effects(_TAG_FIELD_EFFECTS),
         },
@@ -208,6 +209,7 @@ def _task_profile(tag):
         "over_tag_risk": bool(prof.get("over_tag_risk", False)),
         "when_to_use": prof.get("when_to_use", ""),
         "workflow": prof.get("workflow", ""),
+        "workflow_doc": prof.get("workflow_doc", ""),
     }
 
 
@@ -246,6 +248,7 @@ def _task_card(phase_index, unit, parent_task=None):
         "known": prof["known"],
         "route": prof["route"],
         "workflow": prof["workflow"],
+        "workflow_doc": prof["workflow_doc"],
         "when_to_use": prof["when_to_use"],
         "tdd_exempt": prof["tdd_exempt"],
         "coverage_exempt": prof["coverage_exempt"],
@@ -1031,7 +1034,8 @@ function renderGraph() {
       + (row.coverage_exempt?'<span class="pill">coverage-exempt</span>':'')
       + (row.refactor?'<span class="pill">+ tactical refactor</span>':'')
       + '</div>'
-      + (row.workflow?'<div class="wf" style="margin-top:8px"><b>workflow (injected into task-executor):</b><br>'+esc(row.workflow)+'</div>':'<div class="note" style="margin-top:8px">no bespoke workflow → runs default TDD (Steps 3-8)</div>')
+      + (row.workflow_doc?'<div class="wf" style="margin-top:8px"><b>workflow docfile:</b> '+esc(row.workflow_doc)+' (steps library; registry-doc --tag renders it)</div>'
+       :row.workflow?'<div class="wf" style="margin-top:8px"><b>workflow (inline, fetched on demand):</b><br>'+esc(row.workflow)+'</div>':'<div class="note" style="margin-top:8px">no bespoke workflow → runs default TDD (Steps 3-8)</div>')
       + '<div class="note" style="margin-top:8px">'+esc(row.when_to_use||'(no when_to_use)')+'</div>';
     return;
   }

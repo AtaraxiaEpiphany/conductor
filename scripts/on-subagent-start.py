@@ -465,7 +465,17 @@ def _registry_for_executor(cwd):
         lines.append(f"  - tdd_exempt: {prof.get('tdd_exempt', False)}")
         lines.append(f"  - coverage_exempt: {prof.get('coverage_exempt', False)}")
         workflow = tp.workflow_for(tag)
-        if workflow:
+        doc = tp.workflow_doc_for(tag)
+        if doc:
+            # Tier B pointer for the docfile form: the per-dispatch manifest
+            # (WORKFLOW_FILE) names + resolves the docfile — the executor reads
+            # it there; registry-doc --tag is the same render for humans/CLI.
+            lines.append(
+                f"  - workflow: present — docfile `{doc}` (your dispatch "
+                f"manifest's WORKFLOW_FILE names it; "
+                f"`track-state registry-doc --tag {tag}` renders it)"
+            )
+        elif workflow:
             # Tier B: large + conditional payload → pointer, not inline prose.
             # The executor fetches it with one Bash call and follows it verbatim.
             lines.append(

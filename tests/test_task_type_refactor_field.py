@@ -118,13 +118,19 @@ class MigrateIsRealTagTests(TestCase):
         self.assertFalse(tp._profile("Migrate").get("signals"),  # noqa: SLF001
                          "[Migrate] must not carry signals (opt-in, not auto-derived)")
 
-    def test_migrate_tag_carries_workflow_prose(self):
-        # THE difference from [Refactor]: [Migrate] carries a `workflow` the
-        # executor follows instead of TDD (no new tests — keep the existing
-        # suite green). workflow_for is the single accessor the executor reads.
-        wf = tp.workflow_for("Migrate")
-        self.assertTrue(wf, "[Migrate] must carry workflow prose")
-        self.assertIn("EXISTING", wf.upper())
+    def test_migrate_tag_carries_workflow_docfile(self):
+        # THE difference from [Refactor]: [Migrate] carries bespoke executor
+        # workflow (no new tests — keep the existing suite green). Its single
+        # home since the workflow-as-data campaign is the steps-library
+        # docfile (workflow_doc) — the inline `workflow` string is DELETED so
+        # the prose can't exist in two places (two homes = drift).
+        self.assertEqual(tp.workflow_doc_for("Migrate"), "migrate.md")
+        self.assertFalse(tp.workflow_for("Migrate"),
+                         "[Migrate] inline `workflow` must stay deleted "
+                         "(migrate.md is the one home)")
+        resolved = tp.resolve_workflow_doc("Migrate")
+        self.assertEqual(resolved.name, "migrate.md")
+        self.assertIn("EXISTING", resolved.read_text(encoding="utf-8").upper())
 
 
 class RefactorOverlayTests(TestCase):

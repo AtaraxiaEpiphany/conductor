@@ -186,6 +186,17 @@ def validate_tag_row(name: str, row) -> list[str]:
             f"tag {name!r}: workflow_doc must be a bare .md filename in the "
             f"steps library (no path separators), got {row['workflow_doc']!r}")
 
+    # Two-homes guard: a row carrying BOTH the inline `workflow` prose and a
+    # `workflow_doc` docfile holds the same bespoke workflow in two places
+    # (render prefers the docfile — the inline copy silently rots). The
+    # docfile is the home for a full bespoke workflow; `workflow` is the
+    # legacy small-overlay form.
+    if "workflow" in row and "workflow_doc" in row:
+        errs.append(
+            f"tag {name!r}: carries both `workflow` (inline prose) and "
+            f"`workflow_doc` ({row['workflow_doc']!r}) — two homes for one "
+            f"workflow; keep the docfile and drop the inline string")
+
     if "signals" in row:
         val = row["signals"]
         if not isinstance(val, list) or not all(isinstance(x, str) for x in val):

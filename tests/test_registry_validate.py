@@ -316,6 +316,17 @@ class WorkflowDocField(TestCase):
         self.assertTrue(any("workflow_doc must be a string" in e for e in errs),
                         errs)
 
+    def test_both_workflow_forms_rejected(self):
+        # Two-homes guard: inline `workflow` prose AND a `workflow_doc` docfile
+        # on one row is one bespoke workflow held in two places (render prefers
+        # the docfile; the inline copy silently rots). This is exactly the
+        # interim state [Migrate] carried mid-campaign — the guard pins it dead.
+        doc = {"default": {},
+               "tags": {"Custom": {"workflow": "inline prose",
+                                   "workflow_doc": "rollout.md"}}}
+        errs = rv.validate_task_types(doc)
+        self.assertTrue(any("two homes" in e for e in errs), errs)
+
     def test_shipped_declared_docfiles_resolve(self):
         # The existence gate for the SHIPPED registry (test-side I/O): every
         # declared workflow_doc must name a real file in the plugin steps dir,
