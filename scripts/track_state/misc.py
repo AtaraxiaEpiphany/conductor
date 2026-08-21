@@ -84,9 +84,61 @@ _RE_TABLE_STATUS = re.compile(r"\b(new|in_progress|completed|archived|blocked|ca
 _RE_TRACK_ID_TOKEN = re.compile(r"([A-Za-z0-9][A-Za-z0-9_]*_\d{8})")
 
 
+def _roster_lint_findings():
+    """Declared-names + validity lint over the resolved agent-roster (design D4).
+
+    Runtime is fail-open by design — a dispatch hook never denies over a
+    registry — so this is where a broken overlay gets LOUD: ``track-state
+    check`` surfaces it before the first dispatch, not as a mysteriously
+    unscaffolded agent mid-track. Two families:
+
+    - **validity** — ``validate_merged_roster`` over the resolved document
+      (unknown class, ``recovery_instruction`` without a recovery kind, …);
+    - **declared-names-exist** — every roster row name and every merged
+      shape's ``verifiers`` + ``nodes`` entry must resolve to a live
+      agent-definition file in one of the three harness homes (plugin
+      ``agents/`` ∪ project ``.claude/agents/`` ∪ user ``~/.claude/agents/``);
+      a declared name with no file anywhere is a typo/dead name, never a
+      dispatchable agent.
+
+    Returns a list of human-readable finding strings; empty = clean.
+    """
+    from . import agent_roster as ar
+    from . import workflow_shapes as ws
+    from .registry_validate import validate_merged_roster
+
+    findings = [f"agent-roster: {e}"
+                for e in validate_merged_roster(ar._load())]  # noqa: SLF001 — registry-internal resolved-doc lookup
+
+    live = set(ar.agent_file_names())
+    dead_rows = sorted(n for n in ar.merged_agent_names() if n not in live)
+    if dead_rows:
+        findings.append(
+            "agent-roster rows name agents with no definition file in any "
+            "harness home (plugin agents/, project .claude/agents/, user "
+            f"~/.claude/agents/): {', '.join(dead_rows)}")
+
+    dead_shape_names = []
+    for shape in ws.SHAPES_VOCAB():
+        for field, names in (("verifiers", ws.verifiers_for(shape)),
+                             ("nodes", ws.nodes_for(shape))):
+            for name in names:
+                if name not in live:
+                    dead_shape_names.append(f"{shape}.{field}: {name}")
+    if dead_shape_names:
+        findings.append(
+            "workflow-shape rows declare agents with no definition file in "
+            "any harness home: " + ", ".join(dead_shape_names))
+    return findings
+
+
 def _preflight_result(track_dir):
     """Compute the preflight envelope as a dict — factored body of
     ``cmd_preflight`` so ``cmd_setup`` can compose it without capturing stdout.
+
+    Also carries the agent-roster lint (:func:`_roster_lint_findings`) as
+    ``roster_errors`` — non-empty makes ``ok`` false, so a broken overlay is
+    loud at ``check`` (runtime stays fail-open by design).
     """
     td = Path(track_dir)
     missing = [f for f in _TRACK_CORE_FILES if not (td / f).exists()]
@@ -96,6 +148,8 @@ def _preflight_result(track_dir):
             load(track_dir)
         except Exception:
             invalid_state = True
+
+    roster_errors = _roster_lint_findings()
 
     # Project-level workflow files. Skipped (empty) when no conductor root is
     # locatable — fail-open so this never blocks setup on an unusual layout. A
@@ -139,11 +193,13 @@ def _preflight_result(track_dir):
                 "--description '<text>'.")
 
     return dict(
-        ok=not missing and not invalid_state and not missing_workflow,
+        ok=not missing and not invalid_state and not missing_workflow
+        and not roster_errors,
         missing=missing,
         missing_workflow=missing_workflow,
         track_dir=str(td),
         invalid_state=invalid_state,
+        roster_errors=roster_errors,
         hint=hint,
     )
 
@@ -1271,11 +1327,14 @@ def cmd_check(query=None, registry_path=None):
         candidates, announce}``. ``AskUserQuestion`` over ``candidates``.
       - ``action:"halt"`` — anything that stops the skill.
         ``{ok:false, reason, message, hint?, recover?, missing?,
-        missing_workflow?}``. Print ``message``; HALT (if ``recover`` is present
-        it is a suggested command the user may run, not something the skill
-        auto-executes). ``reason`` is one of ``track_not_initialized`` /
-        ``track_dir_missing`` / ``preflight`` / ``no_registry`` / ``no_match`` /
-        ``no_non_terminal``.
+        missing_workflow?, roster_errors?}``. Print ``message``; HALT (if
+        ``recover`` is present it is a suggested command the user may run, not
+        something the skill auto-executes). ``reason`` is one of
+        ``track_not_initialized`` / ``track_dir_missing`` / ``roster`` /
+        ``preflight`` / ``no_registry`` / ``no_match`` / ``no_non_terminal``.
+        (``roster`` = the resolved agent-roster failed validation or declares
+        dead agent names — design D4's lint-loud surface; runtime stays
+        fail-open.)
 
     The diagnostic reasons matter: a track that exists on disk but lacks state,
     or whose registry dir doesn't exist, used to collapse to the useless "no
@@ -1340,6 +1399,21 @@ def cmd_check(query=None, registry_path=None):
 
     pf = _preflight_result(td)
     if not pf["ok"]:
+        roster_errors = pf.get("roster_errors", [])
+        if roster_errors:
+            # Distinct from a missing-file preflight: the track is fine, the
+            # agent-roster registry is not. Name the fix (the overlay is the
+            # likely author; the baseline ships valid) — runtime stays
+            # fail-open, so this HALT is the only loud surface.
+            out(dict(
+                action="halt", ok=False, reason="roster", td=td,
+                track_id=track_id, roster_errors=roster_errors,
+                message=("Agent-roster registry invalid:\n  - "
+                         + "\n  - ".join(roster_errors)
+                         + "\nFix conductor/workflow/agent-roster.json (or "
+                           "the plugin baseline); 'track-state registry-doc "
+                           "--roster' renders validation errors.")))
+            return
         missing = pf.get("missing", [])
         # The on-disk-but-uninitialized case: the track was scaffolded but never
         # had init-from-plan run. Hand back a ready ``recover`` command rather

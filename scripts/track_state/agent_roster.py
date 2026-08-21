@@ -230,6 +230,37 @@ def merged_agent_names() -> tuple[str, ...]:
     return tuple(_agents().keys())
 
 
+def agent_file_names() -> tuple[str, ...]:
+    """Names of agent-definition files live on this machine — the three homes.
+
+    The harness resolves a dispatched name against the plugin's shipped
+    ``agents/``, the project's ``.claude/agents/``, and the user's
+    ``~/.claude/agents/``. ``track-state check``'s declared-names lint (D4)
+    compares every registry-declared agent name (roster rows, shape
+    ``verifiers``/``nodes``) against this set: a declared name with no file in
+    any home is a dead name (a typo), not a dispatchable agent — loud at
+    check, fail-open at runtime. Not cached: three cheap globs, and unlike the
+    registry files these dirs can appear mid-session (a project adding its
+    first ``.claude/agents/`` agent).
+    """
+    names: list[str] = []
+    seen: set[str] = set()
+    homes = [_plugin_root() / "agents"]
+    project = _project_root()
+    if project is not None:
+        homes.append(project / ".claude" / "agents")
+    homes.append(Path.home() / ".claude" / "agents")
+    for d in homes:
+        try:
+            for md in sorted(d.glob("*.md")):
+                if md.stem not in seen:
+                    seen.add(md.stem)
+                    names.append(md.stem)
+        except OSError:
+            continue  # an absent/unreadable home is not an error — just fewer names
+    return tuple(names)
+
+
 def row_for(name: str) -> dict | None:
     """The resolved row for one agent, or ``None`` when unrostered/malformed."""
     row = _agents().get(name)

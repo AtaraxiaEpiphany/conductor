@@ -45,19 +45,36 @@ Three doc/code detectors + two wiring assertions.
 **Wiring assertions** (close the injection seam this campaign opened):
 
 4. **Defer-implies-injected.** A watched *agent* doc whose body references the
-   ``[Conductor Registry]`` block / ``TAG_VOCAB`` must have its filename-stem
-   in ``on-subagent-start._REGISTRY_AGENTS`` — else the prose defers to a block
-   the agent never receives. This is the assertion that would have caught the
-   original half-wired migration (reviewer prose pointed at the block before
-   the reviewers were injected) automatically.
+   ``[Conductor Registry]`` block / ``TAG_VOCAB`` must have a
+   ``registry_injection: true`` row in the agent-roster registry — else the
+   prose defers to a block the agent never receives. This is the assertion
+   that would have caught the original half-wired migration (reviewer prose
+   pointed at the block before the reviewers were injected) automatically.
 
 5. **Flag-coverage.** A watched agent that audits by a registry flag name
    (``over_tag_risk``, …) is guaranteed the block surfaces the flag's token —
    ``reviewer_block_flags`` is the explicit ``{name: token}`` map of what the
    renderers emit. Closes the loop prose → flag → block-data.
 
+**Roster derivation assertions** (design D6 — the agent-roster campaign):
+
+6. **Roster-derivation.** The pre-registry name-keyed literal sets must stay
+   DEAD: each of the six homes (``on-subagent-start`` /
+   ``on-subagent-stop`` / ``on-dispatch-dedupe`` / ``filter-subagent-output``
+   / ``lib/recovery``) carries none of its former literal-set names, every
+   hook home imports the roster, and the baseline roster's rows are exactly
+   the shipped ``agents/*.md`` files — one row per shipped agent, so every
+   dispatched built-in gets its scaffold and no row points at an unshipped
+   name.
+
+7. **Dispatch-target cross-check.** Every ``Dispatch <agent>`` target in a
+   watched doc resolves to a baseline roster row — a shipped doc may only
+   dispatch shipped agents. Baseline (not merged): project docs are not
+   watched (project content the plugin does not ship).
+
 Exit 0 + OK line on success; exit 1 + remediation message on any failure.
 """
+import json
 import re
 import sys
 from pathlib import Path
@@ -464,6 +481,124 @@ def _check_flag_coverage(root, hook):
     return findings
 
 
+def _baseline_roster_names(root):
+    """The plugin baseline roster's row names (NOT merged — the overlay is a
+    project artifact; this gate polices the shipped tree). Empty set when the
+    baseline is missing/unreadable: the derivation check below reports the
+    missing file, and a silent empty set here would turn every dispatch target
+    into a finding that buries the real problem."""
+    path = root / "templates" / "workflow" / "agent-roster.json"
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        agents = doc.get("agents")
+        if isinstance(agents, dict):
+            return set(agents)
+    except (OSError, json.JSONDecodeError):
+        pass
+    return set()
+
+
+# The six pre-registry literal homes → the names that must stay dead in each
+# (Phase B deleted them into agent-roster reads; a re-introduced set would
+# fork the scaffold policy from the registry). The first four homes must also
+# IMPORT the roster — they derive at dispatch time.
+_ROSTER_DERIVATION_SITES = [
+    ("scripts/on-subagent-start.py",
+     ("AGENT_REMINDERS", "_REGISTRY_AGENTS", "_RETRY_AGENTS"), True),
+    ("scripts/on-subagent-stop.py",
+     ("_RESULT_FILE_INSTRUCTIONS", "STDOUT_BLOCK_AGENTS"), True),
+    ("scripts/on-dispatch-dedupe.py", ("_WRITE_AGENTS",), True),
+    ("scripts/filter-subagent-output.py", ("RESULT_FILE_AGENT_TYPES",), True),
+    # lib/recovery keeps the result GRAMMAR only — membership moved to the
+    # roster; it imports nothing (grammar is agent-name-agnostic by design).
+    ("scripts/lib/recovery.py", ("RESULT_FILE_AGENT_TYPES",), False),
+]
+
+
+def _check_roster_derivation(root):
+    """The hooks' derivation from the agent-roster registry must not regress.
+
+    Three assertions per design D6: (a) each former literal-set name is absent
+    from its home — a re-introduced ``AGENT_REMINDERS``-style set is a second
+    home for the scaffold policy, exactly the drift class this lint kills;
+    (b) each hook home imports the roster (else it silently no-ops — the
+    fail-open ``_roster()`` returning ``None`` masks a missing import); and
+    (c) the baseline roster's rows are exactly the shipped ``agents/*.md``
+    stems — a missing row means a dispatched built-in gets no scaffold, an
+    extra row names an agent that is never shipped.
+    """
+    findings = []
+    for rel, dead_literals, needs_import in _ROSTER_DERIVATION_SITES:
+        path = root / rel
+        if not path.exists():
+            findings.append(f"  {rel}: file missing — cannot assert roster "
+                            f"derivation ({'roster import' if needs_import else 'dead literals'})")
+            continue
+        src = path.read_text(encoding="utf-8")
+        for name in dead_literals:
+            if name in src:
+                findings.append(
+                    f"  {rel}: re-introduces the literal set `{name}` — "
+                    f"scaffold policy is registry-owned (agent-roster.json); "
+                    f"add/override a roster row instead of a hardcoded name set")
+        if needs_import and "agent_roster" not in src:
+            findings.append(
+                f"  {rel}: does not import the agent-roster registry — its "
+                f"scaffold decisions silently no-op (the fail-open _roster() "
+                f"returns None)")
+
+    roster_names = _baseline_roster_names(root)
+    agents_dir = root / "agents"
+    if roster_names and agents_dir.is_dir():
+        shipped = {p.stem for p in agents_dir.glob("*.md")}
+        unshipped = sorted(roster_names - shipped)
+        unrostered = sorted(shipped - roster_names)
+        if unshipped:
+            findings.append(
+                f"  templates/workflow/agent-roster.json: rows for agents "
+                f"with no shipped agents/*.md: {', '.join(unshipped)} — "
+                f"dead names (a dispatch would never resolve them)")
+        if unrostered:
+            findings.append(
+                f"  templates/workflow/agent-roster.json: no row for shipped "
+                f"agents/*.md: {', '.join(unrostered)} — they dispatch with "
+                f"no scaffold (no reminder, no recovery contract)")
+    return findings
+
+
+# The dispatch-form doctrine marker (``Dispatch `<agent>``, prompt:`` —
+# subagent-dispatch-format): agent may carry the plugin's ``conductor:``
+# namespace prefix.
+_DISPATCH_TARGET_RE = re.compile(r"Dispatch `([^`]+)`")
+
+
+def _check_dispatch_targets(root, baseline_names):
+    """Every ``Dispatch `<agent>` `` target in a watched doc is baseline-rostered.
+
+    Shipped doctrine (task-workflow, the docfile libraries, skills, agents)
+    only dispatches shipped agents; a doc naming an unrostered agent ships a
+    dead instruction — the dispatch resolves nothing (or an unscaffolded
+    name), and the roster's baseline==agents/*.md assertion above can't see
+    it because the name lives in prose, not a registry row.
+    """
+    findings = []
+    for rel in WATCHED:
+        path = root / rel
+        if not path.exists():
+            continue
+        for m in _DISPATCH_TARGET_RE.finditer(path.read_text(encoding="utf-8")):
+            target = m.group(1)
+            if target.startswith("conductor:"):
+                target = target[len("conductor:"):]
+            if target not in baseline_names:
+                findings.append(
+                    f"  {rel}: dispatches `{target}` but the baseline "
+                    f"agent-roster has no row for it — a shipped doc may only "
+                    f"dispatch shipped agents (add agents/{target}.md + the "
+                    f"roster row, or fix the name)")
+    return findings
+
+
 def main():
     root = get_plugin_root()
 
@@ -485,6 +620,9 @@ def main():
     findings.extend(_check_defer_implies_injected(root, _registry_injected_agents()))
     findings.extend(_check_flag_coverage(root, hook))
 
+    findings.extend(_check_roster_derivation(root))
+    findings.extend(_check_dispatch_targets(root, _baseline_roster_names(root)))
+
     if findings:
         sys.exit(
             "HALT: registry-vocab drift detected.\n"
@@ -504,8 +642,10 @@ def main():
     print("OK: watched docs carry no hand-maintained tag/shape enumeration "
           "(table or prose closed-set), Tier-1 code sites read the vocab via "
           "registry accessors, every agent that defers to the [Conductor "
-          "Registry] block is injected, and every flag an agent names is "
-          "surfaced by the block.")
+          "Registry] block is injected, every flag an agent names is "
+          "surfaced by the block, the hooks derive their scaffold from the "
+          "agent-roster registry (no literal sets; baseline rows == shipped "
+          "agents), and every watched-doc dispatch target is baseline-rostered.")
 
 
 if __name__ == "__main__":

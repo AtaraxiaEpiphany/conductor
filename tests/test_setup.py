@@ -19,6 +19,7 @@ from pathlib import Path
 from unittest import TestCase, main
 
 from scripts.track_state import core
+from scripts.track_state import agent_roster as ar
 from scripts.track_state.misc import cmd_setup, cmd_check, _resolve_core
 
 _scripts = Path(__file__).resolve().parent.parent / "scripts"
@@ -175,6 +176,73 @@ class SetupPassThroughTests(TestCase):
             self.assertEqual(r["reason"], "no_registry")
         finally:
             shutil.rmtree(bare, ignore_errors=True)
+
+
+class SetupRosterLintTests(TestCase):
+    """``check``'s agent-roster halt arm (design D4): runtime hooks are
+    fail-open by design, so a broken project overlay surfaces HERE — reason
+    ``"roster"`` with the validation findings — while a GOOD overlay row for a
+    project agent proceeds untouched (the campaign's happy path)."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.p = _Project(self.d)
+        self.p.add_track("feat_20260101", "in_progress")
+        self._prior_proj = os.environ.get("CLAUDE_PROJECT_DIR")
+        os.environ["CLAUDE_PROJECT_DIR"] = str(self.p.root)
+        ar._load.cache_clear()
+
+    def tearDown(self):
+        if self._prior_proj is not None:
+            os.environ["CLAUDE_PROJECT_DIR"] = self._prior_proj
+        else:
+            os.environ.pop("CLAUDE_PROJECT_DIR", None)
+        shutil.rmtree(self.d, ignore_errors=True)
+        ar._load.cache_clear()
+
+    def _write_overlay(self, doc):
+        (self.p.cond / "workflow" / "agent-roster.json").write_text(
+            json.dumps(doc), encoding="utf-8")
+        ar._load.cache_clear()
+
+    def test_broken_overlay_halts_with_reason_roster(self):
+        self._write_overlay({"agents": {
+            "proj-agent": {"class": "executorr", "fence": "x"},
+        }})
+        r = self.p.check("feat_20260101")
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["action"], "halt")
+        self.assertEqual(r["reason"], "roster")
+        self.assertTrue(r["roster_errors"], "the findings must be in the payload")
+        self.assertIn("registry-doc --roster", r["message"])
+
+    def test_dead_name_halts_with_reason_roster(self):
+        # Declared-names-exist is a halt too: a roster row naming an agent
+        # with no definition file in any harness home is a typo, and letting
+        # the track proceed would dispatch into nothing.
+        self._write_overlay({"agents": {
+            "ghost-agent": {"class": "advisory", "fence": "x"},
+        }})
+        r = self.p.check("feat_20260101")
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["reason"], "roster")
+        self.assertTrue(any("ghost-agent" in e for e in r["roster_errors"]))
+
+    def test_good_project_overlay_row_proceeds(self):
+        # ONE overlay row + a project agent file = full scaffold, and check
+        # stays green — adding a project agent must NOT cost track work.
+        proj_agents = self.p.root / ".claude" / "agents"
+        proj_agents.mkdir(parents=True, exist_ok=True)
+        (proj_agents / "proj-agent.md").write_text("---\n---\nbody\n",
+                                                   encoding="utf-8")
+        self._write_overlay({"agents": {
+            "proj-agent": {"class": "executor",
+                           "fence": "---PROJ RESULT--- ... ---END RESULT---"},
+        }})
+        r = self.p.check("feat_20260101")
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(r["action"], "proceed")
+        self.assertEqual(r.get("roster_errors", []), [])
 
 
 class SetupCLITests(TestCase):

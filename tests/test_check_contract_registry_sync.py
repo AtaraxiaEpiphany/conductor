@@ -14,6 +14,12 @@ Load-bearing invariants under test:
   vocab literal is flagged (the original detector).
 - **Code-literal assertion**: the Tier-1 code sites must reference their registry
   flag/accessor (this is what guards Part 3's data-driving post-merge).
+- **Roster-derivation assertion** (design D6): the six pre-registry literal
+  sets stay dead in the hook sources, every hook home imports the roster, and
+  the baseline roster rows are exactly the shipped ``agents/*.md`` stems.
+- **Dispatch-target cross-check**: every ``Dispatch <agent>`` target in a
+  watched doc is baseline-rostered (a shipped doc may only dispatch shipped
+  agents).
 """
 import importlib.util
 import sys
@@ -175,11 +181,113 @@ class TreeIntegrationTests(TestCase):
         findings.extend(ccrs._check_defer_implies_injected(
             root, ccrs._registry_injected_agents()))
         findings.extend(ccrs._check_flag_coverage(root, hook))
+        findings.extend(ccrs._check_roster_derivation(root))
+        findings.extend(ccrs._check_dispatch_targets(
+            root, ccrs._baseline_roster_names(root)))
         return findings
 
     def test_full_lint_is_clean_on_tree(self):
         self.assertFalse(self._tree_findings(),
                          "registry-vocab drift on the real tree")
+
+
+class RosterDerivationTests(TestCase):
+    """The hooks' derivation from the agent-roster registry must not regress
+    (design D6): the six pre-registry literal sets stay DEAD, every hook home
+    imports the roster, and the baseline rows are exactly the shipped
+    agents/*.md files."""
+
+    def test_clean_on_tree(self):
+        from env import get_plugin_root
+        self.assertFalse(ccrs._check_roster_derivation(get_plugin_root()),
+                         "roster derivation regressed on the real tree")
+
+    def test_fires_when_a_literal_set_creeps_back(self):
+        # Simulate the regression: a hook re-introduces a hardcoded name set.
+        # A tmp tree seeded with only the offending site fires on IT (missing
+        # siblings are skipped, mirroring the WATCHED absent-checkout rule).
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "scripts").mkdir()
+            (root / "scripts" / "on-dispatch-dedupe.py").write_text(
+                "_WRITE_AGENTS = ('task-executor', 'explorer')\n")
+            findings = ccrs._check_roster_derivation(root)
+        self.assertTrue(findings, "a re-introduced literal set must be flagged")
+        self.assertTrue(any("_WRITE_AGENTS" in f for f in findings), findings)
+
+    def test_fires_when_a_hook_drops_the_roster_import(self):
+        # The fail-open `_roster()` returning None masks a missing import —
+        # the hook would silently no-op its scaffold. The lint must catch it.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "scripts").mkdir()
+            for rel in ("on-subagent-start.py", "on-subagent-stop.py",
+                        "on-dispatch-dedupe.py", "filter-subagent-output.py"):
+                (root / "scripts" / rel).write_text("# no roster import here\n")
+            findings = ccrs._check_roster_derivation(root)
+        self.assertTrue(any("does not import the agent-roster" in f
+                            for f in findings), findings)
+
+    def test_fires_when_baseline_rows_diverge_from_shipped_agents(self):
+        # Both directions: a row for an unshipped name (dead row) and a
+        # shipped agent with no row (dispatches with no scaffold).
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "agents").mkdir()
+            (root / "agents" / "shipped-only.md").write_text("x")
+            (root / "agents" / "task-executor.md").write_text("x")
+            (root / "templates" / "workflow").mkdir(parents=True)
+            (root / "templates" / "workflow" / "agent-roster.json").write_text(
+                '{"agents": {"task-executor": {}, "roster-only": {}}}')
+            findings = ccrs._check_roster_derivation(root)
+        self.assertTrue(any("roster-only" in f and "no shipped" in f
+                            for f in findings), findings)
+        self.assertTrue(any("shipped-only" in f and "no row for" in f
+                            for f in findings), findings)
+
+
+class DispatchTargetTests(TestCase):
+    """Every ``Dispatch <agent>`` target in a watched doc must be
+    baseline-rostered — a shipped doc may only dispatch shipped agents."""
+
+    def test_clean_on_tree(self):
+        from env import get_plugin_root
+        root = get_plugin_root()
+        self.assertFalse(
+            ccrs._check_dispatch_targets(root, ccrs._baseline_roster_names(root)),
+            "a watched doc dispatches an unrostered agent on the real tree")
+
+    def test_fires_on_unrostered_target(self):
+        # Simulate: a docfile's dispatch instruction names a dead agent. The
+        # ``conductor:`` namespace prefix must be stripped before the lookup.
+        saved_watched = list(ccrs.WATCHED)
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "skills" / "implement").mkdir(parents=True)
+            (root / "skills" / "implement" / "SKILL.md").write_text(
+                "Dispatch `conductor:ghost-agent`. Prompt:\n")
+            ccrs.WATCHED = ["skills/implement/SKILL.md"]
+            try:
+                findings = ccrs._check_dispatch_targets(root, {"task-executor"})
+            finally:
+                ccrs.WATCHED = saved_watched
+        self.assertEqual(len(findings), 1, findings)
+        self.assertIn("ghost-agent", findings[0])
+        self.assertIn("skills/implement/SKILL.md", findings[0])
+
+    def test_rostered_target_with_namespace_passes(self):
+        saved_watched = list(ccrs.WATCHED)
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "skills" / "implement").mkdir(parents=True)
+            (root / "skills" / "implement" / "SKILL.md").write_text(
+                "Dispatch `conductor:task-executor`. Prompt:\n")
+            ccrs.WATCHED = ["skills/implement/SKILL.md"]
+            try:
+                findings = ccrs._check_dispatch_targets(root, {"task-executor"})
+            finally:
+                ccrs.WATCHED = saved_watched
+        self.assertFalse(findings, findings)
 
 
 class DeferImpliesInjectedTests(TestCase):

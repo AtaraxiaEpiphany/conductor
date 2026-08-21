@@ -20,7 +20,10 @@ Pinned semantics:
   falls back to baseline alone, missing baseline falls back to the EMPTY
   roster (``no scaffold``), never a crash;
 - **validator** — class enum, fence non-empty, unknown fields, the
-  recovery/recovery_instruction pairing (two-homes guard).
+  recovery/recovery_instruction pairing (two-homes guard);
+- **check lint** (design D4) — ``track-state check`` hard-fails validity
+  errors and declared names with no live agent file in the three harness
+  homes; runtime stays fail-open.
 """
 import io
 import json
@@ -332,6 +335,105 @@ class MergeLadder(TestCase):
         finally:
             ar._plugin_registry_path = real
             ar._load.cache_clear()
+
+
+class CheckLintTests(TestCase):
+    """The D4 declared-names lint behind ``track-state check``: runtime is
+    fail-open by design, so a broken overlay must get LOUD here — validity
+    errors (unknown class, …) and declared names with no live agent file in
+    any of the three harness homes (plugin ``agents/`` ∪ project
+    ``.claude/agents/`` ∪ user ``~/.claude/agents/``)."""
+
+    def setUp(self):
+        self._prior_proj = os.environ.get("CLAUDE_PROJECT_DIR")
+        os.environ.pop("CLAUDE_PROJECT_DIR", None)
+        self._tmp = tempfile.TemporaryDirectory()
+        self.proj = Path(self._tmp.name)
+        (self.proj / "conductor" / "workflow").mkdir(parents=True)
+        (self.proj / "conductor" / "tracks").mkdir()
+        (self.proj / ".claude" / "agents").mkdir(parents=True)
+        (self.proj / ".claude" / "agents" / "proj-agent.md").write_text(
+            "---\n---\nbody\n", encoding="utf-8")
+        ar._load.cache_clear()
+
+    def tearDown(self):
+        if self._prior_proj is not None:
+            os.environ["CLAUDE_PROJECT_DIR"] = self._prior_proj
+        else:
+            os.environ.pop("CLAUDE_PROJECT_DIR", None)
+        self._tmp.cleanup()
+        ar._load.cache_clear()
+        from scripts.track_state import workflow_shapes as _ws
+        _ws._load.cache_clear()
+
+    def _lint(self):
+        from scripts.track_state import misc
+        return misc._roster_lint_findings()
+
+    def _write_roster_overlay(self, doc):
+        (self.proj / "conductor" / "workflow" / "agent-roster.json").write_text(
+            json.dumps(doc), encoding="utf-8")
+
+    def test_clean_baseline_no_findings(self):
+        # The shipped tree is clean: baseline rows are live plugin agents and
+        # the baseline shapes' verifiers/nodes all resolve.
+        self.assertEqual(self._lint(), [])
+
+    def test_project_agent_row_passes(self):
+        # The campaign's happy path: ONE overlay row + a project agent file =
+        # full conductor scaffold for a project agent, and check stays green.
+        os.environ["CLAUDE_PROJECT_DIR"] = str(self.proj)
+        self._write_roster_overlay({"agents": {
+            "proj-agent": {"class": "executor",
+                           "fence": "---PROJ RESULT--- ... ---END RESULT---"},
+        }})
+        ar._load.cache_clear()
+        self.assertEqual(self._lint(), [])
+
+    def test_unknown_class_flagged(self):
+        # The hard-fail case: an overlay typo in `class` must surface at
+        # check, not as a silently unscaffolded agent mid-track.
+        os.environ["CLAUDE_PROJECT_DIR"] = str(self.proj)
+        self._write_roster_overlay({"agents": {
+            "proj-agent": {"class": "executorr",
+                           "fence": "---PROJ RESULT--- ... ---END RESULT---"},
+        }})
+        ar._load.cache_clear()
+        findings = self._lint()
+        self.assertTrue(findings, "an unknown class must be flagged")
+        self.assertTrue(any("agent-roster:" in f and "class" in f
+                            for f in findings), findings)
+
+    def test_row_without_agent_file_flagged(self):
+        # Declared-names-exist: a roster row naming an agent with no file in
+        # any home is a dead name (a typo), not a dispatchable agent.
+        os.environ["CLAUDE_PROJECT_DIR"] = str(self.proj)
+        self._write_roster_overlay({"agents": {
+            "ghost-agent": {"class": "advisory",
+                            "fence": "---G RESULT--- ... ---END RESULT---"},
+        }})
+        ar._load.cache_clear()
+        findings = self._lint()
+        self.assertTrue(any("ghost-agent" in f and "no definition file" in f
+                            for f in findings), findings)
+
+    def test_shape_verifier_naming_missing_agent_flagged(self):
+        # Same lint, shape side: a project workflow-shape overlay whose
+        # verifier names an agent with no file anywhere.
+        from scripts.track_state import workflow_shapes as ws
+        os.environ["CLAUDE_PROJECT_DIR"] = str(self.proj)
+        (self.proj / "conductor" / "workflow" / "workflow-shapes.json").write_text(
+            json.dumps({"shapes": {"proj-shape": {
+                "nodes": ["task-executor"], "verifiers": ["ghost-agent"],
+            }}}), encoding="utf-8")
+        ws._load.cache_clear()
+        try:
+            findings = self._lint()
+        finally:
+            ws._load.cache_clear()
+        self.assertTrue(
+            any("proj-shape.verifiers: ghost-agent" in f for f in findings),
+            findings)
 
 
 class ValidatorTests(TestCase):
