@@ -172,7 +172,8 @@ class TreeIntegrationTests(TestCase):
                 findings.append(f"{rel}:{lineno}: {msg}")
         findings.extend(ccrs._scan_code_literals(root))
         hook = ccrs._load_hook()
-        findings.extend(ccrs._check_defer_implies_injected(root, hook))
+        findings.extend(ccrs._check_defer_implies_injected(
+            root, ccrs._registry_injected_agents()))
         findings.extend(ccrs._check_flag_coverage(root, hook))
         return findings
 
@@ -183,21 +184,21 @@ class TreeIntegrationTests(TestCase):
 
 class DeferImpliesInjectedTests(TestCase):
     """A watched agent that defers to the [Conductor Registry] block must be in
-    ``_REGISTRY_AGENTS`` — the assertion that would have caught the original
-    half-wired migration (reviewer prose pointed at the block before the
-    reviewers were injected)."""
+    the roster's injection allowlist — the assertion that would have caught the
+    original half-wired migration (reviewer prose pointed at the block before
+    the reviewers were injected)."""
 
     def test_clean_on_tree(self):
         from env import get_plugin_root
-        hook = ccrs._load_hook()
-        self.assertFalse(ccrs._check_defer_implies_injected(get_plugin_root(), hook),
-                         "a watched agent defers to the block but isn't injected")
+        self.assertFalse(
+            ccrs._check_defer_implies_injected(
+                get_plugin_root(), ccrs._registry_injected_agents()),
+            "a watched agent defers to the block but isn't injected")
 
     def test_fires_when_deferring_agent_absent_from_allowlist(self):
         # Simulate the original bug: a watched agent doc references the block,
-        # but its name is absent from _REGISTRY_AGENTS (block never arrives).
-        hook = ccrs._load_hook()
-        saved_agents = set(hook._REGISTRY_AGENTS)
+        # but its name is absent from the injection allowlist (block never
+        # arrives).
         saved_watched = list(ccrs.WATCHED)
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
@@ -206,20 +207,16 @@ class DeferImpliesInjectedTests(TestCase):
                 "Audit tag membership via your [Conductor Registry] block "
                 "(TAG_VOCAB / MODE_VOCAB).")
             ccrs.WATCHED = ["agents/spec-reviewer.md"]
-            hook._REGISTRY_AGENTS = set()  # reviewer NOT injected → the bug
             try:
-                findings = ccrs._check_defer_implies_injected(root, hook)
+                findings = ccrs._check_defer_implies_injected(root, set())
             finally:
                 ccrs.WATCHED = saved_watched
-                hook._REGISTRY_AGENTS = saved_agents
         self.assertTrue(findings, "a deferring agent absent from the allowlist must be flagged")
         self.assertIn("spec-reviewer", "\n".join(findings))
 
     def test_non_deferring_agent_not_flagged(self):
         # An agent doc that never references the block is not flagged even if
         # absent from the allowlist (the assertion keys on the defer reference).
-        hook = ccrs._load_hook()
-        saved_agents = set(hook._REGISTRY_AGENTS)
         saved_watched = list(ccrs.WATCHED)
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
@@ -227,12 +224,10 @@ class DeferImpliesInjectedTests(TestCase):
             (root / "agents" / "spec-reviewer.md").write_text(
                 "Audit the spec. No registry reference here.")
             ccrs.WATCHED = ["agents/spec-reviewer.md"]
-            hook._REGISTRY_AGENTS = set()
             try:
-                findings = ccrs._check_defer_implies_injected(root, hook)
+                findings = ccrs._check_defer_implies_injected(root, set())
             finally:
                 ccrs.WATCHED = saved_watched
-                hook._REGISTRY_AGENTS = saved_agents
         self.assertFalse(findings,
                          f"non-deferring agent must not be flagged: {findings}")
 

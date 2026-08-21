@@ -66,6 +66,7 @@ sys.path.insert(0, str(Path(__file__).parent / "lib"))
 from env import get_plugin_root  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).parent))
+from track_state import agent_roster  # noqa: E402
 from track_state import task_profiles as tp  # noqa: E402
 from track_state import workflow_shapes as ws  # noqa: E402
 
@@ -366,12 +367,12 @@ def _scan_code_literals(root):
 
 
 def _load_hook():
-    """Load ``on-subagent-start.py`` (hyphenated → importlib) for its registry set.
+    """Load ``on-subagent-start.py`` (hyphenated → importlib) for its renderer.
 
-    The injection allowlist ``_REGISTRY_AGENTS`` and the flag declaration
-    ``reviewer_block_flags`` live in the hook script; this lint asserts against
-    both so prose that defers to the block is guaranteed the block arrives, and
-    prose that names a flag is guaranteed the block surfaces it.
+    The flag declaration ``reviewer_block_flags`` and the reviewer block builder
+    live in the hook script; this lint asserts against them so prose that names
+    a flag is guaranteed the block surfaces it. (The injection ALLOWLIST is
+    roster-driven — ``agent_roster.registry_agents()`` — read directly below.)
     """
     import importlib.util
     p = Path(__file__).parent / "on-subagent-start.py"
@@ -381,20 +382,28 @@ def _load_hook():
     return mod
 
 
-def _check_defer_implies_injected(root, hook):
+def _registry_injected_agents():
+    """The roster's injection allowlist (rows with ``registry_injection: true``).
+
+    The hook reads this same accessor at dispatch, so this lint and the runtime
+    cannot disagree on who receives the ``[Conductor Registry]`` block.
+    """
+    return set(agent_roster.registry_agents())
+
+
+def _check_defer_implies_injected(root, injected):
     """A watched agent that defers to the block must actually receive it.
 
     The half-wired migration this whole campaign closes: ``spec-reviewer`` /
     ``refuter`` prose said "consult your injected ``[Conductor Registry]`` block"
-    while neither was in ``_REGISTRY_AGENTS``, so the block never arrived and the
+    while neither was injected, so the block never arrived and the
     prose pointed at data the agent could not see. For each watched AGENT doc
     (contracts document the block; they do not receive it) whose body references
-    the block / ``TAG_VOCAB``, assert its filename-stem name is in
-    ``_REGISTRY_AGENTS``. This is the assertion that would have caught the
+    the block / ``TAG_VOCAB``, assert its filename-stem name is in the roster's
+    injection allowlist. This is the assertion that would have caught the
     original bug automatically.
     """
     findings = []
-    injected = hook._REGISTRY_AGENTS
     defer_re = re.compile(r"\[Conductor Registry\]|TAG_VOCAB")
     for rel in WATCHED:
         if not rel.startswith("agents/"):
@@ -407,10 +416,11 @@ def _check_defer_implies_injected(root, hook):
         if defer_re.search(text) and agent_name not in injected:
             findings.append(
                 f"  {rel}: defers to the [Conductor Registry] block / TAG_VOCAB "
-                f"but `{agent_name}` is not in "
-                f"on-subagent-start._REGISTRY_AGENTS — the block is never injected, "
-                f"so the prose points at data that never arrives. Add the agent to "
-                f"_REGISTRY_AGENTS and a _registry_for_<agent>() builder.")
+                f"but `{agent_name}` has no registry_injection row in "
+                f"agent-roster.json — the block is never injected, "
+                f"so the prose points at data that never arrives. Add the "
+                f"registry_injection: true row and a "
+                f"_registry_for_<agent>() builder.")
     return findings
 
 
@@ -472,7 +482,7 @@ def main():
     findings.extend(_scan_code_literals(root))
 
     hook = _load_hook()
-    findings.extend(_check_defer_implies_injected(root, hook))
+    findings.extend(_check_defer_implies_injected(root, _registry_injected_agents()))
     findings.extend(_check_flag_coverage(root, hook))
 
     if findings:

@@ -19,6 +19,7 @@ These assert the wiring so the split (and the firewall seam between the two
 phases) can't be silently reverted, and so the two-phase dispatch sequence in
 both callers (post-loop track mode + wiki ingest ad-hoc mode) is pinned.
 """
+import sys
 from pathlib import Path
 from unittest import TestCase, main
 
@@ -222,26 +223,34 @@ class HookAndDispatcherWiringTests(TestCase):
 
     def setUp(self):
         self.hooks = (ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8")
-        self.stop = (ROOT / "scripts" / "on-subagent-stop.py").read_text(encoding="utf-8")
-        self.start = (ROOT / "scripts" / "on-subagent-start.py").read_text(encoding="utf-8")
         self.post_loop = (ROOT / "templates" / "post-loop.md").read_text(encoding="utf-8")
         self.wiki = (ROOT / "skills" / "wiki" / "SKILL.md").read_text(encoding="utf-8")
 
     def test_hooks_matchers_include_both_phases(self):
-        # SubagentStart + SubagentStop matchers must carry the two new agents.
-        self.assertIn("corpus-writer", self.hooks)
-        self.assertIn("wiki-synthesizer", self.hooks)
+        # Both subagent matchers are matcherless (the roster gates), so the two
+        # new agents reach the hooks with the built-ins; the dead merged name
+        # must not linger anywhere in hooks.json.
+        import json
+        for event in ("SubagentStart", "SubagentStop"):
+            for entry in json.loads(self.hooks)["hooks"][event]:
+                self.assertNotIn("matcher", entry)
         self.assertNotIn("doc-syncer", self.hooks)
 
     def test_stop_stdout_block_registry_has_both_phases(self):
-        self.assertIn('"corpus-writer"', self.stop)
-        self.assertIn('"wiki-synthesizer"', self.stop)
-        self.assertNotIn('"doc-syncer"', self.stop)
+        # Both phases carry recovery: "stdout-block" rows (close-tag recovery
+        # contracts) in the agent-roster registry; the dead merged name is gone.
+        sys.path.insert(0, str(ROOT / "scripts"))
+        from track_state import agent_roster as ar
+        self.assertEqual(ar.recovery_kind_for("corpus-writer"), "stdout-block")
+        self.assertEqual(ar.recovery_kind_for("wiki-synthesizer"), "stdout-block")
+        self.assertNotIn("doc-syncer", ar.merged_agent_names())
 
     def test_start_reminder_registry_has_both_phases(self):
-        self.assertIn('"corpus-writer"', self.start)
-        self.assertIn('"wiki-synthesizer"', self.start)
-        self.assertNotIn('"doc-syncer"', self.start)
+        # Both phases carry roster fence rows (SubagentStart reminders).
+        sys.path.insert(0, str(ROOT / "scripts"))
+        from track_state import agent_roster as ar
+        self.assertIn("---DOC SYNC RESULT---", ar.reminder_for("corpus-writer"))
+        self.assertIn("---DOC SYNC RESULT---", ar.reminder_for("wiki-synthesizer"))
 
     def test_post_loop_dispatches_three_step_pipeline(self):
         # post-loop §6.0 sequences corpus-writer → wiki-synthesizer → wiki-differ.

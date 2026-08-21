@@ -110,7 +110,7 @@ conductor-plugin/
 ├── agents/                 23 specialised agent definitions (.md)
 ├── bin/track-state         Shell wrapper for the state CLI
 ├── conductor/design/       Decision records (serial-execution, loop-heartbeat, rail-b step/wave …)
-├── hooks/hooks.json        9 hook event types, 20 hook entries
+├── hooks/hooks.json        9 hook event types, 19 hook entries
 ├── runtime/                System prompt material injected into sessions
 │   ├── core-contract.md      Main-session contract (F1–F6, V1–V11)
 │   ├── subagent-firewall.md  Subagent safety floor (dispatch injection)

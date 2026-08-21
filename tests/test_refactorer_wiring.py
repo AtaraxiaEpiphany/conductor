@@ -14,13 +14,14 @@ The plugin has TWO refactor tiers, by design:
 
 This is a *top-level* dispatch (the orchestrator runs it via the refactorer leaf),
 not a nested child — so it does NOT touch EXPECTED_AGENT_TOOL_AGENTS. It is a
-stdout-block agent (emits a RESULT block, writes no result.json), so it joins the
-SubagentStop SYNC recovery group + STDOUT_BLOCK_AGENTS. These tests lock: the
-bounded-agent contract + result block + firewall, the 3-way hook lockstep +
+stdout-block agent (emits a RESULT block, writes no result.json), so its
+agent-roster row carries ``recovery: "stdout-block"`` (SubagentStop forces a
+recovery turn on a missing close tag). These tests lock: the
+bounded-agent contract + result block + firewall, the 3-way roster lockstep +
 recovery-group membership, and the §3.6c seam.
 """
 import json
-import re
+import sys
 import unittest
 from pathlib import Path
 
@@ -28,10 +29,7 @@ ROOT = Path(__file__).resolve().parent.parent
 AGENTS = ROOT / "agents"
 REFACTORER = (AGENTS / "refactorer.md").read_text(encoding="utf-8")
 HOOKS = (ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8")
-ON_START = (ROOT / "scripts" / "on-subagent-start.py").read_text(encoding="utf-8")
-ON_STOP = (ROOT / "scripts" / "on-subagent-stop.py").read_text(encoding="utf-8")
 SKILL = (ROOT / "skills" / "implement" / "SKILL.md").read_text(encoding="utf-8")
-RECOVERY = (ROOT / "scripts" / "lib" / "recovery.py").read_text(encoding="utf-8")
 
 
 def _frontmatter_value(agent_text: str, key: str) -> str:
@@ -96,61 +94,58 @@ class RefactorerAgentTests(unittest.TestCase):
 
 
 class HookWiringTests(unittest.TestCase):
-    """The 3-way lockstep: agents/*.md ↔ SubagentStart matcher ↔ AGENT_REMINDERS,
-    plus the SubagentStop SYNC recovery-group membership (refactorer is stdout-block)."""
+    """The 3-way lockstep: agents/*.md ↔ agent-roster row ↔ hook derivation,
+    plus the recovery-group membership (refactorer is stdout-block)."""
 
-    def test_subagentstart_matcher_includes_refactorer(self):
+    def test_refactorer_rostered_with_fence(self):
+        # The roster row is load-bearing: an unrostered agent gets no
+        # floor/reminder (the `if not reminder` early-return).
+        sys.path.insert(0, str(ROOT / "scripts"))
+        from track_state import agent_roster as ar
+        reminder = ar.reminder_for("refactorer")
+        self.assertIsNotNone(reminder)
+        self.assertIn("---REFACTOR RESULT---", reminder)
+
+    def test_refactorer_is_stdout_block(self):
+        # refactorer emits a RESULT block (no result.json) → its roster row
+        # carries recovery: "stdout-block", forcing a recovery turn if it stops
+        # without the close tag. The merged matcherless SubagentStop entry is
+        # SYNC (no async arm) — the block decision actually lands.
+        sys.path.insert(0, str(ROOT / "scripts"))
+        from track_state import agent_roster as ar
+        self.assertEqual(ar.recovery_kind_for("refactorer"), "stdout-block")
+        self.assertIn("refactorer", ar.stdout_block_agents())
+        self.assertNotIn("refactorer", ar.result_file_agents())
+
+    def test_subagent_matchers_are_matcherless(self):
+        # D5: both subagent matchers dropped their name alternations — the
+        # roster gates, so refactorer reaches the hooks with the built-ins.
+        # There is exactly ONE (sync) stop entry — an async hook's block
+        # decision is a no-op, which would leave recovery contracts inert.
         data = json.loads(HOOKS)
-        matched = set()
-        for entry in data["hooks"]["SubagentStart"]:
-            matched.update(a.strip() for a in entry["matcher"].split("|"))
-        self.assertIn("refactorer", matched)
-
-    def test_subagentstop_sync_matcher_includes_refactorer(self):
-        # refactorer emits a RESULT block (no result.json) → SYNC group, whose
-        # STDOUT_BLOCK_AGENTS recovery contract forces a recovery turn if it stops
-        # without the close tag. Assert it is in the SYNC (non-async) group.
-        data = json.loads(HOOKS)
-        sync_agents = set()
-        for entry in data["hooks"]["SubagentStop"]:
-            if entry.get("async"):
-                continue
-            sync_agents.update(a.strip() for a in entry["matcher"].split("|"))
-        self.assertIn("refactorer", sync_agents)
-
-    def test_subagentstop_async_matcher_excludes_refactorer(self):
-        # It is a stdout-block agent with a recovery contract → SYNC, NOT async.
-        data = json.loads(HOOKS)
-        async_agents = set()
-        for entry in data["hooks"]["SubagentStop"]:
-            if not entry.get("async"):
-                continue
-            async_agents.update(a.strip() for a in entry["matcher"].split("|"))
-        self.assertNotIn("refactorer", async_agents)
-
-    def test_on_subagent_start_reminder_registered(self):
-        # CRITICAL coupling: on-subagent-start drops the safety floor entirely
-        # for any matched agent NOT in AGENT_REMINDERS. Adding refactorer to the
-        # matcher alone would silently strip its floor — the reminder is load-bearing.
-        self.assertIn('"refactorer"', ON_START)
-        self.assertIn("---REFACTOR RESULT---", ON_START)
+        for event in ("SubagentStart", "SubagentStop"):
+            for entry in data["hooks"][event]:
+                self.assertNotIn("matcher", entry)
+        self.assertEqual(len(data["hooks"]["SubagentStop"]), 1)
+        self.assertNotIn("async", data["hooks"]["SubagentStop"][0]["hooks"][0])
 
     def test_stdout_block_agent_recovery_instruction_registered(self):
-        # The SYNC group's recovery contract keys on STDOUT_BLOCK_AGENTS; an agent
-        # in the matcher but missing from this dict would KeyError at recovery time.
-        keys = re.findall(r'^\s*"([a-z-]+)":\s*\(', ON_STOP, re.MULTILINE)
-        self.assertIn("refactorer", keys)
+        # The recovery contract pairs kind with instruction (the validator's
+        # two-homes guard); refactorer must carry a non-empty instruction.
+        sys.path.insert(0, str(ROOT / "scripts"))
+        from track_state import agent_roster as ar
+        self.assertIn(
+            "IMMEDIATELY print the ---REFACTOR RESULT--- block",
+            ar.recovery_instruction_for("refactorer"))
 
     def test_not_a_result_file_agent(self):
         # refactorer writes NO result.json (it is not a plan task) — it must not
-        # be admitted to RESULT_FILE_AGENT_TYPES (the fresh-result recovery set),
-        # whose authorship is lib/recovery.py and must stay exactly {task-executor,
-        # explorer} (the on-subagent-stop assert guards _RESULT_FILE_INSTRUCTIONS
-        # parity with this set).
-        m = re.search(r"RESULT_FILE_AGENT_TYPES\s*=\s*frozenset\(\{([^}]*)\}\)", RECOVERY)
-        self.assertIsNotNone(m, "RESULT_FILE_AGENT_TYPES definition not found")
-        members = {s.strip().strip('"').strip("'") for s in m.group(1).split(",") if s.strip()}
-        self.assertEqual(members, {"task-executor", "explorer"})
+        # be admitted to the roster's result-file recovery set, which must stay
+        # exactly {task-executor, explorer}.
+        sys.path.insert(0, str(ROOT / "scripts"))
+        from track_state import agent_roster as ar
+        self.assertEqual(set(ar.result_file_agents()),
+                         {"task-executor", "explorer"})
 
 
 class RefactorSeamTests(unittest.TestCase):

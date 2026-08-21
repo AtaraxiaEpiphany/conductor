@@ -1,8 +1,9 @@
 r"""Tests for on-subagent-start.py — the SubagentStart result-format reminder.
 
-Two drift guards: (1) every agent registered in the SubagentStart matcher
-(hooks.json) has a reminder, so a newly-added agent can't silently start with no
-result-format hint; (2) an unknown agent gets no context.
+The matcher is matcherless; the agent-roster registry gates who gets a
+reminder. Two drift guards: (1) every agents/*.md is rostered with a reminder,
+so a newly-added agent can't silently start with no result-format hint; (2) an
+unrostered agent gets no context (fast no-op).
 """
 import contextlib
 import importlib.util
@@ -16,24 +17,29 @@ from unittest import TestCase, main
 
 _scripts = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(_scripts))
+sys.path.insert(0, str(_scripts.parent))
 
 _spec = importlib.util.spec_from_file_location(
     "on_subagent_start", _scripts / "on-subagent-start.py",
 )
 _mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)
-_REMINDERS = _mod.AGENT_REMINDERS
+
+from track_state import agent_roster as _ar  # noqa: E402
+
+_REMINDERS = {name: _ar.reminder_for(name) for name in _ar.merged_agent_names()}
 
 _HOOK = _scripts / "on-subagent-start.py"
 _HOOKS_JSON = Path(__file__).resolve().parent.parent / "hooks" / "hooks.json"
 
 
 def _subagent_start_agents():
-    """Agent types named in any SubagentStart matcher of hooks.json."""
-    data = json.loads(_HOOKS_JSON.read_text())
-    for entry in data["hooks"]["SubagentStart"]:
-        for agent in entry["matcher"].split("|"):
-            yield agent.strip()
+    """Agent types the SubagentStart hook scaffolds = the merged roster names.
+
+    The matcher is matcherless (fires for every subagent); the roster decides
+    who gets context, so the roster IS the coverage set.
+    """
+    return _ar.merged_agent_names()
 
 
 def _run(agent_type: str, cwd: str = None) -> dict:
@@ -49,12 +55,11 @@ def _run(agent_type: str, cwd: str = None) -> dict:
 
 
 class SubagentStartReminderTests(TestCase):
-    def test_every_matched_agent_has_a_reminder(self):
-        """Drift guard: an agent added to the SubagentStart matcher must get a
-        reminder, else it starts with no result-format hint."""
-        matched = set(_subagent_start_agents())
-        missing = matched - set(_REMINDERS)
-        self.assertFalse(missing, f"SubagentStart agents without a reminder: {missing}")
+    def test_every_rostered_agent_has_a_reminder(self):
+        """Drift guard: every roster row must yield a reminder (a row with a
+        missing/malformed fence silently starts with no result-format hint)."""
+        missing = [n for n in _subagent_start_agents() if n not in _REMINDERS]
+        self.assertFalse(missing, f"rostered agents without a reminder: {missing}")
 
     def test_each_reminder_names_a_result_block(self):
         for agent, reminder in _REMINDERS.items():
@@ -126,11 +131,12 @@ class SafetyFloorInjectionTests(TestCase):
                 f"see task-executor.md Step 8 + core-contract.md V5/V9",
             )
 
-    def test_every_matched_agent_receives_the_safety_floor(self):
-        """Load-bearing: each SubagentStart-matched agent's injected context carries
-        the floor. Silent breakage here would strip safety from every matched agent."""
+    def test_every_rostered_agent_receives_the_safety_floor(self):
+        """Load-bearing: each rostered agent's injected context carries
+        the floor. Silent breakage here would strip safety from every rostered
+        agent."""
         matched = list(_subagent_start_agents())
-        self.assertTrue(matched, "no SubagentStart agents found in hooks.json")
+        self.assertTrue(matched, "no rostered agents found")
         for agent in matched:
             ctx = _run(agent).get("hookSpecificOutput", {}).get("additionalContext", "")
             self.assertTrue(ctx, f"{agent} got no injected context")
@@ -166,31 +172,42 @@ class SafetyFloorInjectionTests(TestCase):
 
 
 class SubagentMatcherCompletenessTests(TestCase):
-    def test_every_subagent_is_in_the_subagentstart_matcher(self):
-        """Completeness guard: every agents/*.md must be in the SubagentStart
-        matcher, so no subagent is ever dispatched without the safety floor +
+    def test_subagentstart_matcher_is_matcherless(self):
+        """D5: the SubagentStart matcher carries no name alternation — a
+        project-overlay agent must be able to reach the hook. The roster (not
+        the matcher) gates who gets context."""
+        data = json.loads(_HOOKS_JSON.read_text())
+        for entry in data["hooks"]["SubagentStart"]:
+            self.assertNotIn("matcher", entry,
+                             "SubagentStart matcher must stay matcherless "
+                             "(the roster gates)")
+
+    def test_every_subagent_is_rostered(self):
+        """Completeness guard: every agents/*.md must be in the baseline
+        roster, so no subagent is ever dispatched without the safety floor +
         result-format reminder. Prevents the wiki-differ/wiki-researcher gap
         (closed in the follow-up commit) from recurring for a future agent."""
-        matched = set(_subagent_start_agents())
-        roster = {p.stem for p in (_scripts.parent / "agents").glob("*.md")}
-        unguarded = roster - matched
+        rostered = set(_subagent_start_agents())
+        agents_md = {p.stem for p in (_scripts.parent / "agents").glob("*.md")}
+        unguarded = agents_md - rostered
         self.assertFalse(
             unguarded,
-            f"agents/*.md not in the SubagentStart matcher (no safety floor): "
+            f"agents/*.md absent from agent-roster.json (no safety floor): "
             f"{sorted(unguarded)}",
         )
 
     def test_every_agent_has_a_reminder_row(self):
-        """The AGENT_REMINDERS dict is keyed by agent name — a new agents/*.md
-        with no row means filter-subagent-output gets no result delimiter from
-        the dispatch, and a stale row means a deleted agent still claims one.
-        Keys must track the agents/ roster exactly (campaign 2.6)."""
-        roster = {p.stem for p in (_scripts.parent / "agents").glob("*.md")}
+        """The roster's reminder coverage is keyed by agent name — a new
+        agents/*.md with no row means filter-subagent-output gets no result
+        delimiter from the dispatch, and a stale row means a deleted agent
+        still claims one. Keys must track the agents/ dir exactly (campaign
+        2.6)."""
+        agents_md = {p.stem for p in (_scripts.parent / "agents").glob("*.md")}
         self.assertEqual(
-            set(_REMINDERS), roster,
-            f"AGENT_REMINDERS out of sync with agents/: "
-            f"missing={sorted(roster - set(_REMINDERS))} "
-            f"stale={sorted(set(_REMINDERS) - roster)}",
+            set(_REMINDERS), agents_md,
+            f"agent-roster rows out of sync with agents/: "
+            f"missing={sorted(agents_md - set(_REMINDERS))} "
+            f"stale={sorted(set(_REMINDERS) - agents_md)}",
         )
 
 

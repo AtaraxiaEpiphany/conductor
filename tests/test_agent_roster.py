@@ -1,39 +1,38 @@
-"""Tests for the agent-roster registry — roster-as-data Phase A (D1/D2).
+"""Tests for the agent-roster registry — roster-as-data (Phases A+B).
 
 The third registry owns the dispatch SCAFFOLD per agent (result fence,
 registry injection, retry context, single-writer guard, stop-hook recovery).
-Phase A lands it alongside the six hardcoded literal sets it replaces — so the
-load-bearing tests here are the **equivalence pins**: for every one of the 23
-seeded agents, the roster-derived value must be byte-identical to the live
-hook literal (the plugin-generality C1 guard — the pins make Phase B's
-hook-side switch a provable no-op, and after Phase B they keep the roster
-honest as the only home).
+Phase B deleted the six pre-registry literal homes into roster reads — the
+roster is now the SOLE home — so the load-bearing tests here are the **golden
+pins**: the derived sets must equal the values the hooks used to hardcode
+(the plugin-generality C1 guard, now guarding data instead of a refactor),
+plus the homes-gone source pins proving no literal set crept back.
 
 Pinned semantics:
 
-- **verbatim fences** — ``reminder_for(n) == AGENT_REMINDERS[n]`` for all 23
-  (the lead + fence composition reconstructs the literal exactly);
-- **derived sets** — single_writers / registry_agents / retry_agents /
-  result_file_agents / stdout_block_agents equal the six hook-side homes;
-- **recovery instructions** — byte-identical to ``_RESULT_FILE_INSTRUCTIONS``
-  and ``STDOUT_BLOCK_AGENTS``;
+- **golden sets** — single_writers / registry_agents / retry_agents /
+  result_file_agents / stdout_block_agents equal the six pre-registry homes'
+  values (pinned inline; the equivalence tests that ran while both homes
+  existed proved the Phase B switch was a no-op);
+- **homes gone** — no hook source carries the literal dicts; each reads the
+  roster; the SubagentStart/SubagentStop matchers are matcherless;
 - **merge ladder** — overlay rows added, project wins, malformed overlay
   falls back to baseline alone, missing baseline falls back to the EMPTY
   roster (``no scaffold``), never a crash;
 - **validator** — class enum, fence non-empty, unknown fields, the
   recovery/recovery_instruction pairing (two-homes guard).
 """
-import importlib.util
 import io
 import json
 import os
-import sys
 import tempfile
 from contextlib import redirect_stderr
 from pathlib import Path
 from unittest import TestCase, main
 
 ROOT = Path(__file__).resolve().parent.parent
+import sys  # noqa: E402
+
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
@@ -42,22 +41,39 @@ from scripts.track_state.registry_validate import (  # noqa: E402
     AGENT_CLASSES, RECOVERY_KINDS, validate_agent_roster, validate_merged_roster,
 )
 
+# The 23 baseline rows, in registry (insertion) order — the exact names the six
+# pre-registry literal homes carried. A new agents/*.md without a row fails the
+# agents/-parity pin in test_on_subagent_start; this pin catches stale rows.
+BASELINE_NAMES = (
+    "task-executor", "code-reviewer", "explorer", "phase-checker",
+    "ac-tracer", "build-runner", "test-runner", "corpus-writer",
+    "wiki-synthesizer", "doc-linter", "skip-analyst", "failure-analyst",
+    "spec-planner", "spec-reviewer", "project-analyzer", "wiki-differ",
+    "wiki-researcher", "refuter", "command-digester", "doc-probe",
+    "apply-fixes", "refactorer", "strategy-writer",
+)
 
-def _load_hook_module(name: str, rel: str):
-    """Import a dash-named hook script by path (the established test pattern —
-    hook scripts are not importable by module name)."""
-    spec = importlib.util.spec_from_file_location(name, ROOT / rel)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+# The pre-registry literal sets, pinned as values (their code homes are gone).
+GOLDEN_SINGLE_WRITERS = ("task-executor", "explorer")            # _WRITE_AGENTS
+GOLDEN_REGISTRY_AGENTS = {"task-executor", "spec-reviewer", "refuter"}  # _REGISTRY_AGENTS
+GOLDEN_RETRY_AGENTS = {"task-executor"}                          # _RETRY_AGENTS
+GOLDEN_RESULT_FILE = {"task-executor", "explorer"}               # RESULT_FILE_AGENT_TYPES
+# STDOUT_BLOCK_AGENTS keys, registry order.
+GOLDEN_STDOUT_BLOCK = (
+    "code-reviewer", "phase-checker", "ac-tracer", "build-runner",
+    "test-runner", "corpus-writer", "wiki-synthesizer", "spec-planner",
+    "spec-reviewer", "apply-fixes", "refactorer",
+)
 
-
-# The six literal homes (still live in Phase A; the pins prove the roster
-# reconstructs them byte-identically. Phase B deletes them into these reads.)
-_start = _load_hook_module("aru_start_hook", "scripts/on-subagent-start.py")
-_stop = _load_hook_module("aru_stop_hook", "scripts/on-subagent-stop.py")
-_dedupe = _load_hook_module("aru_dedupe_hook", "scripts/on-dispatch-dedupe.py")
-from lib.recovery import RESULT_FILE_AGENT_TYPES  # noqa: E402
+_HOOK_SOURCES = {
+    "scripts/on-subagent-start.py": ("AGENT_REMINDERS", "_REGISTRY_AGENTS",
+                                     "_RETRY_AGENTS"),
+    "scripts/on-subagent-stop.py": ("_RESULT_FILE_INSTRUCTIONS",
+                                    "STDOUT_BLOCK_AGENTS"),
+    "scripts/on-dispatch-dedupe.py": ("_WRITE_AGENTS",),
+    "scripts/filter-subagent-output.py": ("RESULT_FILE_AGENT_TYPES",),
+    "scripts/lib/recovery.py": ("RESULT_FILE_AGENT_TYPES",),
+}
 
 
 class _ShippedRoster(TestCase):
@@ -74,55 +90,30 @@ class _ShippedRoster(TestCase):
         ar._load.cache_clear()
 
 
-class EquivalencePins(_ShippedRoster):
-    """The roster reconstructs the six literal homes byte-identically."""
+class RosterGoldenPins(_ShippedRoster):
+    """The derived sets equal the pre-registry literal homes' values."""
 
-    def test_every_hook_agent_is_rostered_and_vice_versa(self):
-        self.assertEqual(set(ar.merged_agent_names()),
-                         set(_start.AGENT_REMINDERS))
-        self.assertEqual(len(ar.merged_agent_names()), 23)
+    def test_baseline_covers_the_23_agents(self):
+        self.assertEqual(ar.merged_agent_names(), BASELINE_NAMES)
 
-    def test_reminders_byte_identical(self):
-        for name, literal in _start.AGENT_REMINDERS.items():
-            self.assertEqual(ar.reminder_for(name), literal,
-                             f"fence for {name} must seed verbatim")
+    def test_single_writers(self):
+        self.assertEqual(ar.single_writers(), GOLDEN_SINGLE_WRITERS)
 
-    def test_single_writers_match_write_agents(self):
-        self.assertEqual(set(ar.single_writers()), set(_dedupe._WRITE_AGENTS))
-        self.assertEqual(ar.single_writers(), ("task-executor", "explorer"))
+    def test_registry_agents(self):
+        self.assertEqual(set(ar.registry_agents()), GOLDEN_REGISTRY_AGENTS)
 
-    def test_registry_agents_match(self):
-        self.assertEqual(set(ar.registry_agents()), _start._REGISTRY_AGENTS)
+    def test_retry_agents(self):
+        self.assertEqual(set(ar.retry_agents()), GOLDEN_RETRY_AGENTS)
 
-    def test_retry_agents_match(self):
-        self.assertEqual(set(ar.retry_agents()), _start._RETRY_AGENTS)
+    def test_result_file_agents(self):
+        self.assertEqual(set(ar.result_file_agents()), GOLDEN_RESULT_FILE)
 
-    def test_result_file_agents_match_all_three_homes(self):
-        # lib.recovery's set, the stop hook's instruction keys, and the roster
-        # must agree (the import-time assert in on-subagent-stop held the first
-        # pair; the roster now carries all three).
-        self.assertEqual(set(ar.result_file_agents()),
-                         set(RESULT_FILE_AGENT_TYPES))
-        self.assertEqual(set(ar.result_file_agents()),
-                         set(_stop._RESULT_FILE_INSTRUCTIONS))
-
-    def test_result_file_instructions_byte_identical(self):
-        for name, instr in _stop._RESULT_FILE_INSTRUCTIONS.items():
-            self.assertEqual(ar.recovery_instruction_for(name), instr)
-
-    def test_stdout_block_agents_match(self):
-        self.assertEqual(set(ar.stdout_block_agents()),
-                         set(_stop.STDOUT_BLOCK_AGENTS))
-
-    def test_stdout_block_instructions_byte_identical(self):
-        for name, instr in _stop.STDOUT_BLOCK_AGENTS.items():
-            self.assertEqual(ar.recovery_instruction_for(name), instr)
+    def test_stdout_block_agents_registry_order(self):
+        self.assertEqual(ar.stdout_block_agents(), GOLDEN_STDOUT_BLOCK)
 
     def test_no_agent_has_both_recovery_kinds(self):
-        # The two instruction dicts must stay disjoint (one completion signal
-        # per agent — a row in both would race the two SubagentStop branches).
-        self.assertFalse(set(_stop._RESULT_FILE_INSTRUCTIONS)
-                         & set(_stop.STDOUT_BLOCK_AGENTS))
+        # One completion signal per agent — a row in both sets would race the
+        # two SubagentStop branches.
         rf, sb = set(ar.result_file_agents()), set(ar.stdout_block_agents())
         self.assertFalse(rf & sb)
 
@@ -130,12 +121,98 @@ class EquivalencePins(_ShippedRoster):
         for name in ar.merged_agent_names():
             self.assertIn(ar.class_for(name), AGENT_CLASSES)
 
+    def test_class_census(self):
+        census = {}
+        for name in ar.merged_agent_names():
+            census[ar.class_for(name)] = census.get(ar.class_for(name), 0) + 1
+        self.assertEqual(census,
+                         {"executor": 2, "verifier": 4, "reviewer": 3,
+                          "advisory": 14})
+
+    def test_every_reminder_composes_from_the_lead(self):
+        for name in BASELINE_NAMES:
+            reminder = ar.reminder_for(name)
+            self.assertTrue(reminder.startswith(ar.REMINDER_LEAD), name)
+            self.assertIn("---", reminder, f"{name} fence has no delimiter")
+
+    def test_task_executor_fence_and_flags(self):
+        self.assertEqual(ar.reminder_for("task-executor"),
+                         "[Conductor] Result format: "
+                         "---TASK RESULT--- ... ---END RESULT---")
+        self.assertTrue(ar.is_single_writer("task-executor"))
+        self.assertEqual(ar.recovery_kind_for("task-executor"), "result-file")
+
+    def test_command_digester_fence_is_purpose_keyed(self):
+        # The one two-format fence in the roster — both delimiters must ride.
+        reminder = ar.reminder_for("command-digester")
+        self.assertIn("---TEST DIGEST RESULT---", reminder)
+        self.assertIn("---LOG CHECK RESULT---", reminder)
+        self.assertEqual(ar.recovery_kind_for("command-digester"), "none")
+
+    def test_task_executor_recovery_instruction(self):
+        self.assertEqual(
+            ar.recovery_instruction_for("task-executor"),
+            "IMMEDIATELY call track-state write-result (Section 6.0) and "
+            "print the ---TASK RESULT--- block. Report FAILURE if you cannot "
+            "complete.")
+
+    def test_spec_reviewer_recovery_instruction_noninteractive(self):
+        # The read-only auditor contract (cb35bcf): no file writes, no
+        # CANCELLED — the recovery turn can complete without a human loop.
+        instr = ar.recovery_instruction_for("spec-reviewer")
+        self.assertNotIn("review-result.json", instr)
+        self.assertNotIn("CANCELLED", instr)
+        self.assertIn("CHANGES_REQUESTED", instr)
+
     def test_shipped_baseline_and_merged_validate_clean(self):
         doc = json.loads(
             (ROOT / "templates" / "workflow" / "agent-roster.json")
             .read_text(encoding="utf-8"))
         self.assertEqual(validate_agent_roster(doc), [])
         self.assertEqual(validate_merged_roster(ar._load()), [])
+
+
+class LiteralHomesGone(TestCase):
+    """Phase B's deletion pins: no literal set crept back; hooks read the roster.
+
+    Source-text asserts (not imports) — the point is what ships in the file,
+    and a hook module has CLI side effects at import.
+    """
+
+    def test_six_literal_sets_absent_from_hook_sources(self):
+        for rel, literals in _HOOK_SOURCES.items():
+            src = (ROOT / rel).read_text(encoding="utf-8")
+            for lit in literals:
+                self.assertNotIn(lit, src, f"{lit} resurrected in {rel}")
+
+    def test_hooks_read_the_roster(self):
+        for rel in ("scripts/on-subagent-start.py",
+                    "scripts/on-subagent-stop.py",
+                    "scripts/on-dispatch-dedupe.py",
+                    "scripts/filter-subagent-output.py"):
+            src = (ROOT / rel).read_text(encoding="utf-8")
+            self.assertIn("agent_roster", src,
+                          f"{rel} must read the agent-roster registry")
+
+    def test_subagent_matchers_are_matcherless(self):
+        # D5: matchers drop their name alternations so a project-overlay agent
+        # ever reaches the scripts (matchers are static JSON — no
+        # registry-aware pattern exists). The stop hook merged to ONE sync
+        # entry (the old async arm's block-is-a-no-op semantics would have
+        # left spec-reviewer/refuter recovery contracts inert).
+        data = json.loads((ROOT / "hooks" / "hooks.json").read_text())
+        for event in ("SubagentStart", "SubagentStop"):
+            self.assertTrue(data["hooks"][event], f"no {event} entry")
+            for entry in data["hooks"][event]:
+                self.assertNotIn(
+                    "matcher", entry,
+                    f"{event} matcher carries a name alternation — widen it "
+                    f"away and let the roster gate")
+        self.assertEqual(len(data["hooks"]["SubagentStop"]), 1,
+                         "SubagentStop must be ONE merged (sync) entry")
+        self.assertNotIn("async", data["hooks"]["SubagentStop"][0]["hooks"][0],
+                         "the merged SubagentStop entry must be sync — an "
+                         "async hook's block decision is a no-op")
 
 
 class UnrosteredFailOpen(_ShippedRoster):
@@ -210,7 +287,7 @@ class MergeLadder(TestCase):
         err = io.StringIO()
         with redirect_stderr(err):
             names = ar.merged_agent_names()
-        self.assertEqual(set(names), set(_start.AGENT_REMINDERS))
+        self.assertEqual(set(names), set(BASELINE_NAMES))
         self.assertIn("WARNING", err.getvalue())
 
     def test_non_object_overlay_falls_back_to_baseline(self):
@@ -220,7 +297,7 @@ class MergeLadder(TestCase):
         err = io.StringIO()
         with redirect_stderr(err):
             names = ar.merged_agent_names()
-        self.assertEqual(set(names), set(_start.AGENT_REMINDERS))
+        self.assertEqual(set(names), set(BASELINE_NAMES))
         self.assertIn("WARNING", err.getvalue())
 
     def test_missing_baseline_falls_back_to_empty_roster(self):

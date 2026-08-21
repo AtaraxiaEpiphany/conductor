@@ -16,6 +16,7 @@ haiku-leaf contract + result block; the parent's opt-in gate + canonical dispatc
 form + firewall fence; and the 3-way hook lockstep (matcher ↔ reminder).
 """
 import json
+import sys
 import unittest
 from pathlib import Path
 
@@ -24,7 +25,6 @@ AGENTS = ROOT / "agents"
 TASK_EXECUTOR = (AGENTS / "task-executor.md").read_text(encoding="utf-8")
 DOC_PROBE = (AGENTS / "doc-probe.md").read_text(encoding="utf-8")
 HOOKS = (ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8")
-ON_START = (ROOT / "scripts" / "on-subagent-start.py").read_text(encoding="utf-8")
 
 
 def _frontmatter_value(agent_text: str, key: str) -> str:
@@ -124,50 +124,37 @@ class TaskExecutorNestingTests(unittest.TestCase):
 
 
 class HookWiringTests(unittest.TestCase):
-    """The 3-way lockstep: agents/*.md ↔ SubagentStart matcher ↔ AGENT_REMINDERS.
-    test_on_subagent_start enforces this at the suite level; these assertions pin
-    doc-probe's specific entries."""
+    """The 3-way lockstep: agents/*.md ↔ agent-roster row ↔ hook derivation.
+    test_on_subagent_start enforces this at the suite level; these assertions
+    pin doc-probe's specific entries."""
 
-    def test_subagentstart_matcher_includes_doc_probe(self):
-        data = json.loads(HOOKS)
-        matched = set()
-        for entry in data["hooks"]["SubagentStart"]:
-            matched.update(a.strip() for a in entry["matcher"].split("|"))
-        self.assertIn("doc-probe", matched)
-
-    def test_subagentstop_matcher_includes_doc_probe(self):
-        # doc-probe is a leaf analysis child (emits a RESULT block, writes no
-        # result.json) — like command-digester it belongs in a SubagentStop matcher
-        # (async / no-recovery-contract), NOT the result-file or stdout-block
-        # recovery sets. A forced recovery turn on a haiku read-only child would
-        # waste budget, not save it.
-        data = json.loads(HOOKS)
-        stop_agents = set()
-        for entry in data["hooks"]["SubagentStop"]:
-            stop_agents.update(a.strip() for a in entry["matcher"].split("|"))
-        self.assertIn("doc-probe", stop_agents)
+    def test_doc_probe_rostered_with_fence(self):
+        # The roster row is load-bearing, not cosmetic: an unrostered agent gets
+        # no floor/reminder (the `if not reminder` early-return).
+        sys.path.insert(0, str(ROOT / "scripts"))
+        from track_state import agent_roster as ar
+        reminder = ar.reminder_for("doc-probe")
+        self.assertIsNotNone(reminder)
+        self.assertIn("---PROBE RESULT---", reminder)
 
     def test_doc_probe_not_in_recovery_groups(self):
-        # Mirror of the command-digester contract: doc-probe must NOT be admitted to
-        # the recovery-contract groups (_RESULT_FILE_INSTRUCTIONS or
-        # STDOUT_BLOCK_AGENTS in on-subagent-stop). It is a leaf dispatched by
-        # task-executor; reliability is the parent's concern, and a forced recovery
-        # turn on a haiku read-only child would waste budget. Asserted via source
-        # text (the hook module has CLI side effects at import).
-        import re
-        ON_STOP = (ROOT / "scripts" / "on-subagent-stop.py").read_text(encoding="utf-8")
-        # Captures dict keys of both _RESULT_FILE_INSTRUCTIONS and STDOUT_BLOCK_AGENTS
-        # (each is `"name": (` at line start). doc-probe must not be one.
-        keys = re.findall(r'^\s*"([a-z-]+)":\s*\(', ON_STOP, re.MULTILINE)
-        self.assertNotIn("doc-probe", keys)
+        # Mirror of the command-digester contract: doc-probe must have NO
+        # recovery kind in the roster. It is a leaf dispatched by task-executor;
+        # reliability is the parent's concern, and a forced recovery turn on a
+        # haiku read-only child would waste budget, not save it.
+        sys.path.insert(0, str(ROOT / "scripts"))
+        from track_state import agent_roster as ar
+        self.assertEqual(ar.recovery_kind_for("doc-probe"), "none")
+        self.assertNotIn("doc-probe", ar.result_file_agents())
+        self.assertNotIn("doc-probe", ar.stdout_block_agents())
 
-    def test_on_subagent_start_reminder_registered(self):
-        # CRITICAL coupling: on-subagent-start drops the safety floor entirely for
-        # any matched agent NOT in AGENT_REMINDERS. Adding doc-probe to the matcher
-        # alone would silently strip its floor — the reminder registration is
-        # load-bearing, not cosmetic.
-        self.assertIn('"doc-probe"', ON_START)
-        self.assertIn("---PROBE RESULT---", ON_START)
+    def test_subagent_matchers_are_matcherless(self):
+        # Both subagent matchers dropped their name alternations (the roster
+        # gates) — doc-probe reaches the hooks with the built-ins.
+        data = json.loads(HOOKS)
+        for event in ("SubagentStart", "SubagentStop"):
+            for entry in data["hooks"][event]:
+                self.assertNotIn("matcher", entry)
 
 
 if __name__ == "__main__":

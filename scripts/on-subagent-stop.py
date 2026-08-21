@@ -1,17 +1,23 @@
 #!/usr/bin/env python3
 """SubagentStop hook: keep a subagent running when it stopped without a result.
 
-A subagent signals completion through ONE deterministic channel:
+The hook matcher is matcherless (fires for every subagent stop, sync); the
+merged agent-roster registry (``track_state.agent_roster``) decides who has a
+recovery contract. A subagent signals completion through ONE deterministic
+channel, declared by its roster row's ``recovery`` field:
 
-- **result-file agents** (task-executor, explorer) write a fresh
+- **result-file agents** (``recovery: "result-file"``) write a fresh
   ``.conductor/result.json`` via ``track-state write-result``. A missing fresh
   file means the agent exhausted turns or crashed before its result step.
-- **stdout-block agents** (phase-checker, code-reviewer, corpus-writer,
-  wiki-synthesizer, spec-planner) emit a ``---END RESULT---`` close tag (no result file). A
-  missing close tag means it stopped mid-protocol.
+- **stdout-block agents** (``recovery: "stdout-block"``) emit an
+  ``---END RESULT---``-family close tag (no result file). A missing close tag
+  means it stopped mid-protocol.
+- rows with no ``recovery`` (and unrostered agents) have no contract — the stop
+  lands (their reliability is advisory).
 
-In either case the hook returns ``decision: "block"`` with a `reason` that is
-delivered to the subagent as its next instruction, giving it one recovery turn.
+In either contract case the hook returns ``decision: "block"`` with a `reason`
+(the row's ``recovery_instruction``) delivered to the subagent as its next
+instruction, giving it one recovery turn.
 
 Failures are NOT detected from prose. A result-file agent that wrote a FAILURE
 result.json has signalled correctly — the orchestrator's retry/skip path reads
@@ -38,96 +44,27 @@ from lib.hook_io import read_hook_input, write_hook_output
 from lib.logging import init_logging, log_entry
 from lib.result_probe import fresh_result_exists
 from lib.recovery import (
-    RECOVERY_MARKER, RESULT_FILE_AGENT_TYPES, RESULT_END_TAG,
+    RECOVERY_MARKER, RESULT_END_TAG,
     MAX_RECOVERY_TURNS, increment_session_recovery, clear_session_recovery,
 )
 from lib.locked_task import resolve as resolve_locked_task
 from lib import dispatch_lifecycle as lifecycle
 
 
-# Per-agent recovery instructions for result-file agents. The GATE (which
-# agents count as result-file agents) is the shared RESULT_FILE_AGENT_TYPES from
-# lib.recovery — these strings are just the hook UI appended after the shared
-# RECOVERY_MARKER lead. The guard keeps the two in sync, so adding an agent type
-# in the shared set without an instruction here (or vice versa) fails loudly at
-# import instead of raising a cryptic KeyError when that agent crashes.
-_RESULT_FILE_INSTRUCTIONS = {
-    "task-executor": (
-        "IMMEDIATELY call track-state write-result (Section 6.0) and print "
-        "the ---TASK RESULT--- block. Report FAILURE if you cannot complete."
-    ),
-    "explorer": (
-        "IMMEDIATELY call track-state write-result (Section 5.1) and print "
-        "the ---TASK RESULT--- block. Report FAILURE if you cannot complete."
-    ),
-}
-assert set(_RESULT_FILE_INSTRUCTIONS) == RESULT_FILE_AGENT_TYPES, (
-    "RESULT_FILE_AGENT_TYPES (lib.recovery) and _RESULT_FILE_INSTRUCTIONS keys "
-    "drifted — a result-file agent lacks a recovery instruction or vice versa."
-)
+def _roster():
+    """The agent-roster registry module, or ``None`` when unimportable.
 
-# stdout-block agents (no result file) → gated on the presence of a close tag.
-# Instruction appended after "[Conductor Recovery] You stopped without producing
-# a result block."
-STDOUT_BLOCK_AGENTS = {
-    "phase-checker": (
-        "IMMEDIATELY print the ---CHECKPOINT RESULT--- block (Section 8.0). "
-        "Report STATUS: FAILED with a one-line FAILURE_REASON if the checkpoint "
-        "protocol did not complete; do NOT create a checkpoint commit on this "
-        "recovery turn."
-    ),
-    "code-reviewer": (
-        "IMMEDIATELY print the ---REVIEW RESULT--- block (Section 4.2) and write "
-        "{TRACK_DIR}/.conductor/review-result.json. Report STATUS: FAILURE with "
-        "a one-line REASON if the review could not complete."
-    ),
-    "corpus-writer": (
-        "IMMEDIATELY print the ---DOC SYNC RESULT--- block (Section 7.0). Report "
-        "STATUS: FAILURE with a one-line REASON if Phase 1 of the doc sync could not complete."
-    ),
-    "wiki-synthesizer": (
-        "IMMEDIATELY print the ---DOC SYNC RESULT--- block (Section 6.0). Report "
-        "STATUS: FAILURE with a one-line REASON if Phase 2 of the doc sync could not complete."
-    ),
-    "ac-tracer": (
-        "IMMEDIATELY print the ---AC TRACE RESULT--- block (Section 5.0). Report "
-        "VERDICT: ERROR with a one-line REASON if the integrity check could not complete."
-    ),
-    "build-runner": (
-        "IMMEDIATELY print the ---BUILD VERIFY RESULT--- block (Section 5.0). Report "
-        "STATUS: error with a one-line REASON if no build command could be resolved or "
-        "the build could not run at all (a failing build is STATUS: failed, NOT error)."
-    ),
-    "test-runner": (
-        "IMMEDIATELY print the ---L1 VERIFY RESULT--- block (Section 5.0). Report "
-        "STATUS: error with a one-line REASON if the test command could not run at all "
-        "(a failing suite is STATUS: failed, NOT error)."
-    ),
-    "spec-planner": (
-        "IMMEDIATELY print the ---SPEC PLAN RESULT--- block (Section 5.0). Report "
-        "STATUS: FAILURE with a one-line SUMMARY if generation could not complete."
-    ),
-    "spec-reviewer": (
-        "IMMEDIATELY print the ---REVIEW RESULT--- block (Section 4.0). You are "
-        "read-only and non-interactive — do NOT call AskUserQuestion or edit files; "
-        "just emit the block with what you have: STATUS: APPROVED (clean), "
-        "STATUS: CHANGES_REQUESTED (+ FINDINGS), or STATUS: FAILURE with a one-line "
-        "REASON. The ---REVIEW RESULT--- block is the ONLY signal the parent parses "
-        "for STATUS — without it the parent cannot recover the verdict, so never stop "
-        "without emitting it."
-    ),
-    "apply-fixes": (
-        "IMMEDIATELY print the ---FIX RESULT--- block (Section 5.0). Report "
-        "STATUS: FAILURE with a one-line REASON if the chunk could not be applied; "
-        "the spine does NOT mark a failed chunk done, so an honest FAILURE re-dispatches "
-        "it — do not fake SUCCESS."
-    ),
-    "refactorer": (
-        "IMMEDIATELY print the ---REFACTOR RESULT--- block (Section 5.0). Report "
-        "STATUS: FAILURE with a one-line REASON if the refactor could not complete; "
-        "the seam is non-blocking, so an honest FAILURE just proceeds — do not fake SUCCESS."
-    ),
-}
+    Function-level import (the established ``track_state`` pattern; hooks run
+    with ``scripts/`` on ``sys.path``). ``None`` keeps the hook fail-open — no
+    recovery contract for anyone (the pre-registry unknown-name behavior),
+    never a crashed SubagentStop, which would silently drop the recovery
+    contract for every rostered agent too.
+    """
+    try:
+        from track_state import agent_roster
+        return agent_roster
+    except Exception:
+        return None
 
 # Matches any conductor result-block close tag, e.g. ---END RESULT---,
 # ---END CHECKPOINT RESULT---, ---END TASK RESULT---. The grammar is shared with
@@ -264,6 +201,14 @@ def main():
     log_file = init_logging("on-subagent-stop")
     log_entry(log_file, f"session={session_id} agent={agent_type} event=subagent_stop")
 
+    # Recovery membership is roster-driven (resolved once for the whole stop):
+    # result-file / stdout-block rows name who has a completion-signal contract
+    # and carry the per-agent recovery_instruction. Unrostered / no-recovery
+    # rows land in neither set → the stop simply allows below.
+    roster = _roster()
+    result_file_agents = set(roster.result_file_agents()) if roster else set()
+    stdout_block_agents = set(roster.stdout_block_agents()) if roster else set()
+
     # Resolve the locked task ONCE for the whole stop. The result-file branch
     # below needs it again (line ~326 originally re-resolved) — nothing between
     # mutates the lock (only telemetry emit + a stat()), so reuse this value.
@@ -302,7 +247,7 @@ def main():
                 # fresh result in ANOTHER track can't satisfy this probe when
                 # the lock is gone. (When the lock is live this is unchanged.)
                 track_dir = td
-        if agent_type in RESULT_FILE_AGENT_TYPES:
+        if agent_type in result_file_agents:
             had = "1" if fresh_result_exists(cwd, track_dir=track_dir) else "0"
         else:
             had = "-"
@@ -318,7 +263,7 @@ def main():
     # A written FAILURE result.json is a valid signal — do NOT block (the
     # orchestrator's retry/skip path reads it). Only a missing file means the
     # agent never reached its result step.
-    if agent_type in RESULT_FILE_AGENT_TYPES:
+    if agent_type in result_file_agents:
         # Wave agents first: dispatch-wave drops a wave-agent.marker in each
         # member's worktree. wave-finalize owns that member's result synthesis +
         # retry, so this hook must NOT bound it via the singleton-cursor recovery
@@ -368,7 +313,7 @@ def main():
         _block_recovery(
             agent_type,
             f"{RECOVERY_MARKER} You stopped without writing a result.",
-            _RESULT_FILE_INSTRUCTIONS[agent_type],
+            roster.recovery_instruction_for(agent_type),
             log_file, session_id, "no_result_file_detected",
         )
         return
@@ -384,7 +329,7 @@ def main():
     # recovery turns that can never succeed — each one re-injecting "emit the
     # block" — and exhaust with no block, surfacing as the generic "no
     # dispatch-finalize recovery" warning. Bounded, it fails fast and clean.
-    if agent_type in STDOUT_BLOCK_AGENTS:
+    if agent_type in stdout_block_agents:
         if _has_result_block(last_message):
             clear_session_recovery(session_id)
             write_hook_output()
@@ -400,13 +345,13 @@ def main():
         _block_recovery(
             agent_type,
             f"{RECOVERY_MARKER} You stopped without producing a result block.",
-            STDOUT_BLOCK_AGENTS[agent_type],
+            roster.recovery_instruction_for(agent_type),
             log_file, session_id, "no_result_block_detected",
         )
         return
 
-    # All other agents (registered async in hooks.json): no recovery contract.
-    # Allow the stop; failure/recovery for these is advisory-only.
+    # All other agents (rostered with no recovery, or unrostered): no recovery
+    # contract. Allow the stop; failure/recovery for these is advisory-only.
     write_hook_output()
 
 

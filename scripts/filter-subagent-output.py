@@ -21,20 +21,35 @@ from lib.hook_io import read_hook_input, write_hook_output
 from lib.constants import RECOVERY_SUCCESS_PATTERNS
 from lib.result_probe import fresh_result_exists
 from lib.recovery import (
-    RECOVERY_MARKER, RESULT_FILE_AGENT_TYPES, RESULT_BLOCK_PATTERN,
+    RECOVERY_MARKER, RESULT_BLOCK_PATTERN,
     parse_result_block,
 )
 
-# The result-block grammar (open + close) and the result-file agent set are
-# shared with on-subagent-stop via lib.recovery so the two hooks cannot disagree
-# on what a result block looks like or on which agents are dispatch-finalize
-# agents. See lib.recovery for the single definitions.
+# The result-block GRAMMAR (open + close) is shared with on-subagent-stop via
+# lib.recovery so the two hooks cannot disagree on what a result block looks
+# like. WHO has a contract is roster-driven: the agent-roster registry's
+# ``result_file_agents()`` (rows with ``recovery: "result-file"``) — the same
+# set on-subagent-stop gates its fresh-result recovery on, so a roster row
+# changes both hooks at once.
 #
-# Agents whose followup is `dispatch-finalize` (== RESULT_FILE_AGENT_TYPES)
+# Agents whose followup is `dispatch-finalize` (the result-file rows)
 # synthesize a missing result from result.json / locked task state — for these a
-# missing result block is recoverable. Other agents (phase-checker, code-reviewer,
-# skip-analyst, corpus-writer, wiki-synthesizer, ...) have no dispatch-finalize step — a missing block
-# means lost status the orchestrator must inspect manually.
+# missing result block is recoverable. Other agents have no dispatch-finalize
+# step — a missing block means lost status the orchestrator must inspect
+# manually.
+
+
+def _result_file_agents():
+    """The roster's result-file agent set, or ``()`` when unimportable.
+
+    Function-level import (hooks run with ``scripts/`` on ``sys.path``);
+    ``()`` fail-opens to the generic no-recovery messaging, never a crash.
+    """
+    try:
+        from track_state import agent_roster
+        return agent_roster.result_file_agents()
+    except Exception:
+        return ()
 
 NO_RESULT_MESSAGE = (
     "[Conductor] Subagent completed without structured result block. "
@@ -172,7 +187,7 @@ def main():
     tool_input = input_data.get("tool_input") or {}
     raw_type = tool_input.get("subagent_type", "") if isinstance(tool_input, dict) else ""
     agent_type = raw_type.split(":")[-1]
-    uses_finalize = agent_type in RESULT_FILE_AGENT_TYPES
+    uses_finalize = agent_type in _result_file_agents()
 
     # --- Responsibility 1: Extract structured result blocks ---
     result = extract_result_blocks(response)

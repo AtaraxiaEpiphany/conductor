@@ -203,15 +203,11 @@ class RecoveryGuardTests(TestCase):
         must NOT tell it to write review-result.json (it's read-only) or emit
         CANCELLED (no interactive loop to cancel), and the agent file must declare
         read-only tools with NO AskUserQuestion."""
-        import importlib.util
-        spec = importlib.util.spec_from_file_location(
-            "on_subagent_stop_full", _scripts / "on-subagent-stop.py")
-        # Provide the lib package on the path the same way the script does at runtime.
-        sys.path.insert(0, str(_scripts))
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        sys.path.pop(0)
-        instr = mod.STDOUT_BLOCK_AGENTS["spec-reviewer"]
+        # The recovery instruction lives in the agent-roster registry (its
+        # stdout-block row for spec-reviewer).
+        sys.path.insert(0, str(_scripts.parent))
+        from track_state import agent_roster as ar
+        instr = ar.recovery_instruction_for("spec-reviewer")
         # Stale interactive artifacts must be gone from the instruction.
         self.assertNotIn("review-result.json", instr,
                          "spec-reviewer is read-only — must not write review-result.json")

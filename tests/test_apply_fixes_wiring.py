@@ -11,12 +11,13 @@ open-ended scope, no result contract).
 This is a *top-level* dispatch (the teleoperator runs it via the ``apply_fixes``
 leaf), not a nested child — so it does NOT touch
 ``EXPECTED_AGENT_TOOL_AGENTS``. It is a stdout-block agent (emits a RESULT block,
-writes no result.json), so it joins the SubagentStop SYNC recovery group +
-``STDOUT_BLOCK_AGENTS``. These tests lock: the bounded-agent contract + result
+writes no result.json), so its agent-roster row carries ``recovery:
+"stdout-block"`` (SubagentStop forces a recovery turn on a missing close tag).
+These tests lock: the bounded-agent contract + result
 block + firewall, and the 3-way hook lockstep + recovery-group membership.
 """
 import json
-import re
+import sys
 import unittest
 from pathlib import Path
 
@@ -24,8 +25,6 @@ ROOT = Path(__file__).resolve().parent.parent
 AGENTS = ROOT / "agents"
 APPLY_FIXES = (AGENTS / "apply-fixes.md").read_text(encoding="utf-8")
 HOOKS = (ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8")
-ON_START = (ROOT / "scripts" / "on-subagent-start.py").read_text(encoding="utf-8")
-ON_STOP = (ROOT / "scripts" / "on-subagent-stop.py").read_text(encoding="utf-8")
 
 
 def _frontmatter_value(agent_text: str, key: str) -> str:
@@ -90,54 +89,56 @@ class ApplyFixesAgentTests(unittest.TestCase):
 
 
 class HookWiringTests(unittest.TestCase):
-    """The 3-way lockstep: agents/*.md ↔ SubagentStart matcher ↔ AGENT_REMINDERS,
-    plus the SubagentStop recovery-group membership (apply-fixes is stdout-block)."""
+    """The 3-way lockstep: agents/*.md ↔ agent-roster row ↔ hook derivation,
+    plus the recovery-group membership (apply-fixes is stdout-block)."""
 
-    def test_subagentstart_matcher_includes_apply_fixes(self):
+    def test_apply_fixes_rostered_with_fence(self):
+        # The roster row is load-bearing: an unrostered agent gets no
+        # floor/reminder (the `if not reminder` early-return).
+        sys.path.insert(0, str(ROOT / "scripts"))
+        from track_state import agent_roster as ar
+        reminder = ar.reminder_for("apply-fixes")
+        self.assertIsNotNone(reminder)
+        self.assertIn("---FIX RESULT---", reminder)
+
+    def test_apply_fixes_is_stdout_block(self):
+        # apply-fixes emits a RESULT block (no result.json) → its roster row
+        # carries recovery: "stdout-block", so SubagentStop forces a recovery
+        # turn if it stops without the close tag. The merged matcherless stop
+        # entry is SYNC — the block decision actually lands.
+        sys.path.insert(0, str(ROOT / "scripts"))
+        from track_state import agent_roster as ar
+        self.assertEqual(ar.recovery_kind_for("apply-fixes"), "stdout-block")
+        self.assertNotIn("apply-fixes", ar.result_file_agents())
+        self.assertIn("apply-fixes", ar.stdout_block_agents())
+
+    def test_subagent_matchers_are_matcherless(self):
+        # D5: both subagent matchers dropped their name alternations — the
+        # roster gates, so apply-fixes reaches the hooks with the built-ins.
         data = json.loads(HOOKS)
-        matched = set()
-        for entry in data["hooks"]["SubagentStart"]:
-            matched.update(a.strip() for a in entry["matcher"].split("|"))
-        self.assertIn("apply-fixes", matched)
-
-    def test_subagentstop_sync_matcher_includes_apply_fixes(self):
-        # apply-fixes emits a RESULT block (no result.json) → it belongs in the
-        # SYNC SubagentStop group whose STDOUT_BLOCK_AGENTS recovery contract
-        # forces a recovery turn if it stops without the close tag. Assert it is
-        # in the SYNC (non-async) group specifically.
-        data = json.loads(HOOKS)
-        sync_agents = set()
-        for entry in data["hooks"]["SubagentStop"]:
-            if entry.get("async"):
-                continue
-            sync_agents.update(a.strip() for a in entry["matcher"].split("|"))
-        self.assertIn("apply-fixes", sync_agents)
-
-    def test_on_subagent_start_reminder_registered(self):
-        # CRITICAL coupling: on-subagent-start drops the safety floor entirely
-        # for any matched agent NOT in AGENT_REMINDERS. Adding apply-fixes to the
-        # matcher alone would silently strip its floor — the reminder is load-bearing.
-        self.assertIn('"apply-fixes"', ON_START)
-        self.assertIn("---FIX RESULT---", ON_START)
+        for event in ("SubagentStart", "SubagentStop"):
+            for entry in data["hooks"][event]:
+                self.assertNotIn("matcher", entry)
 
     def test_stdout_block_agent_recovery_instruction_registered(self):
-        # The SYNC group's recovery contract keys on STDOUT_BLOCK_AGENTS; an agent
-        # in the matcher but missing from this dict would KeyError at recovery
+        # The recovery contract pairs kind with instruction (the validator's
+        # two-homes guard); an agent in the stdout-block set without an
+        # instruction would block with an empty reason at recovery
         # time. apply-fixes must have an instruction.
-        keys = re.findall(r'^\s*"([a-z-]+)":\s*\(', ON_STOP, re.MULTILINE)
-        self.assertIn("apply-fixes", keys)
+        sys.path.insert(0, str(ROOT / "scripts"))
+        from track_state import agent_roster as ar
+        self.assertIn(
+            "IMMEDIATELY print the ---FIX RESULT--- block",
+            ar.recovery_instruction_for("apply-fixes"))
 
     def test_not_a_result_file_agent(self):
-        # apply-fixes writes NO result.json (it is not a plan task) — it must not
-        # be admitted to RESULT_FILE_AGENT_TYPES (the fresh-result recovery set).
-        # on-subagent-stop asserts _RESULT_FILE_INSTRUCTIONS == RESULT_FILE_AGENT_TYPES,
-        # so the dict keys are the authoritative surface.
-        keys = re.findall(r'^\s*"([a-z-]+)":\s*\(', ON_STOP, re.MULTILINE)
-        # Only task-executor + explorer are result-file agents.
-        self.assertEqual(set(k for k in keys
-                             if k in ("task-executor", "explorer")),
+        # apply-fixes writes NO result.json (it is not a plan task) — it must
+        # not be admitted to the roster's result-file recovery set. Only
+        # task-executor + explorer are result-file agents.
+        sys.path.insert(0, str(ROOT / "scripts"))
+        from track_state import agent_roster as ar
+        self.assertEqual(set(ar.result_file_agents()),
                          {"task-executor", "explorer"})
-        self.assertNotIn("apply-fixes", {"task-executor", "explorer"})
 
 
 if __name__ == "__main__":

@@ -24,10 +24,10 @@ How it fires
 ------------
 PreToolUse fires in the orchestrator's own tool loop. For an ``Agent`` dispatch,
 ``tool_name == "Agent"`` and ``tool_input.subagent_type`` names the target. This
-hook filters to the single-writer-critical agents (``task-executor``, ``explorer``
-— the only ones that *write* the working tree for a locked task); verifiers,
-phase-checker, skip-analyst, failure-analyst and refuter are read-only or own
-their own lifecycle and are left alone.
+hook filters to the single-writer-critical agents — the agent-roster registry's
+``single_writers()`` (executor-class rows: the agents that *write* the working
+tree for a locked task); read-only verifiers and lifecycle-owning agents are
+left alone.
 
 Resolution + in-flight test
 ---------------------------
@@ -60,11 +60,24 @@ from lib import dispatch_inflight as inflight
 from lib import dispatch_lifecycle as lifecycle
 
 
-# Only these agents mutate the working tree for a locked task, so only they are
-# single-writer-critical. Verifiers (ac-tracer, build-runner, test-runner),
-# phase-checker, skip-analyst, failure-analyst and refuter are read-only or own
-# their own lifecycle → excluded.
-_WRITE_AGENTS = ("task-executor", "explorer")
+# Single-writer membership is roster-driven: the agent-roster registry's
+# ``single_writers()`` (rows with class executor, or an explicit single_writer
+# override). Only these agents mutate the working tree for a locked task, so
+# only they are single-writer-critical; verifiers, phase-checker, skip-analyst,
+# failure-analyst and refuter are read-only or own their lifecycle → excluded.
+
+
+def _single_writers():
+    """The roster's single-writer set, or ``()`` when the roster is unimportable.
+
+    Function-level import (hooks run with ``scripts/`` on ``sys.path``);
+    ``()`` fail-opens to allow — this hook must never block productive work.
+    """
+    try:
+        from track_state import agent_roster
+        return agent_roster.single_writers()
+    except Exception:
+        return ()
 
 
 def _emit_probe(input_data, subagent_type, phase, task, subtask,
@@ -139,7 +152,7 @@ def main():
     _emit_probe(input_data, subagent_type, None, None, None,
                 marker="-", in_flight="-", decision="allow-not-write-or-early")
 
-    if subagent_type not in _WRITE_AGENTS:
+    if subagent_type not in _single_writers():
         write_hook_output(permission_decision="allow")
         return
 

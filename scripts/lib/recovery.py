@@ -4,10 +4,13 @@
 without its expected artifact, the SubagentStop hook (``on-subagent-stop.py``)
 injects a ``[Conductor Recovery]`` turn keeping it alive, and the PostToolUse
 filter (``filter-subagent-output.py``) detects whether that recovery turn
-succeeded. This module is the single source of truth for the vocabulary both
-sides share — the marker prefix, the result-file agent set, and the result-
-block grammar — so the two hooks cannot drift apart (they previously each
-hardcoded all three, and a change on one side silently broke the other).
+succeeded. This module is the single source of truth for the GRAMMAR both sides
+share — the marker prefix and the result-block pattern — so the two hooks cannot
+drift apart (they previously each hardcoded both, and a change on one side
+silently broke the other). WHO has a recovery contract (the result-file /
+stdout-block membership) is owned by the agent-roster registry
+(``track_state.agent_roster`` — rows' ``recovery`` field), so a project overlay
+row extends the contract with zero plugin edits.
 
 Distinct from ``track_state.dispatch.cmd_recover`` (state-machine *resumption*
 after an orchestrator interrupt — it shares the word "recover" but is unrelated
@@ -20,15 +23,6 @@ import re
 # detection on the same prefix substring. If this changes, BOTH hooks must change
 # together — hence the single constant.
 RECOVERY_MARKER = "[Conductor Recovery]"
-
-# Agents whose completion is gated on a fresh ``.conductor/result.json`` (written
-# by the agent, consumed by dispatch-finalize). on-subagent-stop triggers a
-# recovery turn when this file is stale/missing for these agents; the PostToolUse
-# filter routes a missing result block to dispatch-finalize for the SAME set.
-# Defined once here so the two hooks agree on who is a "result-file agent" —
-# adding one is a single-line change (Tier 2 #21 will extend this, noting those
-# agents' finalize path differs).
-RESULT_FILE_AGENT_TYPES = frozenset({"task-executor", "explorer"})
 
 # The result-block grammar (e.g. ``---TASK RESULT---`` / ``---END RESULT---``,
 # ``---END CHECKPOINT RESULT---``). on-subagent-stop checks an agent emitted its
@@ -110,15 +104,16 @@ def parse_result_block(text):
 # extra turns instead of burning its whole ``maxTurns`` budget before Layer-2
 # synthesis engages. Counted per locked task and reset when a new task is locked
 # (see ``track_state.mutations._do_lock`` / ``increment_recovery_turns``). Lives
-# here alongside ``RESULT_FILE_AGENT_TYPES`` so the SubagentStop hook and the
-# state-machine counter share one vocabulary.
+# here beside the grammar so the SubagentStop hook and the state-machine counter
+# share one vocabulary.
 MAX_RECOVERY_TURNS = 2
 RECOVERY_TURN_FIELD = "recovery_turns"  # track-state.json key on the locked task
 
 
 # --- Session-scoped recovery counter (STDOUT-block agents) -------------------
 #
-# Result-file agents (task-executor, explorer) bound their recovery turns on the
+# Result-file agents (the roster's recovery: "result-file" rows) bound their
+# recovery turns on the
 # LOCKED TASK (``track_state.mutations.increment_recovery_turns``) — they always
 # run under a (phase, task, subtask) cursor. STDOUT-block agents (spec-reviewer,
 # code-reviewer, phase-checker, ...) do NOT — they run pre-state (new-track §2.4)

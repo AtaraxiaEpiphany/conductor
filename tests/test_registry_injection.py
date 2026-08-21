@@ -10,8 +10,8 @@ full catalog on demand via ``track-state registry-doc`` (a tier-B join, pinned
 in test_registry_doc.py); only the small/per-task resolved bits stay injected.
 
 These are the load-bearing guards that:
-- spec-planner is NOT in _REGISTRY_AGENTS (it fetches the vocab via registry-doc;
-  the floor + reminder still arrive, but no registry block).
+- spec-planner's roster row has no registry_injection (it fetches the vocab via
+  registry-doc; the floor + reminder still arrive, but no registry block).
 - task-executor sees this task's leading-tag profile (and its on-demand
   `workflow` pointer when the tag carries one) and the resolved exemption sets.
 - the registry block is ordered between the reminder and any retry block.
@@ -97,8 +97,9 @@ _FAILURE_HANDOFF = """# Handoff: demo
 
 class PlannerOnDemandTests(TestCase):
     """spec-planner fetches the full tag catalog on demand via
-    ``track-state registry-doc`` (§3.1) — it is NOT in ``_REGISTRY_AGENTS``, so
-    the SubagentStart hook injects no ``[Conductor Registry]`` block for it. The
+    ``track-state registry-doc`` (§3.1) — its roster row carries no
+    ``registry_injection: true``, so the SubagentStart hook injects no
+    ``[Conductor Registry]`` block for it. The
     full catalog is a tier-B join (large + not per-task), so only the
     small/per-task resolved bits stay hook-injected (task-executor's leading-tag
     profile). These tests pin the deliberate removal: spec-planner gets the
@@ -107,12 +108,9 @@ class PlannerOnDemandTests(TestCase):
     in test_registry_doc.py)."""
 
     def test_planner_not_in_registry_agents(self):
-        import importlib.util
-        hspec = importlib.util.spec_from_file_location(
-            "oss_planner", _scripts / "on-subagent-start.py")
-        hook = importlib.util.module_from_spec(hspec)
-        hspec.loader.exec_module(hook)
-        self.assertNotIn("spec-planner", hook._REGISTRY_AGENTS)
+        sys.path.insert(0, str(_scripts))
+        from track_state import agent_roster as ar
+        self.assertNotIn("spec-planner", ar.registry_agents())
 
     def test_planner_receives_no_registry_block(self):
         ctx = _run("spec-planner").get("hookSpecificOutput", {}).get("additionalContext", "")

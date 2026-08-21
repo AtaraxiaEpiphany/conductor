@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """SubagentStart hook: inject the safety floor + result-format reminder.
 
-Reads hook input from stdin, outputs JSON with additionalContext. For every known
-Conductor subagent the output is: the universal safety floor
+Reads hook input from stdin, outputs JSON with additionalContext. The hook
+matcher is matcherless (fires for every subagent); the merged agent-roster
+registry (``track_state.agent_roster``) gates who gets what. For every ROSTERED
+agent the output is: the universal safety floor
 (``runtime/subagent-firewall.md``), then the agent's result-format reminder.
-Unknown agent types get no context (the SubagentStart matcher gates which agents
-fire this hook at all).
+Unrostered agent types fast-no-op with no context — dispatchable (the harness
+resolves the name), just no conductor scaffold (the pre-registry unknown-name
+behavior, now the fail-open floor for everyone).
 
 For retry-context agents (task-executor), a third piece is appended when the
 locked task has a prior failed attempt: the most recent ``### Attempt ❌`` record
@@ -59,53 +62,32 @@ def _load_safety_floor() -> str:
         return ""
 
 
-# Result-format reminders. Agent markdown files already define full role behavior;
-# only the delimiter format is reinforced here — filter-subagent-output.py depends
-# on it being present in the subagent's emitted output.
-AGENT_REMINDERS = {
-    "task-executor": "[Conductor] Result format: ---TASK RESULT--- ... ---END RESULT---",
-    "code-reviewer": "[Conductor] Result format: ---REVIEW RESULT--- ... ---END REVIEW RESULT---",
-    "explorer": "[Conductor] Result format: ---TASK RESULT--- ... ---END RESULT---",
-    "phase-checker": "[Conductor] Result format: ---CHECKPOINT RESULT--- ... ---END RESULT---",
-    "ac-tracer": "[Conductor] Result format: ---AC TRACE RESULT--- ... ---END RESULT---",
-    "build-runner": "[Conductor] Result format: ---BUILD VERIFY RESULT--- ... ---END RESULT---",
-    "test-runner": "[Conductor] Result format: ---L1 VERIFY RESULT--- ... ---END RESULT---",
-    "corpus-writer": "[Conductor] Result format: ---DOC SYNC RESULT--- ... ---END RESULT---",
-    "wiki-synthesizer": "[Conductor] Result format: ---DOC SYNC RESULT--- ... ---END RESULT---",
-    "doc-linter": "[Conductor] Result format: ---DOC LINT RESULT--- ... ---END RESULT---",
-    "skip-analyst": "[Conductor] Result format: ---SKIP ANALYSIS--- ... ---END ANALYSIS---",
-    "failure-analyst": "[Conductor] Result format: ---FAILURE ANALYSIS--- ... ---END ANALYSIS---",
-    "spec-planner": "[Conductor] Result format: ---SPEC PLAN RESULT--- ... ---END SPEC PLAN RESULT---",
-    "spec-reviewer": "[Conductor] Result format: ---REVIEW RESULT--- ... ---END REVIEW RESULT---",
-    "project-analyzer": "[Conductor] Result format: ---ANALYSIS RESULT--- ... ---END ANALYSIS RESULT---",
-    "wiki-differ": "[Conductor] Result format: ---WIKI DIFF RESULT--- ... ---END RESULT---",
-    "wiki-researcher": "[Conductor] Result format: ---WIKI RESEARCH RESULT--- ... ---END RESULT---",
-    "refuter": "[Conductor] Result format: ---REFUTATION RESULT--- ... ---END RESULT---",
-    "command-digester": "[Conductor] Result format: keyed on PURPOSE — red|coverage → ---TEST DIGEST RESULT--- ... ---END RESULT---; log-verify → ---LOG CHECK RESULT--- ... ---END RESULT---",
-    "doc-probe": "[Conductor] Result format: ---PROBE RESULT--- ... ---END RESULT---",
-    "apply-fixes": "[Conductor] Result format: ---FIX RESULT--- ... ---END RESULT---",
-    "refactorer": "[Conductor] Result format: ---REFACTOR RESULT--- ... ---END RESULT---",
-    "strategy-writer": "[Conductor] Result format: ---STRATEGY RESULT--- ... ---END RESULT---",
-}
+# Result-format reminders live in the agent-roster registry (the third
+# registry): ``reminder_for(name)`` composes the "[Conductor] Result format: "
+# lead + the row's ``fence``. Agent markdown files already define full role
+# behavior; only the delimiter format is reinforced at dispatch —
+# filter-subagent-output.py depends on it being present in the subagent's
+# emitted output. The same roster owns the retry-context set (``retry``) and the
+# registry-vocab injection set (``registry_injection``) — one overlay row gives
+# a project agent the whole scaffold with zero plugin edits.
 
 
-# Agents whose re-dispatch carries prior-failure context. task-executor is THE
-# retry agent (attempt 2+); explorer and the stdout-block agents are dispatched
-# fresh, so they are excluded — injecting a stale failure record into a non-retry
-# dispatch would mislead. Add here if another agent gains retry semantics.
-_RETRY_AGENTS = {"task-executor"}
+def _roster():
+    """The agent-roster registry module, or ``None`` when unimportable.
 
-# Agents that receive the resolved registry-vocab block (task-type tags).
-# This is how a project overlay's tags flow end-to-end to the agent-prose
-# layer: task-executor is data-driven by injection here (its OWN task's leading-
-# tag profile — small + per-task-resolved, tier A). spec-reviewer and refuter
-# AUDIT tag membership — they receive the vocab WITH the review flags
-# (over_tag_risk) so their prose can defer to the flags instead of restating
-# which tags carry them (a restated set is the first thing to drift). spec-planner
-# is NOT here: it needs the FULL tag catalog (a tier-B join), which it fetches on
-# demand via `track-state registry-doc` (§3.1) — only the small/resolved bits stay
-# injected. Add here if another agent should see the resolved vocab at dispatch.
-_REGISTRY_AGENTS = {"task-executor", "spec-reviewer", "refuter"}
+    Function-level import (the established ``track_state`` pattern — see
+    :func:`_resolve_locked_task_type`; hooks run with ``scripts/`` on
+    ``sys.path``). ``None`` keeps every caller fail-open (no reminder /
+    injection / retry context — the unrostered behavior), never a crashed
+    dispatch hook; the registry's own missing/malformed floor is the empty
+    roster with a stderr warning (see ``agent_roster``).
+    """
+    try:
+        from track_state import agent_roster
+        return agent_roster
+    except Exception:
+        return None
+
 
 _REGISTRY_LEAD = (
     "[Conductor Registry] The closed task-type tag set below is resolved at "
@@ -226,7 +208,11 @@ def _retry_context(cwd, agent_type):
     floor/reminder injection that is the hook's primary contract — a retry nudge
     that risks the safety floor is worse than none.
     """
-    if agent_type not in _RETRY_AGENTS:
+    # Retry context is roster-driven (``retry: true`` rows — task-executor is
+    # THE retry agent; explorer and the stdout-block agents dispatch fresh, so
+    # injecting a stale failure record into a non-retry dispatch would mislead).
+    roster = _roster()
+    if roster is None or agent_type not in roster.retry_agents():
         return None
     try:
         locked = resolve_locked_task(cwd)
@@ -406,9 +392,12 @@ def _registry_context(agent_type, cwd):
     registry block that risks the safety floor is worse than none. Mirrors
     :func:`_retry_context`'s fail-open posture.
 
-    Returns ``None`` for agents outside :data:`_REGISTRY_AGENTS`.
+    Returns ``None`` for agents whose roster row lacks ``registry_injection:
+    true`` (task-executor + spec-reviewer + refuter; spec-planner deliberately
+    fetches the full catalog on demand via ``registry-doc`` — the tier-B join).
     """
-    if agent_type not in _REGISTRY_AGENTS:
+    roster = _roster()
+    if roster is None or agent_type not in roster.registry_agents():
         return None
     try:
         if agent_type == "task-executor":
@@ -584,11 +573,14 @@ def main():
     # Reset the round tripwire counter for a fresh task-executor dispatch.
     _reset_tripwire_counter(cwd, agent_type)
 
-    # Get reminder for this agent type
-    reminder = AGENT_REMINDERS.get(agent_type, "")
+    # Get the reminder for this agent type from the merged roster (the fence
+    # row). Unrostered → no reminder → fast no-op (fail-open: the agent
+    # dispatches, it just gets no conductor scaffold).
+    roster = _roster()
+    reminder = roster.reminder_for(agent_type) if roster is not None else None
 
     if not reminder:
-        # Unknown agent type — emit no context (the matcher gates this in practice).
+        # Unrostered agent type — emit no context (the roster gates this).
         write_simple_output()
         return
 

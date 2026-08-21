@@ -32,6 +32,7 @@ fence, and the parser contract so the call sites can't drift.
 import importlib.util
 import json
 import re
+import sys
 import unittest
 from pathlib import Path
 
@@ -42,7 +43,6 @@ TASK_EXECUTOR = (AGENTS / "task-executor.md").read_text(encoding="utf-8")
 DOC_LINTER = (AGENTS / "doc-linter.md").read_text(encoding="utf-8")
 COMMAND_DIGESTER = (AGENTS / "command-digester.md").read_text(encoding="utf-8")
 HOOKS = (ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8")
-ON_START = (ROOT / "scripts" / "on-subagent-start.py").read_text(encoding="utf-8")
 
 # Anti-proliferation allowlist: the only agents that may hold the ``Agent`` tool
 # (i.e. dispatch a nested child). Each entry is a fenced, single-purpose exception
@@ -246,45 +246,47 @@ class DocLinterNestingTests(unittest.TestCase):
 
 
 class HookWiringTests(unittest.TestCase):
-    """The 3-way lockstep: agents/*.md ↔ SubagentStart matcher ↔ AGENT_REMINDERS.
-    test_on_subagent_start enforces this at the suite level; these assertions pin
-    command-digester's specific entries."""
+    """The 3-way lockstep: agents/*.md ↔ agent-roster row ↔ hook derivation.
+    test_on_subagent_start enforces this at the suite level; these assertions
+    pin command-digester's specific entries."""
 
-    def _matcher_agents(self, event):
+    def test_command_digester_rostered_with_purpose_keyed_fence(self):
+        # The roster row is load-bearing, not cosmetic: an unrostered agent
+        # gets no floor/reminder (the `if not reminder` early-return). The
+        # fence is PURPOSE-keyed — it must name BOTH result block formats.
+        sys.path.insert(0, str(ROOT / "scripts"))
+        from track_state import agent_roster as ar
+        reminder = ar.reminder_for("command-digester")
+        self.assertIsNotNone(reminder)
+        self.assertIn("---TEST DIGEST RESULT---", reminder)
+        self.assertIn("---LOG CHECK RESULT---", reminder)
+
+    def test_command_digester_has_no_recovery_contract(self):
+        # command-digester is a leaf analysis child (emits a RESULT block,
+        # writes no result.json). It belongs to the no-recovery-contract rows —
+        # NOT the result-file or stdout-block recovery sets.
+        sys.path.insert(0, str(ROOT / "scripts"))
+        from track_state import agent_roster as ar
+        self.assertEqual(ar.recovery_kind_for("command-digester"), "none")
+        self.assertNotIn("command-digester", ar.result_file_agents())
+        self.assertNotIn("command-digester", ar.stdout_block_agents())
+
+    def test_subagent_matchers_are_matcherless(self):
+        # Both subagent matchers dropped their name alternations (the roster
+        # gates) — command-digester reaches the hooks with the built-ins.
         data = json.loads(HOOKS)
-        matched = set()
-        for entry in data["hooks"][event]:
-            matched.update(a.strip() for a in entry["matcher"].split("|"))
-        return matched
-
-    def test_subagentstart_matcher_includes_command_digester(self):
-        self.assertIn("command-digester", self._matcher_agents("SubagentStart"))
-
-    def test_subagentstop_async_matcher_includes_command_digester(self):
-        # command-digester is a leaf analysis child (emits a RESULT block, writes
-        # no result.json). It belongs in the async / no-recovery-contract group
-        # with doc-linter, skip-analyst, refuter — NOT the result-file recovery
-        # set.
-        self.assertIn("command-digester",
-                      self._matcher_agents("SubagentStop"))
-
-    def test_merged_agent_names_gone_from_matchers(self):
-        # The merge must not leave the dead names in any matcher — a stale entry
-        # matches nothing (the agent file is gone) but rots as drift.
         for event in ("SubagentStart", "SubagentStop"):
-            self.assertNotIn("test-digester", self._matcher_agents(event))
-            self.assertNotIn("log-checker", self._matcher_agents(event))
+            for entry in data["hooks"][event]:
+                self.assertNotIn("matcher", entry)
 
-    def test_on_subagent_start_reminder_registered(self):
-        # CRITICAL coupling: on-subagent-start drops the safety floor entirely for
-        # any matched agent NOT in AGENT_REMINDERS (the `if not reminder`
-        # early-return). Adding command-digester to the matcher alone would
-        # silently strip its floor — the reminder registration is load-bearing,
-        # not cosmetic. The reminder is PURPOSE-keyed: it must name BOTH result
-        # block formats.
-        self.assertIn('"command-digester"', ON_START)
-        self.assertIn("---TEST DIGEST RESULT---", ON_START)
-        self.assertIn("---LOG CHECK RESULT---", ON_START)
+    def test_merged_agent_names_gone_from_roster(self):
+        # The merge must not leave the dead names in the roster — a stale row
+        # claims a scaffold for an agent file that is gone.
+        sys.path.insert(0, str(ROOT / "scripts"))
+        from track_state import agent_roster as ar
+        names = set(ar.merged_agent_names())
+        self.assertNotIn("test-digester", names)
+        self.assertNotIn("log-checker", names)
 
 
 class CoverageParserTests(unittest.TestCase):
