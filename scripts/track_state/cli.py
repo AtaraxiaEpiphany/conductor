@@ -285,8 +285,8 @@ COMMAND_HELP = {
                         "Update track entry in Tracks Registry (tracks.md)"),
     "registry-add": ("registry-add <track-dir> [<tracks-md-path>]",
                      "Append the canonical entry for a track to tracks.md (idempotent; auto-locates registry)"),
-    "registry-doc": ("registry-doc [--tag <Name>] [--shape <name>]",
-                     "Render the resolved task-type + workflow-shape registries (baseline ⊕ overlay) as tables. Read-only — no track-dir, no writes. --tag/--shape render ONE entity's row plus its workflow/planning-docfile prose (the on-demand payload agents fetch)."),
+    "registry-doc": ("registry-doc [--tag <Name>] [--shape <name>] [--roster <agent>]",
+                     "Render the resolved task-type + workflow-shape + agent-roster registries (baseline ⊕ overlay) as tables. Read-only — no track-dir, no writes. --tag/--shape render ONE entity's row plus its workflow/planning-docfile prose (the on-demand payload agents fetch); --roster renders ONE agent's scaffold row plus its result-format fence + recovery instruction verbatim."),
     "shape-studio": ("shape-studio [--port <n>] [--host <addr>] [--project-dir <dir>]\n"
                      "             [--baseline] [--no-browser]",
                      "Launch the read/write workflow-registry visualizer — a local stdlib web UI "
@@ -656,17 +656,19 @@ def main():
             # new-track skill never hand-computes the path.
             cmd_registry_add(track_dir, pos[0] if pos else None)
         elif cmd == "registry-doc":
-            # Read-only render of the resolved task-type + workflow-shape
-            # registries (baseline ⊕ overlay). No track-dir, no writes. Optional
-            # --tag/--shape filters render ONE entity's row plus its workflow/
-            # planning-docfile prose verbatim — the on-demand payload agents
-            # fetch instead of having it always injected.
+            # Read-only render of the resolved task-type + workflow-shape +
+            # agent-roster registries (baseline ⊕ overlay). No track-dir, no
+            # writes. Optional --tag/--shape/--roster filters render ONE
+            # entity's row plus its workflow/planning-docfile/scaffold prose
+            # verbatim — the on-demand payload agents fetch instead of having
+            # it always injected.
             #
             # registry-doc takes NO track-dir, so its flags start at argv[2] —
             # scan the full remainder, not the post-track-dir ``args`` slice
             # (which would eat the first flag as a phantom track-dir).
             rest = sys.argv[2:]
-            cmd_registry_doc(tag=flag(rest, "--tag"), shape=flag(rest, "--shape"))
+            cmd_registry_doc(tag=flag(rest, "--tag"), shape=flag(rest, "--shape"),
+                             roster=flag(rest, "--roster"))
         elif cmd == "shape-studio":
             # No track-dir: flags start at argv[2] (see registry-doc). Serves a
             # local stdlib web UI for the two registries (127.0.0.1 only).

@@ -1,0 +1,136 @@
+{
+  "_comment": "Single source of truth for the dispatch SCAFFOLD each subagent receives (the third registry; the task-type registry says what a node says, the shape registry says the sequence, THIS one says the per-agent dispatch contract: result fence, registry-vocab injection, retry context, single-writer guard, stop-hook recovery). Hooks read this via track_state.agent_roster, never hardcoded Python name sets. An agent ABSENT from the merged roster is unrostered: dispatchable (the harness resolves plugin/project/user name homes) but fail-open with no scaffold. A project gives its agent the scaffold = one row in conductor/workflow/agent-roster.json (project rows added, project wins), zero plugin edits. The result-block GRAMMAR stays in scripts/lib/recovery.py (RESULT_BLOCK_PATTERN) — the fence here is the SubagentStart reminder body, not a parser.",
+  "_fields": {
+    "class": "executor | verifier | reviewer | advisory — the agent's role class. executor derives single_writer=true (the dispatch-dedupe single-writer guard set); every other class derives false. Documents role beyond that default.",
+    "fence": "the exact result-format reminder BODY, without the '[Conductor] Result format: ' lead (the loader composes it). filter-subagent-output extracts via the generic RESULT_BLOCK_PATTERN grammar — the fence reinforces the format, it does not parse it.",
+    "single_writer": "optional bool override of the class-derived default; true => the PreToolUse dedupe guard treats this agent as single-writer-critical (a second in-flight dispatch is denied).",
+    "registry_injection": "true => SubagentStart injects the resolved [Conductor Registry] tag-vocab block at this agent's dispatch. Default false.",
+    "retry": "true => a re-dispatch carries the prior attempt's failure record (the [Conductor Retry] context). Default false.",
+    "recovery": "result-file | stdout-block | none — the SubagentStop completion signal. result-file: a fresh .conductor/result.json gates the stop. stdout-block: the ---END RESULT--- close tag gates it. none (default): no recovery contract, the stop always lands.",
+    "recovery_instruction": "required iff recovery != none — the instruction appended after the '[Conductor Recovery] You stopped without ...' lead on a forced recovery turn (what the agent must IMMEDIATELY do)."
+  },
+  "agents": {
+    "task-executor": {
+      "class": "executor",
+      "fence": "---TASK RESULT--- ... ---END RESULT---",
+      "registry_injection": true,
+      "retry": true,
+      "recovery": "result-file",
+      "recovery_instruction": "IMMEDIATELY call track-state write-result (Section 6.0) and print the ---TASK RESULT--- block. Report FAILURE if you cannot complete."
+    },
+    "code-reviewer": {
+      "class": "reviewer",
+      "fence": "---REVIEW RESULT--- ... ---END REVIEW RESULT---",
+      "recovery": "stdout-block",
+      "recovery_instruction": "IMMEDIATELY print the ---REVIEW RESULT--- block (Section 4.2) and write {TRACK_DIR}/.conductor/review-result.json. Report STATUS: FAILURE with a one-line REASON if the review could not complete."
+    },
+    "explorer": {
+      "class": "executor",
+      "fence": "---TASK RESULT--- ... ---END RESULT---",
+      "recovery": "result-file",
+      "recovery_instruction": "IMMEDIATELY call track-state write-result (Section 5.1) and print the ---TASK RESULT--- block. Report FAILURE if you cannot complete."
+    },
+    "phase-checker": {
+      "class": "verifier",
+      "fence": "---CHECKPOINT RESULT--- ... ---END RESULT---",
+      "recovery": "stdout-block",
+      "recovery_instruction": "IMMEDIATELY print the ---CHECKPOINT RESULT--- block (Section 8.0). Report STATUS: FAILED with a one-line FAILURE_REASON if the checkpoint protocol did not complete; do NOT create a checkpoint commit on this recovery turn."
+    },
+    "ac-tracer": {
+      "class": "verifier",
+      "fence": "---AC TRACE RESULT--- ... ---END RESULT---",
+      "recovery": "stdout-block",
+      "recovery_instruction": "IMMEDIATELY print the ---AC TRACE RESULT--- block (Section 5.0). Report VERDICT: ERROR with a one-line REASON if the integrity check could not complete."
+    },
+    "build-runner": {
+      "class": "verifier",
+      "fence": "---BUILD VERIFY RESULT--- ... ---END RESULT---",
+      "recovery": "stdout-block",
+      "recovery_instruction": "IMMEDIATELY print the ---BUILD VERIFY RESULT--- block (Section 5.0). Report STATUS: error with a one-line REASON if no build command could be resolved or the build could not run at all (a failing build is STATUS: failed, NOT error)."
+    },
+    "test-runner": {
+      "class": "verifier",
+      "fence": "---L1 VERIFY RESULT--- ... ---END RESULT---",
+      "recovery": "stdout-block",
+      "recovery_instruction": "IMMEDIATELY print the ---L1 VERIFY RESULT--- block (Section 5.0). Report STATUS: error with a one-line REASON if the test command could not run at all (a failing suite is STATUS: failed, NOT error)."
+    },
+    "corpus-writer": {
+      "class": "advisory",
+      "fence": "---DOC SYNC RESULT--- ... ---END RESULT---",
+      "recovery": "stdout-block",
+      "recovery_instruction": "IMMEDIATELY print the ---DOC SYNC RESULT--- block (Section 7.0). Report STATUS: FAILURE with a one-line REASON if Phase 1 of the doc sync could not complete."
+    },
+    "wiki-synthesizer": {
+      "class": "advisory",
+      "fence": "---DOC SYNC RESULT--- ... ---END RESULT---",
+      "recovery": "stdout-block",
+      "recovery_instruction": "IMMEDIATELY print the ---DOC SYNC RESULT--- block (Section 6.0). Report STATUS: FAILURE with a one-line REASON if Phase 2 of the doc sync could not complete."
+    },
+    "doc-linter": {
+      "class": "advisory",
+      "fence": "---DOC LINT RESULT--- ... ---END RESULT---"
+    },
+    "skip-analyst": {
+      "class": "advisory",
+      "fence": "---SKIP ANALYSIS--- ... ---END ANALYSIS---"
+    },
+    "failure-analyst": {
+      "class": "advisory",
+      "fence": "---FAILURE ANALYSIS--- ... ---END ANALYSIS---"
+    },
+    "spec-planner": {
+      "class": "advisory",
+      "fence": "---SPEC PLAN RESULT--- ... ---END SPEC PLAN RESULT---",
+      "recovery": "stdout-block",
+      "recovery_instruction": "IMMEDIATELY print the ---SPEC PLAN RESULT--- block (Section 5.0). Report STATUS: FAILURE with a one-line SUMMARY if generation could not complete."
+    },
+    "spec-reviewer": {
+      "class": "reviewer",
+      "fence": "---REVIEW RESULT--- ... ---END REVIEW RESULT---",
+      "registry_injection": true,
+      "recovery": "stdout-block",
+      "recovery_instruction": "IMMEDIATELY print the ---REVIEW RESULT--- block (Section 4.0). You are read-only and non-interactive — do NOT call AskUserQuestion or edit files; just emit the block with what you have: STATUS: APPROVED (clean), STATUS: CHANGES_REQUESTED (+ FINDINGS), or STATUS: FAILURE with a one-line REASON. The ---REVIEW RESULT--- block is the ONLY signal the parent parses for STATUS — without it the parent cannot recover the verdict, so never stop without emitting it."
+    },
+    "project-analyzer": {
+      "class": "advisory",
+      "fence": "---ANALYSIS RESULT--- ... ---END ANALYSIS RESULT---"
+    },
+    "wiki-differ": {
+      "class": "advisory",
+      "fence": "---WIKI DIFF RESULT--- ... ---END RESULT---"
+    },
+    "wiki-researcher": {
+      "class": "advisory",
+      "fence": "---WIKI RESEARCH RESULT--- ... ---END RESULT---"
+    },
+    "refuter": {
+      "class": "reviewer",
+      "fence": "---REFUTATION RESULT--- ... ---END RESULT---",
+      "registry_injection": true
+    },
+    "command-digester": {
+      "class": "advisory",
+      "fence": "keyed on PURPOSE — red|coverage → ---TEST DIGEST RESULT--- ... ---END RESULT---; log-verify → ---LOG CHECK RESULT--- ... ---END RESULT---"
+    },
+    "doc-probe": {
+      "class": "advisory",
+      "fence": "---PROBE RESULT--- ... ---END RESULT---"
+    },
+    "apply-fixes": {
+      "class": "advisory",
+      "fence": "---FIX RESULT--- ... ---END RESULT---",
+      "recovery": "stdout-block",
+      "recovery_instruction": "IMMEDIATELY print the ---FIX RESULT--- block (Section 5.0). Report STATUS: FAILURE with a one-line REASON if the chunk could not be applied; the spine does NOT mark a failed chunk done, so an honest FAILURE re-dispatches it — do not fake SUCCESS."
+    },
+    "refactorer": {
+      "class": "advisory",
+      "fence": "---REFACTOR RESULT--- ... ---END RESULT---",
+      "recovery": "stdout-block",
+      "recovery_instruction": "IMMEDIATELY print the ---REFACTOR RESULT--- block (Section 5.0). Report STATUS: FAILURE with a one-line REASON if the refactor could not complete; the seam is non-blocking, so an honest FAILURE just proceeds — do not fake SUCCESS."
+    },
+    "strategy-writer": {
+      "class": "advisory",
+      "fence": "---STRATEGY RESULT--- ... ---END RESULT---"
+    }
+  }
+}

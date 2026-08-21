@@ -1713,18 +1713,20 @@ def cmd_registry_add(track_dir, tracks_md_path=None):
              line=line, registry=str(reg)))
 
 
-def cmd_registry_doc(tag=None, shape=None):
-    """Render the RESOLVED task-type + workflow-shape registries
+def cmd_registry_doc(tag=None, shape=None, roster=None):
+    """Render the RESOLVED task-type + workflow-shape + agent-roster registries
     (baseline ⊕ overlay) — the live-data view complementing the grammar-only
-    contract. Two on-demand filters: ``--tag`` / ``--shape`` render one entity's
-    row plus its prompt-shaping prose verbatim. Strictly read-only; fail-open
-    everywhere.
+    contract. Three on-demand filters: ``--tag`` / ``--shape`` / ``--roster``
+    render one entity's row plus its prompt-shaping prose verbatim. Strictly
+    read-only; fail-open everywhere.
     """
     # Local import: these modules are read by the phase-checker/dispatch paths and
     # resolve the overlay via the project root; importing here (not at module top)
     # keeps the render self-contained and avoids any import-order coupling.
     from . import task_profiles as tp
     from . import workflow_shapes as ws
+    from . import agent_roster as ar
+    from .registry_validate import validate_merged_roster
 
     def _yesno(b):
         return "yes" if b else "no"
@@ -1765,6 +1767,17 @@ def cmd_registry_doc(tag=None, shape=None):
         policy = ws.verify_policy_for(shape)
         stop = ws.stop_condition_for(shape)
         return f"| `{shape}` | {nodes} | {verifiers} | `{policy}` | `{stop}` |"
+
+    def _roster_row(agent):
+        """One registry-derived table row for a rostered agent (full + filtered)."""
+        row = ar.row_for(agent) or {}
+        return (
+            f"| `{agent}` | `{row.get('class', '?')}` | "
+            f"{_yesno(ar.is_single_writer(agent))} | "
+            f"{_yesno(row.get('registry_injection') is True)} | "
+            f"{_yesno(row.get('retry') is True)} | "
+            f"`{ar.recovery_kind_for(agent)}` |"
+        )
 
     # --- filtered payloads ---------------------------------------------------
     # The on-demand path: one entity's row + its prompt-shaping prose verbatim.
@@ -1922,6 +1935,47 @@ def cmd_registry_doc(tag=None, shape=None):
                   f"`conductor/workflow/workflow-shapes.json` to add it.")
         return
 
+    if roster is not None:
+        if ar.row_for(roster) is not None:
+            print(f"# Agent Roster: `{roster}` "
+                  f"(resolved: plugin baseline ⊕ project overlay)")
+            print()
+            print("| Agent | Class | Single-writer | Registry-injection | Retry | Recovery |")
+            print("|---|---|---|---|---|---|")
+            print(_roster_row(roster))
+            print()
+            # The fence verbatim: this is the exact string composed into the
+            # SubagentStart reminder (REMINDER_LEAD + fence) — the one facet
+            # every dispatch depends on and the reason a row exists.
+            print(f"## Result-format fence for `{roster}` "
+                  f"(SubagentStart injects it verbatim)")
+            print()
+            print(f"`{ar.reminder_for(roster)}`")
+            rec = ar.recovery_instruction_for(roster)
+            if rec:
+                print()
+                print(f"## Recovery instruction for `{roster}` "
+                      f"(appended after the [Conductor Recovery] lead)")
+                print()
+                print(rec)
+            errs = validate_merged_roster(ar._load())  # noqa: SLF001 — registry-internal resolved-doc lookup
+            if errs:
+                print()
+                print("## WARNING: resolved roster validation errors")
+                print()
+                for e in errs:
+                    print(f"- {e}")
+        else:
+            # Fail-open, mirroring the tag/shape arms: an unknown agent is
+            # surfaced, never raised (the *lint* hard-errors on dead names).
+            print(f"# Agent Roster: `{roster}` — UNKNOWN to the resolved roster")
+            print()
+            print(f"`{roster}` is unrostered: it dispatches fine (the harness "
+                  f"resolves the three name homes) but receives no scaffold — "
+                  f"no reminder, no recovery contract, fail-open. To scaffold "
+                  f"it, add one row in `conductor/workflow/agent-roster.json`.")
+        return
+
     # --- full overview (no filter) -------------------------------------------
     print("# Conductor Registry (resolved: plugin baseline ⊕ project overlay)")
     print()
@@ -1981,6 +2035,33 @@ def cmd_registry_doc(tag=None, shape=None):
           "`test-runner` simply doesn't fan it out). `default` is the loop the "
           "conductor has always run, now declared rather than hardcoded.")
     print()
+
+    # --- Agent roster (the dispatch scaffold) --------------------------------
+    agents = ar.merged_agent_names()
+    print(f"## Agent Roster ({len(agents)})")
+    print()
+    print("| Agent | Class | Single-writer | Registry-injection | Retry | Recovery |")
+    print("|---|---|---|---|---|---|")
+    for agent in agents:
+        print(_roster_row(agent))
+    print()
+    print("The dispatch SCAFFOLD each agent receives (result fence, registry "
+          "injection, retry context, single-writer guard, stop-hook recovery). "
+          "The fence body and recovery instruction render verbatim on demand "
+          "(`track-state registry-doc --roster <agent>`). An agent absent from "
+          "this table is *unrostered*: dispatchable but fail-open with no "
+          "scaffold — the pre-registry behavior for built-in agents. A project "
+          "scaffolds its own agent with one row in "
+          "`conductor/workflow/agent-roster.json`.")
+    print()
+    roster_errs = validate_merged_roster(ar._load())  # noqa: SLF001 — registry-internal resolved-doc lookup
+    if roster_errs:
+        print("**WARNING — resolved roster validation errors** (the read is "
+              "fail-open; `track-state check` fails on these):")
+        print()
+        for e in roster_errs:
+            print(f"- {e}")
+        print()
 
 
 def cmd_record_summary(track_dir):

@@ -1,7 +1,8 @@
-"""Strict-write validation for the two workflow registries.
+"""Strict-write validation for the three workflow registries.
 
 The registries are **fail-open on read** (``workflow_shapes.resolve_shape`` /
-``task_profiles._profile`` fall back to ``default`` + a WARNING on a typo), so a
+``task_profiles._profile`` fall back to ``default`` + a WARNING on a typo;
+``agent_roster`` row accessors degrade to the unrostered behavior), so a
 malformed row degrades *silently* at dispatch. That is the right behavior for a
 running conductor — a typo must never block dispatch. But it is the wrong
 behavior for an *edit*: the workflow-studio editor (and the ``registry-save``
@@ -78,6 +79,19 @@ CHECKPOINT_POLICIES = ("run", "skip-if-declared")
 #: Dispatch category for a task type (`route` field).
 ROUTES = ("manual", "explore", "executor")
 
+#: Agent-roster role classes (the `class` field). `executor` derives
+#: single_writer=true (the dispatch-dedupe single-writer guard set); every
+#: other class derives false — an explicit `single_writer` override is the
+#: only way to differ.
+AGENT_CLASSES = ("executor", "verifier", "reviewer", "advisory")
+
+#: How a SubagentStop recovery contract is gated (`recovery` field).
+#: `result-file` = a fresh .conductor/result.json gates the stop;
+#: `stdout-block` = the ---END RESULT--- close tag gates it; `none` (default)
+#: no recovery contract. Each non-`none` kind pairs with a
+#: `recovery_instruction` (the two-homes guard below enforces the pairing).
+RECOVERY_KINDS = ("result-file", "stdout-block", "none")
+
 #: The name grammar for a `workflow_doc` row field: a BARE ``.md`` filename in
 #: the workflow steps library (``templates/workflow/steps/`` plugin side,
 #: ``conductor/workflow/steps/`` project side). No path separators, no leading
@@ -102,6 +116,15 @@ _KNOWN_TAG_FIELDS = frozenset({
 # Tag fields that must be booleans.
 _TAG_BOOL_FIELDS = ("tdd_exempt", "coverage_exempt", "refactor",
                     "auto_propose", "over_tag_risk")
+
+# Roster fields that must be booleans when present.
+_ROSTER_BOOL_FIELDS = ("single_writer", "registry_injection", "retry")
+
+# Known per-row roster fields (everything else on a row is a typo → error).
+_KNOWN_ROSTER_FIELDS = frozenset({
+    "class", "fence", "single_writer", "registry_injection", "retry",
+    "recovery", "recovery_instruction",
+})
 
 # Shape field → its closed vocabulary (for the list-valued and scalar-valued
 # vocab fields). `nodes`/`verifiers`/`gates` are lists whose members must be in
@@ -404,4 +427,117 @@ def validate_merged_task_types(merged) -> list[str]:
     if isinstance(merged, dict) and not isinstance(merged.get("default"), dict):
         errs.append(
             "merged task-type registry must declare a top-level 'default' object")
+    return errs
+
+
+# --- agent roster (the dispatch-scaffold axis) --------------------------------
+#
+# Same strict-on-present / structural-on-missing philosophy as the two
+# registries above: an overlay fragment declaring only ``{"agents": {...}}``
+# is valid (it merges over the baseline); the resolved-result check
+# (:func:`validate_merged_roster`) owns the one post-merge invariant.
+
+_ROSTER_TOP_KEYS = frozenset({"agents", "_comment", "_fields"})
+
+
+def validate_agent_row(name: str, row) -> list[str]:
+    """Errors for a single agent-roster row. Empty list = valid.
+
+    Enforces: `class` in the closed vocabulary (and required — the
+    single_writer default derives from it, so a classless row is a broken
+    derivation, not a missing optional); `fence` a non-empty string (the
+    SubagentStart reminder composes from it); bool fields boolean;
+    `recovery` in its vocabulary, PAIRED with a non-empty
+    `recovery_instruction` iff the kind is not ``none`` (a recovery turn with
+    no instruction, or an orphaned instruction, is the two-homes drift the
+    pairing guard rejects).
+    """
+    errs: list[str] = []
+    for k in row:
+        if k not in _KNOWN_ROSTER_FIELDS:
+            errs.append(f"agent {name!r}: unknown field {k!r}")
+
+    cls = row.get("class")
+    if cls is None:
+        errs.append(f"agent {name!r}: 'class' is required "
+                    f"(executor|verifier|reviewer|advisory)")
+    elif cls not in AGENT_CLASSES:
+        errs.append(
+            f"agent {name!r}: class={cls!r} not in {list(AGENT_CLASSES)}")
+
+    fence = row.get("fence")
+    if not isinstance(fence, str) or not fence:
+        errs.append(f"agent {name!r}: 'fence' must be a non-empty string "
+                    f"(the SubagentStart reminder composes from it)")
+
+    for b in _ROSTER_BOOL_FIELDS:
+        if b in row and not isinstance(row[b], bool):
+            errs.append(f"agent {name!r}: {b} must be a boolean")
+
+    kind = row.get("recovery", "none")
+    if kind not in RECOVERY_KINDS:
+        errs.append(
+            f"agent {name!r}: recovery={kind!r} not in {list(RECOVERY_KINDS)}")
+        kind = None  # skip the pairing check — the kind itself is the error
+    instr = row.get("recovery_instruction")
+    if kind is not None:
+        if kind != "none":
+            if not isinstance(instr, str) or not instr:
+                errs.append(
+                    f"agent {name!r}: recovery={kind!r} requires a non-empty "
+                    f"'recovery_instruction' (what the agent must IMMEDIATELY "
+                    f"do on its recovery turn)")
+        elif instr is not None:
+            errs.append(
+                f"agent {name!r}: 'recovery_instruction' set but recovery is "
+                f"{row.get('recovery')!r} — an instruction without a recovery "
+                f"kind never fires; set recovery or drop the instruction")
+    return errs
+
+
+def validate_agent_roster(doc) -> list[str]:
+    """Errors for an agent-roster document fragment. Validates whatever keys
+    are PRESENT (an overlay fragment with only ``agents`` is fine); does NOT
+    require anything — the resolved-result check is
+    :func:`validate_merged_roster`. Empty list = valid.
+    """
+    if not isinstance(doc, dict):
+        return ["agent roster top-level must be an object"]
+    errs: list[str] = []
+    for k in doc:
+        if k not in _ROSTER_TOP_KEYS:
+            errs.append(
+                f"unknown top-level key {k!r} (allowed: agents)")
+
+    agents = doc.get("agents")
+    if agents is not None:
+        if not isinstance(agents, dict):
+            errs.append("'agents' must be an object")
+        else:
+            for name, row in agents.items():
+                if not isinstance(row, dict):
+                    errs.append(f"agent {name!r} must be an object")
+                    continue
+                errs.extend(validate_agent_row(name, row))
+    return errs
+
+
+def validate_merged_roster(merged) -> list[str]:
+    """Errors for a RESOLVED (baseline ⊕ overlay) agent-roster document.
+
+    Adds to :func:`validate_agent_roster` the one invariant that only holds
+    post-merge: the resolved document must carry an ``agents`` OBJECT
+    (possibly empty — the empty roster IS the fail-open floor, "no scaffold",
+    and is never an error state; a project *fragment* may omit the key, a
+    *resolved* result may not). The single_writer derivation itself
+    (``explicit bool override, else class == executor``) is single-homed in
+    ``agent_roster.is_single_writer``; this validator checks the inputs it
+    derives from (class enum + bool-typed override) so the derivation can
+    never see a malformed operand.
+    """
+    errs = validate_agent_roster(merged)
+    if isinstance(merged, dict) and not isinstance(merged.get("agents"), dict):
+        errs.append(
+            "merged agent roster must declare an 'agents' object "
+            "(possibly empty — the fail-open floor)")
     return errs
