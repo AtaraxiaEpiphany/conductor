@@ -71,3 +71,30 @@ Selection is control flow (code); the choice is the user's (one confirm).
 
 **Avoid:** *shape inference* (implies silent, unconfirmed selection — the
 proposal is always surfaced, and consequential shapes are confirmed).
+
+## agent roster
+
+The third registry (`templates/workflow/agent-roster.json` baseline ⊕
+`conductor/workflow/agent-roster.json` overlay, project rows added/wins):
+one row per scaffolded agent — `class` (executor / verifier / reviewer /
+advisory, deriving the single-writer default), `fence` (the exact
+result-format reminder string), and override flags. The roster contracts
+**named** agents; it never selects them. An agent absent from the merged
+roster is *unrostered*: it dispatches fine (the harness resolves three
+name homes) and runs fail-open with no scaffold — the declared-names lint
+is the guard, not a runtime deny.
+
+**Avoid:** *agent registry* (reads as a fourth task-semantics registry —
+this one contracts dispatch behavior), *scaffold map* (it is merged
+overlay data, not a generated artifact).
+
+## scaffold contract
+
+The bundle the roster grants a dispatched agent: the result fence
+(SubagentStart reminder + `filter-subagent-output` extraction), the
+registry-vocab injection, prior-failure retry context, and the
+single-writer dedupe guard. Registry owns the contract; the agent body
+owns behavior — the docfile invariant applied to dispatch.
+
+**Avoid:** *agent contract* (ambiguous — sounds like the body), *result
+contract* (names one facet of the bundle).
