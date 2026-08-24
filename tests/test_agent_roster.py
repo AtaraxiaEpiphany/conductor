@@ -68,6 +68,122 @@ GOLDEN_STDOUT_BLOCK = (
     "spec-reviewer", "apply-fixes", "refactorer",
 )
 
+# Every baseline row field-by-field (design D6). The set-level goldens above
+# pin MEMBERSHIP; this pins each row's own class/fence/recovery fields, so a
+# census-neutral class swap, a fence edit, or a recovery_instruction
+# rewording fails with the row named. An absent ``recovery`` key means
+# "none"; an absent ``recovery_instruction`` reads as ``""`` through the
+# accessor (fail-open).
+GOLDEN_ROWS = {
+    "task-executor": ("executor", "---TASK RESULT--- ... ---END RESULT---",
+                      "result-file",
+                      "IMMEDIATELY call track-state write-result (Section 6.0) "
+                      "and print the ---TASK RESULT--- block. Report FAILURE "
+                      "if you cannot complete."),
+    "code-reviewer": ("reviewer", "---REVIEW RESULT--- ... ---END REVIEW RESULT---",
+                      "stdout-block",
+                      "IMMEDIATELY print the ---REVIEW RESULT--- block "
+                      "(Section 4.2) and write {TRACK_DIR}/.conductor/"
+                      "review-result.json. Report STATUS: FAILURE with a "
+                      "one-line REASON if the review could not complete."),
+    "explorer": ("executor", "---TASK RESULT--- ... ---END RESULT---",
+                 "result-file",
+                 "IMMEDIATELY call track-state write-result (Section 5.1) "
+                 "and print the ---TASK RESULT--- block. Report FAILURE if "
+                 "you cannot complete."),
+    "phase-checker": ("verifier", "---CHECKPOINT RESULT--- ... ---END RESULT---",
+                      "stdout-block",
+                      "IMMEDIATELY print the ---CHECKPOINT RESULT--- block "
+                      "(Section 8.0). Report STATUS: FAILED with a one-line "
+                      "FAILURE_REASON if the checkpoint protocol did not "
+                      "complete; do NOT create a checkpoint commit on this "
+                      "recovery turn."),
+    "ac-tracer": ("verifier", "---AC TRACE RESULT--- ... ---END RESULT---",
+                  "stdout-block",
+                  "IMMEDIATELY print the ---AC TRACE RESULT--- block "
+                  "(Section 5.0). Report VERDICT: ERROR with a one-line "
+                  "REASON if the integrity check could not complete."),
+    "build-runner": ("verifier", "---BUILD VERIFY RESULT--- ... ---END RESULT---",
+                     "stdout-block",
+                     "IMMEDIATELY print the ---BUILD VERIFY RESULT--- block "
+                     "(Section 5.0). Report STATUS: error with a one-line "
+                     "REASON if no build command could be resolved or the "
+                     "build could not run at all (a failing build is "
+                     "STATUS: failed, NOT error)."),
+    "test-runner": ("verifier", "---L1 VERIFY RESULT--- ... ---END RESULT---",
+                    "stdout-block",
+                    "IMMEDIATELY print the ---L1 VERIFY RESULT--- block "
+                    "(Section 5.0). Report STATUS: error with a one-line "
+                    "REASON if the test command could not run at all (a "
+                    "failing suite is STATUS: failed, NOT error)."),
+    "corpus-writer": ("advisory", "---DOC SYNC RESULT--- ... ---END RESULT---",
+                      "stdout-block",
+                      "IMMEDIATELY print the ---DOC SYNC RESULT--- block "
+                      "(Section 7.0). Report STATUS: FAILURE with a one-line "
+                      "REASON if Phase 1 of the doc sync could not complete."),
+    "wiki-synthesizer": ("advisory", "---DOC SYNC RESULT--- ... ---END RESULT---",
+                         "stdout-block",
+                         "IMMEDIATELY print the ---DOC SYNC RESULT--- block "
+                         "(Section 6.0). Report STATUS: FAILURE with a "
+                         "one-line REASON if Phase 2 of the doc sync could "
+                         "not complete."),
+    "doc-linter": ("advisory", "---DOC LINT RESULT--- ... ---END RESULT---",
+                   "none", ""),
+    "skip-analyst": ("advisory", "---SKIP ANALYSIS--- ... ---END ANALYSIS---",
+                     "none", ""),
+    "failure-analyst": ("advisory", "---FAILURE ANALYSIS--- ... ---END ANALYSIS---",
+                        "none", ""),
+    "spec-planner": ("advisory", "---SPEC PLAN RESULT--- ... ---END SPEC PLAN RESULT---",
+                     "stdout-block",
+                     "IMMEDIATELY print the ---SPEC PLAN RESULT--- block "
+                     "(Section 5.0). Report STATUS: FAILURE with a one-line "
+                     "SUMMARY if generation could not complete."),
+    "spec-reviewer": ("reviewer", "---REVIEW RESULT--- ... ---END REVIEW RESULT---",
+                      "stdout-block",
+                      "IMMEDIATELY print the ---REVIEW RESULT--- block "
+                      "(Section 4.0). You are read-only and non-interactive — "
+                      "do NOT call AskUserQuestion or edit files; just emit "
+                      "the block with what you have: STATUS: APPROVED "
+                      "(clean), STATUS: CHANGES_REQUESTED (+ FINDINGS), or "
+                      "STATUS: FAILURE with a one-line REASON. The ---REVIEW "
+                      "RESULT--- block is the ONLY signal the parent parses "
+                      "for STATUS — without it the parent cannot recover the "
+                      "verdict, so never stop without emitting it."),
+    "project-analyzer": ("advisory", "---ANALYSIS RESULT--- ... ---END ANALYSIS RESULT---",
+                         "none", ""),
+    "wiki-differ": ("advisory", "---WIKI DIFF RESULT--- ... ---END RESULT---",
+                    "none", ""),
+    "wiki-researcher": ("advisory", "---WIKI RESEARCH RESULT--- ... ---END RESULT---",
+                        "none", ""),
+    "refuter": ("reviewer", "---REFUTATION RESULT--- ... ---END RESULT---",
+                "none", ""),
+    "command-digester": (
+        "advisory",
+        "keyed on PURPOSE — red|coverage → ---TEST DIGEST RESULT--- ... "
+        "---END RESULT---; log-verify → ---LOG CHECK RESULT--- ... "
+        "---END RESULT---",
+        "none", ""),
+    "doc-probe": ("advisory", "---PROBE RESULT--- ... ---END RESULT---",
+                  "none", ""),
+    "apply-fixes": ("advisory", "---FIX RESULT--- ... ---END RESULT---",
+                    "stdout-block",
+                    "IMMEDIATELY print the ---FIX RESULT--- block "
+                    "(Section 5.0). Report STATUS: FAILURE with a one-line "
+                    "REASON if the chunk could not be applied; the spine "
+                    "does NOT mark a failed chunk done, so an honest FAILURE "
+                    "re-dispatches it — do not fake SUCCESS."),
+    "refactorer": ("advisory", "---REFACTOR RESULT--- ... ---END RESULT---",
+                   "stdout-block",
+                   "IMMEDIATELY print the ---REFACTOR RESULT--- block "
+                   "(Section 5.0). Report STATUS: FAILURE with a one-line "
+                   "REASON if the refactor could not complete; the seam is "
+                   "non-blocking, so an honest FAILURE just proceeds — do "
+                   "not fake SUCCESS."),
+    "strategy-writer": ("advisory", "---STRATEGY RESULT--- ... ---END RESULT---",
+                        "none", ""),
+}
+assert tuple(GOLDEN_ROWS) == BASELINE_NAMES  # same rows, same registry order
+
 _HOOK_SOURCES = {
     "scripts/on-subagent-start.py": ("AGENT_REMINDERS", "_REGISTRY_AGENTS",
                                      "_RETRY_AGENTS"),
@@ -173,6 +289,27 @@ class RosterGoldenPins(_ShippedRoster):
             .read_text(encoding="utf-8"))
         self.assertEqual(validate_agent_roster(doc), [])
         self.assertEqual(validate_merged_roster(ar._load()), [])
+
+
+class RosterRowGoldens(_ShippedRoster):
+    """Every baseline row pinned field-by-field (design D6).
+
+    ``RosterGoldenPins`` pins set membership; this pins each row's own
+    class/fence/recovery fields through the public accessors, so a
+    census-neutral class swap between two rows, a fence edit, or a
+    recovery_instruction rewording fails with the row named — an accidental
+    registry edit is a reviewable diff, never silent drift.
+    """
+
+    def test_rows_pinned_field_by_field(self):
+        for name, (cls, fence, recovery, instr) in GOLDEN_ROWS.items():
+            self.assertEqual(ar.class_for(name), cls, f"{name}.class")
+            self.assertEqual(ar._agents()[name].get("fence"), fence,
+                             f"{name}.fence")
+            self.assertEqual(ar.recovery_kind_for(name), recovery,
+                             f"{name}.recovery")
+            self.assertEqual(ar.recovery_instruction_for(name), instr,
+                             f"{name}.recovery_instruction")
 
 
 class LiteralHomesGone(TestCase):

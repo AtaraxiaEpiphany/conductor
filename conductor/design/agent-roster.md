@@ -15,9 +15,14 @@ last_verified: 2026-08-21
 
 # Agent Roster (roster-as-data seam)
 
-Status: **Proposed** (2026-08-21, grill-crystallized) — decision record:
-[[conductor/design/decision-agent-roster]]. Ship phases below; the advisory
-digest is deferred (bar: a real consumer).
+Status: **Implemented** (designed 2026-08-21, shipped 2026-08-24) — decision
+record: [[conductor/design/decision-agent-roster]]. Phase 0 `84821ea`
+(grill artifacts + D5 matcher-reality fix), A `1d1832a` (registry + loader +
+validator + `--roster` render), B `1fb584e` (hooks derive; matchers widen),
+C `a17b026` (check lint + contract-sync derivation gates), D (this commit:
+README recipe, row-level goldens, lazy package init, both experiments
+resolved — see Results). The advisory digest stays deferred (bar: a real
+consumer).
 
 ## Context
 
@@ -164,18 +169,35 @@ suite green each boundary — the campaign discipline.
   wrapper agent + roster row; integrate an agent: one row), golden
   baseline tests, both experiments below, Status → Implemented.
 
-## Experiments (open unknowns)
+## Experiments (resolved — Phase D, 2026-08-24)
 
-1. **Preload coexistence.** Hypothesis: a `skills:`-preloaded subagent and
-   conductor's SubagentStart injection both land in one context and the
-   fence is honored. Experiment: scratch agent + scratch skill + one
-   roster row, dispatched through `implement`. Single variable: preload
-   present vs absent. Signal: skill content evidenced in the subagent's
-   behavior AND the RESULT block survives `filter-subagent-output`.
-2. **Widened-matcher cost.** Hypothesis: a no-op hook spawn is
-   imperceptible at dispatch cadence (<100 ms). Experiment: time 20 no-op
-   SubagentStart fires. Signal: median spawn time; abort to a
-   start-only widening if it exceeds ~250 ms.
+1. **Preload coexistence — CONFIRMED.** Hypothesis: a `skills:`-preloaded
+   subagent and conductor's SubagentStart injection both land in one
+   context and the fence is honored. Method: scratch probe agent
+   (`.claude/agents/`) + scratch skill (`.claude/skills/`) + one overlay
+   roster row, dispatched in a fresh headless session
+   (`claude --plugin-dir . -p`) — mid-session registration does not
+   refresh the Agent tool's registry, so the probe rode a sub-session
+   rather than a dispatch through `implement` (same SubagentStart event,
+   same seam; the `implement` wrapper adds nothing the variable
+   isolates). The probe reports what its context contains; the single
+   variable is the agent's `skills:` frontmatter line. Result: with
+   preload — `PRELOAD: 39` (the skill's secret number) AND
+   `SCAFFOLD: present` in one context; without — `PRELOAD: absent`,
+   `SCAFFOLD: present` unchanged. RESULT block survives
+   `filter-subagent-output` in both arms. Bonus finding, now pinned: a
+   bare reply with no fence gets its output replaced by the filter's
+   recovery path — ad-hoc probes must emit the roster fence.
+2. **Widened-matcher cost — CONFIRMED after one remediation.** Hypothesis:
+   a no-op hook spawn is imperceptible at dispatch cadence (<100 ms).
+   First measurement (20 fires, loaded machine): median 278 ms — over the
+   ~250 ms abort bar. Cause was not the widening but the eager
+   `track_state/__init__` chain (`cli` → `shape_studio` → `http.server`,
+   …) that every function-level hook import paid; made lazy (PEP 562
+   `__getattr__` re-exports). Interleaved re-measurement (20 rounds,
+   floor vs hook): interpreter floor 48 ms; Start-hook marginal
+   **31 ms**, Stop-hook marginal **22 ms** — well inside the hypothesis.
+   The abort arm (start-only widening) never fired.
 
 ## Non-goals
 
