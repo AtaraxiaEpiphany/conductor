@@ -98,3 +98,19 @@ owns behavior — the docfile invariant applied to dispatch.
 
 **Avoid:** *agent contract* (ambiguous — sounds like the body), *result
 contract* (names one facet of the bundle).
+
+## probe
+
+A named, registered, read-only, side-effect-free, cheap context snapshot an
+agent fetches on demand (`track-state probe <name>`) — tier B's dynamic arm
+(see [[conductor/design/probes]]). The fourth registry
+(`templates/workflow/probes.json` ⊕ `conductor/workflow/probes.json`): rows
+are `builtin` (a parser in `track_state/probes.py`; the exemplar `test-state`
+reads the on-test-run ledger) or `command` (registered argv, shlex-split, no
+shell, hard timeout). The five adjectives are the contract: dynamic context
+is fine, undisciplined context is not — ad-hoc scraping from agent prose
+stays out.
+
+**Avoid:** *dynamic context hook* (sounds tier-A and hardcoded), *context
+scraper* (the exact thing the registry replaces), *tmux probe* (interaction
+is not context — the rejected heuristic).

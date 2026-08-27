@@ -541,3 +541,78 @@ def validate_merged_roster(merged) -> list[str]:
             "merged agent roster must declare an 'agents' object "
             "(possibly empty — the fail-open floor)")
     return errs
+
+
+# --- probe registry -------------------------------------------------------------
+
+PROBE_KINDS = ("builtin", "command")
+_PROBE_TOP_KEYS = frozenset({"probes", "_comment", "_fields"})
+
+
+def validate_probes_row(name: str, row) -> list[str]:
+    """Errors for a single probe-registry row. Empty list = valid.
+
+    Enforces: ``description`` a non-empty string (it is the one-line answer to
+    "what does this probe tell me?"); ``kind`` in the closed vocabulary; a
+    ``command`` row carries a non-empty command; and a ``builtin`` row must
+    name a builtin the loader implements (``probes._BUILTINS`` — a builtin
+    name with no implementation is a dead name, not a probe).
+    """
+    from .probes import _BUILTINS
+
+    errs: list[str] = []
+    for k in row:
+        if k not in ("description", "kind", "command"):
+            errs.append(f"probe {name!r}: unknown field {k!r}")
+
+    desc = row.get("description")
+    if not isinstance(desc, str) or not desc:
+        errs.append(f"probe {name!r}: 'description' must be a non-empty string")
+
+    kind = row.get("kind")
+    if kind not in PROBE_KINDS:
+        errs.append(f"probe {name!r}: kind={kind!r} not in {list(PROBE_KINDS)}")
+        kind = None
+    if kind == "command":
+        cmd = row.get("command")
+        if not isinstance(cmd, str) or not cmd.strip():
+            errs.append(
+                f"probe {name!r}: kind=command requires a non-empty 'command' "
+                f"(argv string; shlex-split, no shell)")
+    else:
+        if "command" in row:
+            errs.append(
+                f"probe {name!r}: 'command' set but kind is "
+                f"{row.get('kind')!r} — an orphaned command never runs")
+        if kind == "builtin" and name not in _BUILTINS:
+            errs.append(
+                f"probe {name!r}: builtin not implemented "
+                f"(known builtins: {sorted(_BUILTINS)})")
+    return errs
+
+
+def validate_probes_doc(doc) -> list[str]:
+    """Errors for a probes document (fragment OR resolved). Present-only keys
+    are validated; the resolved result must carry a ``probes`` object (the
+    fail-open floor is the EMPTY registry, which still declares the key).
+    Empty list = valid."""
+    if not isinstance(doc, dict):
+        return ["probes registry top-level must be an object"]
+    errs: list[str] = []
+    for k in doc:
+        if k not in _PROBE_TOP_KEYS:
+            errs.append(f"unknown top-level key {k!r} (allowed: probes)")
+    probes = doc.get("probes")
+    if probes is not None:
+        if not isinstance(probes, dict):
+            errs.append("'probes' must be an object")
+        else:
+            for name, row in probes.items():
+                if not isinstance(row, dict):
+                    errs.append(f"probe {name!r} must be an object")
+                    continue
+                errs.extend(validate_probes_row(name, row))
+    if "probes" not in doc:
+        errs.append("probes registry must declare a 'probes' object "
+                    "(possibly empty — the fail-open floor)")
+    return errs

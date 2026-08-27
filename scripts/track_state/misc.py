@@ -133,13 +133,31 @@ def _roster_lint_findings():
     return findings
 
 
+def _probe_lint_findings():
+    """Lint the resolved probe registry (baseline ⊕ overlay) for ``check``.
+
+    Mirrors :func:`_roster_lint_findings` for the fourth registry:
+    ``validate_probes_doc`` over the resolved document — an unimplemented
+    builtin, an orphaned command, an unknown kind, or a missing description is
+    loud at check (runtime stays fail-open: an invalid row degrades to the
+    unknown-probe response, never a crash). Returns a list of human-readable
+    finding strings; empty = clean.
+    """
+    from . import probes
+    from .registry_validate import validate_probes_doc
+
+    return [f"probes: {e}" for e in validate_probes_doc(probes._load())]  # noqa: SLF001 — registry-internal resolved-doc lookup
+
+
 def _preflight_result(track_dir):
     """Compute the preflight envelope as a dict — factored body of
     ``cmd_preflight`` so ``cmd_setup`` can compose it without capturing stdout.
 
     Also carries the agent-roster lint (:func:`_roster_lint_findings`) as
-    ``roster_errors`` — non-empty makes ``ok`` false, so a broken overlay is
-    loud at ``check`` (runtime stays fail-open by design).
+    ``roster_errors`` and the probe-registry lint
+    (:func:`_probe_lint_findings`) as ``probe_errors`` — non-empty makes
+    ``ok`` false, so a broken overlay is loud at ``check`` (runtime stays
+    fail-open by design).
     """
     td = Path(track_dir)
     missing = [f for f in _TRACK_CORE_FILES if not (td / f).exists()]
@@ -151,6 +169,7 @@ def _preflight_result(track_dir):
             invalid_state = True
 
     roster_errors = _roster_lint_findings()
+    probe_errors = _probe_lint_findings()
 
     # Project-level workflow files. Skipped (empty) when no conductor root is
     # locatable — fail-open so this never blocks setup on an unusual layout. A
@@ -195,12 +214,13 @@ def _preflight_result(track_dir):
 
     return dict(
         ok=not missing and not invalid_state and not missing_workflow
-        and not roster_errors,
+        and not roster_errors and not probe_errors,
         missing=missing,
         missing_workflow=missing_workflow,
         track_dir=str(td),
         invalid_state=invalid_state,
         roster_errors=roster_errors,
+        probe_errors=probe_errors,
         hint=hint,
     )
 

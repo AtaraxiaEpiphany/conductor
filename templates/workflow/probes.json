@@ -1,0 +1,14 @@
+{
+  "_comment": "Single source of truth for the tier-B PROBE registry (the fourth registry): named, read-only, side-effect-free context snapshots an agent fetches on demand via `track-state probe <name>`. Rows resolve plugin baseline ⊕ project overlay (conductor/workflow/probes.json, row-level replace). A probe must be CHEAP (a bounded parser or a short command); ad-hoc context scraping stays out of the registry — see conductor/design/probes.md.",
+  "_fields": {
+    "description": "one line: what context question this probe answers.",
+    "kind": "builtin | command — builtin rows are implemented in scripts/track_state/probes.py (the name must be one it implements); command rows run the row's argv (shlex-split, no shell, 10s timeout, bounded stdout).",
+    "command": "required iff kind=command — the argv string to run. MUST be read-only (the contract is reviewed, not enforced); a mutating command here is a design violation."
+  },
+  "probes": {
+    "test-state": {
+      "description": "Latest test-run verdicts (on-test-run.log)",
+      "kind": "builtin"
+    }
+  }
+}

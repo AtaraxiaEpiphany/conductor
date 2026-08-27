@@ -3,9 +3,10 @@ type: concept
 sources:
   - scripts/on-subagent-start.py
   - scripts/track_state/task_context.py
+  - scripts/track_state/probes.py
   - agents/spec-planner
   - agents/task-executor
-last_verified: 2026-08-05
+last_verified: 2026-08-27
 ---
 
 # Context Model (three tiers)
@@ -37,10 +38,26 @@ one `track-state` call when it needs them. Today: the resolved tag + shape
 registry (`registry-doc`, fetched by `spec-planner` at planning start), a single
 tag's `workflow` prose (`registry-doc --tag <Tag>`, fetched by `task-executor`
 only when the leading tag carries one), the per-task plan↔spec AC/TC join
-(`task-context`), and the retry handoff (`get-handoff`). Same tier, file-delivered:
+(`task-context`), the retry handoff (`get-handoff`), and **live project state
+via registered probes** (`probe test-state`, fetched by executors/verifiers
+when they need the live run ledger — see below). Same tier, file-delivered:
 the **per-dispatch workflow manifest** (`WORKFLOW_FILE` in `task-executor`'s
 envelope — a code-composed join of shape gates ⊕ tag exemptions ⊕ the workflow
 path decision; small, per-task, resolved, and byte-stable across retries).
+
+**Probes (tier B's dynamic arm).** A *probe* is a **named, registered,
+read-only, side-effect-free, cheap** snapshot command (`track-state probe
+<name>`) over state no static file carries — the exemplar `test-state`
+returns the latest test-run verdicts from the on-test-run ledger. Probes live
+in the fourth registry (`templates/workflow/probes.json` baseline ⊕ project
+overlay, row-level replace; `track-state check` lints it); `kind: builtin`
+rows are parsers in `scripts/track_state/probes.py`, `kind: command` rows run
+a registered argv under a hard timeout. The rules are the point: dynamic
+context is fine, *undisciplined* context is not — anything an agent wants to
+"just check quickly" must either be a file (tier C), a registered probe
+(tier B), or it does not happen. Ad-hoc context scraping (shelling out to
+inspect tmux panes, tailing arbitrary logs, `curl`-ing dashboards from agent
+prose) stays out of the tiers entirely. See `conductor/design/probes.md`.
 
 **Tier C — self-load Read.** **Durable file content** — the project's own
 artifacts (`brief.md`, `spec.md`, `plan.md`, the workflow/styleguide docs) and
@@ -78,7 +95,9 @@ The discriminator is *size + scope*, not format:
   path) → Tier B (`WORKFLOW_FILE`), AND the leading tag's `workflow` prose when
   the path decision is `inline` → Tier B pointer (`registry-doc --tag`), AND the
   docfile the manifest names → Tier C (self-load), AND the task's AC text →
-  Tier B (`task-context`), AND `spec.md`'s Out-of-Scope → Tier C (self-load).
+  Tier B (`task-context`), AND `spec.md`'s Out-of-Scope → Tier C (self-load),
+  AND "did the suite pass since my last change?" → Tier B probe
+  (`track-state probe test-state`).
 - Every agent reads `brief.md` / `spec.md` / `plan.md` by path (Tier C) — never
   inlined. A `USER_CONTEXT: brief` signal names the file; it does not carry the
   file's content.
@@ -90,3 +109,6 @@ The discriminator is *size + scope*, not format:
 - Injecting a full catalog (every dispatch pays for data one agent needs once).
 - Hand-extracting a cross-file join in agent prose when a CLI could own it (the
   extraction drifts from the parsers' grammar).
+- Ad-hoc dynamic context from agent prose (tailing an arbitrary log, scraping
+  a pane, curl-ing a dashboard) — if the question recurs, it earns a
+  registered probe; if not, the agent asks the orchestrator.

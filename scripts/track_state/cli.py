@@ -50,6 +50,7 @@ from .logs_read import cmd_log_path, cmd_subagent_log
 from .registry_studio import cmd_registry_json, cmd_registry_save
 from .shape_studio import cmd_shape_studio
 from .agent_roster import roster_add
+from .probes import run_probe, probe_names
 # Command-surface tables live in the leaf module ``.commands`` (single source
 # for the pre-command guard and README sync too); aliased to the historical
 # underscore names so callers/tests importing them from cli still work.
@@ -86,7 +87,7 @@ _TD_NO_RESOLUTION_COMMANDS = {
     "new-track-set-mode", "new-track-finalize", "preflight", "derive-name",
     "propose-shape",
     "brief-init", "brief-finalize", "brief-grill-done",
-    "roster",
+    "roster", "probe",
 }
 
 
@@ -312,6 +313,12 @@ COMMAND_HELP = {
                ".claude/agents/<name>.md (skills-frontmatter preload + conductor result "
                "contract) and upsert its agent-roster overlay row (defaults = the "
                "task-executor scaffold). Validated before write; keeps a .bak."),
+    "probe": ("probe <name>",
+              "Fetch a tier-B context snapshot by registered name (read-only, "
+              "side-effect-free): `test-state` returns the latest test-run verdicts "
+              "from the on-test-run ledger; command-kind rows run their registered "
+              "argv (10s timeout). Registry: baseline probes.json ⊕ project overlay; "
+              "`check` lints it."),
     "write-result": ("write-result <track-dir> --status success|failure --commit-sha <sha>\n"
                      "                                --summary <text> --coverage-pct <n> ...\n"
                      "                  <track-dir> [--data '<json>']   (or pipe JSON on stdin)",
@@ -536,7 +543,7 @@ _NO_TRACK_DIR_COMMANDS = frozenset({
     "log-path", "subagent-log", "brief-resume",
     "registry-doc", "status",
     "shape-studio", "registry-json", "registry-save",
-    "roster",
+    "roster", "probe",
 })
 
 
@@ -717,6 +724,16 @@ def main():
             out(result)
             if not result.get("ok"):
                 sys.exit(1)
+        elif cmd == "probe":
+            # No track-dir: the positional is a registered probe NAME (flags
+            # start at argv[2] — see registry-doc). Read-only snapshot.
+            rest = sys.argv[2:]
+            ppos = positional(rest)
+            if not ppos:
+                out(dict(error="usage: track-state probe <name>",
+                         hint="registered probes: " + ", ".join(probe_names())))
+                sys.exit(1)
+            out(run_probe(ppos[0]))
         elif cmd == "start":
             cmd_start(track_dir)
         elif cmd == "set-mode":
