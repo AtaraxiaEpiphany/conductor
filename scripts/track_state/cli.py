@@ -49,6 +49,7 @@ from .brief import cmd_brief_init, cmd_brief_finalize, cmd_brief_resume, cmd_bri
 from .logs_read import cmd_log_path, cmd_subagent_log
 from .registry_studio import cmd_registry_json, cmd_registry_save
 from .shape_studio import cmd_shape_studio
+from .agent_roster import roster_add
 # Command-surface tables live in the leaf module ``.commands`` (single source
 # for the pre-command guard and README sync too); aliased to the historical
 # underscore names so callers/tests importing them from cli still work.
@@ -85,6 +86,7 @@ _TD_NO_RESOLUTION_COMMANDS = {
     "new-track-set-mode", "new-track-finalize", "preflight", "derive-name",
     "propose-shape",
     "brief-init", "brief-finalize", "brief-grill-done",
+    "roster",
 }
 
 
@@ -302,6 +304,14 @@ COMMAND_HELP = {
                       "Validate + atomically write a registry document from stdin. Rejects unknown "
                       "vocab / bad structure / a merge that loses the fail-open default (the strict "
                       "write gate; fail-open is read-only behavior). Keeps a .bak; clears the read cache."),
+    "roster": ("roster add <name> --skill <skill> [--description <text>]\n"
+               "           [--class executor|verifier|reviewer|advisory] [--fence <text>]\n"
+               "           [--recovery result-file|stdout-block|none] [--recovery-instruction <text>]\n"
+               "           [--force] [--project-dir <dir>]",
+               "Adopt an outside skill as a conductor agent: generate the wrapper "
+               ".claude/agents/<name>.md (skills-frontmatter preload + conductor result "
+               "contract) and upsert its agent-roster overlay row (defaults = the "
+               "task-executor scaffold). Validated before write; keeps a .bak."),
     "write-result": ("write-result <track-dir> --status success|failure --commit-sha <sha>\n"
                      "                                --summary <text> --coverage-pct <n> ...\n"
                      "                  <track-dir> [--data '<json>']   (or pipe JSON on stdin)",
@@ -526,6 +536,7 @@ _NO_TRACK_DIR_COMMANDS = frozenset({
     "log-path", "subagent-log", "brief-resume",
     "registry-doc", "status",
     "shape-studio", "registry-json", "registry-save",
+    "roster",
 })
 
 
@@ -684,6 +695,28 @@ def main():
             cmd_registry_save(which=flag(rest, "--which"),
                               target=flag(rest, "--target"),
                               project_dir=flag(rest, "--project-dir"))
+        elif cmd == "roster":
+            # No track-dir: positionals are `add <name>` (flags start at
+            # argv[2] — see registry-doc). Only `add` today; the arg surface
+            # mirrors roster_add's generator flags.
+            rest = sys.argv[2:]
+            rpos = positional(rest)
+            if not rpos or rpos[0] != "add" or len(rpos) < 2:
+                out(dict(error="usage: track-state roster add <name> --skill <skill>",
+                         hint="adopt an outside skill as a conductor agent"))
+                sys.exit(1)
+            result = roster_add(
+                rpos[1], flag(rest, "--skill"),
+                description=flag(rest, "--description"),
+                agent_class=flag(rest, "--class"),
+                fence=flag(rest, "--fence"),
+                recovery=flag(rest, "--recovery"),
+                recovery_instruction=flag(rest, "--recovery-instruction"),
+                force="--force" in rest,
+                project_dir=flag(rest, "--project-dir"))
+            out(result)
+            if not result.get("ok"):
+                sys.exit(1)
         elif cmd == "start":
             cmd_start(track_dir)
         elif cmd == "set-mode":

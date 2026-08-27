@@ -37,6 +37,7 @@ COMMAND_GROUPS = [
                      "quality-snapshot", "spec-integrity", "spec-anchors", "spec-delta",
                      "task-context", "view", "status"]),
     ("Workflow Studio", ["shape-studio", "registry-json", "registry-save"]),
+    ("Roster", ["roster"]),
     ("Logs", ["log-path", "subagent-log"]),
 ]
 

@@ -32,6 +32,7 @@ All interaction happens through Claude Code slash commands:
 <!-- conductor:begin:commands-table -->
 | Command | Description |
 |---------|-------------|
+| `/conductor:adopt-skill` | Adopt an outside skill as a conductor agent — generates the wrapper subagent (.claude/agents/<name>.md with skills-frontmatter preload) and its agent-roster overlay row in one validated command. |
 | `/conductor:brief` | Grill the user (frontier rounds of up to 4 questions per call) to reach shared understanding of a track, then write a brief.md that /conductor:new-track consumes as authoritative planning input |
 | `/conductor:dashboard` | Live resolved-workflow dashboard — renders the track's resolved shape (nodes, checkpoint verifier fan-out, gates) with the current position, the task tree, and quality gauges. Read-only in-chat snapshot. |
 | `/conductor:discover` | Find recurring dev frictions worth making tracks for (read git log + dispatch-lifecycle.log + .conductor/ signals first), grill-triage them with the user, then write a proposals.md the user feeds to /conductor:brief one proposal at a time |
@@ -55,7 +56,7 @@ All interaction happens through Claude Code slash commands:
 ### `track-state` CLI
 
 <!-- conductor:begin:cli-groups -->
-The `bin/track-state` command provides direct state management. Run `bin/track-state help` for the full, current list (86 subcommands across 15 groups) — it is grouped and self-describing. The complete surface, straight from `track_state/commands.py` (the same single source the pre-command guard derives its sanctioned set from):
+The `bin/track-state` command provides direct state management. Run `bin/track-state help` for the full, current list (87 subcommands across 16 groups) — it is grouped and self-describing. The complete surface, straight from `track_state/commands.py` (the same single source the pre-command guard derives its sanctioned set from):
 
 | Group | Subcommands |
 |-------|-------------|
@@ -73,6 +74,7 @@ The `bin/track-state` command provides direct state management. Run `bin/track-s
 | **Brief** | `brief-resume`, `brief-init`, `brief-finalize`, `brief-grill-done` |
 | **Diagnostics** | `validate`, `gc`, `shas`, `post-loop-status`, `checklist-verify`, `deferred-report`, `phase-done`, `add-checkpoint`, `preflight`, `quality-snapshot`, `spec-integrity`, `spec-anchors`, `spec-delta`, `task-context`, `view`, `status` |
 | **Workflow Studio** | `shape-studio`, `registry-json`, `registry-save` |
+| **Roster** | `roster` |
 | **Logs** | `log-path`, `subagent-log` |
 <!-- conductor:end:cli-groups -->
 
@@ -91,7 +93,7 @@ The conductor's routing vocabulary is **data, not code.** Three registries, each
 **Adding a task type, workflow shape, or agent is one row in the registry.** Tag extraction, TDD-gating, dispatch routing, the `[Conductor Registry]` block injected into agents, the SubagentStart/Stop scaffold, and the `registry-doc` render all derive from it automatically.
 
 - **Integrating an agent is one row** — `"<name>": {class, fence, recovery, recovery_instruction}` in the overlay. The dispatch hooks read the merged roster: an executor-class row derives the single-writer guard; a `stdout-block` recovery row gets a recovery turn instruction; unrostered names stay fail-open (no scaffold, no deny — `track-state check` flags them instead).
-- **Integrating a skill is a wrapper agent + one row** — the conductor dispatches agents, not skills. Write a thin `.claude/agents/<name>.md` wrapper whose `skills:` frontmatter preloads the skill (procedure up front, reference on fetch), add its roster row, and the skill rides with conductor's full scaffold: safety floor, result fence, and recovery — zero plugin edits.
+- **Integrating a skill is a wrapper agent + one row** — the conductor dispatches agents, not skills. Write a thin `.claude/agents/<name>.md` wrapper whose `skills:` frontmatter preloads the skill (procedure up front, reference on fetch), add its roster row, and the skill rides with conductor's full scaffold: safety floor, result fence, and recovery — zero plugin edits. `track-state roster add <name> --skill <skill>` (front-doored by `/conductor:adopt-skill`) generates both files validated — defaults mirror the task-executor scaffold, so most adoptions need just the two names.
 - **Inspect the resolved registry** — `track-state registry-doc` prints the full resolved tables (baseline + your overlay); `registry-doc --tag <Name>` / `--shape <s>` / `--roster <agent>` prints one row plus its prompt-shaping prose verbatim.
 - **Project overlay** — drop `conductor/workflow/task-type-profiles.json` (or the workflow-shape equivalent) next to the files `setup` scaffolds there. Absent = plugin defaults, no behavior change. A project's own workflow docfiles live at `conductor/workflow/steps/<name>.md` and win over the plugin's `templates/workflow/steps/` — a full custom workflow is one docfile + one registry row.
 - **Unknown values** — an unknown task tag is a **hard error** at `init-from-plan` (a wrong tag means wrong executor behavior). `workflow_shape` reads **fail-open** to `default` but `set-workflow-shape` **hard-rejects** an unknown shape so a deliberate set never silently no-ops.
@@ -123,7 +125,7 @@ conductor-plugin/
 │   ├── lib/                Shared library (env, dispatch_inflight, hook_io, logging, recovery, validation …)
 │   ├── track_state/        State machine CLI package (cli + cmd_* modules + *_profiles.py registries)
 │   └── *.py                Hook scripts (session start/end, subagent-start, dispatch-dedupe, tripwire …)
-├── skills/                 18 slash-command skills (implement, new-track, reconcile, re-spec, parallel, wiki …)
+├── skills/                 19 slash-command skills (implement, new-track, reconcile, re-spec, parallel, wiki …)
 ├── templates/
 │   ├── workflow/             The two registries: task-type / workflow-shape profiles (.json) + steps/ docfile library
 │   ├── code-styleguides/     10 language style guides

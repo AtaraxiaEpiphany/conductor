@@ -385,3 +385,197 @@ def recovery_instruction_for(name: str) -> str:
         return ""
     instr = row.get("recovery_instruction")
     return instr if isinstance(instr, str) and instr else ""
+
+
+# --- roster add: adopt an outside skill as a wrapper agent ----------------------
+#
+# The generator behind ``track-state roster add`` (front-doored by the
+# adopt-skill skill). Writes the two files the design's D3 recipe names — the
+# wrapper agent (.claude/agents/<name>.md, skills-frontmatter preload) and the
+# project overlay row — so adopting a skill is one command, not a hand-edited
+# pair that can drift (wrapper fence ≠ roster fence).
+
+# The scaffold defaults mirror the task-executor row (templates/workflow/
+# agent-roster.json): an adopted skill IS an executor. The recovery instruction
+# drops task-executor's "(Section 6.0)" pin — the wrapper body has no numbered
+# sections to point at.
+_DEFAULT_FENCE = "---TASK RESULT--- ... ---END RESULT---"
+_DEFAULT_RECOVERY_INSTRUCTION = (
+    "IMMEDIATELY call track-state write-result and print the ---TASK RESULT--- "
+    "block. Report FAILURE if you cannot complete."
+)
+
+_WRAPPER_TEMPLATE = """\
+---
+name: {name}
+description: {description}
+tools: Bash, Read, Edit, Write, Grep, Glob
+model: sonnet
+effort: high
+maxTurns: 48
+skills: [{skill}]
+---
+
+# {name} — conductor executor wrapping the `{skill}` skill
+
+You are dispatched by the conductor as an **executor** for one task. The
+`{skill}` skill is preloaded above (procedure up front); fetch its reference
+material only when the procedure points to it (preload procedure, fetch
+reference).
+
+## Procedure
+
+1. Read the dispatch envelope's context blocks (the task's spec/plan sections
+   it names). Self-load anything else you need from files.
+2. Do the task's work following the `{skill}` skill procedure. Follow the
+   project's conventions; keep changes scoped to the task.
+3. Report the result (below). Honest FAILURE beats fake SUCCESS — the
+   orchestrator re-dispatches a failure with your summary as context.
+
+## Result contract
+
+On completion, write the result file, then print the fence:
+
+```bash
+track-state write-result "<track-dir>" --status success|failure \\
+  --commit-sha <sha> --summary "<one line>"
+```
+
+```
+---TASK RESULT---
+STATUS: SUCCESS | FAILURE
+COMMIT_SHA: <sha, or empty on failure>
+SUMMARY: <one line>
+---END RESULT---
+```
+
+The stop hook gates your exit on a fresh result file — never stop without
+writing one and printing the fence.
+
+## Hard boundaries
+
+- The ONE sanctioned write is `track-state write-result` (result.json).
+- NEVER edit plan.md, track-state.json, or conductor/tracks state — the
+  orchestrator owns dispatch-finalize (state updates, plan sync, the
+  bookkeeping commit).
+- NEVER create commits, tags, or branches yourself.
+"""
+
+
+def roster_add(name, skill, description=None, agent_class=None, fence=None,
+               recovery=None, recovery_instruction=None, force=False,
+               project_dir=None):
+    """Generate the wrapper agent + overlay roster row that adopt a skill.
+
+    The D3 recipe as one command: writes ``<project>/.claude/agents/<name>.md``
+    (frontmatter preloads the skill; body is the conductor-facing procedure +
+    result contract) and upserts the agent's row into
+    ``<project>/conductor/workflow/agent-roster.json`` (row-level replace by
+    name, ``_comment``/``_fields`` preserved, ``.bak`` + atomic write per the
+    registry-studio precedent). Defaults mirror the task-executor scaffold;
+    ``--class``/``--fence``/``--recovery``/``--recovery-instruction`` override.
+
+    Validates the row (fragment + the baseline ⊕ new-overlay merge) BEFORE any
+    write and returns ``{ok: False, errors: [...]}`` on a bad row, a name with
+    path separators, an orphaned recovery instruction, or a wrapper file that
+    exists (unless *force*). On success clears the roster read cache and
+    returns ``{ok, agent_path, roster_path, lint: []}`` (``lint`` reserved for
+    future post-write checks).
+    """
+    # Lazy imports keep the hook path clean: this generator is CLI-only, and
+    # the dispatch hooks importing this module must not pay for (or depend on)
+    # the validator or the atomic-write helper.
+    from lib.atomic_io import atomic_write_json
+    from .registry_validate import (
+        AGENT_CLASSES, RECOVERY_KINDS, validate_agent_row, validate_merged_roster,
+    )
+
+    if not name or not skill:
+        return {"ok": False, "errors": ["both <name> and --skill are required"]}
+    if "/" in name or name != name.strip() or not name.replace("-", "").replace("_", "").isalnum():
+        return {"ok": False, "errors": [
+            f"invalid agent name {name!r} — letters/digits/-/_ only (it becomes "
+            f"both a filename and a roster key)"]}
+    if agent_class is not None and agent_class not in AGENT_CLASSES:
+        return {"ok": False, "errors": [
+            f"unknown --class {agent_class!r} (expected {list(AGENT_CLASSES)})"]}
+    if recovery is not None and recovery not in RECOVERY_KINDS:
+        return {"ok": False, "errors": [
+            f"unknown --recovery {recovery!r} (expected {list(RECOVERY_KINDS)})"]}
+
+    if project_dir is not None:
+        root = Path(project_dir).resolve()
+        if not root.is_dir():
+            return {"ok": False, "errors": [
+                f"project dir {project_dir!r} does not exist — refusing to "
+                f"create conductor/ scaffolding in a typo'd path"]}
+    else:
+        root = _project_root()
+    if root is None:
+        return {"ok": False, "errors": [
+            "no project dir resolved — pass --project-dir or run inside a "
+            "project tree (one with conductor/tracks/)"]}
+
+    kind = recovery or "result-file"
+    if kind == "none" and recovery_instruction:
+        return {"ok": False, "errors": [
+            "--recovery-instruction set but recovery is none — an instruction "
+            "without a recovery kind never fires; set --recovery or drop it"]}
+
+    row = {"class": agent_class or "executor",
+           "fence": fence or _DEFAULT_FENCE}
+    if kind != "none":
+        row["recovery"] = kind
+        row["recovery_instruction"] = (recovery_instruction
+                                       or _DEFAULT_RECOVERY_INSTRUCTION)
+
+    # The overlay as it will exist AFTER this write (existing rows + doc
+    # blocks preserved, this row replacing any same-name row), so validation
+    # sees exactly what the conductor will resolve.
+    overlay = {"agents": {}}
+    roster_path = root / "conductor" / "workflow" / "agent-roster.json"
+    if roster_path.exists():
+        try:
+            existing = json.loads(roster_path.read_text(encoding="utf-8"))
+            if isinstance(existing, dict) and isinstance(existing.get("agents"), dict):
+                overlay = existing
+        except (OSError, json.JSONDecodeError):
+            return {"ok": False, "errors": [
+                f"{roster_path} is unreadable — fix or remove it before adding "
+                f"agents (the conductor currently fails open to the baseline)"]}
+    overlay.setdefault("agents", {})[name] = row
+
+    # Validate before touching disk: the row itself, then the merge the
+    # conductor WOULD resolve (baseline ⊕ the post-write overlay).
+    errs = list(validate_agent_row(name, row))
+    merged = _merge_overlay(_load_baseline())
+    merged.setdefault("agents", {}).update(overlay["agents"])
+    errs.extend(validate_merged_roster(merged))
+    if errs:
+        return {"ok": False, "errors": errs}
+
+    agent_path = root / ".claude" / "agents" / f"{name}.md"
+    if agent_path.exists() and not force:
+        return {"ok": False, "errors": [
+            f"{agent_path} already exists — pass --force to overwrite"]}
+
+    agent_path.parent.mkdir(parents=True, exist_ok=True)
+    agent_path.write_text(
+        _WRAPPER_TEMPLATE.format(
+            name=name, skill=skill,
+            description=description
+            or f"Conductor executor wrapping the {skill} skill."),
+        encoding="utf-8")
+
+    if roster_path.exists():
+        try:
+            import shutil
+            shutil.copy2(roster_path, roster_path.parent / (roster_path.name + ".bak"))
+        except OSError as exc:
+            return {"ok": False, "errors": [f"could not back up {roster_path} ({exc})"]}
+    roster_path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_json(roster_path, overlay)
+
+    _load.cache_clear()
+    return {"ok": True, "agent_path": str(agent_path),
+            "roster_path": str(roster_path), "lint": []}

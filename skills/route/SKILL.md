@@ -43,6 +43,7 @@ exist, or misses one that does) is worse than none.
 | See the workflow shape (DAG, gates, verifiers) | `/conductor:dashboard` |
 | Query or build the docs wiki | `/conductor:wiki` |
 | Diagnose wiki problems | `/conductor:wiki-doctor` |
+| Adopt an outside skill as a conductor-dispatched agent | `/conductor:adopt-skill` |
 | Initialize Conductor in a project | `/conductor:setup` |
 
 Match rule: pick the first row whose left side matches the intent's words.
