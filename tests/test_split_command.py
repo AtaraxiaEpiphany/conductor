@@ -72,8 +72,11 @@ class TaskLevelSplitTests(TestCase):
         self.assertEqual(o["added"], 2)
         state = load(d)
         task = state["phases"][0]["tasks"][0]
-        # Original skipped, SHA preserved (the load-bearing invariant).
-        self.assertEqual(task["status"], "skipped")
+        # The original BECOMES the pieces' parent: reopened to in_progress
+        # (reopen invariant — a skipped parent would have _auto_fix propagate
+        # 'skipped' onto the pieces on the next step). The decomposition is
+        # recorded via skip_analysis, and the partial-work SHA survives.
+        self.assertEqual(task["status"], "in_progress")
         self.assertEqual(task["commit_sha"], "abc1234")
         self.assertIn("decomposed", task["skip_analysis"])
         # Two new pending subtasks appended under it.
@@ -122,7 +125,11 @@ class SubtaskLevelSplitTests(TestCase):
                          ["Old S1", "Piece A", "Piece B"])
         self.assertEqual(task["subtasks"][1]["status"], "pending")
         self.assertEqual(task["subtasks"][2]["status"], "pending")
-        # Parent task itself untouched (still failed — only its children changed).
+        # Reopen invariant: the parent task (failed via _do_fail_parent) is
+        # reopened to in_progress so the pieces are dispatchable — a failed
+        # parent would have _auto_fix propagate 'failed' onto them on the
+        # next step and navigation would never descend into it.
+        self.assertEqual(task["status"], "in_progress")
         # No sub-subtasks created (depth invariant).
         for s in task["subtasks"]:
             self.assertNotIn("subtasks", s)
@@ -163,7 +170,7 @@ class PlanMdToleranceTests(TestCase):
         # JSON mutation succeeds; plan.md splice tolerated (warning to stderr).
         self.assertTrue(o["ok"])
         state = load(d)
-        self.assertEqual(state["phases"][0]["tasks"][0]["status"], "skipped")
+        self.assertEqual(state["phases"][0]["tasks"][0]["status"], "in_progress")
 
 
 class SyncReconciliationTests(TestCase):
@@ -181,6 +188,68 @@ class SyncReconciliationTests(TestCase):
             sys.stdout = old
         # No plan/state count mismatch after the splice + sync.
         self.assertNotIn("error", report)
+
+
+class StepAfterSplitTests(TestCase):
+    """The clobber regression: the step right after a split must NOT "repair"
+    the split shape. Pre-fix, split left a terminal parent (skipped original /
+    failed parent) with pending pieces; the next ``step``'s ``ensure_healthy``
+    ran ``_auto_fix`` parent-propagation, stamping the pieces with the parent's
+    status and re-syncing plan.md — the pieces vanished as pending work, then
+    the consistency checker flagged the shape. The reopen invariant closes all
+    three symptoms at once."""
+
+    def _assert_pieces_survive(self, d, pieces, orig_status, orig_sub=None):
+        from scripts.track_state.validate import ensure_healthy
+        state, fixes, errors = ensure_healthy(d)
+        self.assertEqual(errors, [])
+        task = state["phases"][0]["tasks"][0]
+        # Parent stays in_progress — no propagation fix fired on the pieces.
+        self.assertEqual(task["status"], "in_progress")
+        orig = (task["subtasks"][orig_sub - 1] if orig_sub else task)
+        self.assertEqual(orig["status"], orig_status)
+        got = [s for s in task["subtasks"] if s["name"] in pieces]
+        self.assertEqual(len(got), len(pieces))
+        for piece in got:
+            self.assertEqual(piece["status"], "pending",
+                             f"_auto_fix clobbered split piece {piece['name']!r}")
+        # plan.md markers survive the re-sync too.
+        plan = (Path(d) / "plan.md").read_text()
+        for name in pieces:
+            self.assertIn(f"- [ ] {name}", plan)
+        # Navigation reaches the first piece (Pass 1 in_progress-parent descent).
+        from scripts.track_state.dispatch import _find_next_task
+        nxt = _find_next_task(load(d))
+        self.assertEqual(nxt["type"], "subtask")
+        self.assertIn(nxt["name"], pieces)
+
+    def test_task_split_survives_next_step(self):
+        d = _split_track()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        _run(cmd_split, d, 1, 1, None, ["P1", "P2"], note="n")
+        self._assert_pieces_survive(d, ["P1", "P2"], "in_progress")
+
+    def test_subtask_split_survives_next_step(self):
+        d = _split_track(subtasks=[
+            {"name": "Old S1", "status": "failed", "retry_count": 3,
+             "commit_sha": "abc1234"}])
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        _run(cmd_split, d, 1, 1, 1, ["P1", "P2"], note="n")
+        self._assert_pieces_survive(d, ["P1", "P2"], "skipped", orig_sub=1)
+
+    def test_step_after_split_dispatches_first_piece(self):
+        # The teleop spine: with the reopened parent locked (si=None) and HEAD
+        # past the Start commit (the Decompose bookkeeping commit), step must
+        # NOT try to finalize the parent over its pending pieces — it routes to
+        # the next leaf, which locks + dispatches the first piece.
+        d = _split_track()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        _run(cmd_split, d, 1, 1, None, ["P1", "P2"], note="n")
+        from scripts.track_state.dispatch import cmd_step
+        o = _run(cmd_step, d)
+        self.assertEqual(o["action"], "dispatch")
+        self.assertEqual(o["name"], "P1")
+        self.assertEqual(o["subtask"], 1)
 
 
 class CliWiringTests(TestCase):

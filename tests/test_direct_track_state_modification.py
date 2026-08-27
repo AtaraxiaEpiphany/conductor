@@ -44,6 +44,12 @@ class IsDirectTrackStateModificationTests(TestCase):
         self.assertTrue(is_direct("git rm conductor/tracks/x/track-state.json"))
         self.assertTrue(is_direct("git rm -f conductor/tracks/x/track-state.json"))
 
+    def test_cp_backup_litter(self):
+        # A stuck orchestrator hand-copies .bak2/.bak3 chains; cp over a
+        # track-state path is exactly the litter the guard exists to catch.
+        self.assertTrue(is_direct("cp track-state.json track-state.json.bak2"))
+        self.assertTrue(is_direct("cp track-state.json.bak track-state.json.bak2"))
+
     def test_sed_inplace(self):
         self.assertTrue(is_direct("sed -i 's/a/b/' track-state.json"))
 
@@ -68,6 +74,12 @@ class IsDirectTrackStateModificationTests(TestCase):
 
     def test_pure_git_diff(self):
         self.assertFalse(is_direct("git diff conductor/tracks/x/track-state.json"))
+
+    def test_cp_unrelated_target_not_flagged(self):
+        # cp touching OTHER files, or a look-alike filename, must not match.
+        # (cp FROM a state file elsewhere still asks — conservative, no bypass.)
+        self.assertFalse(is_direct("cp other.json x"))
+        self.assertFalse(is_direct("cp x track-state.json.md"))
 
     def test_read_only_ops(self):
         for cmd in ("cat track-state.json",

@@ -452,6 +452,16 @@ def _do_split(track_dir, p, t, s, subtask_names, note=None):
       * subtask split (``s`` set) → pieces append under the *parent task* as
         siblings of the original, so every piece stays a top-level subtask.
 
+    Reopen invariant: the PARENT of the new pieces is set to ``in_progress``
+    before this returns. A terminal parent (``failed`` via ``_do_fail_parent``, or
+    the skipped original in the task-split case) would be terminal-with-pending-
+    children — the exact shape ``_auto_fix``'s parent-propagation "repairs" by
+    stamping the pieces with the parent's status on the next ``step``, and that
+    ``_find_next_task``/``_fix_terminal_current_indices`` never descend into.
+    Mirrors sync.py auto-absorb's reopen (sync.py:93-96). In the task-split case
+    the parent IS the original, so the original records its decomposition via
+    ``skip_analysis`` while its STATUS carries the parent role (``in_progress``).
+
     Returns the post-commit state (mirrors ``reactivate_for_modified_retry``).
     plan.md insertion + sync + commit are the caller's job (``cmd_split``), run
     sequentially AFTER this transaction commits — transactions must not nest
@@ -466,10 +476,14 @@ def _do_split(track_dir, p, t, s, subtask_names, note=None):
             raise ValueError(
                 f"cannot split {orig.get('status')!r} task "
                 f"(only {sorted(_SPLITTABLE)} are splittable)")
-        # Skip the original; KEEP commit_sha (mirrors _do_fail_parent's keep-set,
-        # NOT plain _do_skip which drops it) so the partial-work SHA survives.
-        orig["status"] = "skipped"
+        # Decomposition record: note + KEEP commit_sha (mirrors _do_fail_parent's
+        # keep-set, NOT plain _do_skip which drops it) so the partial-work SHA
+        # survives. Status depends on the depth case — see the reopen invariant
+        # above: a subtask-split original is skipped; a task-split original
+        # becomes the pieces' parent and is reopened to in_progress below.
         orig["skip_analysis"] = note or "Decomposed via failure-analyst"
+        if si is not None:
+            orig["status"] = "skipped"
         clean(orig, {"status", "skip_analysis", "commit_sha"})
         # Append the pieces as pending subtasks of the parent task.
         subs = parent.setdefault("subtasks", [])
@@ -481,6 +495,15 @@ def _do_split(track_dir, p, t, s, subtask_names, note=None):
                 "status": "pending",
                 "task_type": derive_child_task_type(parent),
             })
+        # Reopen invariant: the pieces' parent must be in_progress so the next
+        # step dispatches the first piece instead of propagating a terminal
+        # status onto them (task-split: parent == orig, reopened here). The
+        # keep-set guards the SAME dict's split record: in the task-split case
+        # parent IS orig, so this clean must re-keep commit_sha + skip_analysis
+        # (and drops the failed parent's pinned retry_count/last_failure_summary
+        # — the reopened parent starts a fresh dispatch loop over the pieces).
+        parent["status"] = "in_progress"
+        clean(parent, {"status", "commit_sha", "skip_analysis"})
         # Point at the parent so dispatch-next/step picks up the first new piece.
         _set_current_indices(state, pi, ti, None)
         state["updated_at"] = now_iso()

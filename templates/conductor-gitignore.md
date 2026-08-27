@@ -13,9 +13,12 @@
 # (the track ROOT, not under .conductor/). The root-anchored /.conductor/ rule
 # above cannot reach them, and the per-track .conductor/.gitignore only governs
 # .conductor/. Specific names — NOT *.lock/*.bak globally (collateral: yarn.lock,
-# Cargo.lock, poetry.lock must stay committable). *.json.bak also covers the
-# registry <name>.json.bak written by track-state registry-studio saves.
-*.json.bak
+# Cargo.lock, poetry.lock must stay committable). *.json.bak* also covers the
+# registry <name>.json.bak written by track-state registry-studio saves, and the
+# track-state.json.bak2/.bak3 litter an improvising orchestrator can hand-copy
+# (one .bak is by design; the numbered chain is not, and `git add -A` would
+# sweep it into a commit).
+*.json.bak*
 .track-state.lock
 .track-state.json.tmp.*
 

@@ -15,7 +15,7 @@ from .helpers import (
 )
 from .constants import (AUTO_COMPLETE_OK, MAX_RETRIES, task_max_retries,
                         RECOVERY_DRY_K, MAX_RECOVERY_ROUNDS,
-                        MAX_PHASE_RECOVERY_ROUNDS)
+                        MAX_PHASE_RECOVERY_ROUNDS, TERMINAL_STATUSES)
 from .mutations import (_do_lock, _do_complete, _do_fail, _do_fail_parent,
                         _do_defer, _do_skip, reactivate_for_modified_retry,
                         reactivate_phase_tasks)
@@ -672,7 +672,9 @@ def _decompose_decision(track_dir, marker):
         header="Decompose",
         options=[
             {"label": "Apply split",
-             "description": "Skip original (SHA kept), add these subtasks, resume"},
+             "description": (
+                 "Split and resume (partial SHA kept; original reopens as the "
+                 "pieces' parent, or is skipped when itself a subtask)")},
             {"label": "Skip original only",
              "description": "Skip the task without splitting — resume without it"},
             {"label": "Escalate",
@@ -3053,6 +3055,20 @@ def cmd_step(track_dir, compact=True):
         except IndexError:
             tgt = None
         if tgt is not None and tgt.get("status") == "in_progress":
+            # Post-split descent: an in_progress PARENT with subtasks but no
+            # locked subtask index is the shape ``track-state split`` leaves
+            # (current points at the reopened parent). Finalizing here would
+            # try to complete the parent over its pending pieces (the guarded
+            # "Cannot complete — subtasks still non-terminal" error) on every
+            # call. Route instead: the next-leaf resolver's Pass-1 descent
+            # locks the first non-terminal piece. A parent whose pieces are
+            # ALL terminal falls through to finalize/parent-complete normally.
+            _open_pieces = (
+                si is None and tgt.get("subtasks")
+                and any(x.get("status") not in TERMINAL_STATUSES
+                        for x in tgt["subtasks"]))
+            if _open_pieces:
+                return _step_emit_next_leaf(track_dir, state, compact)
             # The no-retry-burn contract (design: rail-b-step.md §"No-retry-burn"):
             # a dispatch that NEVER ran (killed session, context-budget yield
             # before any work) must not burn a retry. That state is *clean tree

@@ -107,6 +107,8 @@ class GitignoreSemanticsTests(TestCase):
         # (task-executor Step 8, _bookkeeping_commit_line) swept them into commits.
         for rel in (
             "conductor/tracks/feat-x/track-state.json.bak",
+            "conductor/tracks/feat-x/track-state.json.bak2",
+            "conductor/tracks/feat-x/track-state.json.bak3",
             "conductor/tracks/feat-x/.track-state.lock",
             "conductor/tracks/feat-x/.track-state.json.tmp.abc",
             "conductor/workflow/workflow-shapes.json.bak",  # registry .bak

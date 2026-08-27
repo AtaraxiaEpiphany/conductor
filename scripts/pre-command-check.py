@@ -274,9 +274,18 @@ def _iter_command_segments(command):
 # Matched WITHIN a single segment (see _iter_command_segments), so the gaps use
 # a plain .* — the segmenter, not the regex, enforces "no crossing separators".
 # re.DOTALL so a newline surviving inside a quoted segment can't break a match.
+# ``cp`` included: copying TO track-state.json is a restore outside the
+# transaction/backup machinery, and copying FROM it is how a stuck orchestrator
+# improvises the track-state.json.bak2/.bak3 litter chain (untracked by
+# ``*.json.bak``, then swept by bookkeeping ``git add -A``).
+# State paths matched to the end of their filename: track-state.json itself or
+# a .bak/.bak2/... backup of it — but NOT look-alikes such as
+# track-state.json.md (a doc) or the .tmp.* scratch, which rm-ing is harmless.
 _TRACK_STATE_MOD_PATTERNS = (
-    re.compile(r'(?:\brm\b|\bmv\b|git\s+rm\b).*track-state\.json',
-               re.IGNORECASE | re.DOTALL),
+    re.compile(
+        r'(?:\brm\b|\bmv\b|\bcp\b|git\s+rm\b)'
+        r'.*track-state\.json(?:\.bak\d*)?(?![\w.-])',
+        re.IGNORECASE | re.DOTALL),
     re.compile(r'\bsed\b.*track-state', re.IGNORECASE | re.DOTALL),
     re.compile(r'\bpython\w*.*track-state.*\bwrite\b', re.IGNORECASE | re.DOTALL),
 )
