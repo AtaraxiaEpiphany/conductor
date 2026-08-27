@@ -1,14 +1,17 @@
 """Tests for the cross-phase track-findings compiler (#track-findings).
 
 ``compile_track_findings`` compiles durable findings (explorer
-``graduation_candidates`` + decision entries — the same harvest
-``_extract_candidates`` already produces) into
+graduation_candidates + Key Findings + Gotchas & Constraints + decision
+entries — the harvest ``_extract_candidates`` produces) into
 ``{TRACK_DIR}/.conductor/track-findings.md``: the cross-phase bridge a later
 phase's explorer/task-executor reads before re-exploring.
 
-Covers: compile + dedup, idempotent recompilation, empty-harvest stub, the F5
-hook (``cmd_phase_checkpoint_review`` PASSED triggers compile; FAILED does not),
-and the fail-open invariant (a compile error never blocks the stamp).
+Covers: compile + dedup, the findings/gotchas widen (sentinel + cap),
+idempotent recompilation, empty-harvest stub, the stamp-path trigger
+(``_stamp_checkpoint_in_plan`` — reached via both ``add-checkpoint`` (Rail A)
+and ``phase_checkpoint_review`` PASSED (Rail B); FAILED never stamps → never
+compiles), and the fail-open invariant (a compile error never blocks the
+stamp).
 """
 import io
 import json
@@ -152,6 +155,63 @@ class CompileTrackFindingsTests(TestCase):
         doc = (Path(self.d) / ".conductor" / "track-findings.md").read_text()
         self.assertIn("No durable findings recorded yet", doc)
 
+    def test_findings_and_gotchas_are_carried(self):
+        # The widen: explore Key Findings + Gotchas & Constraints bullets ride
+        # the compile alongside graduation candidates, each with its source.
+        cmd_append_handoff(self.d, 1, 1, "explore", _explore_payload(
+            [], findings=["auth lives in lib/auth.py", "tokens rotate on refresh"],
+            gotchas=["clock skew breaks expiry checks"]))
+        r = compile_track_findings(self.d)
+        self.assertEqual(r["findings_count"], 2)
+        self.assertEqual(r["gotchas_count"], 1)
+        self.assertEqual(r["graduation_count"], 0)
+        doc = (Path(self.d) / ".conductor" / "track-findings.md").read_text()
+        self.assertIn("## Key Findings", doc)
+        self.assertIn("- auth lives in lib/auth.py _— source P1T1 (Phase 1)_", doc)
+        self.assertIn("## Gotchas & Constraints", doc)
+        self.assertIn("- clock skew breaks expiry checks", doc)
+        # Findings alone (no graduation/decisions) still compile a real doc,
+        # not the empty stub.
+        self.assertNotIn("No durable findings recorded yet", doc)
+
+    def test_none_sentinel_bullets_not_collected(self):
+        # An explorer that recorded no findings renders `- None` bullets — the
+        # sentinel must not ride the harvest as a finding/gotcha. (Written
+        # directly: cmd_append_handoff's explore gate requires >=1 finding.)
+        handoff_dir = Path(self.d) / ".conductor" / "handoff"
+        handoff_dir.mkdir(parents=True, exist_ok=True)
+        (handoff_dir / "P1T1.md").write_text(
+            "# P1T1\n\n## Exploration Notes\n\n"
+            "### Key Findings\n- None\n\n### Gotchas & Constraints\n- None\n")
+        r = compile_track_findings(self.d)
+        self.assertEqual(r["findings_count"], 0)
+        self.assertEqual(r["gotchas_count"], 0)
+        doc = (Path(self.d) / ".conductor" / "track-findings.md").read_text()
+        self.assertNotIn("- None", doc)
+
+    def test_findings_capped_per_handoff(self):
+        # A rambling explorer cannot flood the compiled doc: at most
+        # _FINDINGS_CAP_PER_TASK bullets per kind per handoff file.
+        handoff_dir = Path(self.d) / ".conductor" / "handoff"
+        handoff_dir.mkdir(parents=True, exist_ok=True)
+        (handoff_dir / "P1T1.md").write_text(
+            "# P1T1\n\n## Exploration Notes\n\n### Key Findings\n"
+            + "".join(f"- finding {i}\n" for i in range(10)))
+        r = compile_track_findings(self.d)
+        self.assertEqual(r["findings_count"], 8)
+        doc = (Path(self.d) / ".conductor" / "track-findings.md").read_text()
+        self.assertIn("- finding 7", doc)
+        self.assertNotIn("- finding 8", doc)
+        self.assertNotIn("- finding 9", doc)
+
+    def test_dedup_findings_across_handoffs(self):
+        cmd_append_handoff(self.d, 1, 1, "explore",
+                           _explore_payload([], findings=["shared insight"]))
+        cmd_append_handoff(self.d, 1, 2, "explore",
+                           _explore_payload([], findings=["shared insight"]))
+        r = compile_track_findings(self.d)
+        self.assertEqual(r["findings_count"], 1)
+
     def test_none_graduation_is_empty(self):
         # Empty graduation_candidates renders `_None_` in the handoff → harvest
         # yields zero → doc is the empty stub.
@@ -170,9 +230,12 @@ class CompileTrackFindingsTests(TestCase):
         self.assertTrue(r["path"].endswith("track-findings.md"))
 
 
-class F5HookTests(TestCase):
-    """The PASSED phase checkpoint triggers a compile; FAILED does not;
-    a compile error is fail-open (never blocks the stamp)."""
+class StampPathTests(TestCase):
+    """The compile trigger is single-homed in ``_stamp_checkpoint_in_plan``:
+    any successful stamp compiles (both Rail A ``add-checkpoint`` and Rail B
+    ``phase_checkpoint_review`` PASSED funnel through it), FAILED never stamps
+    → never compiles, and a compile error is fail-open (never blocks the
+    stamp)."""
 
     def setUp(self):
         # _phase_complete_track() already returns a git-backed track dir (it
@@ -204,15 +267,40 @@ class F5HookTests(TestCase):
 
     def _seed_finding(self, d, text, source="P1T1"):
         """Write a handoff file directly with a Graduation Candidates section,
-        bypassing cmd_append_handoff's state lookup (the F5 fixture's state
-        shape isn't always append-friendly; we only need the harvest parser to
-        see the finding)."""
+        bypassing cmd_append_handoff's state lookup (the fixture's state shape
+        isn't always append-friendly; we only need the harvest parser to see
+        the finding)."""
         handoff_dir = Path(d) / ".conductor" / "handoff"
         handoff_dir.mkdir(parents=True, exist_ok=True)
         (handoff_dir / f"{source}.md").write_text(
             f"# {source}\n\n## Exploration Notes\n\n"
             f"### Graduation Candidates (durable → corpus; for corpus-writer harvest)\n"
             f"- {text}\n")
+
+    def test_stamp_helper_triggers_compile(self):
+        # The single home: stamping directly (the shared helper) compiles.
+        from scripts.track_state.misc import _stamp_checkpoint_in_plan
+        d = self._track()
+        self._seed_finding(d, "stamp-path durable finding")
+        o = _stamp_checkpoint_in_plan(d, 1, "abc1234")
+        self.assertTrue(o["ok"])
+        doc_path = Path(d) / ".conductor" / "track-findings.md"
+        self.assertTrue(doc_path.exists(), "a successful stamp must compile")
+        self.assertIn("stamp-path durable finding", doc_path.read_text())
+
+    def test_add_checkpoint_triggers_compile(self):
+        # Rail A: the phase-checker agent stamps via add-checkpoint — that
+        # path compiled nothing pre-fix (the compile lived only in the Rail B
+        # review command), so track-findings.md never materialized.
+        from scripts.track_state.misc import cmd_add_checkpoint
+        d = self._track()
+        self._seed_finding(d, "rail-a durable finding")
+        o = self._capture(cmd_add_checkpoint, d, 1, "abc1234")
+        self.assertTrue(o["ok"])
+        doc_path = Path(d) / ".conductor" / "track-findings.md"
+        self.assertTrue(doc_path.exists(),
+                        "add-checkpoint must compile track-findings.md")
+        self.assertIn("rail-a durable finding", doc_path.read_text())
 
     def test_passed_checkpoint_triggers_compile(self):
         from scripts.track_state.dispatch import cmd_phase_checkpoint_review
@@ -238,20 +326,20 @@ class F5HookTests(TestCase):
 
     def test_compile_failure_is_fail_open(self):
         # A broken compile must not block the checkpoint stamp. Monkeypatch
-        # compile_track_findings in the dispatch module to raise.
-        import scripts.track_state.dispatch as dispatch_mod
-        original = dispatch_mod.compile_track_findings
-        dispatch_mod.compile_track_findings = lambda td: (_ for _ in ()).throw(
-            RuntimeError("boom"))
+        # compile_track_findings in the misc module (where the single-homed
+        # trigger now lives) to raise.
+        import scripts.track_state.misc as misc_mod
+        original = misc_mod.compile_track_findings
+        misc_mod.compile_track_findings = lambda td, current_phase=None: (
+            _ for _ in ()).throw(RuntimeError("boom"))
         try:
-            from scripts.track_state.dispatch import cmd_phase_checkpoint_review
+            from scripts.track_state.misc import _stamp_checkpoint_in_plan
             d = self._track()
-            o = self._capture(cmd_phase_checkpoint_review, d, "PASSED", "abc1234", None)
+            o = _stamp_checkpoint_in_plan(d, 1, "abc1234")
             # Stamp still succeeds — the advisory compile error was swallowed.
-            self.assertTrue(o["ok"])
-            self.assertTrue(o["stamped"], "checkpoint must stamp even if compile raises")
+            self.assertTrue(o["ok"], "checkpoint must stamp even if compile raises")
         finally:
-            dispatch_mod.compile_track_findings = original
+            misc_mod.compile_track_findings = original
 
 
 def _strip_compiled_at(text):

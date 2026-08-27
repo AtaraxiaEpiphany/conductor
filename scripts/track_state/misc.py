@@ -18,6 +18,7 @@ from .git_ops import _git_commit, _git_head_sha, _ensure_note, docs_synced_for_t
 from .constants import TERMINAL_FOR_PARENT
 from .quality import _checklist_status, _to_number
 from .spec_integrity import compute_ac_integrity
+from .handoff import compile_track_findings
 
 
 # Core conductor files every executable track must have. Single source for the
@@ -1556,7 +1557,11 @@ def _stamp_checkpoint_in_plan(track_dir, p, sha):
     plan.md. Returns a result dict (no printing) so both the ``add-checkpoint``
     CLI command and the phase-checkpoint handshake (``cmd_phase_checkpoint_review``)
     can stamp without double-printing. ``ok`` on success; ``error`` on a missing
-    plan.md, malformed SHA, or phase heading not found."""
+    plan.md, malformed SHA, or phase heading not found.
+
+    A successful stamp also compiles ``.conductor/track-findings.md`` for this
+    phase (advisory, fail-open) — the single home for that trigger; see the
+    comment at the tail of this function."""
     plan_path = Path(track_dir) / "plan.md"
     if not plan_path.exists():
         return dict(error="plan.md not found")
@@ -1591,6 +1596,19 @@ def _stamp_checkpoint_in_plan(track_dir, p, sha):
         f.write("\n".join(result))
         if result and not result[-1].endswith("\n"):
             f.write("\n")
+
+    # Single-homed track-findings compile: BOTH stamp paths funnel through this
+    # helper (cmd_add_checkpoint — Rail A / the phase-checker agent — and
+    # cmd_phase_checkpoint_review's PASSED arm — Rail B), so the compile lives
+    # here rather than at either call site. A PASSED checkpoint means the
+    # phase's durable findings are settled; later phases' consumers read
+    # .conductor/track-findings.md. FAILED never stamps → never compiles.
+    # Advisory + fail-open: a compile error must never block the advance (the
+    # checkpoint is already stamped).
+    try:
+        compile_track_findings(track_dir, current_phase=phase_num)
+    except Exception as exc:  # noqa: BLE001 — advisory, never fatal
+        sys.stderr.write(f"track-findings compile skipped (advisory): {exc}\n")
     return dict(ok=True, phase=p, sha=sha)
 
 

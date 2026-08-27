@@ -563,6 +563,15 @@ def cmd_append_handoff(track_dir, phase, task, entry_type, content_json, subtask
 
 # Heading rendered by cmd_append_handoff's explore block (handoff.py:502).
 _GRAD_HEADING = re.compile(r"^###\s+Graduation Candidates\b")
+# Explore-block sections whose bullets carry the phase's durable findings /
+# gotchas (handoff.py:483-484, 489-490). Unlike graduation, an EMPTY list
+# renders as the bullet ``- None`` — the walks below must skip that sentinel.
+_FINDINGS_HEADING = re.compile(r"^###\s+Key Findings\b")
+_GOTCHAS_HEADING = re.compile(r"^###\s+Gotchas & Constraints\b")
+_NONE_BULLET = "- None"
+# Cap on findings/gotchas bullets harvested per section kind per handoff file:
+# an explorer can ramble; the compiled doc needs the load-bearing head, not the tail.
+_FINDINGS_CAP_PER_TASK = 8
 # `## Technical Decision: {title} | {ts}` rendered by the decision block.
 _DECISION_HEADING = re.compile(r"^##\s+Technical Decision:\s*(.+?)\s*(?:\|[^|]*)?$")
 _DECISION_FIELD = re.compile(r"^\*\*(Options|Chosen|Reasoning|Tradeoffs)\*\*:\s*(.*)$")
@@ -571,26 +580,65 @@ _DECISION_FIELD = re.compile(r"^\*\*(Options|Chosen|Reasoning|Tradeoffs)\*\*:\s*
 def _extract_candidates(handoff_dir):
     """Parse durable findings from every ``P*T*.md`` handoff file in *handoff_dir*.
 
-    Returns ``{"graduation": [...], "decisions": [...]}``:
+    Returns ``{"graduation": [...], "decisions": [...], "findings": [...],
+    "gotchas": [...]}``:
     - graduation: ``{"text", "source"}`` per non-``_None_`` bullet under any
       ``### Graduation Candidates`` section (de-duplicated by text; multiple
       sections per file — e.g. one per subtask — are all collected).
     - decisions: ``{"title", "chosen", "reasoning", "source"}`` per
       ``## Technical Decision:`` block (``--type decision`` entries).
+    - findings / gotchas: ``{"text", "source"}`` bullets from the explore
+      block's ``### Key Findings`` / ``### Gotchas & Constraints`` sections
+      (de-duplicated by text; capped at ``_FINDINGS_CAP_PER_TASK`` bullets per
+      kind per file; the ``- None`` empty-list sentinel is never collected).
 
     ``source`` is the handoff stem (``P1T2``). Read-only; never creates the dir.
     """
     graduation, decisions = [], []
+    findings, gotchas = [], []
     if not handoff_dir.is_dir():
-        return {"graduation": graduation, "decisions": decisions}
+        return {"graduation": graduation, "decisions": decisions,
+                "findings": findings, "gotchas": gotchas}
 
     seen = set()  # de-dup identical candidate text across handoffs
+    seen_findings, seen_gotchas = set(), set()
     for hf in sorted(handoff_dir.glob("P*T*.md")):
         source = hf.stem
         try:
             lines = hf.read_text(encoding="utf-8").splitlines()
         except OSError:
             continue
+
+        # Explore-block findings/gotchas (possibly multiple sections per file).
+        # Same bullet walk as graduation, but the empty-list sentinel is the
+        # bullet ``- None`` (rendered when the explorer recorded nothing), and
+        # each kind is capped per file so a rambling explorer cannot flood the
+        # compiled doc.
+        for heading, bucket, seen_set in (
+                (_FINDINGS_HEADING, findings, seen_findings),
+                (_GOTCHAS_HEADING, gotchas, seen_gotchas)):
+            n_taken = 0
+            for idx, line in enumerate(lines):
+                if not heading.match(line):
+                    continue
+                for l in lines[idx + 1:]:
+                    if l.startswith("#"):
+                        break
+                    s = l.strip()
+                    if not s:
+                        continue
+                    if s == _NONE_BULLET:
+                        break
+                    if s.startswith("- "):
+                        if n_taken >= _FINDINGS_CAP_PER_TASK:
+                            break
+                        text = s[2:].strip()
+                        if text and text not in seen_set:
+                            seen_set.add(text)
+                            bucket.append({"text": text, "source": source})
+                            n_taken += 1
+                    else:
+                        break  # non-bullet content ends the list
 
         # Graduation candidates (possibly multiple sections per file).
         for idx, line in enumerate(lines):
@@ -627,7 +675,8 @@ def _extract_candidates(handoff_dir):
                     entry[{"Chosen": "chosen", "Reasoning": "reasoning"}[fm.group(1)]] = fm.group(2).strip()
             decisions.append(entry)
 
-    return {"graduation": graduation, "decisions": decisions}
+    return {"graduation": graduation, "decisions": decisions,
+            "findings": findings, "gotchas": gotchas}
 
 
 def cmd_harvest_candidates(track_dir):
@@ -699,6 +748,8 @@ def _render_track_findings(track_dir, state, harvested, current_phase=None):
     """
     graduation = harvested.get("graduation", [])
     decisions = harvested.get("decisions", [])
+    findings = harvested.get("findings", [])
+    gotchas = harvested.get("gotchas", [])
     description = state.get("description", "") if state else ""
     track_id = state.get("track_id", "track") if state else "track"
     title = description.strip() or track_id
@@ -718,7 +769,7 @@ def _render_track_findings(track_dir, state, harvested, current_phase=None):
         "",
     ]
 
-    if not graduation and not decisions:
+    if not graduation and not decisions and not findings and not gotchas:
         lines.append("_No durable findings recorded yet._")
         lines.append("")
         return "\n".join(lines)
@@ -727,6 +778,26 @@ def _render_track_findings(track_dir, state, harvested, current_phase=None):
     lines.append("")
     if graduation:
         for g in graduation:
+            src = g.get("source", "?")
+            lines.append(f"- {g['text']} _— source {src} "
+                         f"{_source_age_label(src, current_phase)}_")
+    else:
+        lines.append("_None._")
+    lines.append("")
+    lines.append("## Key Findings")
+    lines.append("")
+    if findings:
+        for f in findings:
+            src = f.get("source", "?")
+            lines.append(f"- {f['text']} _— source {src} "
+                         f"{_source_age_label(src, current_phase)}_")
+    else:
+        lines.append("_None._")
+    lines.append("")
+    lines.append("## Gotchas & Constraints")
+    lines.append("")
+    if gotchas:
+        for g in gotchas:
             src = g.get("source", "?")
             lines.append(f"- {g['text']} _— source {src} "
                          f"{_source_age_label(src, current_phase)}_")
@@ -762,12 +833,12 @@ def compile_track_findings(track_dir, current_phase=None):
     re-exploring. Idempotent: rewritten from scratch every call.
 
     ``current_phase`` (1-based) flows to ``_source_age_label`` so each rendered
-    finding carries its age relative to the checkpoint just stamped (the F5 hook
-    passes it; the manual CLI path omits it → source-phase-only labels).
+    finding carries its age relative to the checkpoint just stamped (the stamp
+    path passes it; the manual CLI path omits it → source-phase-only labels).
 
     Returns a dict (``path``, ``graduation_count``, ``decisions_count``,
-    ``compiled`` bool). Does not emit — the CLI wrapper and the F5 hook decide
-    what to do with the result.
+    ``findings_count``, ``gotchas_count``, ``compiled`` bool). Does not emit —
+    the CLI wrapper and the stamp path decide what to do with the result.
     """
     state = load(track_dir)
     handoff_dir = Path(track_dir) / ".conductor" / "handoff"
@@ -783,6 +854,8 @@ def compile_track_findings(track_dir, current_phase=None):
         "path": str(path),
         "graduation_count": len(harvested.get("graduation", [])),
         "decisions_count": len(harvested.get("decisions", [])),
+        "findings_count": len(harvested.get("findings", [])),
+        "gotchas_count": len(harvested.get("gotchas", [])),
         "compiled": compiled,
     }
 
@@ -790,10 +863,12 @@ def compile_track_findings(track_dir, current_phase=None):
 def cmd_compile_track_findings(track_dir):
     """CLI wrapper — compile ``.conductor/track-findings.md`` from handoffs.
 
-    Runs automatically at every PASSED phase checkpoint
-    (``cmd_phase_checkpoint_review``); exposed as a command so it can be invoked
-    and tested in isolation. The compile is advisory (fail-open at the F5 hook):
-    a findings-compile error never blocks a phase advance.
+    Runs automatically at every PASSED phase checkpoint (the compile is
+    single-homed in ``_stamp_checkpoint_in_plan``, which both stamp paths —
+    ``add-checkpoint`` and ``phase-checkpoint-review`` — funnel through);
+    exposed as a command so it can be invoked and tested in isolation. The
+    compile is advisory (fail-open at the stamp path): a findings-compile error
+    never blocks a phase advance.
     """
     result = compile_track_findings(track_dir)
     result["ok"] = True

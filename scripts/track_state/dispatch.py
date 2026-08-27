@@ -45,7 +45,7 @@ from .git_ops import (
     docs_synced_for_track, wiki_phase2_committed_for_track,
     _git_rev_parse_toplevel,
 )
-from .handoff import _append_execution_record, compile_track_findings
+from .handoff import _append_execution_record
 from .misc import _get_all_shas, _stamp_checkpoint_in_plan
 from .quality import _finalize_track
 from .validate import _fix_plan_mismatches, ensure_healthy
@@ -3239,13 +3239,8 @@ def cmd_phase_checkpoint_review(track_dir, status, sha, reason):
         # A phase-recovery retry cycle that finally PASSED is resolved — clear it so
         # the next step advances instead of re-routing (idempotent if none present).
         _phase_recovery_clear_marker(track_dir)
-        # Advisory: compile durable findings for later phases. Fail-open — a
-        # compile error must never block the phase advance (the checkpoint is
-        # already stamped). cross-phase findings live in .conductor/track-findings.md.
-        try:
-            compile_track_findings(track_dir, current_phase=cp)
-        except Exception as exc:  # noqa: BLE001 — advisory, never fatal
-            sys.stderr.write(f"track-findings compile skipped (advisory): {exc}\n")
+        # track-findings compile: single-homed in _stamp_checkpoint_in_plan
+        # (both stamp paths funnel through it) — nothing to do here.
         out(dict(ok=True, stamped=True, phase=cp, sha=sha, track_dir=td))
     elif verdict == "FAILED":
         if _auto_route_failure(state):
