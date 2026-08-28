@@ -39,6 +39,7 @@ COMMAND_GROUPS = [
                      "task-context", "view", "status"]),
     ("Workflow Studio", ["shape-studio", "registry-json", "registry-save"]),
     ("Roster", ["roster"]),
+    ("Task Types", ["tag"]),
     ("Probes", ["probe"]),
     ("Logs", ["log-path", "subagent-log"]),
 ]

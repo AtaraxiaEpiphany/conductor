@@ -51,6 +51,7 @@ from .logs_read import cmd_log_path, cmd_subagent_log
 from .registry_studio import cmd_registry_json, cmd_registry_save
 from .shape_studio import cmd_shape_studio
 from .agent_roster import roster_add
+from .task_profiles import tag_add
 from .probes import run_probe, probe_names
 # Command-surface tables live in the leaf module ``.commands`` (single source
 # for the pre-command guard and README sync too); aliased to the historical
@@ -61,7 +62,9 @@ from .commands import (
 )
 
 
-_BOOL_FLAGS = {"--full", "--fix", "--check", "--force", "--verify"}
+_BOOL_FLAGS = {"--full", "--fix", "--check", "--force", "--verify",
+               "--tdd-exempt", "--coverage-exempt", "--auto-propose",
+               "--over-tag-risk", "--refactor"}
 
 # Commands EXCLUDED from short-id resolution (their ``<track-dir>`` positional
 # is not "an existing track to locate"):
@@ -88,7 +91,7 @@ _TD_NO_RESOLUTION_COMMANDS = {
     "new-track-set-mode", "new-track-finalize", "preflight", "derive-name",
     "propose-shape", "propose-tags",
     "brief-init", "brief-finalize", "brief-grill-done",
-    "roster", "probe",
+    "roster", "probe", "tag",
 }
 
 
@@ -314,6 +317,15 @@ COMMAND_HELP = {
                ".claude/agents/<name>.md (skills-frontmatter preload + conductor result "
                "contract) and upsert its agent-roster overlay row (defaults = the "
                "task-executor scaffold). Validated before write; keeps a .bak."),
+    "tag": ("tag add <name> --when-to-use <text> [--route executor|manual|explore]\n"
+            "         [--signals \"a,b\"] [--tdd-exempt] [--coverage-exempt]\n"
+            "         [--over-tag-risk] [--refactor] [--auto-propose]\n"
+            "         [--workflow <prose> | --workflow-doc <name>.md] [--force] [--project-dir <dir>]",
+            "Generate a project task-type: upsert one row into the project overlay "
+            "conductor/workflow/task-type-profiles.json (existing rows/default preserved, "
+            ".bak kept). Defaults = safe: executor route, both gates ON, auto_propose "
+            "false (never surfaces in propose-tags without opting in). Validated "
+            "before write; the tag is live in TAG_VOCAB/route_for immediately."),
     "probe": ("probe <name>",
               "Fetch a tier-B context snapshot by registered name (read-only, "
               "side-effect-free): `test-state` returns the latest test-run verdicts "
@@ -550,7 +562,7 @@ _NO_TRACK_DIR_COMMANDS = frozenset({
     "log-path", "subagent-log", "brief-resume",
     "registry-doc", "status",
     "shape-studio", "registry-json", "registry-save",
-    "roster", "probe",
+    "roster", "probe", "tag",
 })
 
 
@@ -726,6 +738,34 @@ def main():
                 fence=flag(rest, "--fence"),
                 recovery=flag(rest, "--recovery"),
                 recovery_instruction=flag(rest, "--recovery-instruction"),
+                force="--force" in rest,
+                project_dir=flag(rest, "--project-dir"))
+            out(result)
+            if not result.get("ok"):
+                sys.exit(1)
+        elif cmd == "tag":
+            # No track-dir: positionals are `add <name>` (flags start at
+            # argv[2] — see registry-doc). Only `add` today; the arg surface
+            # mirrors tag_add's generator flags. The five booleans must stay
+            # in _BOOL_FLAGS or positional() swallows the next token as each
+            # flag's value.
+            rest = sys.argv[2:]
+            tpos = positional(rest)
+            if not tpos or tpos[0] != "add" or len(tpos) < 2:
+                out(dict(error="usage: track-state tag add <name> --when-to-use <text>",
+                         hint="generate a project task-type overlay row"))
+                sys.exit(1)
+            result = tag_add(
+                tpos[1], flag(rest, "--when-to-use"),
+                route=flag(rest, "--route"),
+                tdd_exempt="--tdd-exempt" in rest,
+                coverage_exempt="--coverage-exempt" in rest,
+                workflow=flag(rest, "--workflow"),
+                workflow_doc=flag(rest, "--workflow-doc"),
+                refactor="--refactor" in rest,
+                auto_propose="--auto-propose" in rest,
+                over_tag_risk="--over-tag-risk" in rest,
+                signals=flag(rest, "--signals"),
                 force="--force" in rest,
                 project_dir=flag(rest, "--project-dir"))
             out(result)

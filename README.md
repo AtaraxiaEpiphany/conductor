@@ -56,7 +56,7 @@ All interaction happens through Claude Code slash commands:
 ### `track-state` CLI
 
 <!-- conductor:begin:cli-groups -->
-The `bin/track-state` command provides direct state management. Run `bin/track-state help` for the full, current list (89 subcommands across 17 groups) — it is grouped and self-describing. The complete surface, straight from `track_state/commands.py` (the same single source the pre-command guard derives its sanctioned set from):
+The `bin/track-state` command provides direct state management. Run `bin/track-state help` for the full, current list (90 subcommands across 18 groups) — it is grouped and self-describing. The complete surface, straight from `track_state/commands.py` (the same single source the pre-command guard derives its sanctioned set from):
 
 | Group | Subcommands |
 |-------|-------------|
@@ -75,6 +75,7 @@ The `bin/track-state` command provides direct state management. Run `bin/track-s
 | **Diagnostics** | `validate`, `gc`, `shas`, `post-loop-status`, `checklist-verify`, `deferred-report`, `phase-done`, `add-checkpoint`, `preflight`, `quality-snapshot`, `spec-integrity`, `spec-anchors`, `spec-delta`, `task-context`, `view`, `status` |
 | **Workflow Studio** | `shape-studio`, `registry-json`, `registry-save` |
 | **Roster** | `roster` |
+| **Task Types** | `tag` |
 | **Probes** | `probe` |
 | **Logs** | `log-path`, `subagent-log` |
 <!-- conductor:end:cli-groups -->

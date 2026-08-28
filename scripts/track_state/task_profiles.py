@@ -728,3 +728,163 @@ def derive_task_tag(description: str) -> str | None:
         print(f"derive_task_tag: classifier failed ({exc!r}); defaulting to None",
               file=sys.stderr)
         return None
+
+
+# --- overlay generator ----------------------------------------------------------
+
+def tag_add(name, when_to_use=None, route=None, tdd_exempt=False,
+            coverage_exempt=False, workflow=None, workflow_doc=None,
+            refactor=False, auto_propose=False, over_tag_risk=False,
+            signals=None, force=False, project_dir=None) -> dict:
+    """Generate (or replace) a task-type row in the PROJECT overlay registry.
+
+    The validating generator for project task types — the task-type counterpart
+    of ``agent_roster.roster_add``. Upserts one row into
+    ``<project>/conductor/workflow/task-type-profiles.json`` (whole-doc
+    adoption: existing rows, the ``default`` block, ``_comment``/``_fields``
+    preserved; same-name row replaced wholesale — exactly the ``tags`` merge
+    semantics of :func:`_merge_overlay`). The new row becomes live in
+    ``TAG_VOCAB``/``route_for``/``is_tdd_exempt``/``when_to_use_for`` (and
+    ``extract_tags``, which builds its regex from the vocab) with zero Python
+    edits.
+
+    Field policy: ``route``/``when_to_use``/``tdd_exempt``/``coverage_exempt``
+    are always written explicitly; ``auto_propose`` is always written too — a
+    *generated* tag defaults to ``false`` because at read time an absent
+    ``auto_propose`` means True, and an adopted/bespoke tag must never surface
+    in the mechanical proposer (:func:`rank_tags`) without an explicit decision
+    to opt in. ``over_tag_risk``/``refactor`` are written only when true;
+    ``signals`` when provided (comma-separated string, lowercased, deduped).
+
+    ``when_to_use`` is REQUIRED here even though :func:`validate_tag_row` does
+    not demand it: without it spec-planner's tag guidance silently degrades to
+    an empty hint and the tag is invisible in the ``registry-doc`` render — the
+    one field whose absence costs comprehension rather than correctness, so the
+    generator holds the bar the validator leaves to convention.
+
+    Validates the row and the post-write merge BEFORE touching disk and returns
+    ``{ok: False, errors: [...]}`` on a bad name (must match
+    ``[A-Za-z0-9][A-Za-z0-9_-]*``, not the reserved ``default``), missing
+    ``when_to_use``, unknown ``route``, an existing same-name overlay row
+    (unless *force* — shadowing a BASELINE tag is the overlay mechanism and
+    needs no flag), or an unreadable existing overlay (the write gate refuses
+    to clobber; fail-open is read-time behavior). On success writes a ``.bak``
+    beside the registry, clears the read cache (the first production
+    self-clear — previously only the studio did this), and returns
+    ``{ok, tag, registry_path, lint: []}``.
+    """
+    # Lazy imports keep the hook path clean (roster_add precedent): the
+    # dispatch hooks importing this module must not pay for the validator or
+    # the atomic-write helper.
+    from lib.atomic_io import atomic_write_json
+    from .registry_validate import ROUTES, validate_tag_row, validate_merged_task_types
+
+    if not name or name != name.strip() or "/" in name or "[" in name or "]" in name:
+        return {"ok": False, "errors": [
+            f"invalid tag name {name!r} — letters/digits/-/_ only, no brackets "
+            f"(it becomes both a plan marker and a registry key)"]}
+    import re as _re
+    if not _re.match(r"^[A-Za-z0-9][A-Za-z0-9_-]*$", name):
+        return {"ok": False, "errors": [
+            f"invalid tag name {name!r} — must match [A-Za-z0-9][A-Za-z0-9_-]*"]}
+    if name == "default":
+        return {"ok": False, "errors": [
+            "'default' is reserved for the top-level default profile — pass "
+            "per-key default overrides by editing the overlay directly"]}
+
+    if not when_to_use or not when_to_use.strip():
+        return {"ok": False, "errors": [
+            "--when-to-use is required — a tag without it is invisible in the "
+            "registry-doc render and spec-planner's tag guidance"]}
+
+    if route is not None and route not in ROUTES:
+        return {"ok": False, "errors": [
+            f"unknown --route {route!r} (expected {list(ROUTES)})"]}
+
+    if project_dir is not None:
+        root = Path(project_dir).resolve()
+        if not root.is_dir():
+            return {"ok": False, "errors": [
+                f"project dir {project_dir!r} does not exist — refusing to "
+                f"create conductor/ scaffolding in a typo'd path"]}
+    else:
+        root = _project_root()
+    if root is None:
+        return {"ok": False, "errors": [
+            "no project dir resolved — pass --project-dir or run inside a "
+            "project tree (one with conductor/tracks/)"]}
+
+    if isinstance(signals, str):
+        signal_list = _dedupe_signals(
+            s.strip().lower() for s in signals.split(","))
+    elif signals:
+        signal_list = _dedupe_signals(str(s).strip().lower() for s in signals)
+    else:
+        signal_list = []
+
+    row = {"route": route or "executor",
+           "when_to_use": when_to_use.strip(),
+           "tdd_exempt": bool(tdd_exempt),
+           "coverage_exempt": bool(coverage_exempt),
+           # Always explicit: at read time absent means True, and a generated
+           # tag must not join the proposer's candidates by accident.
+           "auto_propose": bool(auto_propose)}
+    if over_tag_risk:
+        row["over_tag_risk"] = True
+    if refactor:
+        row["refactor"] = True
+    if workflow is not None:
+        row["workflow"] = workflow
+    if workflow_doc is not None:
+        row["workflow_doc"] = workflow_doc
+    if signal_list:
+        row["signals"] = signal_list
+
+    # The overlay as it will exist AFTER this write: whole-doc adoption of the
+    # existing file (preserves default/_comment/_fields/rows), this row
+    # replacing any same-name row wholesale (the _merge_overlay tags
+    # semantics). A malformed existing file is a write-gate refusal, not a
+    # fail-open — clobbering it would discard rows the user cannot see.
+    overlay = {"default": {}, "tags": {}}
+    registry_path = root / "conductor" / "workflow" / "task-type-profiles.json"
+    if registry_path.exists():
+        try:
+            existing = json.loads(registry_path.read_text(encoding="utf-8"))
+            if not isinstance(existing, dict):
+                raise ValueError("not an object")
+            overlay = existing
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            return {"ok": False, "errors": [
+                f"{registry_path} is unreadable ({exc}) — fix or remove it "
+                f"before adding tags (the conductor currently fails open to "
+                f"the baseline)"]}
+    tags = overlay.setdefault("tags", {})
+    if name in tags and not force:
+        return {"ok": False, "errors": [
+            f"overlay tag {name!r} already exists — pass --force to replace it "
+            f"(shadowing a BASELINE tag is the overlay mechanism and needs "
+            f"no flag)"]}
+    tags[name] = row
+
+    # Validate before touching disk: the row itself, then the merge the
+    # conductor WOULD resolve after the write (baseline ⊕ the on-disk overlay
+    # as amended above — reusing _merge_overlay for the pre-write disk state,
+    # then applying the same tags update it would perform).
+    errs = list(validate_tag_row(name, row))
+    merged = _merge_overlay(_load_baseline())
+    merged.setdefault("tags", {}).update(tags)
+    errs.extend(validate_merged_task_types(merged))
+    if errs:
+        return {"ok": False, "errors": errs}
+
+    if registry_path.exists():
+        import shutil
+        shutil.copy2(registry_path,
+                     registry_path.parent / (registry_path.name + ".bak"))
+
+    registry_path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_json(registry_path, overlay)
+
+    _load.cache_clear()
+    return {"ok": True, "tag": name, "registry_path": str(registry_path),
+            "lint": []}
