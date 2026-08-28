@@ -623,14 +623,45 @@ _FEATURE_MARKER_PHRASES = (
 _FEATURE_MARKER_EXCEPTIONS = ("feature flag", "feature toggle", "feature gate")
 
 
+def rank_tags(text: str) -> list[dict]:
+    """Scored tag candidates for a free-text DESCRIPTION — the propose-tags core.
+
+    The planning-layer mirror of :func:`workflow_shapes.rank_shapes`: pure
+    signal-matching over the resolved registry, deterministic, no plurality /
+    guard / fail-open — those policies belong to the consumer. Each auto-
+    proposable tag (``auto_propose: false`` rows are skipped — opt-in tags are
+    authored, never surfaced) is scored by distinct ``signals`` hits
+    (:func:`_signal_in`, word-boundary aware). Returns ``[{"tag", "score",
+    "hits"}]``, score-descending with registry order stable within a tie,
+    capped at the top 3. Empty/blank text scores nothing (``[]``).
+    """
+    if not text or not text.strip():
+        return []
+    lowered = text.lower()
+    candidates = []
+    for tag in TAG_VOCAB():
+        # An opt-in tag (auto_propose: false) is never surfaced — it is authored
+        # onto a task name, not inferred from a description ([Refactor],
+        # [Migrate]; see derive_task_tag).
+        if not auto_propose_for(tag):
+            continue
+        hits = [sig for sig in _signals_for(tag) if _signal_in(sig, lowered)]
+        if hits:
+            candidates.append(dict(tag=tag, score=len(hits), hits=hits))
+    # Stable sort on score only — registry order breaks ties (no preference
+    # among equals; the consumers treat a tie as ambiguity, not a ranking).
+    candidates.sort(key=lambda c: c["score"], reverse=True)
+    return candidates[:3]
+
+
 def derive_task_tag(description: str) -> str | None:
     """Advisory leading tag for a task DESCRIPTION, or ``None`` (default TDD).
 
     The inverse of :func:`derive_task_type` (which reads a tag *already on* a
     name string): this classifies **free text that has no tag yet**, by
-    signal-matching each registered tag's ``signals`` set. It is the
-    registry-driven selection engine for dynamic plan generation — a project
-    overlay tag with a ``signals`` field becomes selectable with zero code edits.
+    strict-plurality over :func:`rank_tags` scores. It is the registry-driven
+    selection engine for dynamic plan generation — a project overlay tag with a
+    ``signals`` field becomes selectable with zero code edits.
 
     **Safe-failure-mode bias.** ``None`` means "no exemption, full TDD" — the
     correct outcome for the majority of tasks and the safe failure mode: a
@@ -639,7 +670,9 @@ def derive_task_tag(description: str) -> str | None:
     (F2/F3 exempt). So the matcher is deliberately conservative:
 
     - returns a tag only when it wins a **strict plurality** of distinct signal
-      hits AND clears a minimum-hit bar (>= 2 distinct hits);
+      hits (any single hit can enter the ranking; the effective >= 2-hit bar
+      exists only inside the over-tagging guard below, where a weak exemption
+      signal on feature-marker text is refused);
     - feature work (descriptions carrying a :data:`_FEATURE_MARKERS` term with no
       stronger exemption signal) returns ``None`` even if it incidentally
       matches an exemption tag's signals;
@@ -657,34 +690,13 @@ def derive_task_tag(description: str) -> str | None:
     returns ``None`` (never raises into a caller).
     """
     try:
-        if not description or not description.strip():
-            return None
-        text = description.lower()
-
-        scores: dict[str, int] = {}
-        for tag in TAG_VOCAB():
-            # An opt-in tag (auto_propose: false) is NEVER auto-derived as a
-            # leading tag — it is authored onto a task name, not inferred from a
-            # description. Today both opt-in tags: [Refactor] (a modifier that
-            # augments a primary task) and [Migrate] (a behavior-preservation
-            # primary). Without this guard, [Refactor]'s when_to_use tokens
-            # ("refactor"/"extract"/"simplify") would auto-propose it for any
-            # readability tweak (silently opting into the refactorer), and
-            # [Migrate]'s ("refactor"/"upgrade"/"rename") would auto-propose it
-            # (silently dropping TDD/coverage). Both are deliberate opt-ins.
-            if not auto_propose_for(tag):
-                continue
-            hits = sum(1 for sig in _signals_for(tag) if _signal_in(sig, text))
-            if hits:
-                scores[tag] = hits
-
-        if not scores:
+        ranked = rank_tags(description)
+        if not ranked:
             return None
 
         # Strict plurality: a unique winner with more hits than every other.
-        ranked = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
-        winner, top = ranked[0]
-        if len(ranked) > 1 and ranked[1][1] >= top:
+        winner, top = ranked[0]["tag"], ranked[0]["score"]
+        if len(ranked) > 1 and ranked[1]["score"] >= top:
             return None  # tied — ambiguous, refuse to guess into an exemption
 
         # Over-tagging guard. Feature work that merely *touches* an exemption
@@ -693,7 +705,7 @@ def derive_task_tag(description: str) -> str | None:
         # work), then if a remaining feature marker is present AND the winning
         # tag did not clear a comfortable plurality (top >= 2 distinct signals,
         # i.e. the exemption signal is strong, not incidental), refuse to tag.
-        guard_text = text
+        guard_text = (description or "").lower()
         for ex in _FEATURE_MARKER_EXCEPTIONS:
             guard_text = guard_text.replace(ex, "")
         # over_tag_risk is read from the registry (has_over_tag_risk), not a

@@ -924,6 +924,92 @@ def cmd_propose_shape(description, brief_path=None):
     ))
 
 
+def cmd_propose_tags(description):
+    """Propose the task-type tag for a task description — the tag axis of D3.
+
+    ``propose-shape`` one layer down, for TASK tags: pure signal-matching via
+    :func:`task_profiles.rank_tags` — deterministic, no model call, no
+    filesystem writes. Consumers: the spec-planner agent calls this per task
+    description before writing each plan.md task line (the mechanical matcher
+    replacing hand-mirroring the registry-doc signal tables), and a human can
+    run it at the CLI to audit the classifier.
+
+    Output contract:
+
+    - ``proposed`` — the strict-plurality winner, or ``None`` (no candidate, or
+      a top score tied with the runner-up: ambiguity is a decision to leave the
+      task untagged, not a proposal).
+    - ``confirm_required`` — **the gate-confirm asymmetry**: ``True`` iff the
+      proposed tag drops a gate (``tdd_exempt`` or ``coverage_exempt``). A
+      gate-neutral proposal records silently; a gate-dropping one must be
+      confirmed before it takes effect (keep vs drop-to-default-TDD) — the
+      over-tagging guard's silent suppression stays in ``derive_task_tag``;
+      here the candidate is SURFACED and the user is the bar.
+    - ``candidates`` — every scored tag (score + hits + resolved route/exemption
+      flags for transparency); ``chosen`` — the proposed tag's full row (only
+      when proposed); ``default`` — the untagged fallback entry (full TDD).
+    """
+    from . import task_profiles as tp
+
+    desc = (description or "").strip()
+    if not desc:
+        out(dict(ok=False, error="missing description",
+                 hint='track-state propose-tags "<task description>"'))
+        return
+
+    def _flags(tag):
+        prof = tp._profile(tag)
+        return dict(
+            route=prof.get("route", "executor"),
+            tdd_exempt=bool(prof.get("tdd_exempt", False)),
+            coverage_exempt=bool(prof.get("coverage_exempt", False)),
+            over_tag_risk=bool(prof.get("over_tag_risk", False)),
+        )
+
+    candidates = []
+    for cand in tp.rank_tags(desc):
+        entry = dict(tag=cand["tag"], score=cand["score"], hits=cand["hits"])
+        entry.update(_flags(cand["tag"]))
+        candidates.append(entry)
+
+    proposed = None
+    if candidates and (len(candidates) == 1
+                       or candidates[0]["score"] > candidates[1]["score"]):
+        proposed = candidates[0]["tag"]
+
+    confirm_required = False
+    chosen = None
+    if proposed is not None:
+        prof = tp._profile(proposed)
+        confirm_required = bool(prof.get("tdd_exempt", False)
+                                or prof.get("coverage_exempt", False))
+        chosen = dict(tag=proposed, **_flags(proposed))
+        chosen["auto_propose"] = bool(prof.get("auto_propose", True))
+        chosen["when_to_use"] = prof.get("when_to_use", "")
+        chosen["workflow_doc"] = prof.get("workflow_doc", "")
+
+    default_profile = tp._load()["default"]
+    default_entry = dict(
+        tag=None,
+        route=default_profile.get("route", "executor"),
+        tdd_exempt=bool(default_profile.get("tdd_exempt", False)),
+        coverage_exempt=bool(default_profile.get("coverage_exempt", False)),
+        note="untagged — the default task type (full TDD, both gates on)",
+    )
+
+    out(dict(
+        ok=True,
+        proposed=proposed,
+        confirm_required=confirm_required,
+        chosen=chosen,
+        candidates=candidates,
+        default=default_entry,
+        hint="confirm_required=false → record `proposed` silently; true → "
+             "confirm the gate-dropping tag before it takes effect (keep vs "
+             "drop to default TDD). proposed=null → leave the task untagged.",
+    ))
+
+
 def _candidate_roots(conductor_root):
     """Base dirs to probe when resolving a track dir, given the conductor root
     (the directory holding ``tracks.md`` = ``reg.parent``).
@@ -2124,7 +2210,9 @@ def cmd_registry_doc(tag=None, shape=None, roster=None):
         print("Match a task description to a tag by these keywords (the same "
               "inputs `derive_task_tag` uses). Only tags that explicitly declare "
               "`signals` appear; a tag with no row here (e.g. `[Refactor]`) is "
-              "opt-in — match it deliberately, never auto-propose it.")
+              "opt-in — match it deliberately, never auto-propose it. "
+              "Or run `track-state propose-tags \"<description>\"` — the "
+              "mechanical matcher over these signals.")
         print()
         for sig_tag, sig in sig_rows:
             print(f"- `[{sig_tag}]`: {', '.join(str(k) for k in sig)}")

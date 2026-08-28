@@ -1,7 +1,7 @@
 ---
 name: spec-planner
 description: Generates spec.md and plan.md from user requirements and project context. Writes files directly, returns compact summary to minimize parent context pressure. Dispatched by conductor:setup and conductor:newTrack.
-tools: Read, Write, Grep, Glob, Edit
+tools: Read, Write, Grep, Glob, Edit, Bash
 model: sonnet
 effort: medium
 maxTurns: 60
@@ -63,7 +63,7 @@ If `USER_CONTEXT` is `N/A` (no Brief), proceed to §3.1 as before — the codeba
 
 The orchestrator provides file paths only — you read and synthesize all content yourself. This keeps business docs out of the orchestrator context.
 
-1. **Task-Type Vocabulary (fetch FIRST)** — Run `track-state registry-doc` (no args) and load the resolved task-type tag tables AND the `## Tag Signals` matcher keywords BEFORE authoring any task line. This is the closed vocabulary your `plan.md` tags validate against (plugin baseline ⊕ project overlay). `init-from-plan` rejects an unrecognized tag as a hard error, so author tags ONLY from what this renders — never invent one. The registry is the single home for the tag set; you fetch it on demand rather than receiving it injected (the three-tier discipline — `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/context-model.md`). The `## Tag Signals` keywords are the matcher data: match each task description against them the same way `derive_task_tag` does.
+1. **Task-Type Vocabulary (fetch FIRST)** — Run `track-state registry-doc` (no args) and load the resolved task-type tag tables AND the `## Tag Signals` matcher keywords BEFORE authoring any task line. This is the closed vocabulary your `plan.md` tags validate against (plugin baseline ⊕ project overlay). `init-from-plan` rejects an unrecognized tag as a hard error, so author tags ONLY from what this renders — never invent one. The registry is the single home for the tag set; you fetch it on demand rather than receiving it injected (the three-tier discipline — `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/context-model.md`). The `## Tag Signals` keywords are the matcher data — but do NOT hand-match against them: §4.2 runs the mechanical matcher (`track-state propose-tags`) per task. Fetch the vocabulary here; match there.
 2. **Project Index** — Read `conductor/index.md` to discover all available documentation paths and categories.
 3. **Global Docs** — Read the Global Docs listed in `conductor/index.md`:
    - Product Definition
@@ -143,7 +143,7 @@ Structure:
 
 **Task-tag decision rule (apply to EVERY task line before writing it).** Tags are **exemptions from the default TDD workflow**, not classifications, and a task with **no tag is the default** (full Red→Green→Refactor TDD, which is the correct path for most implementation work).
 
-**The closed tag set is data-driven — match by the registry data you fetched in §3.1, not by an enumerated ladder.** The `track-state registry-doc` render (plugin baseline ⊕ project overlay) IS the authoritative closed vocabulary. Each registered tag carries TWO matcher inputs there: a one-line `when_to_use` hint and a `signals:` keyword list (the same inputs `derive_task_tag` matches against). Match each task to a registered tag by those inputs — emit any tag the registry lists, **refuse none that are registered**, including project-overlay tags (e.g. a project's `[K8sRollout]` or `[Lint]`). The registry's per-tag hint names the canonical case for that tag (e.g. `[Config]` for a no-logic `.env`/`.yaml`/`.json` edit) — read those hints; do not re-encode them here. A tag that declares **no `signals:` line (e.g. `[Refactor]`) is opt-in only — never auto-propose it;** a tag without a signals line must be chosen deliberately, not goal-detected.
+**The closed tag set is data-driven — match MECHANICALLY, not by hand.** The `track-state registry-doc` render (plugin baseline ⊕ project overlay) IS the authoritative closed vocabulary (fetched in §3.1). For **every top-level task line, before writing it**, run `track-state propose-tags "<task description>"` and adopt `proposed` **verbatim** — write that tag as the task's leading `[Tag]` marker, or leave the task UNTAGGED when `proposed` is null (tie/ambiguity/no-signal is a decision, not a bug — never resolve it by re-matching the signal tables yourself). A tag that declares **no `signals:` line (e.g. `[Refactor]`) is opt-in only — it never appears in `propose-tags` candidates;** author such tags deliberately, never from description text. Emit any tag the registry lists, **refuse none that are registered**, including project-overlay tags (e.g. a project's `[K8sRollout]` or `[Lint]`). When the command reports `confirm_required: true`, the adopted tag drops the TDD and/or coverage gate on that task — you MUST list it under `TAG_CONFIRM:` in §5.0 (the orchestrator relays one keep-vs-drop question to the user; you never drop it yourself). The registry's per-tag hint names the canonical case for that tag (e.g. `[Config]` for a no-logic `.env`/`.yaml`/`.json` edit) — read those hints; do not re-encode them here.
 
 **When no registered tag's `when_to_use`/`signals` match — or you are unsure between an exemption tag and no-tag — leave the task UNTAGGED.** The default TDD path is the safe failure mode: a wrongly-untagged `[Config]` task costs one extra Red cycle, but a wrongly-tagged feature task silently skips TDD and the coverage gate (F2/F3 exempt). Defaulting to no-tag biases toward correctness. Never invent a tag **not in the resolved registry you fetched in §3.1** (e.g. `[Feature]`, `[Bugfix]`, `[Test]`, `[TDD]`) — `init-from-plan` **rejects** an unrecognized tag as a hard error (it validates against the resolved registry vocab), so an invented tag blocks the track from starting. The registry lives at `conductor/workflow/task-type-profiles.json` (baseline ⊕ project overlay — see `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/plan-format-contract.md`), and the project's overlay there is where a project-specific tag is registered so it appears in your `registry-doc` render.
 
@@ -173,8 +173,12 @@ FILES_WRITTEN:
 - {TRACK_DIR}/spec.md
 - {TRACK_DIR}/plan.md
 SUMMARY: <one-line summary of what was generated>
+TAG_CONFIRM:
+- <task name> → [<Tag>] (drops tdd/coverage gates on this task)
 ---END SPEC PLAN RESULT---
 ```
+
+`TAG_CONFIRM:` is optional — include it ONLY when at least one adopted tag reported `confirm_required: true` from `track-state propose-tags` (§4.2), one line per such task exactly as shown; omit the section entirely when none. The orchestrator relays these as one keep-vs-drop question round and applies the drops.
 
 The orchestrator derives the full task/subtask structure **mechanically from `plan.md`** via `track-state init-from-plan` — do **NOT** transcribe the plan structure back into this block. Dispatch tags (the closed set you fetched via `track-state registry-doc` in §3.1) are parsed from `plan.md` by that command, so they reach `track-state.json` without you echoing them here; just write them into `plan.md` per §4.2.
 

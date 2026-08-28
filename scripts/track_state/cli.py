@@ -28,6 +28,7 @@ from .misc import (
     cmd_registry_doc,
     cmd_record_summary, cmd_preflight, cmd_quality_snapshot,
     cmd_spec_integrity, cmd_view, cmd_status, cmd_derive_name, cmd_propose_shape,
+    cmd_propose_tags,
     cmd_post_loop_status,
     cmd_resolve_track, cmd_check, _resolve_track_dir_or_halt,
 )
@@ -75,9 +76,9 @@ _BOOL_FLAGS = {"--full", "--fix", "--check", "--force", "--verify"}
 #   * ``derive-name``: its positional is a shortname to derive a track name
 #     from, not a track to locate — resolving a bare shortname would exit 1
 #     with ``no_match`` (the track it names doesn't exist yet).
-#   * ``propose-shape``: its positional is a free-text track DESCRIPTION fed to
-#     the signal matcher — the same "not a track to locate" shape as
-#     ``derive-name`` (a description is never a track_dir lookup).
+#   * ``propose-shape`` / ``propose-tags``: the positional is a free-text
+#     DESCRIPTION fed to a signal matcher — the same "not a track to locate"
+#     shape as ``derive-name`` (a description is never a track_dir lookup).
 # Every OTHER command with a <track-dir> positional resolves a bare track_id /
 # shortname through ``_resolve_track_dir_or_halt`` (existing-path fast path
 # skips resolution), so ``track-state next auth``, ``indices auth``,
@@ -85,7 +86,7 @@ _BOOL_FLAGS = {"--full", "--fix", "--check", "--force", "--verify"}
 _TD_NO_RESOLUTION_COMMANDS = {
     "init-from-plan", "new-track-init", "new-track-step",
     "new-track-set-mode", "new-track-finalize", "preflight", "derive-name",
-    "propose-shape",
+    "propose-shape", "propose-tags",
     "brief-init", "brief-finalize", "brief-grill-done",
     "roster", "probe",
 }
@@ -472,6 +473,12 @@ COMMAND_HELP = {
                       "proposed/confirm_required + chosen entry (gates/verifiers/ac_grounding/"
                       "planning_doc path) — new-track §2.1's selection step; default is silent, "
                       "non-default asks one confirm. set-workflow-shape overrides later."),
+    "propose-tags": ('propose-tags "<task description>"',
+                     "Propose the task-type tag for one task description (pure signal-match "
+                     "via rank_tags — deterministic, no model call). proposed/confirm_required "
+                     "+ candidates + default entry. Gate-confirm asymmetry: a gate-neutral tag "
+                     "records silently; a gate-dropping one (tdd_exempt/coverage_exempt) sets "
+                     "confirm_required — spec-planner §4.2's matcher; proposed=null → untagged."),
     "resolve-track": ("resolve-track [<query>] [--registry <path>]",
                       "Resolve a track_dir from conductor/tracks.md (exact id / shortname "
                       "prefix / auto-select the single active track). ALWAYS exits 0 — "
@@ -913,6 +920,10 @@ def main():
             # description — the other non-track-dir positional (see
             # _TD_NO_RESOLUTION_COMMANDS); --brief takes a value (flag()).
             cmd_propose_shape(sys.argv[2], flag(args, "--brief"))
+        elif cmd == "propose-tags":
+            # task description — same non-track-dir positional shape as
+            # propose-shape (one free-text argument, no flags).
+            cmd_propose_tags(sys.argv[2])
         elif cmd == "new-track-init":
             cmd_new_track_init(track_dir,
                                flag(args, "--track-id") or "track",
