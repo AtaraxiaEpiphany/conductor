@@ -32,7 +32,7 @@ All interaction happens through Claude Code slash commands:
 <!-- conductor:begin:commands-table -->
 | Command | Description |
 |---------|-------------|
-| `/conductor:adopt-skill` | Adopt an outside skill as a conductor agent — generates the wrapper subagent (.claude/agents/<name>.md with skills-frontmatter preload) and its agent-roster overlay row in one validated command. |
+| `/conductor:adopt-skill` | Adopt an outside skill into the conductor — two roads. Road A adopts it as a project TASK TYPE (tag row + workflow docfile; [<Tag>] tasks run the skill's procedure inside task-executor). Road B adopts it as a WRAPPER AGENT (.claude/agents/<name>.md + agent-roster row). Each road is one validated command. |
 | `/conductor:brief` | Grill the user (frontier rounds of up to 4 questions per call) to reach shared understanding of a track, then write a brief.md that /conductor:new-track consumes as authoritative planning input |
 | `/conductor:dashboard` | Live resolved-workflow dashboard — renders the track's resolved shape (nodes, checkpoint verifier fan-out, gates) with the current position, the task tree, and quality gauges. Read-only in-chat snapshot. |
 | `/conductor:discover` | Find recurring dev frictions worth making tracks for (read git log + dispatch-lifecycle.log + .conductor/ signals first), grill-triage them with the user, then write a proposals.md the user feeds to /conductor:brief one proposal at a time |
