@@ -11,6 +11,7 @@ never hand-edits the JSON; it calls these commands. Mirrors new_track.py's
 invariants: idempotent, tolerant reader, parents=True mkdir, always-CLI-invoked.
 """
 from pathlib import Path
+import time
 
 from lib.brief_counters import clear_counter
 from .helpers import out, _find_registry
@@ -136,3 +137,71 @@ def cmd_brief_resume():
         out(dict(action="none", candidates=[]))
         return
     out(dict(action="resume", candidates=candidates))
+
+
+def _brief_metadata(track_dir):
+    """Fail-open brief.md metadata: ``(track_id, title)``. An unreadable file,
+    missing frontmatter, or a missing H1 degrades to the dir name — a brief
+    with odd contents is still an adoption candidate (the dir name is always
+    a usable label; detection must not die on parsing)."""
+    dir_name = Path(track_dir).name
+    track_id, title = dir_name, dir_name
+    try:
+        text = (Path(track_dir) / "brief.md").read_text(errors="replace")
+    except OSError:
+        return track_id, title
+    lines = text.splitlines()
+    # track_id from the frontmatter block only (leading --- ... --- pair).
+    if lines and lines[0].strip() == "---":
+        for line in lines[1:]:
+            if line.strip() == "---":
+                break
+            if line.startswith("track_id:"):
+                track_id = line.split(":", 1)[1].strip() or dir_name
+    # title from the first H1 anywhere in the file.
+    for line in lines:
+        if line.startswith("# "):
+            title = line[2:].strip() or dir_name
+            break
+    return track_id, title
+
+
+def cmd_brief_pending():
+    """Detect completed-but-unplanned briefs (orphaned pending briefs) for
+    new-track §2.1 adoption — the brief-finalize marker is deleted at §5, so
+    a finished brief is invisible to ``brief-resume``; this is the other half
+    of the state partition. A track dir is a candidate iff brief.md is
+    present AND ``track-state.json`` is absent (state exists → the §2.3
+    existing-plan revision lane owns it) AND the brief resume marker is
+    absent (marker present → ``brief-resume`` owns it) — one state, one
+    owner; overlapping detectors would double-offer. Always exits 0 — switch
+    on ``action``: ``none`` → fresh track; ``found`` → ``candidates`` sorted
+    newest-first by brief.md mtime (the skill asks over the 3 newest)."""
+    registry = _find_registry()
+    if registry is None:
+        out(dict(action="none", reason="no_registry",
+                 hint="No conductor/tracks.md found — nothing to scan."))
+        return
+    tracks_dir = registry.parent / "tracks"
+    scored = []
+    if tracks_dir.is_dir():
+        now = time.time()
+        for brief in tracks_dir.glob("*/brief.md"):
+            track_dir = brief.parent
+            if (track_dir / "track-state.json").exists():
+                continue
+            if _brief_read_marker(track_dir) is not None:
+                continue
+            track_id, title = _brief_metadata(track_dir)
+            mtime = brief.stat().st_mtime
+            scored.append((mtime, dict(
+                track_id=track_id,
+                track_dir=str(track_dir.resolve()),
+                title=title,
+                brief_age_days=int((now - mtime) / 86400),
+            )))
+    scored.sort(key=lambda pair: pair[0], reverse=True)
+    if not scored:
+        out(dict(action="none", candidates=[]))
+        return
+    out(dict(action="found", candidates=[cand for _mtime, cand in scored]))

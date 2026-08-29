@@ -46,7 +46,8 @@ from .new_track import (
     cmd_new_track_init, cmd_new_track_step, cmd_new_track_set_mode,
     cmd_new_track_resume, cmd_new_track_finalize,
 )
-from .brief import cmd_brief_init, cmd_brief_finalize, cmd_brief_resume, cmd_brief_grill_done
+from .brief import (cmd_brief_init, cmd_brief_finalize, cmd_brief_resume,
+                    cmd_brief_grill_done, cmd_brief_pending)
 from .logs_read import cmd_log_path, cmd_subagent_log
 from .registry_studio import cmd_registry_json, cmd_registry_save
 from .shape_studio import cmd_shape_studio
@@ -522,6 +523,11 @@ COMMAND_HELP = {
     "brief-resume": ("brief-resume",
                      "Detect any interrupted /conductor:brief run (committed:false marker). "
                      "ALWAYS exits 0 — action:none|resume"),
+    "pending-briefs": ("pending-briefs",
+                       "Detect completed-but-unplanned briefs (brief.md present, no "
+                       "track-state.json, no resume marker) for new-track adoption — "
+                       "the orphaned-brief half of the state partition. ALWAYS exits 0 — "
+                       "action:none|found, candidates newest-first by mtime."),
 }
 
 def cmd_help(command=None):
@@ -559,7 +565,7 @@ def cmd_help(command=None):
 # error (the brief-resume bug: registered in 3 sites but absent from this set).
 _NO_TRACK_DIR_COMMANDS = frozenset({
     "resolve-track", "check", "setup", "new-track-resume",
-    "log-path", "subagent-log", "brief-resume",
+    "log-path", "subagent-log", "brief-resume", "pending-briefs",
     "registry-doc", "status",
     "shape-studio", "registry-json", "registry-save",
     "roster", "probe", "tag",
@@ -989,6 +995,8 @@ def main():
             cmd_brief_grill_done(track_dir)
         elif cmd == "brief-resume":
             cmd_brief_resume()
+        elif cmd == "pending-briefs":
+            cmd_brief_pending()
         elif cmd in ("resolve-track", "check", "setup", "status"):
             # Re-derive from argv[2:] (not the shared track_dir/args split):
             # `check --registry X` would otherwise eat the flag name into the

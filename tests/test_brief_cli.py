@@ -163,6 +163,101 @@ class BriefResumeTests(TestCase):
         self.assertEqual(out["action"], "none")
 
 
+class BriefPendingTests(TestCase):
+    """``pending-briefs`` — the orphaned-brief half of the state partition
+    (brief-resume owns the marker-present lane; this owns brief.md-with-no-
+    state). Same registry-from-CWD shape as BriefResumeTests."""
+
+    def setUp(self):
+        self._prev_cwd = os.getcwd()
+        self.tmp = tempfile.mkdtemp(prefix="brief-pending-")
+        os.chdir(self.tmp)
+        (Path(self.tmp) / "conductor").mkdir()
+        (Path(self.tmp) / "conductor" / "tracks.md").write_text("# Tracks\n")
+
+    def tearDown(self):
+        os.chdir(self._prev_cwd)
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _mk_brief(self, track_id, text="# A brief\n", mtime=None):
+        td = Path(self.tmp) / "conductor" / "tracks" / track_id
+        td.mkdir(parents=True, exist_ok=True)
+        b = td / "brief.md"
+        b.write_text(text)
+        if mtime is not None:
+            import os as _os
+            _os.utime(b, (mtime, mtime))
+        return td
+
+    def test_none_when_no_briefs(self):
+        out = run(br.cmd_brief_pending)
+        self.assertEqual(out["action"], "none")
+        self.assertEqual(out["candidates"], [])
+
+    def test_found_reports_candidate_metadata(self):
+        td = self._mk_brief(
+            "foo_20260829",
+            "---\ntrack_id: foo_20260829\n---\n\n# Foo the bar\n")
+        out = run(br.cmd_brief_pending)
+        self.assertEqual(out["action"], "found")
+        self.assertEqual(len(out["candidates"]), 1)
+        cand = out["candidates"][0]
+        self.assertEqual(cand["track_id"], "foo_20260829")
+        self.assertEqual(cand["track_dir"], str(td.resolve()))
+        self.assertEqual(cand["title"], "Foo the bar")
+        self.assertEqual(cand["brief_age_days"], 0)
+
+    def test_state_excluded(self):
+        """track-state.json present → the §2.3 revision lane owns the dir, not
+        adoption."""
+        td = self._mk_brief("foo_20260829")
+        (td / "track-state.json").write_text("{}")
+        out = run(br.cmd_brief_pending)
+        self.assertEqual(out["action"], "none")
+
+    def test_marker_excluded(self):
+        """Brief resume marker present → brief-resume owns the dir (one state,
+        one owner; overlapping detectors would double-offer)."""
+        td = self._mk_brief("foo_20260829")
+        run(br.cmd_brief_init, str(td), "foo_20260829")
+        out = run(br.cmd_brief_pending)
+        self.assertEqual(out["action"], "none")
+
+    def test_newest_first_sort(self):
+        import time as _time
+        now = _time.time()
+        self._mk_brief("old_20260801", mtime=now - 20 * 86400)
+        self._mk_brief("new_20260829", mtime=now)
+        self._mk_brief("mid_20260815", mtime=now - 10 * 86400)
+        out = run(br.cmd_brief_pending)
+        ids = [c["track_id"] for c in out["candidates"]]
+        self.assertEqual(ids, ["new_20260829", "mid_20260815", "old_20260801"])
+        self.assertEqual(out["candidates"][0]["brief_age_days"], 0)
+        self.assertEqual(out["candidates"][2]["brief_age_days"], 20)
+
+    def test_corrupt_frontmatter_fail_open(self):
+        """Unparseable frontmatter/no H1 → still a candidate; track_id + title
+        degrade to the dir name."""
+        self._mk_brief("foo_20260829", "not a brief at all\nno anchors\n")
+        out = run(br.cmd_brief_pending)
+        self.assertEqual(out["action"], "found")
+        cand = out["candidates"][0]
+        self.assertEqual(cand["track_id"], "foo_20260829")
+        self.assertEqual(cand["title"], "foo_20260829")
+
+    def test_no_registry(self):
+        tmp2 = tempfile.mkdtemp(prefix="brief-noreg-")
+        prev = os.getcwd()
+        try:
+            os.chdir(tmp2)
+            out = run(br.cmd_brief_pending)
+            self.assertEqual(out["action"], "none")
+            self.assertEqual(out["reason"], "no_registry")
+        finally:
+            os.chdir(prev)
+            shutil.rmtree(tmp2, ignore_errors=True)
+
+
 class BriefCliWiringTests(TestCase):
     """The brief subcommands are registered in the CLI surface (help, group,
     sanctioned-subcommand allowlist). Mirrors test_split_command wiring tests."""
@@ -234,6 +329,27 @@ class BriefCliWiringTests(TestCase):
         """Pin the arity allowlist so a future rename/drop can't re-break it."""
         from scripts.track_state import cli
         self.assertIn("brief-resume", cli._NO_TRACK_DIR_COMMANDS)
+        self.assertIn("pending-briefs", cli._NO_TRACK_DIR_COMMANDS)
+
+    def test_pending_briefs_dispatch_branch_exists(self):
+        from scripts.track_state.cli import COMMAND_HELP, main  # noqa: F401
+        self.assertIn("pending-briefs", COMMAND_HELP)
+        src = (ROOT / "scripts" / "track_state" / "cli.py").read_text()
+        self.assertIn('cmd == "pending-briefs"', src)
+
+    def test_pending_briefs_grouped_and_sanctioned(self):
+        """Guard the repeated gotcha: a new no-positional subcommand must land
+        in COMMAND_GROUPS (Brief group — feeds the sanctioned allowlist) or the
+        pre-command guard flags it and grouped help omits it."""
+        from scripts.track_state.cli import _COMMAND_GROUPS
+        groups = {name: cmds for name, cmds in _COMMAND_GROUPS}
+        self.assertIn("pending-briefs", groups["Brief"])
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "pcc_brief2", ROOT / "scripts" / "pre-command-check.py")
+        pcc = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(pcc)
+        self.assertIn("pending-briefs", pcc._SANCTIONED_TS_SUBCOMMANDS)
 
 
 if __name__ == "__main__":
