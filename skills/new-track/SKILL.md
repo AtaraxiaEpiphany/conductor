@@ -57,13 +57,22 @@ CRITICAL: Validate every tool call. On failure → halt → announce.
    - `false` (proposed `default`) → no prompt. Record from the JSON: `$WORKFLOW_SHAPE=default`, `$AC_GROUNDING` = the `chosen` entry's `ac_grounding`, `$PLAY_PATH` = its `planning_doc_path`.
    - `true` → a consequential choice (the proposal's `rationale` names exactly what changes), so confirm via ONE `AskUserQuestion`: *"This reads like a `<proposed>` track — <rationale from the JSON>. Use the `<proposed>` shape?"* Options: **Yes, `<proposed>` shape (Recommended)** / **No, `default` shape (full gates)**. Record `$WORKFLOW_SHAPE`, `$AC_GROUNDING`, and `$PLAY_PATH` from the chosen entry (`chosen` for the proposal, `default` for the fallback) — never hand-derive them.
    Override either way later via `track-state set-workflow-shape "<track_dir>" --shape <name>`. The conductor runs one track per session, so a mis-proposed shape is one command to fix.
-4. **Derive the track id deterministically** — pick a short slug (1–3 lowercase words) summarizing the track, then run:
+4. **Scan for pending briefs (pre-derive adoption).** Unless `$ARGUMENTS` is a bare track_id already adopted above (Existing-track adoption), run the code-owned scan — it finds finished-but-unplanned briefs sitting in other track dirs (§2.2b checks only `<track_dir>`; this closes the orphaned-brief gap without the user typing the exact date-stamped id):
+   ```bash
+   track-state pending-briefs
+   ```
+   When `$ARGUMENTS` is empty, run this scan BEFORE the step-1 description ask — an adopted Brief supplies the description (skip that ask on adoption). Parse the JSON. Switch on `action`:
+   - `none` → no pending briefs → continue to step 5.
+   - `found` → `candidates[]` is sorted newest-first. ONE `AskUserQuestion`: *"Found completed brief(s) not yet planned — adopt one as this track's planning input?"* Options: **Adopt '`<title>`' (`<brief_age_days>`d)** for each of the 3 newest candidates (first one = Recommended), plus **None — fresh track**. More than 3 candidates: name the older ones in the question text (the tool caps at 4 options).
+     - **Adopt** → adopt that candidate's `track_id`/`track_dir` for everything below; skip `derive-name` (step 5). Re-run the step-3 matcher with `--brief "<track_dir>/brief.md"` so the shape reflects Brief signals. §2.2b then consumes the Brief as authoritative input on the adopted dir.
+     - **None — fresh track** → continue to step 5; existing flow unchanged.
+5. **Derive the track id deterministically** — pick a short slug (1–3 lowercase words) summarizing the track, then run:
    ```bash
    track-state derive-name <slug>
    ```
    Parse the JSON. Use `track_id` and `track_dir` from the result for **everything** below (resume marker, spec-planner `TRACK_DIR`, §2.6 init `--track-id` and `<track_dir>`). Never hand-write the date — the command stamps it from the clock.
    > **Existing-track adoption:** If `$ARGUMENTS` is a bare track_id whose `<track_dir>` already exists (commonly one carrying a `brief.md` from `/conductor:brief`, but any existing track dir qualifies), **adopt that track_id/track_dir directly** — do NOT re-derive (re-deriving would mint a new dated id and orphan the Brief). Skip `derive-name` for this case.
-5. **Initialize resume marker** (skip if resuming — `new-track-resume` already found it). Creates `<track_dir>/.conductor/` and the marker in one call (idempotent — a no-op if the marker already exists):
+6. **Initialize resume marker** (skip if resuming — `new-track-resume` already found it). Creates `<track_dir>/.conductor/` and the marker in one call (idempotent — a no-op if the marker already exists):
    ```bash
    track-state new-track-init "<track_dir>" --track-id <id> --description "<desc>" --type <type>
    ```

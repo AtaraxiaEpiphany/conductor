@@ -182,6 +182,36 @@ class BriefWriterAgentRemovedTests(TestCase):
         self.assertNotIn("track-brief-writer", txt)
 
 
+class NewTrackPendingBriefScanTests(TestCase):
+    """new-track §2.1 step 4 — the pre-derive pending-brief scan. Without it a
+    finished brief in another track dir is orphaned: §2.2b checks only the
+    just-derived dir, and adoption required the user to type the exact
+    date-stamped track_id. The scan is code-owned (the skill stays
+    path-agnostic) and runs before derive-name."""
+
+    def test_scan_step_present_and_before_derive_name(self):
+        txt = _read("skills/new-track/SKILL.md")
+        self.assertIn("track-state pending-briefs", txt)
+        # Ordered: the scan must precede derive-name, or the dated id is
+        # already minted and the brief orphaned anyway.
+        self.assertLess(txt.index("track-state pending-briefs"),
+                        txt.index("track-state derive-name"))
+
+    def test_adoption_ask_pins_none_option(self):
+        txt = _read("skills/new-track/SKILL.md")
+        self.assertIn("Adopt '`<title>`' (`<brief_age_days>`d)", txt)
+        self.assertIn("None — fresh track", txt)
+
+    def test_empty_args_scan_before_description_ask(self):
+        txt = _read("skills/new-track/SKILL.md")
+        self.assertIn("run this scan BEFORE the step-1 description ask", txt)
+
+    def test_adoption_skips_derive_and_reruns_shape_with_brief(self):
+        txt = _read("skills/new-track/SKILL.md")
+        self.assertIn("skip `derive-name` (step 5)", txt)
+        self.assertIn("--brief \"<track_dir>/brief.md\"", txt)
+
+
 class NewTrackConsumesBriefTests(TestCase):
     """new-track §2.2b must detect brief.md, skip Q&A, and feed the Brief to
     spec-planner. Regression guard for the additive integration."""
