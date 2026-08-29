@@ -68,13 +68,31 @@ class BriefSkillWiringTests(TestCase):
         self.assertIn("track-state brief-finalize", txt)
         self.assertIn("track-state brief-resume", txt)
 
-    def test_skill_does_not_autochain_new_track(self):
-        """The hand-off is manual by design — the skill must NOT invoke
-        /conductor:new-track itself."""
+    def test_skill_confirm_gated_invoke(self):
+        """The hand-off chain is CONFIRM-GATED (design reversal, 2026-08-29 —
+        the old manual halt forced the user to re-type the date-stamped id).
+        "Plan now" at the §5 gate invokes /conductor:new-track itself; the
+        gate keeps the edit window open (Out-of-Scope propagates verbatim
+        into the spec) and the invoke fires only after finalize + scoped
+        commit — durability before consumption."""
         txt = _read("skills/brief/SKILL.md")
-        # It prints the hand-off instruction but must not invoke the skill.
-        self.assertIn("/conductor:new-track", txt)  # the printed hand-off
-        self.assertNotIn("invoke `/conductor:new-track", txt)  # no auto-invoke
+        # The gate + its three options.
+        self.assertIn("Plan now (Recommended)", txt)
+        self.assertIn("Review/edit first", txt)
+        self.assertIn("Done for now", txt)
+        # Re-ask after an edit is bounded to once (over-asking is a tax).
+        self.assertIn("re-ask once", txt)
+        # Durability before consumption: finalize + commit ordered before the invoke.
+        self.assertLess(txt.index("**Commit brief.md scoped**"),
+                        txt.index("invoke `/conductor:new-track <track_id>`"))
+        # The declined path still prints the hand-off (only that path does).
+        self.assertIn("When ready to plan, run: `/conductor:new-track <track_id>`", txt)
+        # The invoke runs through the Skill tool, so it must be allowed.
+        self.assertIn("Skill", txt)
+        fm = txt.split("---")[1]
+        self.assertIn("Skill", fm.split("allowed-tools:")[1].splitlines()[0])
+        # The brief still never chains past new-track into implement
+        # (new-track §2.7 owns the auto-start offer).
         self.assertNotIn("invoke `/conductor:implement", txt)
 
     def test_skill_handoff_message_present(self):

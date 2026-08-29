@@ -3,7 +3,7 @@ name: brief
 description: Grill the user (frontier rounds of up to 4 questions per call) to reach shared understanding of a track, then write a brief.md that /conductor:new-track consumes as authoritative planning input
 when_to_use: User wants to capture full track context before planning, or has comprehensive track info and wants a durable brief; produces conductor/tracks/<id>/brief.md for /conductor:new-track to auto-detect
 argument-hint: "[track_description]"
-allowed-tools: Bash, Read, Edit, Write, Grep, Glob, Agent, AskUserQuestion
+allowed-tools: Bash, Read, Edit, Write, Grep, Glob, Agent, AskUserQuestion, Skill
 model: sonnet
 ---
 
@@ -11,7 +11,7 @@ model: sonnet
 
 A **Track Brief** is the comprehensive, durable capture of a track's full context — the *why*, goals, explicit out-of-scope, constraints, stakeholders, open questions, and draft acceptance signals — written **before** planning. It lives at `conductor/tracks/<track_id>/brief.md` and is consumed as authoritative input by `/conductor:new-track` (§2.2b Brief Detection), which skips its own Q&A when a Brief is present and feeds the Brief's sections to spec-planner.
 
-**Flow:** `/conductor:brief` (this skill — grill to shared understanding, then write) → human reviews/edits `brief.md` → `/conductor:new-track <track_id>` (plan, consuming the Brief). Do NOT auto-chain into new-track — the hand-off is manual on purpose.
+**Flow:** `/conductor:brief` (this skill — grill to shared understanding, then write) → human reviews/edits `brief.md` (the edit window stays open at the §5 gate) → `/conductor:new-track <track_id>` (plan, consuming the Brief). The chain into new-track is **confirm-gated, never silent**: "Plan now" at the §5 gate invokes it directly; any other answer prints the hand-off. The invoke fires only after the Brief is durable (finalize + scoped commit) — durability before consumption.
 
 ## 0.0 RESOLVE PATHS
 
@@ -222,12 +222,13 @@ If either is missing → **halt**: `"brief.md failed validation (missing
 and rewrite {track_dir}/brief.md conforming to the scaffold, then re-validate."`
 You wrote it inline, so you fix it inline — there is no writer to re-dispatch.
 
-## 5.0 CONFIRM + HAND-OFF
+## 5.0 CONFIRM-GATE + HAND-OFF
 
 1. Announce: *"Track brief written to `<track_dir>/brief.md`."*
-2. `AskUserQuestion`: *"Brief ready. Open it to review/edit now?"*
-   - **Yes, review/edit** → the user edits `brief.md` in place (they may refine Out-of-Scope, add open questions, etc.).
-   - **No, looks good** → proceed.
+2. **Confirm-gate** — ONE `AskUserQuestion`: *"Brief ready. Plan now?"* Options:
+   - **Plan now (Recommended)** — chain into new-track once the Brief is durable (steps 3–4, then the step-5 invoke).
+   - **Review/edit first** — the user edits `brief.md` in place (they may refine Out-of-Scope, add open questions, etc. — the Brief's Out-of-Scope is copied verbatim into the spec, so this edit window is the guard). When they say they're done, **re-ask once**: **Plan now** / **Done for now** (max 2 asks per run — over-asking is a tax). "Plan now" → steps 3–4 then invoke; "Done for now" → steps 3–5, no invoke.
+   - **Done for now** — steps 3–5, no invoke; the printed hand-off covers a later run.
 3. **Finalize resume marker** (brief is durable now):
    ```bash
    track-state brief-finalize "<track_dir>"
@@ -251,9 +252,11 @@ You wrote it inline, so you fix it inline — there is no writer to re-dispatch.
    If the `.conductor/` marker was the only change and it's already gone (finalize
    deleted it), the `git add` of that path is a harmless no-op — brief.md alone
    carries the commit.
-5. Print the hand-off:
-   > **Brief ready at [brief.md](<track_dir>/brief.md).**
-   > When ready to plan, run: `/conductor:new-track <track_id>`
-   > It will auto-detect this Brief and use it as authoritative planning input (skipping its own Q&A).
+5. **Hand-off — switch on the gate outcome** (both paths run only AFTER steps 3–4 succeeded; invoking new-track over an uncommitted Brief is the durability hazard the ordering exists to prevent):
+   - **Plan now** → invoke `/conductor:new-track <track_id>` via the Skill tool. The exact-id argument takes new-track's Existing-track adoption lane straight to this dir, and its §2.2b consumes the Brief as authoritative planning input. If the Skill tool is denied by the harness, fall back to printing the hand-off below — never let the chain fail silently.
+   - **Done for now** → print the hand-off (only this path prints it):
+     > **Brief ready at [brief.md](<track_dir>/brief.md).**
+     > When ready to plan, run: `/conductor:new-track <track_id>`
+     > It will auto-detect this Brief and use it as authoritative planning input (skipping its own Q&A).
 
-Do NOT auto-chain into `/conductor:new-track`. The hand-off is manual — the user may want to edit the Brief, sit on it, or hand it to someone else first.
+The chain is gated, not automatic: the user's edit window stays open at the gate (an unreviewed Out-of-Scope would propagate verbatim into the spec), and every path finalizes + commits before any invoke or hand-off.
