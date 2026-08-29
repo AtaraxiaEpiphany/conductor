@@ -11,7 +11,9 @@ last_verified: 2026-08-28
 # Brief → New-Track Seam: Confirm-Gate Chaining + Pending-Brief Detection
 
 Plan for two changes at the brief→new-track seam, agreed via grill (frontier
-rounds, 2026-08-28). Status: **planned, not implemented**.
+rounds, 2026-08-28). Status: **SHIPPED 2026-08-29** — `bbeac33..91eead8`
+(3 commits, 2727 tests green): Task 1 `pending-briefs` CLI, Task 2 new-track
+§2.1 scan step, Task 3 brief §5 confirm-gate.
 
 ## Problem
 
