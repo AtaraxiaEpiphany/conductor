@@ -121,6 +121,12 @@ Determine which category the failure falls into:
   an external service. Often skippable or blockable; not a code-logic failure.
 - **`stuck`** — The same failure recurs across multiple attempts with no progress. None
   of the above gave the executor a path forward; escalate for a human.
+- **`misrouted_explore`** — The failure report carries the token `MISROUTE: exploration
+  work dispatched to task-executor` (task-executor self-reporting exploration-shaped
+  work — findings as the deliverable, no code change expected — that arrived untagged
+  or otherwise misrouted). The work is fine; the *label* is wrong. Recommend
+  `reroute_explorer`: the spine amends `[Explore]` onto the plan task line and
+  re-dispatches the explorer.
 
 ### 3.3 Render Verdict
 
@@ -131,7 +137,8 @@ Based on the diagnosis, determine:
   the symptom).
 - **what_was_done** — what the prior attempt(s) actually accomplished (partial work worth
   keeping, or nothing).
-- **recommendation** — one of `retry_modified`, `replan`, `decompose`, `escalate`.
+- **recommendation** — one of `retry_modified`, `replan`, `decompose`, `escalate`,
+  `reroute_explorer` (task mode only).
 - **modification** — the concrete delta for the next action. **Required when
   `recommendation == retry_modified`**: a specific, different approach the executor should
   take (not "try harder"). For `decompose`: the proposed subtask split. For `replan`: a
@@ -157,12 +164,13 @@ Based on the diagnosis, determine:
 | `context_budget`    | `decompose`                                             |
 | `environmental`     | `escalate` (a human should decide skip/block/fix-infra) |
 | `stuck`             | `escalate`                                              |
+| `misrouted_explore` | `reroute_explorer` (task mode only)                     |
 
 **PHASE mode restriction:** the phase-level router only routes `retry_modified`,
-`replan`, and `escalate` (there is no phase-level `decompose` arm). In PHASE mode,
-emit one of those three — a `decompose` verdict degrades to a re-analysis round
-(burning budget for nothing). If the phase is genuinely too large, `escalate` and
-name the split in `modification`.
+`replan`, and `escalate` (there is no phase-level `decompose` or `reroute_explorer`
+arm). In PHASE mode, emit one of those three — a `decompose` or `reroute_explorer`
+verdict degrades to a re-analysis round (burning budget for nothing). If the phase
+is genuinely too large, `escalate` and name the split in `modification`.
 
 ---
 

@@ -48,9 +48,11 @@ from .task_profiles import (
     DEFAULT_WORKFLOW_DOC,
     _plugin_root,
     _project_root,
+    derive_task_tag,
     is_coverage_exempt,
     is_tdd_exempt,
     resolve_workflow_doc,
+    strip_dispatch_tags,
     workflow_doc_for,
     workflow_for,
 )
@@ -142,6 +144,24 @@ def compose_manifest(track_dir, state, pre) -> str:
         f"- loc: {loc}",
         f"- name: {pre.get('name', '?')}",
         f"- tags: {', '.join(tags) or '(none)'} (leading: {leading or '(none)'})",
+    ]
+    # R3 misroute advisory (task-type ownership): an untagged task whose
+    # description carries explore signals routes to task-executor — surface
+    # the possible misroute at dispatch time, the earliest checkpoint for
+    # in-flight plans (the init lint catches new ones). Pure + fail-open:
+    # matcher errors never block dispatch. Explore-only by decision; other
+    # tag families' false positives were not worth the nag.
+    try:
+        if (not leading and derive_task_tag(
+                strip_dispatch_tags(pre.get("name", ""))) == "Explore"):
+            lines.append(
+                "- advisory: explore signals hit but task untagged — routes to "
+                "task-executor; if the deliverable is findings (not code), "
+                "task-executor will self-report MISROUTE and the verdict "
+                "re-tags it")
+    except Exception:  # noqa: BLE001 — advisory only, never fatal
+        pass
+    lines += [
         "",
         "## Resolved gates (workflow-shape: " + shape + ")",
         f"- gates: {', '.join(gates) or '(none)'}",

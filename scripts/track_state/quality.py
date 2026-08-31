@@ -15,7 +15,7 @@ from .constants import EXECUTION_MODES, RECOVERY_POLICIES
 from .handoff import _ensure_handoff_index
 from .validate import _parse_plan_structure
 from .plan_parse import parse_plan, to_plan_structure
-from .task_profiles import derive_task_type
+from .task_profiles import derive_task_type, derive_task_tag, strip_dispatch_tags
 # Marker filenames/templates single-homed in lib.constants — the gitignore
 # tuple below derives from the exact constants the writer modules use.
 from lib.constants import (
@@ -416,6 +416,43 @@ def _init_core(track_dir, plan, track_id, track_type, description, execution_mod
     return result
 
 
+def _tag_signal_advisories(structure):
+    """Declared-vs-signals tag advisories — the R1 lint telemetry.
+
+    Tags are planner-authored content (decision: task-type ownership); the
+    keyword matcher is advisory only. For each top-level task, compare the
+    DECLARED leading tag against what the conservative matcher
+    (:func:`task_profiles.derive_task_tag` over the tag-stripped name) would
+    have suggested. A disagreement is printed, never enforced — every run on
+    a real plan is a telemetry sample; silent agreement is the non-event.
+    Fail-open: any registry error inside the matcher yields no advisories
+    (init must never block on the lint).
+    """
+    advisories = []
+    for pi, phase in enumerate(structure.get("phases", []), 1):
+        for ti, task in enumerate(phase.get("tasks", []), 1):
+            name = task.get("name", "")
+            # Original-case declared tag for display; lowercased for compare.
+            from .helpers import extract_tags  # lazy: cycle-safe
+            declared_tags = extract_tags(name)
+            declared = declared_tags[0].lower() if declared_tags else "default"
+            try:
+                suggested = derive_task_tag(strip_dispatch_tags(name))
+            except Exception:
+                continue
+            suggested_type = suggested.lower() if suggested else "default"
+            if declared == suggested_type:
+                continue
+            shown_declared = (f"[{declared_tags[0]}]" if declared_tags
+                              else "untagged")
+            shown_suggested = f"[{suggested}]" if suggested else "untagged"
+            advisories.append(
+                f"P{pi}.T{ti}: declared {shown_declared}, signals suggest "
+                f"{shown_suggested} — planner judgment wins; double-check "
+                f"the label")
+    return advisories
+
+
 def cmd_init_from_plan(track_dir, track_id, track_type, description,
                        execution_mode=None, check=False, force=False):
     """Create track-state.json by parsing <track-dir>/plan.md mechanically.
@@ -445,6 +482,7 @@ def cmd_init_from_plan(track_dir, track_id, track_type, description,
     structure = to_plan_structure(parsed)
     phase_count = len(structure["phases"])
     task_count = sum(len(p["tasks"]) for p in structure["phases"])
+    tag_advisories = _tag_signal_advisories(structure)
 
     if check:
         result = dict(ok=True, check=True, source=str(plan_path),
@@ -452,6 +490,8 @@ def cmd_init_from_plan(track_dir, track_id, track_type, description,
                       structure=structure)
         if plan_warnings:
             result["warnings"] = plan_warnings
+        if tag_advisories:
+            result["tag_advisories"] = tag_advisories
         out(result)
         return
 
@@ -461,6 +501,8 @@ def cmd_init_from_plan(track_dir, track_id, track_type, description,
     # pass; the only advisory notes are plan-syntax warnings from parse_plan.
     if plan_warnings and result.get("ok"):
         result["plan_warnings"] = plan_warnings
+    if tag_advisories and result.get("ok"):
+        result["tag_advisories"] = tag_advisories
     out(result)
 
 

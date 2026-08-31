@@ -387,6 +387,24 @@ def derive_task_type(name: str) -> str:
     return tags[0].lower() if tags else "default"
 
 
+def strip_dispatch_tags(name: str) -> str:
+    """A task name with its dispatch ``[Tag]`` tokens removed.
+
+    The inverse of :func:`derive_task_type`: the lint (:func:`quality`'s
+    declared-vs-signals advisory) and the manifest mismatch advisory classify
+    the *description* — what the matcher would have seen — so the declared
+    tags must come off before ``derive_task_tag`` runs, or the tag's own
+    keywords would match themselves.
+    """
+    # Imported lazily to avoid a circular import (helpers imports this module).
+    from .helpers import extract_tags
+
+    out = name
+    for tag in extract_tags(name):
+        out = out.replace(f"[{tag}]", "")
+    return " ".join(out.split())
+
+
 def derive_child_task_type(parent: dict) -> str:
     """The ``task_type`` for a subtask created/split/absorbed under ``parent``.
 
@@ -624,7 +642,7 @@ _FEATURE_MARKER_EXCEPTIONS = ("feature flag", "feature toggle", "feature gate")
 
 
 def rank_tags(text: str) -> list[dict]:
-    """Scored tag candidates for a free-text DESCRIPTION — the propose-tags core.
+    """Scored tag candidates for a free-text DESCRIPTION — the lint engine core.
 
     The planning-layer mirror of :func:`workflow_shapes.rank_shapes`: pure
     signal-matching over the resolved registry, deterministic, no plurality /
@@ -657,11 +675,12 @@ def rank_tags(text: str) -> list[dict]:
 def derive_task_tag(description: str) -> str | None:
     """Advisory leading tag for a task DESCRIPTION, or ``None`` (default TDD).
 
-    The inverse of :func:`derive_task_type` (which reads a tag *already on* a
-    name string): this classifies **free text that has no tag yet**, by
-    strict-plurality over :func:`rank_tags` scores. It is the registry-driven
-    selection engine for dynamic plan generation — a project overlay tag with a
-    ``signals`` field becomes selectable with zero code edits.
+    The inverse of :func:`derive_task_type` (which reads a tag *already on*
+    a name string): this classifies **free text that has no tag yet**, by
+    strict-plurality over :func:`rank_tags` scores. It is the advisory oracle
+    behind the init lint's declared-vs-signals comparison (labels themselves
+    are planner-authored — decision: task-type ownership) — a project overlay
+    tag with a ``signals`` field joins the advisories with zero code edits.
 
     **Safe-failure-mode bias.** ``None`` means "no exemption, full TDD" — the
     correct outcome for the majority of tasks and the safe failure mode: a

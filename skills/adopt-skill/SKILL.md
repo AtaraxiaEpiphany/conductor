@@ -89,9 +89,9 @@ docfile (see it via `track-state registry-doc --tag Migrate`):
 Print the tag-add JSON output **verbatim**, then orientation: the row lives
 at `conductor/workflow/task-type-profiles.json`, the docfile at
 `conductor/workflow/steps/<docfile>.md`, and tasks opt in by being named
-`[<Tag>] <description>` (the tag also joins `propose-tags` candidates only if
-the user later opts in with `--auto-propose` — the row writes it false by
-default).
+`[<Tag>] <description>` (the tag also joins the init lint's signal suggestions
+only if the user later opts in with `--auto-propose` — the row writes it false
+by default).
 
 ## ROAD B — wrapper agent (unchanged)
 

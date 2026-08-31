@@ -924,92 +924,6 @@ def cmd_propose_shape(description, brief_path=None):
     ))
 
 
-def cmd_propose_tags(description):
-    """Propose the task-type tag for a task description — the tag axis of D3.
-
-    ``propose-shape`` one layer down, for TASK tags: pure signal-matching via
-    :func:`task_profiles.rank_tags` — deterministic, no model call, no
-    filesystem writes. Consumers: the spec-planner agent calls this per task
-    description before writing each plan.md task line (the mechanical matcher
-    replacing hand-mirroring the registry-doc signal tables), and a human can
-    run it at the CLI to audit the classifier.
-
-    Output contract:
-
-    - ``proposed`` — the strict-plurality winner, or ``None`` (no candidate, or
-      a top score tied with the runner-up: ambiguity is a decision to leave the
-      task untagged, not a proposal).
-    - ``confirm_required`` — **the gate-confirm asymmetry**: ``True`` iff the
-      proposed tag drops a gate (``tdd_exempt`` or ``coverage_exempt``). A
-      gate-neutral proposal records silently; a gate-dropping one must be
-      confirmed before it takes effect (keep vs drop-to-default-TDD) — the
-      over-tagging guard's silent suppression stays in ``derive_task_tag``;
-      here the candidate is SURFACED and the user is the bar.
-    - ``candidates`` — every scored tag (score + hits + resolved route/exemption
-      flags for transparency); ``chosen`` — the proposed tag's full row (only
-      when proposed); ``default`` — the untagged fallback entry (full TDD).
-    """
-    from . import task_profiles as tp
-
-    desc = (description or "").strip()
-    if not desc:
-        out(dict(ok=False, error="missing description",
-                 hint='track-state propose-tags "<task description>"'))
-        return
-
-    def _flags(tag):
-        prof = tp._profile(tag)
-        return dict(
-            route=prof.get("route", "executor"),
-            tdd_exempt=bool(prof.get("tdd_exempt", False)),
-            coverage_exempt=bool(prof.get("coverage_exempt", False)),
-            over_tag_risk=bool(prof.get("over_tag_risk", False)),
-        )
-
-    candidates = []
-    for cand in tp.rank_tags(desc):
-        entry = dict(tag=cand["tag"], score=cand["score"], hits=cand["hits"])
-        entry.update(_flags(cand["tag"]))
-        candidates.append(entry)
-
-    proposed = None
-    if candidates and (len(candidates) == 1
-                       or candidates[0]["score"] > candidates[1]["score"]):
-        proposed = candidates[0]["tag"]
-
-    confirm_required = False
-    chosen = None
-    if proposed is not None:
-        prof = tp._profile(proposed)
-        confirm_required = bool(prof.get("tdd_exempt", False)
-                                or prof.get("coverage_exempt", False))
-        chosen = dict(tag=proposed, **_flags(proposed))
-        chosen["auto_propose"] = bool(prof.get("auto_propose", True))
-        chosen["when_to_use"] = prof.get("when_to_use", "")
-        chosen["workflow_doc"] = prof.get("workflow_doc", "")
-
-    default_profile = tp._load()["default"]
-    default_entry = dict(
-        tag=None,
-        route=default_profile.get("route", "executor"),
-        tdd_exempt=bool(default_profile.get("tdd_exempt", False)),
-        coverage_exempt=bool(default_profile.get("coverage_exempt", False)),
-        note="untagged — the default task type (full TDD, both gates on)",
-    )
-
-    out(dict(
-        ok=True,
-        proposed=proposed,
-        confirm_required=confirm_required,
-        chosen=chosen,
-        candidates=candidates,
-        default=default_entry,
-        hint="confirm_required=false → record `proposed` silently; true → "
-             "confirm the gate-dropping tag before it takes effect (keep vs "
-             "drop to default TDD). proposed=null → leave the task untagged.",
-    ))
-
-
 def _candidate_roots(conductor_root):
     """Base dirs to probe when resolving a track dir, given the conductor root
     (the directory holding ``tracks.md`` = ``reg.parent``).
@@ -1723,6 +1637,69 @@ def cmd_add_checkpoint(track_dir, p, sha):
     out(_stamp_checkpoint_in_plan(track_dir, p, sha))
 
 
+def _amend_plan_task_tag(track_dir, p, t, tag):
+    """Prepend a dispatch ``[Tag]`` onto a top-level task line in plan.md.
+
+    The misroute-recovery write (decision: task-type ownership): a wrong label
+    is fixed by amending the plan — the name is authoritative and ``task_type``
+    is re-derived from it — never by a dispatch-time override. Returns
+    ``dict(ok=True, name=<new cleaned name>)``; ``name`` is the OLD name when
+    the tag was already present (idempotent no-op), and ``dict(error=...)`` on
+    a missing plan/phase/task. The caller mirrors ``name`` into state and
+    re-dispatches; routing then derives through the normal classification
+    path. The edit is position-keyed (phase heading + nth top-level task
+    line, the same anchors ``parse_plan`` walks), so it never guesses at
+    name-matching.
+    """
+    from .plan_parse import _TASK_LINE, _clean_name
+
+    plan_path = Path(track_dir) / "plan.md"
+    if not plan_path.exists():
+        return dict(error="plan.md not found")
+
+    phase_num, task_num = int(p), int(t)
+    with open(plan_path) as f:
+        lines = f.readlines()
+
+    result = []
+    cur_phase = None
+    task_seen = 0
+    edited_name = None
+    for line in lines:
+        stripped = line.rstrip("\n")
+        pm = re.match(r"^##\s+Phase\s+(\d+)\b", stripped)
+        if pm:
+            cur_phase = int(pm.group(1))
+            result.append(stripped)
+            continue
+        tm = _TASK_LINE.match(stripped)
+        # Top-level only (no indent) — subtasks never carry their own tag.
+        if (cur_phase == phase_num and tm and not tm.group(1).strip()):
+            task_seen += 1
+            if task_seen == task_num:
+                indent, status, name = tm.group(1), tm.group(2), tm.group(3)
+                existing = extract_tags(name)
+                if tag in existing:
+                    edited_name = name  # idempotent: already tagged
+                else:
+                    edited_name = f"[{tag}] {name}".strip()
+                    stripped = f"{indent}- [{status}] {edited_name}"
+        result.append(stripped)
+    if task_seen < task_num or (cur_phase or 0) < phase_num:
+        return dict(error=f"task {task_num} not found under Phase {phase_num} "
+                          "in plan.md")
+
+    with open(plan_path, "w") as f:
+        f.write("\n".join(result))
+        if result and not result[-1].endswith("\n"):
+            f.write("\n")
+    # The returned name mirrors what parse_plan would store for the edited
+    # line (comments stripped, sha/verified markers stripped, dispatch tags
+    # preserved) so the caller's state mirror never drifts from a re-parse.
+    return dict(ok=True, name=_clean_name(edited_name))
+
+
+
 def cmd_deferred_report(track_dir):
     """List all deferred tasks with their context for final verification."""
     state = load(track_dir)
@@ -2207,12 +2184,13 @@ def cmd_registry_doc(tag=None, shape=None, roster=None):
     if sig_rows:
         print("## Tag Signals (description-matching keywords)")
         print()
-        print("Match a task description to a tag by these keywords (the same "
-              "inputs `derive_task_tag` uses). Only tags that explicitly declare "
-              "`signals` appear; a tag with no row here (e.g. `[Refactor]`) is "
-              "opt-in — match it deliberately, never auto-propose it. "
-              "Or run `track-state propose-tags \"<description>\"` — the "
-              "mechanical matcher over these signals.")
+        print("Match a task description to a tag by these keywords — GUIDANCE "
+              "for your labeling judgment, not a command to run: classify by "
+              "the task's deliverable, use these as tiebreakers. Only tags "
+              "that explicitly declare `signals` appear; a tag with no row "
+              "here (e.g. `[Refactor]`) is opt-in — match it deliberately, "
+              "never auto-propose it. (`init-from-plan --check` prints an "
+              "advisory when your declared tag disagrees with these signals.)")
         print()
         for sig_tag, sig in sig_rows:
             print(f"- `[{sig_tag}]`: {', '.join(str(k) for k in sig)}")

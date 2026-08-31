@@ -3,8 +3,9 @@ type: resource
 sources:
   - conductor/design/dispatch-manifest
   - conductor/design/planning-as-data
+  - conductor/design/task-type-ownership
   - runtime/contracts/grill-discipline
-last_verified: 2026-08-20
+last_verified: 2026-08-31
 ---
 
 # Glossary
@@ -114,3 +115,19 @@ stays out.
 **Avoid:** *dynamic context hook* (sounds tier-A and hardcoded), *context
 scraper* (the exact thing the registry replaces), *tmux probe* (interaction
 is not context — the rejected heuristic).
+
+## task-type ownership
+
+The split that governs task tags: **the planner authors the label; code owns
+the vocab and validation.** A task's leading tag is authored content, like the
+task name — written by spec-planner from the resolved registry vocab by
+judgment. The keyword matcher is only the advisory lint inside
+`init-from-plan --check` (declared-vs-signals disagreements = telemetry); the
+unknown-tag hard error and the TAG_CONFIRM relay stay contract. A wrong label
+in flight is fixed by the misroute verdict amending the tag into plan.md —
+never by a dispatch-time override.
+
+**Avoid:** *tag inference* (the matcher never infers the label anymore — it
+advises), *route override* (an ephemeral patch reconcile silently reverts;
+the label is the defect, amend the label).
+

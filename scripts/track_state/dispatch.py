@@ -20,8 +20,9 @@ from .mutations import (_do_lock, _do_complete, _do_fail, _do_fail_parent,
                         _do_defer, _do_skip, reactivate_for_modified_retry,
                         reactivate_phase_tasks)
 from .result import _advisory_gates
-from .task_profiles import refactor_for
+from .task_profiles import refactor_for, derive_task_type
 from .sync import _do_sync_plan
+from .misc import _amend_plan_task_tag
 from lib import dispatch_inflight as _inflight
 from lib import dispatch_lock as _dispatch_lock
 from lib.git_utils import implementation_uncommitted_files
@@ -1893,12 +1894,16 @@ def _skip_analysis_clear_marker(track_dir):
 
 # Verdict enums (mirrors _SKIP_RECOMMENDATIONS). The category taxonomy is the
 # analyst's diagnostic classification; the recommendation is the action it asks
-# the spine to take.
+# the spine to take. ``misrouted_explore``/``reroute_explorer`` (task-level
+# only): task-executor self-reported exploration-shaped work via the MISROUTE
+# signature — the label, not the work, is the defect (decision: task-type
+# ownership).
 _FAILED_CATEGORIES = (
     "deterministic_bug", "spec_plan_defect", "context_budget",
-    "environmental", "stuck",
+    "environmental", "stuck", "misrouted_explore",
 )
-_FAILED_RECOMMENDATIONS = ("retry_modified", "replan", "decompose", "escalate")
+_FAILED_RECOMMENDATIONS = ("retry_modified", "replan", "decompose", "escalate",
+                           "reroute_explorer")
 
 
 def _failure_analysis_marker_path(track_dir):
@@ -2455,6 +2460,10 @@ def _step_route_failure_analysis(track_dir, marker, compact):
     owning the category→action route judgment in code.
 
     ``stage=analyzed`` routes by ``recommendation``:
+      ``reroute_explorer`` → amend ``[Explore]`` onto the plan task line
+        (task-type-ownership misroute recovery), mirror name+task_type into
+        state, reactivate preserving retry budget, re-dispatch (routing
+        derives the explorer).
       ``retry_modified`` → write the modification to the modified-guidance marker
         (B.5), reactivate the failed task (failed→pending, retry_count preserved
         so the attempt still counts against budget), clear the analysis marker,
@@ -2537,6 +2546,40 @@ def _step_route_failure_analysis(track_dir, marker, compact):
              "step", compact)
 
     if stage == "analyzed":
+        if rec == "reroute_explorer":
+            # Misroute recovery (decision: task-type ownership). The LABEL, not
+            # the work, is the defect — so the fix amends the plan task line
+            # with [Explore] (durable: task_type is re-derived from the name,
+            # so a dispatch-time override would be silently reverted by the
+            # next sync) and re-dispatches through the normal classification
+            # path. No confirm relay: the verdict was already gated by the
+            # analyst's judgment; the bookkeeping commit records the tag-add
+            # for audit. Retry budget is preserved (reactivate-for-modified-
+            # retry semantics) so a misroute-detection oscillation cannot burn
+            # unbounded attempts.
+            amend = _amend_plan_task_tag(track_dir, pi, ti, "Explore")
+            if not amend.get("ok"):
+                _halt("escalate")
+                return
+            new_name = amend.get("name")
+            with transaction(track_dir) as state:
+                tgt = target(state, pi, ti)
+                if new_name and new_name != tgt.get("name"):
+                    tgt["name"] = new_name
+                    tgt["task_type"] = derive_task_type(new_name)
+                    for sub in tgt.get("subtasks", []):
+                        # Subtasks inherit the parent's tag (never carry
+                        # their own) — keep the mirror in lockstep.
+                        sub["task_type"] = tgt["task_type"]
+                state["updated_at"] = now_iso()
+            reactivate_for_modified_retry(track_dir, pi, ti, si)
+            _failure_analysis_clear_marker(track_dir)
+            _do_sync_plan(track_dir, load(track_dir))
+            _git_commit_ensured(
+                track_dir,
+                f"chore(conductor): Amend '[Explore]' onto '{name}' "
+                f"[P{pi}T{ti}] (misroute recovery)")
+            return _step_emit_dispatch(track_dir, compact)
         if rec == "retry_modified":
             # Twin backstop on the analyze→retry→fail loop (loop-until-dry + hard
             # budget; see constants.RECOVERY_DRY_K / MAX_RECOVERY_ROUNDS):
@@ -3446,6 +3489,7 @@ def cmd_failure_analyst_verdict(track_dir, category, recommendation, root_cause,
     After ``dispatch_failure_analyst`` returns, the teleoperator parses the
     ``---FAILURE ANALYSIS---`` JSON and runs this. Writes ``stage=analyzed`` so
     the next ``step`` routes (``_step_route_failure_analysis``):
+    ``reroute_explorer`` → amend the plan tag + re-dispatch (misroute);
     ``retry_modified`` → inject modification + re-dispatch task-executor;
     ``replan`` (with AC details) → stage an in-place amendment + ask (A3);
     ``replan`` (without) / ``decompose`` (ask) / ``escalate`` → ``halt``.
