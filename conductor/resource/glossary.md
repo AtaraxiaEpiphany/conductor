@@ -4,6 +4,7 @@ sources:
   - conductor/design/dispatch-manifest
   - conductor/design/planning-as-data
   - conductor/design/task-type-ownership
+  - conductor/design/extensibility-review-2026-08
   - runtime/contracts/grill-discipline
 last_verified: 2026-08-31
 ---
@@ -130,4 +131,45 @@ never by a dispatch-time override.
 **Avoid:** *tag inference* (the matcher never infers the label anymore — it
 advises), *route override* (an ephemeral patch reconcile silently reverts;
 the label is the defect, amend the label).
+
+## findings edge
+
+The envelope-pointer contract that carries cross-phase knowledge to a
+dispatched task: a `FINDINGS_FILE` line in the executor/explorer envelope
+naming `.conductor/track-findings.md` (absent line = none recorded), plus
+compile-at-checkpoint regardless of verdict. The pointer rides the prompt
+body exactly as `WORKFLOW_FILE` does — fetch-side, no new injection channel;
+the artifact, its caps, and its archive-time supersession by corpus
+graduation are unchanged.
+
+**Avoid:** *findings injection* (tier-A restatement — the edge points, it
+never carries content), *explore-findings file* (a second artifact beside
+track-findings — one bridge, one home).
+
+## phase-gate replanning
+
+The dynamism ceiling: at each PASSED phase checkpoint, a confirm-gated
+re-derive pass (spec ⊕ track-findings ⊕ remaining plan → amendment
+proposals through the existing plan-amendment machinery, one
+AskUserQuestion, reconcile's SHA-preserving semantics). Completed phases
+never reopen; shape stays immutable mid-track; within-phase dispatch stays
+frozen — authored content changes at boundaries, control flow never does.
+
+**Avoid:** *rolling replan* (implies unbounded re-derivation; one pass per
+checkpoint), *dynamic spine* (the declined D2 — runtime judgment over
+control flow, which this explicitly is not).
+
+## skill distillation
+
+The reverse direction of the improvement loop: harvest recurrence from
+completed tracks (handoffs, manifest lanes, failure verdicts, tag usage),
+route each candidate to its home (job family → tag + workflow docfile;
+role → roster wrapper; knowledge → wiki; planning pattern → planning
+docfile), refute it, and adopt it only through a human gate landing via
+the validating generators. Recurrence-before-extraction and
+human-as-adoption-anchor are the two invariants.
+
+**Avoid:** *auto-skill* (nothing auto-adopts — the gate is the anchor),
+*skill mining* (sounds like transcript scraping; the harvester reads
+conductor's own durable artifacts).
 
