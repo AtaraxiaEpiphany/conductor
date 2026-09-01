@@ -17,8 +17,22 @@ should prevent this is **prose a small-window model can ignore** — the same
 class of gap the round tripwire (``on-pre-tool-tripwire.py``) was built to
 close. This hook makes the single-writer invariant **deterministic**: it sees
 the orchestrator's ``Agent`` tool call *before* the subagent spawns, reads the
-inflight marker ``prepare_dispatch`` stamped, and ``permissionDecision: "deny"``
-a second spawn for a task already in flight.
+inflight marker the **SubagentStart hook stamped at spawn**
+(``on-subagent-start.py:_stamp_inflight`` → ``lib.dispatch_inflight.stamp``),
+and ``permissionDecision: "deny"`` a second spawn for a task already in flight.
+
+Marker semantics — "spawned", not "prepared"
+--------------------------------------------
+The marker is deliberately NOT stamped by ``prepare_dispatch``. Between
+``step`` emitting ``action: dispatch`` and the Agent call the dispatch is
+*prepared but not spawned* — a state a stateless PreToolUse hook cannot tell
+apart from "agent running". A prepare-time stamp therefore made this guard deny
+the FIRST spawn itself (the 2026-09-01 dispatch-deadlock incident: every
+dispatch denied → dispatch-finalize → re-prepare → denied again, looping until
+the retry budget died). With the spawn-time stamp every guarded state is one
+where an agent demonstrably started; a spawn denied or pulled back before
+SubagentStart leaves no marker, so a retry spawns clean. See
+``lib/dispatch_inflight`` for the full record.
 
 How it fires
 ------------
@@ -239,11 +253,21 @@ def main():
     # is `dispatch-finalize`, which synthesizes a FAILURE verdict from the
     # locked-task state, advances the cursor, and clears this marker — breaking
     # the loop. (See _resolve_finalize_target in track_state/dispatch.py.)
+    #
+    # First branch of the reason: the agent may STILL BE RUNNING in this very
+    # session (foreground subagent whose result simply hasn't landed yet, or a
+    # background-mode spawn — CLAUDE_AUTO_BACKGROUND_TASKS auto-backgrounds
+    # after ~2 min, CLAUDE_CODE_FORK_SUBAGENT forces it). Finalizing a live
+    # agent burns a retry for work that is about to land; WAITING is then the
+    # correct move. finalize is the exit only once the agent is gone.
     reason = (
         f"A {subagent_type} is already in flight for {loc} (Start {sha_hint} "
         f"still HEAD, no result.json). Do NOT dispatch again. Do NOT re-run "
         f"`track-state step` — in this state it hands you another `dispatch` "
-        f"and you will loop here. Run "
+        f"and you will loop here. If the {subagent_type} is still running in "
+        f"this session (including auto-backgrounded — check running tasks "
+        f"before assuming), WAIT for it to finish and process its result. "
+        f"Only if the agent is gone (interrupted/lost session) run "
         f"`track-state dispatch-finalize \"{track_dir}\"` to synthesize a "
         f"FAILURE verdict from the locked task and advance the track; that "
         f"clears this guard."

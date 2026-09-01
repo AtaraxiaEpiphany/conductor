@@ -10,6 +10,13 @@ Unrostered agent types fast-no-op with no context — dispatchable (the harness
 resolves the name), just no conductor scaffold (the pre-registry unknown-name
 behavior, now the fail-open floor for everyone).
 
+This hook is also the SPAWN-TIME home of the dispatch inflight marker
+(:func:`_stamp_inflight` → ``lib.dispatch_inflight.stamp``): the marker means
+"an agent has demonstrably started", which is the semantics the PreToolUse
+dedupe guard needs (a prepare-time stamp made the guard deny the first spawn
+itself — the 2026-09-01 dispatch-deadlock incident; see
+``lib/dispatch_inflight`` for the full record).
+
 For retry-context agents (task-executor), a third piece is appended when the
 locked task has a prior failed attempt: the most recent ``### Attempt ❌`` record
 from its handoff. This is the deterministic, can't-be-skipped counterpart to the
@@ -18,6 +25,7 @@ the prior failure reason / suggested next step reaches the retry agent here.
 """
 
 import functools
+import json
 import sys
 from pathlib import Path
 
@@ -525,6 +533,53 @@ def _reset_tripwire_counter(cwd, agent_type):
         pass
 
 
+def _wave_active(track_dir):
+    """Whether this track has an active wave ledger (any ``in_flight`` member).
+
+    Lib-light inline of ``track_state.wave._is_active`` — the hook must not
+    import the heavy wave graph for one JSON read. Missing/corrupt ledger →
+    ``False`` (no wave). Never raises.
+    """
+    try:
+        path = Path(track_dir) / ".conductor" / "parallel.json"
+        ledger = json.loads(path.read_text())
+        return isinstance(ledger, dict) and any(
+            isinstance(m, dict) and m.get("status") == "in_flight"
+            for m in ledger.get("wave", []))
+    except Exception:
+        return False
+
+
+def _stamp_inflight(track_dir, phase, task, subtask, agent_type):
+    """Stamp the inflight marker for a single-writer agent that just SPAWNED.
+
+    The marker means "spawned", not "prepared" (the 2026-09-01 dispatch-deadlock
+    incident — see ``lib/dispatch_inflight`` for the full record):
+    ``prepare_dispatch`` no longer writes it, making this the single production
+    writer. Stamped only for rostered single-writer agents on the serial spine —
+    wave members carry their own ``wave-agent.marker`` state and the wave F1
+    guards own concurrency there, so an active wave suppresses the stamp (a wave
+    member's serial-spine marker would poison the guard for the drain path).
+
+    Namespace-aware (``conductor:task-executor`` → ``task-executor``) via
+    ``agent_roster.canonical_name`` — same normalization as the dedupe hook that
+    later READS the marker. Best-effort: any failure is swallowed — a stamp
+    problem must never break a spawn (fail-open; worst case the guard sees no
+    marker and allows, the pre-marker behavior).
+    """
+    try:
+        from track_state import agent_roster
+        key = agent_roster.canonical_name(agent_type)
+        if key is None or key not in agent_roster.single_writers():
+            return
+        if _wave_active(track_dir):
+            return
+        from lib import dispatch_inflight as _inflight
+        _inflight.stamp(track_dir, phase, task, subtask)
+    except Exception:
+        pass
+
+
 def main():
     """Main hook function"""
     # Read hook input
@@ -543,6 +598,11 @@ def main():
             _td, p, t, s = locked
         else:
             p = t = s = None
+        # Stamp the inflight marker at spawn BEFORE the gen read below, so the
+        # `start` event logs the generation THIS spawn stamped (not the stale
+        # prior one) — probe/start sharing a gen is the telemetry join.
+        if locked is not None:
+            _stamp_inflight(_td, p, t, s, agent_type)
         # Read the inflight marker's gen so a start event records WHICH dispatch
         # generation is now running — same gen as the probe = the dispatch the
         # guard saw; a higher gen than a prior start = a spine re-dispatch.

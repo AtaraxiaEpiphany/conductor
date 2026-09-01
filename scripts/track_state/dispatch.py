@@ -24,7 +24,6 @@ from .task_profiles import refactor_for, derive_task_type
 from .sync import _do_sync_plan
 from .misc import _amend_plan_task_tag
 from lib import dispatch_inflight as _inflight
-from lib import dispatch_lock as _dispatch_lock
 from lib.git_utils import implementation_uncommitted_files
 # Marker filenames/templates single-homed in lib.constants (aliased to the
 # historical private names; quality.py's gitignore derives from the same home).
@@ -865,31 +864,6 @@ def _clear_stale_result(track_dir):
     (conductor_dir(track_dir) / RESULT_MARKER).unlink(missing_ok=True)
 
 
-def _dispatch_inflight_write(track_dir, pi, ti, si, start_sha, written_at_iso):
-    """Stamp the inflight dispatch marker (see lib/dispatch_inflight). Thin
-    wrapper so callers stay within the ``_``-prefixed private-helper convention.
-
-    Bumps the dispatch ``gen`` (read-modify-write): a re-dispatch of the same
-    ``(phase, task, subtask)`` stamps a NEW generation, so the dedupe hook sees
-    a fresh in-flight state rather than the stale one from the prior dispatch.
-    First write for a key → gen 1 (``read_gen`` returns 0 when no marker).
-
-    Atomicity
-    ---------
-    The read-modify-write is wrapped in ``dispatch_lock.acquire`` (an exclusive
-    ``fcntl.flock`` on ``<track_dir>/.conductor/.dispatch.lock``). Under the
-    normal synchronous model the lock is uncontended and held for microseconds;
-    under background-mode concurrency it serializes the bump so two racing
-    ``prepare_dispatch`` calls cannot both read ``gen=N`` and stamp ``gen=N+1``
-    (which would collapse two fresh dispatches into one in the dedupe hook's
-    ``gen``-disambiguation). Fail-open: a lock error leaves this unguarded, and
-    the marker + git-HEAD predicate remains the safety net."""
-    with _dispatch_lock.acquire(track_dir):
-        prev_gen = _inflight.read_gen(track_dir, pi, ti, si)
-        _inflight.write(track_dir, pi, ti, si, start_sha, written_at_iso,
-                        gen=prev_gen + 1)
-
-
 def _dispatch_inflight_clear(track_dir, pi, ti, si):
     """Clear the inflight dispatch marker for a task (see lib/dispatch_inflight)."""
     _inflight.clear(track_dir, pi, ti, si)
@@ -915,8 +889,9 @@ def _emit_redispatch_telemetry(track_dir, pi, ti, si):
     Telemetry-only: no control-flow change, and best-effort (lazy import + broad
     except) so a logging fault can never perturb the spine.
 
-    The ``gen`` recorded is the PRIOR (interrupted) dispatch's generation — read
-    before ``_step_emit_dispatch`` re-stamps the marker with gen+1. A run of
+    The ``gen`` recorded is the PRIOR (interrupted) dispatch's generation —
+    read from the marker its SubagentStart spawn stamped (the marker survives
+    an interrupted dispatch: only finalize/reap clear it). A run of
     ``re-dispatch gen=1``, ``gen=2``, ``gen=3`` (each one higher than the last)
     is the loop signature: successive interruptions of fresh dispatches.
     """
@@ -1032,14 +1007,13 @@ def prepare_dispatch(track_dir):
         # message pattern at recovery time, not a SHA the machinery requires).
         _git_commit(track_dir, f"chore(conductor): Start task '{name}' [P{pi}.T{ti}]")
 
-    # Stamp the inflight marker so the PreToolUse:Agent dedupe hook can deny a
-    # second spawn for this same task while this dispatch is still in flight
-    # (HEAD == start_sha, no result.json yet). Captured AFTER the Start commit
-    # so start_sha is the commit HEAD actually sits on — on the is_resume path
-    # no new commit is written, so this is the prior Start commit (correct:
-    # that's the SHA the hook compares the live HEAD against). See
-    # lib/dispatch_inflight.
-    _dispatch_inflight_write(track_dir, pi, ti, si, _git_head_sha(track_dir), now_iso())
+    # NOTE: no inflight marker is stamped here. The marker means "a single-
+    # writer subagent SPAWNED for this task" — stamped by the SubagentStart
+    # hook (lib.dispatch_inflight.stamp) at the moment the orchestrator's
+    # Agent call actually produces a subagent. Stamping at prepare made the
+    # PreToolUse dedupe guard deny the first spawn itself (the state between
+    # this return and the Agent call is indistinguishable from "agent
+    # running" to a stateless hook). See lib/dispatch_inflight.
 
     pre = dict(action=action, phase=pi, task=ti, subtask=si, name=name,
                tags=tags, sync_count=synced, is_resume=is_resume,

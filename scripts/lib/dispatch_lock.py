@@ -2,19 +2,19 @@
 
 The problem this solves
 -----------------------
-The inflight dispatch marker (``lib/dispatch_inflight``) is stamped by
-``prepare_dispatch`` via a read-modify-write: it reads the prior ``gen``, bumps
-it, and writes ``(gen+1, start_sha, …)``. Under the conductor's normal
-synchronous model that is uncontended — one dispatch at a time — so the
+The inflight dispatch marker (``lib/dispatch_inflight``) is stamped at spawn
+by the SubagentStart hook via a read-modify-write: it reads the prior ``gen``,
+bumps it, and writes ``(gen+1, start_sha, …)``. Under the conductor's normal
+synchronous model that is uncontended — one spawn at a time — so the
 non-atomic bump is harmless.
 
-The hole opens if the ``Agent`` tool ever returns early (background mode:
+The hole opens if spawns ever overlap (background mode:
 ``CLAUDE_AUTO_BACKGROUND_TASKS`` auto-backgrounds after ~2 min;
 ``CLAUDE_CODE_FORK_SUBAGENT`` forces all spawns to background). Two
-``prepare_dispatch`` calls can then race on the same ``(phase, task, subtask)``:
-both read ``gen=N``, both stamp ``gen=N+1`` — and the dedupe hook's
-same-``gen``-means-one-dispatch-twice disambiguation breaks, because two
-*fresh* dispatches now look like a single one spawned twice.
+``dispatch_inflight.stamp`` calls can then race on the same ``(phase, task,
+subtask)``: both read ``gen=N``, both stamp ``gen=N+1`` — and the lifecycle
+telemetry's same-``gen``-means-one-dispatch-twice disambiguation breaks,
+because two *fresh* spawns now look like a single one spawned twice.
 
 This module closes the read-modify-write window with an exclusive
 ``fcntl.flock`` held for the duration of the critical section. It does NOT
@@ -63,9 +63,9 @@ def acquire(track_dir):
             inflight.write(..., gen=prev_gen + 1)
 
     The lock is process-wide exclusive (``LOCK_EX``) on
-    ``<track_dir>/.conductor/.dispatch.lock``. Two concurrent
-    ``prepare_dispatch`` calls for the same track serialize here, so the
-    read-modify-write of the inflight ``gen`` is atomic.
+    ``<track_dir>/.conductor/.dispatch.lock``. Two concurrent spawn stamps for
+    the same track serialize here, so the read-modify-write of the inflight
+    ``gen`` is atomic.
 
     Fail-open: on any ``OSError`` (cannot create/open the lock file, cannot
     flock — e.g. on a filesystem that doesn't support advisory locks, or a

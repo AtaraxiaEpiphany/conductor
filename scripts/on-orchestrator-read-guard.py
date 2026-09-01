@@ -28,9 +28,13 @@ hook:
 - Resolves the locked ``in_progress`` task via ``lib.locked_task.resolve`` →
   ``(track_dir, phase, task, subtask)``. No locked task → allow (nothing to
   protect; the orchestrator is between tasks and may read freely).
-- Reads the inflight marker for that task (the *same* marker
-  ``prepare_dispatch`` stamps and ``on-dispatch-dedupe.py`` reads). Missing →
-  allow.
+- Reads the inflight marker for that task (the *same* marker the SubagentStart
+  hook stamps at spawn — ``on-subagent-start.py:_stamp_inflight`` — and
+  ``on-dispatch-dedupe.py`` reads). Missing → allow. The marker's semantics
+  shifted with the spawn-stamp change (2026-09-01): this guard's deny window is
+  now "while SPAWNED" (an agent demonstrably started), not "while prepared" —
+  it shifts consistently with the dedupe guard's, since both read the same
+  marker and the same HEAD/result predicate.
 - In flight iff ``git HEAD == marker.start_sha`` AND no
   ``.conductor/result.json`` — the *same predicate* ``on-dispatch-dedupe.py``
   and ``cmd_step`` use. In flight AND the read targets this track's

@@ -367,6 +367,10 @@ class StepFinalizeRouteTests(TestCase):
             d = _git_track_dir(state)
             self.addCleanup(shutil.rmtree, d, ignore_errors=True)
             _step(d)            # locks Task A + Start commit
+            # The dispatched agent spawned — SubagentStart stamped the marker
+            # (gen 1). Then the session died: no result.json, HEAD unmoved.
+            from scripts.lib import dispatch_inflight as inflight
+            inflight.stamp(d, 1, 1, None)
             o = _step(d)        # interrupted → re-dispatch
             self.assertEqual(o["action"], "dispatch")
             log_path = Path(log_dir) / "logs" / "dispatch-lifecycle.log"
@@ -375,30 +379,38 @@ class StepFinalizeRouteTests(TestCase):
             self.assertIn("event=re-dispatch", line)
             self.assertIn("phase=1", line)
             self.assertIn("task=1", line)
-            # The re-dispatch bumped gen → the marker now sits at gen 2; the line
-            # records the gen that was current at emit time (>=1).
-            self.assertIn("gen=", line)
+            # The interrupted spawn stamped gen 1; the re-dispatch line records
+            # that prior generation (successive interruptions = 1, 2, 3 …).
+            self.assertIn("gen=1", line)
         finally:
             if prior is None:
                 _os.environ.pop("CLAUDE_PLUGIN_DATA", None)
             else:
                 _os.environ["CLAUDE_PLUGIN_DATA"] = prior
 
-
-        # prepare_dispatch must stamp the inflight marker with the Start-commit
-        # SHA so the PreToolUse:Agent dedupe hook can deny a second concurrent
-        # dispatch for the same task. Pins the spine-side half of the
-        # single-writer invariant (the hook's deny is tested in
-        # test_dispatch_dedupe.py).
+    def test_spawn_stamp_marker_matches_head(self):
+        # The inflight marker is stamped at SPAWN by the SubagentStart hook
+        # (lib.dispatch_inflight.stamp — the "spawned, not prepared" semantics
+        # that fixed the 2026-09-01 dispatch deadlock). prepare_dispatch no
+        # longer writes it. This pins the stamp's contract: after `step`
+        # emits `dispatch` and the spawn fires, the marker carries the
+        # phase/task and the Start-commit SHA so the PreToolUse:Agent dedupe
+        # hook's HEAD == start_sha in-flight test holds. The hook's deny is
+        # tested in test_dispatch_dedupe.py.
         from scripts.lib import dispatch_inflight as inflight
         state = _make_state(phases=[{"name": "Phase 1", "status": "pending", "tasks": [
             {"name": "Task A", "status": "pending"}]}])
         d = _git_track_dir(state)
         self.addCleanup(shutil.rmtree, d, ignore_errors=True)
-        first = _step(d)  # locks Task A + Start commit + stamps marker
+        first = _step(d)  # locks Task A + Start commit
         self.assertEqual(first["action"], "dispatch")
+        # Prepared but not spawned: NO marker (a prepare-time stamp made the
+        # guard deny the first dispatch itself — the deadlock this pins shut).
+        self.assertIsNone(inflight.read(d, 1, 1, None),
+                          "prepare must NOT stamp the inflight marker")
+        inflight.stamp(d, 1, 1, None)  # the SubagentStart spawn stamp
         marker = inflight.read(d, 1, 1, None)
-        self.assertIsNotNone(marker, "dispatch must stamp the inflight marker")
+        self.assertIsNotNone(marker, "spawn must stamp the inflight marker")
         self.assertEqual(marker["phase"], 1)
         self.assertEqual(marker["task"], 1)
         # start_sha must equal the live HEAD (the Start commit) so the hook's
@@ -416,7 +428,8 @@ class StepFinalizeRouteTests(TestCase):
             {"name": "Task B", "status": "pending"}]}])
         d = _git_track_dir(state)
         self.addCleanup(shutil.rmtree, d, ignore_errors=True)
-        _step(d)  # dispatch Task A → Start commit + marker
+        _step(d)  # dispatch Task A → Start commit
+        inflight.stamp(d, 1, 1, None)  # the SubagentStart spawn stamp
         self.assertIsNotNone(inflight.read(d, 1, 1, None))
         # Agent returns success: a real impl commit + result.json.
         _commit(d, "feat: Task A done", files={"a.py": "x"})
@@ -443,10 +456,11 @@ class StepFinalizeRouteTests(TestCase):
         d = _git_track_dir(state)
         self.addCleanup(shutil.rmtree, d, ignore_errors=True)
 
-        first = _step(d)  # locks Task A + Start commit + stamps inflight marker
+        first = _step(d)  # locks Task A + Start commit
         self.assertEqual(first["action"], "dispatch")
+        inflight.stamp(d, 1, 1, None)  # the SubagentStart spawn stamp
         stuck_marker = inflight.read(d, 1, 1, None)
-        self.assertIsNotNone(stuck_marker, "dispatch stamps the inflight marker")
+        self.assertIsNotNone(stuck_marker, "spawn stamps the inflight marker")
         stuck_sha = stuck_marker["start_sha"]
 
         # Simulate "agent in flight, never returned": no result.json, no impl
@@ -471,13 +485,15 @@ class StepFinalizeRouteTests(TestCase):
                           "finalize must clear the inflight marker so the "
                           "dedupe hook stops guarding the stuck start_sha")
 
-        # The next dispatch stamps a FRESH marker with a new start_sha (the
-        # reset's Start commit), so a subsequent spawn is allowed — not denied
-        # against the old stuck SHA. This is the loop terminating.
+        # The next dispatch spawns fresh — the new spawn stamps a marker with a
+        # new start_sha (the reset's Start commit), so a subsequent spawn is
+        # allowed — not denied against the old stuck SHA. This is the loop
+        # terminating.
         third = _step(d)
         self.assertEqual(third["action"], "dispatch")
+        inflight.stamp(d, 1, 1, None)  # the re-dispatch's SubagentStart stamp
         fresh_marker = inflight.read(d, 1, 1, None)
-        self.assertIsNotNone(fresh_marker, "a fresh dispatch re-stamps the marker")
+        self.assertIsNotNone(fresh_marker, "a fresh spawn re-stamps the marker")
         self.assertNotEqual(
             fresh_marker["start_sha"], stuck_sha,
             "loop not terminated: the new dispatch reused the stuck "

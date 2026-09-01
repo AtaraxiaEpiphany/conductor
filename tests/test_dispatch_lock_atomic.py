@@ -1,13 +1,13 @@
 """Atomicity of the dispatch inflight ``gen`` bump under the dispatch lock.
 
 The inflight marker's ``gen`` is stamped via a read-modify-write in
-``track_state.dispatch._dispatch_inflight_write``. Under the conductor's normal
-synchronous model that bump is uncontended. Under background-mode concurrency
-(two ``prepare_dispatch`` calls racing on the same ``(phase, task, subtask)``)
-the read-modify-write is wrapped in ``lib.dispatch_lock.acquire`` (an exclusive
-``fcntl.flock``) so two writers cannot both read ``gen=N`` and stamp ``gen=N+1``
-— which would collapse two fresh dispatches into one in the dedupe hook's
-``gen``-disambiguation.
+``lib.dispatch_inflight.stamp`` (the SubagentStart spawn stamp). Under the
+conductor's normal synchronous model that bump is uncontended. Under
+background-mode concurrency (two stamps racing on the same ``(phase, task,
+subtask)``) the read-modify-write is wrapped in ``lib.dispatch_lock.acquire``
+(an exclusive ``fcntl.flock``) so two writers cannot both read ``gen=N`` and
+stamp ``gen=N+1`` — which would collapse two spawns into one in the lifecycle
+telemetry's ``gen`` disambiguation.
 
 These tests pin:
 
@@ -28,7 +28,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 from lib import dispatch_lock  # noqa: E402
 from lib import dispatch_inflight as inflight  # noqa: E402
-from track_state.dispatch import _dispatch_inflight_write  # noqa: E402
 
 
 class GenBumpAtomicityTests(TestCase):
@@ -45,17 +44,16 @@ class GenBumpAtomicityTests(TestCase):
         m = inflight.read(self.track, 1, 1, None)
         return m.get("gen") if m else None
 
-    def test_concurrent_writes_get_distinct_gens(self):
-        # The race the lock closes: two writers stamping the same key. Without
-        # the lock both could read gen=0 and stamp gen=1. With the lock they
-        # serialize → gen=1 then gen=2.
+    def test_concurrent_stamps_get_distinct_gens(self):
+        # The race the lock closes: two stamps on the same key. Without the
+        # lock both could read gen=0 and stamp gen=1. With the lock they
+        # serialize → gen=1 then gen=2. (No git repo here → start_sha is
+        # stamped as None; the gen bump is what these tests pin.)
         start = threading.Barrier(2)
-        results = []
 
         def writer():
             start.wait()  # release both threads together
-            _dispatch_inflight_write(self.track, 1, 1, None,
-                                     "abc1234", "2026-07-27T00:00:00+00:00")
+            inflight.stamp(self.track, 1, 1, None)
 
         threads = [threading.Thread(target=writer) for _ in range(2)]
         for t in threads:
@@ -68,16 +66,14 @@ class GenBumpAtomicityTests(TestCase):
         # assertion is that NO collision happened: simulate the unguarded race
         # would leave gen=1 (both read 0). Under the lock the final gen is 2.
         self.assertEqual(self._gens(), 2,
-                         "concurrent writes must serialize to gen=2 (locked), "
+                         "concurrent stamps must serialize to gen=2 (locked), "
                          "not collapse to gen=1 (the unguarded race)")
 
-    def test_serial_writes_bump_monotonically(self):
-        # Sanity: two serial writes bump gen 1 → 2.
-        _dispatch_inflight_write(self.track, 1, 1, None, "sha0001",
-                                 "2026-07-27T00:00:00+00:00")
+    def test_serial_stamps_bump_monotonically(self):
+        # Sanity: two serial stamps bump gen 1 → 2.
+        inflight.stamp(self.track, 1, 1, None)
         self.assertEqual(self._gens(), 1)
-        _dispatch_inflight_write(self.track, 1, 1, None, "sha0002",
-                                 "2026-07-27T00:00:01+00:00")
+        inflight.stamp(self.track, 1, 1, None)
         self.assertEqual(self._gens(), 2)
 
 

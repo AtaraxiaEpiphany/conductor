@@ -81,7 +81,11 @@ straight to the next leaf — and are listed as B-full graduations below.
   is closed by the `on-dispatch-dedupe.py` PreToolUse:Agent hook, which
   `permissionDecision:"deny"`s a second spawn for the same locked task while an
   in-flight marker (`.conductor/.dispatch-inflight-*`, same predicate as the
-  no-retry-burn branch) exists. Read-only agents and wave parallelism (separate
+  no-retry-burn branch) exists. The marker is stamped **at spawn** by the
+  SubagentStart hook (`lib.dispatch_inflight.stamp`), not at prepare — a
+  prepare-time stamp denied the first spawn itself (the 2026-09-01
+  dispatch-deadlock incident); every guarded state is one where an agent
+  demonstrably started. Read-only agents and wave parallelism (separate
   worktrees, no marker, no `in_progress` cursor in the worktree state) are exempt;
   only the serial-spine same-task re-dispatch is denied. The hook's deny reason
   prescribes the *terminating* recovery `track-state dispatch-finalize` (which

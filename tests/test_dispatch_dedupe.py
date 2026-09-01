@@ -138,9 +138,49 @@ class DispatchDedupeHookTests(TestCase):
         reason = spec.get("permissionDecisionReason", "")
         self.assertIn("P1T1", reason)
         self.assertIn("dispatch-finalize", reason)
-        self.assertIn('Run `track-state dispatch-finalize', reason)
+        self.assertIn('run `track-state dispatch-finalize', reason)
         # And it must explicitly warn off the looping path.
         self.assertIn("Do NOT re-run", reason)
+        # The reason must first offer the WAIT branch (the agent may still be
+        # running — foreground or auto-backgrounded) before prescribing
+        # finalize: finalizing a live agent burns a retry for work about to
+        # land.
+        self.assertIn("WAIT for it", reason)
+
+    def test_spawn_stamp_lifecycle_allows_first_denies_second(self):
+        # End-to-end regression for the 2026-09-01 dispatch-deadlock incident.
+        # The marker is stamped at SPAWN (lib.dispatch_inflight.stamp, called
+        # by on-subagent-start), not at prepare — so the full lifecycle is:
+        # (1) prepared, not yet spawned → NO marker → first dispatch ALLOWED
+        #     (the incident: a prepare-time stamp denied this very spawn);
+        # (2) spawned → marker present, HEAD == start_sha, no result.json →
+        #     a SECOND dispatch DENIED (the guard's actual purpose);
+        # (3) finalize clears the marker → next dispatch ALLOWED again.
+        # (2) uses the production stamp path (real gen bump + live HEAD), not
+        # a fabricated marker — pinning that stamp() writes exactly the values
+        # this hook's predicate consumes.
+        # Step 1: fresh dispatch — allow.
+        rc, out = _run_hook(self.repo)
+        self.assertEqual(
+            out.get("hookSpecificOutput", {}).get("permissionDecision"), "allow",
+            "a prepared-but-not-spawned dispatch must be allowed (no marker)")
+        self.assertIsNone(inflight.read(self.track_dir, 1, 1, None))
+        # Step 2: the spawn fires → marker stamped → a second dispatch denied.
+        stamped = inflight.stamp(self.track_dir, 1, 1, None)
+        self.assertIsNotNone(stamped, "spawn stamp must write the marker")
+        self.assertEqual(stamped["start_sha"], self.start_sha,
+                         "stamp must record the live HEAD (the Start commit)")
+        rc, out = _run_hook(self.repo)
+        spec = out.get("hookSpecificOutput", {})
+        self.assertEqual(spec.get("permissionDecision"), "deny",
+                         "a second spawn while the first runs must be denied")
+        self.assertIn("P1T1", spec.get("permissionDecisionReason", ""))
+        # Step 3: finalize's marker clear → the guard releases → allow.
+        inflight.clear(self.track_dir, 1, 1, None)
+        rc, out = _run_hook(self.repo)
+        self.assertEqual(
+            out.get("hookSpecificOutput", {}).get("permissionDecision"), "allow",
+            "after finalize clears the marker the next dispatch is allowed")
 
     def test_denies_explorer_too(self):
         _stamp_marker(self.track_dir, 1, 1, None, self.start_sha)
