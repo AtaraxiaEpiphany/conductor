@@ -38,8 +38,13 @@ class NewTrackGuardWiringTests(TestCase):
         self.assertIn("Cancel", self.skill)
 
     def test_reuse_skips_spec_planner(self):
-        # Reuse must short-circuit straight to review, not re-dispatch spec-planner.
-        self.assertIn("jump to §2.4 review", self.skill)
+        # Reuse must short-circuit the spec-planner DISPATCH, but not the
+        # §2.3b refuter ask — a reused plan (the interrupt-rerun path) gets
+        # the same adversarial pass a fresh one does, then §2.3b carries into
+        # §2.4 review. Pinned because the old text jumped straight to §2.4
+        # and the refuter was never suggested on rerun (user issue 1).
+        self.assertIn("skip spec-planner and proceed", self.skill)
+        self.assertIn("to **§2.3b** (the refuter opt-out ask)", self.skill)
 
     def test_malformed_plan_announces_errors(self):
         # ok:false path: a broken plan.md surfaces its errors and is never reused.

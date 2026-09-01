@@ -118,10 +118,13 @@ Before the §2.2 Q&A branch above, check for a **Track Brief** at `<track_dir>/b
      *"An existing `plan.md` (N phases, M tasks) was found at `<track_dir>`. How should I proceed?"*
      - **Reuse existing plan** → run the two remaining §2.3 validations —
        `track-state spec-anchors "<track_dir>"` and `track-state spec-integrity "<track_dir>"`
-       (the `--check` above already covered format). All clean → skip spec-planner, append
-       `"spec_planned"` to `steps_done`, and jump to §2.4 review (carrying the `ac_integrity_gate`
-       verdict forward, same as a fresh dispatch). Either fails → do NOT reuse; announce the
-       defect, then **Regenerate** (dispatch spec-planner below) or **Cancel** (halt).
+       (the `--check` above already covered format). All clean → skip spec-planner and proceed
+       to **§2.3b** (the refuter opt-out ask) — a reused plan gets the same adversarial pass a
+       fresh one does; §2.3b carries the `ac_integrity_gate` verdict forward and stamps
+       `spec_planned` on resolution, same as a fresh dispatch (the interrupt-rerun path: without
+       this route, a rerun that reuses the recovered plan would skip the refuter ask entirely).
+       Either fails → do NOT reuse; announce the defect, then **Regenerate** (dispatch
+       spec-planner below) or **Cancel** (halt).
      - **Regenerate (overwrite)** → continue to dispatch spec-planner below.
      - **Cancel** → halt.
    - `ok: false` → the existing plan.md is malformed (missing `## Phase N:`
