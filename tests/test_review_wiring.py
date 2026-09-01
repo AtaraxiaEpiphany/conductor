@@ -251,5 +251,45 @@ class SpecReviewerTagVocabDeliveryTests(TestCase):
         self.assertIn("a tag audit on a guessed vocab is worse than none", self.agent)
 
 
+class SpecReviewerShapeAdvisoryTests(TestCase):
+    """§3.4b shape-mismatch advisory pins: the reviewer flags when a majority of
+    the plan's tagged tasks carry gate-dropping tags while the track runs
+    default's full gates (the brief-wording-missed-the-signals case), via a
+    SHAPE_ADVISORY line that NEVER affects STATUS (the orchestrator owns the
+    one-ask switch in new-track §2.4 — the reviewer stays a read-only
+    auditor)."""
+
+    def setUp(self):
+        self.agent = (ROOT / "agents" / "spec-reviewer.md").read_text(encoding="utf-8")
+
+    def test_section_present_between_tag_and_structure(self):
+        self.assertIn("### 3.4b Shape-Mismatch Advisory", self.agent)
+        # Renumber held: structure audit stays §3.5.
+        self.assertIn("### 3.5 Structure Audit", self.agent)
+
+    def test_advisory_only_never_a_finding(self):
+        # The load-bearing posture: the advisory can never flip the verdict or
+        # block — the switch decision belongs to the orchestrator's one ask.
+        self.assertIn("advisory only — NEVER a finding", self.agent)
+        self.assertIn("it does not affect `STATUS`", self.agent)
+
+    def test_default_only_scope_and_vocab_source(self):
+        # The check runs only for absent/default WORKFLOW_SHAPE (a non-default
+        # shape was deliberately confirmed at §2.1) and derives the
+        # gate-dropping family from the injected vocab — same authoritative
+        # source + absent-block-skip posture as §3.4.
+        self.assertIn("WORKFLOW_SHAPE", self.agent)
+        self.assertIn("absent block → skip this", self.agent)
+
+    def test_majority_bar_and_suggested_shape(self):
+        # ≥ half of tagged tasks AND ≥ 2 such tasks; [Migrate]-dominant
+        # suggests migration.
+        self.assertIn("≥ half of tagged tasks", self.agent)
+        self.assertIn("migration", self.agent)
+
+    def test_result_block_carries_optional_line(self):
+        self.assertIn("SHAPE_ADVISORY", self.agent)
+
+
 if __name__ == "__main__":
     main()

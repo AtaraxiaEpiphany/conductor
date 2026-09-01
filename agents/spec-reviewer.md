@@ -48,6 +48,7 @@ The orchestrator supplies:
 | ------------- | ----------------------------------------------- |
 | `TRACK_DIR`   | Absolute path to the track directory             |
 | `REVIEW_MODE` | Optional. `attest` → review-grounded attestation mode (§3.7): review the produced deliverable artifacts against each AC and return per-AC attestation verdicts the orchestrator writes via `track-state review-attest`. Absent (default) → the spec/plan audit (§3.2–§3.6). |
+| `WORKFLOW_SHAPE` | Optional. The track's workflow shape (§3.4b consumes it). Absent → treat as `default`. |
 
 If `TRACK_DIR` is absent or `{TRACK_DIR}/spec.md` and `plan.md` are both missing
 → emit `STATUS: FAILURE` with `REASON: missing artifacts` and stop. A missing
@@ -133,6 +134,35 @@ A task tag whose resolved registry profile is `tdd_exempt` is a **TDD exemption*
 - **Missing `[ ]` checkbox / missing `<!-- AC-n -->` annotation on an untagged
   implementation task** → finding (these are silently dropped or lose
   traceability).
+
+### 3.4b Shape-Mismatch Advisory (advisory only — NEVER a finding)
+
+The gate mismatch the shape matcher cannot see from words alone: a plan whose
+tag mix says one job family while the track runs another family's gates. The
+reported case — a brief described migration work in wording the (English)
+keyword signals don't cover, the shape silently defaulted, and default's full
+`tdd`/`coverage` gates then ran on `[Migrate]`-tagged tasks for the whole
+track.
+
+Check it only when `WORKFLOW_SHAPE` is absent or `default` (the only shape
+whose gate set is definitionally full — a non-default shape was deliberately
+chosen, §2.1 confirm). From the injected `RESOLVED TASK-TYPE TAG VOCAB`
+block (the same authoritative source §3.4 uses — absent block → skip this
+check entirely, same tripwire posture):
+
+1. Count plan.md's tagged tasks; count those whose tag's resolved profile
+   drops the TDD and/or coverage gate (the gate-dropping family).
+2. **≥ half of tagged tasks carry a gate-dropping tag, and there are ≥ 2 such
+   tasks** → emit a `SHAPE_ADVISORY:` line naming the count, the dominant
+   tag, and the suggested shape (`[Migrate]`-dominant → `migration`;
+   `[Explore]`/research-family dominant → `research-first`), e.g.:
+   `SHAPE_ADVISORY: 4/5 tagged tasks carry [Migrate] (drops tdd/coverage per task) while the track runs the default full gates — consider the migration shape`.
+3. Otherwise emit nothing.
+
+This is **advisory only**: never a `CHANGES_REQUESTED` finding, never blocks
+any STATUS — the orchestrator owns a one-ask switch decision (§2.4 of
+new-track); the user may legitimately want per-task exemptions under full
+default gates.
 
 ### 3.5 Structure Audit
 
@@ -249,6 +279,9 @@ ATTESTATIONS:
   orchestrator when IT applies a structural revision.)
 - `FINDINGS`: one bullet per defect. `location` is a stable anchor the
   orchestrator/user can navigate to (FR-id, NFR-id, `P{n}.T{n}`, line number).
+- `SHAPE_ADVISORY`: optional single line, present only when §3.4b fired
+  (gate-dropping tag majority under a default-shaped track). Advisory only —
+  it does not affect `STATUS`.
 
 ---
 

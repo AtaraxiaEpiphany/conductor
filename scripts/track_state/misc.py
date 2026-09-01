@@ -853,9 +853,15 @@ def cmd_propose_shape(description, brief_path=None):
     - ``proposed`` — ``default``, or the strict-plurality winner. A top score
       tied with the runner-up is ambiguity, not a proposal: default wins
       silently (``set-workflow-shape`` remains the override).
-    - ``confirm_required`` — ``proposed != "default"``. ``false`` → the skill
-      proceeds silently; ``true`` → ONE ``AskUserQuestion`` (recommended =
-      ``proposed``, alternative = ``default``) — the generic D3 confirm.
+    - ``confirm_required`` — ``(proposed != "default") or brief_used``. A brief
+      is consequential planning input: on the brief path the shape is ALWAYS
+      user-confirmed, even when the keyword signals miss and the proposal is
+      ``default`` — non-English wording ranks zero hits and a silent default
+      then runs default's full tdd/coverage gates on migration-shaped work
+      (the reported bug). No brief → ``proposed != "default"``: ``false`` →
+      the skill proceeds silently; ``true`` → ONE ``AskUserQuestion``
+      (recommended = ``proposed``, alternative = ``default``) — the generic
+      D3 confirm.
     - ``chosen`` — the full entry for the proposed shape (gates / verifiers /
       ac_grounding / planning_doc + resolved path / rationale), so the skill
       records ``$WORKFLOW_SHAPE``/``$AC_GROUNDING``/``$PLAY_PATH`` from ONE
@@ -913,14 +919,15 @@ def cmd_propose_shape(description, brief_path=None):
     out(dict(
         ok=True,
         proposed=proposed,
-        confirm_required=proposed != "default",
+        confirm_required=(proposed != "default") or brief_used,
         brief_used=brief_used,
         chosen=_entry(proposed),
         candidates=candidates,
         default=default_entry,
         hint="confirm_required=false → proceed silently with `proposed`; "
              "true → ONE AskUserQuestion (recommended=proposed, "
-             "alternative=default). set-workflow-shape overrides later.",
+             "alternative=default; brief path → judgment ask with candidates "
+             "when proposed==default). set-workflow-shape overrides later.",
     ))
 
 

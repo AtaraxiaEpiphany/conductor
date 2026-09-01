@@ -194,6 +194,33 @@ class ProposeShapeTests(_ShippedRegistry):
         # The description's own hit still ranked — nothing was blocked.
         self.assertEqual(r["proposed"], "migration")
 
+    def test_brief_used_forces_confirm_even_on_default(self):
+        # The brief path ALWAYS confirms. A brief is consequential planning
+        # input, and its wording may not match the English keyword signals at
+        # all — the reported bug: a non-English brief ranked zero hits, the
+        # shape silently defaulted, and default's full tdd/coverage gates ran
+        # on migration-shaped work. brief_used forces the judgment ask.
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False,
+                                         encoding="utf-8") as f:
+            f.write("把旧版认证栈整体搬迁到新框架，逐组件行为保持不变地移植。\n")
+            brief = f.name
+        self.addCleanup(os.unlink, brief)
+        r = self._propose("认证栈改造", brief)
+        self.assertTrue(r["brief_used"])
+        self.assertEqual(r["proposed"], "default")
+        self.assertEqual(r["candidates"], [])
+        self.assertTrue(r["confirm_required"],
+                        "brief_used must force the confirm even when the "
+                        "proposal is default")
+
+    def test_unlanded_brief_stays_silent_on_default(self):
+        # The force is brief-LANDED-only: a --brief that failed to open does
+        # not force the confirm (fail-open keeps the silent-default posture).
+        r = self._propose("Fix the login redirect loop", "/nonexistent/b.md")
+        self.assertFalse(r["brief_used"])
+        self.assertEqual(r["proposed"], "default")
+        self.assertFalse(r["confirm_required"])
+
     def test_empty_description_errors(self):
         r = self._propose("   ")
         self.assertFalse(r["ok"])
@@ -306,6 +333,22 @@ class NewTrackSwapWiringTests(TestCase):
         # The ONE generic confirm — recommended = the proposal, alternative =
         # default. No per-shape prose in the skill (it lives in the JSON).
         self.assertIn("(Recommended)", self.skill)
+
+    def test_brief_default_case_gets_judgment_ask(self):
+        # confirm_required now fires with proposed==default on the brief path
+        # (brief_used forces it) — the ask text switches to the judgment
+        # framing (no keyword signal matched) and offers candidates + default.
+        self.assertIn("Confirm the shape by judgment", self.skill)
+        self.assertIn("brief path", self.skill)
+
+    def test_shape_advisory_ask_wired_in_review(self):
+        # §2.4 consumes the reviewer's SHAPE_ADVISORY: ONE ask offering the
+        # switch via set-workflow-shape (the terminating amendment) vs keep
+        # default. The dispatch envelope carries WORKFLOW_SHAPE so the
+        # reviewer can run the majority check.
+        self.assertIn("SHAPE_ADVISORY", self.skill)
+        self.assertIn("set-workflow-shape", self.skill)
+        self.assertIn("WORKFLOW_SHAPE={$WORKFLOW_SHAPE}", self.skill)
 
     def test_records_play_path_from_json(self):
         # $PLAY_PATH (the chosen shape's planning docfile path) comes from the

@@ -54,8 +54,11 @@ CRITICAL: Validate every tool call. On failure → halt → announce.
    track-state propose-shape "<description>" [--brief "<track_dir>/brief.md" when adopting an existing track dir that has one]
    ```
    Parse the JSON. Switch on `confirm_required`:
-   - `false` (proposed `default`) → no prompt. Record from the JSON: `$WORKFLOW_SHAPE=default`, `$AC_GROUNDING` = the `chosen` entry's `ac_grounding`, `$PLAY_PATH` = its `planning_doc_path`.
-   - `true` → a consequential choice (the proposal's `rationale` names exactly what changes), so confirm via ONE `AskUserQuestion`: *"This reads like a `<proposed>` track — <rationale from the JSON>. Use the `<proposed>` shape?"* Options: **Yes, `<proposed>` shape (Recommended)** / **No, `default` shape (full gates)**. Record `$WORKFLOW_SHAPE`, `$AC_GROUNDING`, and `$PLAY_PATH` from the chosen entry (`chosen` for the proposal, `default` for the fallback) — never hand-derive them.
+   - `false` (proposed `default`, no brief) → no prompt. Record from the JSON: `$WORKFLOW_SHAPE=default`, `$AC_GROUNDING` = the `chosen` entry's `ac_grounding`, `$PLAY_PATH` = its `planning_doc_path`.
+   - `true` → a consequential choice (the proposal's `rationale` names exactly what changes), so confirm via ONE `AskUserQuestion` — the ask text depends on why it fired:
+     - **`proposed` is non-`default`** (keyword signal matched): *"This reads like a `<proposed>` track — <rationale from the JSON>. Use the `<proposed>` shape?"* Options: **Yes, `<proposed>` shape (Recommended)** / **No, `default` shape (full gates)**.
+     - **`proposed` is `default`** (this is the brief path — `brief_used: true` forces the confirm; briefs often don't match the English keyword signals, so zero hits landed): *"No strong keyword signal matched — a brief may describe the work in words the signals don't cover. Confirm the shape by judgment."* Options: the top `candidates[]` entries by score (up to 3, each labeled with its shape name) plus **`default` (full gates) (Recommended)**; zero scored candidates → **`default` (full gates) (Recommended)** alone (the user can name another shape via Other).
+     Record `$WORKFLOW_SHAPE`, `$AC_GROUNDING`, and `$PLAY_PATH` from the chosen entry (`chosen` for the proposal, `default` for the fallback) — never hand-derive them.
    Override either way later via `track-state set-workflow-shape "<track_dir>" --shape <name>`. The conductor runs one track per session, so a mis-proposed shape is one command to fix.
 4. **Scan for pending briefs (pre-derive adoption).** Unless `$ARGUMENTS` is a bare track_id already adopted above (Existing-track adoption), run the code-owned scan — it finds finished-but-unplanned briefs sitting in other track dirs (§2.2b checks only `<track_dir>`; this closes the orphaned-brief gap without the user typing the exact date-stamped id):
    ```bash
@@ -223,6 +226,7 @@ Dispatch `conductor:spec-reviewer`, prompt:
 
 ```
 TRACK_DIR={track_dir}
+WORKFLOW_SHAPE={$WORKFLOW_SHAPE}
 ```
 
 Parse the `---REVIEW RESULT---` block and switch on `STATUS`:
@@ -235,6 +239,8 @@ Parse the `---REVIEW RESULT---` block and switch on `STATUS`:
 - **`FAILURE`** → announce `REASON` → re-dispatch `conductor:spec-reviewer` ONCE. Still `FAILURE` → halt: `"spec-reviewer could not complete — inspect <track_dir>/spec.md and plan.md."`
 
 `STRUCTURE_CHANGED: true` from a revision you applied → note for §2.6 `init-from-plan` (it re-derives structure from `plan.md` regardless, so this is informational).
+
+**Shape-mismatch advisory (`SHAPE_ADVISORY:` line in the block).** The reviewer flags when a majority of the plan's tagged tasks carry gate-dropping tags while the track runs `default`'s full gates — the plan's job family and the track's gate posture disagree (the brief-wording-missed-the-signals case). Advisory present → ONE `AskUserQuestion` (after handling the STATUS branch's own ask, if any — the two never merge): *"The plan's tag mix (`<n>/<m>` tagged tasks `<dominant tag>`) suits the `<shape>` shape — the track currently runs `default` (full gates). Switch?"* Options: **Switch to `<shape>` (Recommended when majority)** → run `track-state set-workflow-shape "<track_dir>" --shape <name>`, then re-record `$WORKFLOW_SHAPE`/`$AC_GROUNDING`/`$PLAY_PATH` from `track-state registry-doc --shape <name>` and continue (a gate-set change before any dispatch needs no re-plan — tags already carry the per-task exemptions) / **Keep `default`** → continue as-is (per-task exemptions under full gates is a legitimate posture). The suggested `<shape>` comes from the advisory line; `set-workflow-shape` rejects unknown names, so a bad suggestion fails loud, not silent.
 
 **Carry forward the §2.3 `ac_integrity_gate` verdict.** It is `PASS` or `N/A`+`ac_integrity_reason:"spec_missing"` → nothing to surface (a legitimately spec-less track). If `WARN`, announce the advisory before the review: `"⚠️ AC-integrity WARN: <gate string> — these ACs are traced but not fully grounded; review with this in mind."` so you + the user assess the spec informed by AC traceability (the `ac_evidence` list from the §2.3 JSON shows each AC's measured/claimed/missing TCs). A `FAILED` gate, and an `N/A`+`"no_acs"` gate, cannot reach here — §2.3 loops until they pass or halts.
 
