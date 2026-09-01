@@ -105,7 +105,7 @@ DOCFILE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\.md$")
 _KNOWN_SHAPE_FIELDS = frozenset({
     "nodes", "verifiers", "gates", "verify_policy", "stop_condition",
     "ac_grounding", "checkpoint_policy", "instruction", "when_to_use", "requires",
-    "planning_doc", "signals",
+    "planning_doc", "signals", "max_retries",
 })
 _KNOWN_TAG_FIELDS = frozenset({
     "route", "tdd_exempt", "coverage_exempt", "when_to_use",
@@ -207,6 +207,16 @@ def validate_shape_row(name: str, row) -> list[str]:
         val = row["signals"]
         if not isinstance(val, list) or not all(isinstance(x, str) for x in val):
             errs.append(f"shape {name!r}: signals must be a list of strings")
+
+    # Per-shape retry budget: an int >= 1 (0/absent = inherit the global
+    # MAX_RETRIES — the accessor `workflow_shapes.max_retries_for` owns the
+    # chain). Not a vocab field (an int, not a closed set); mirrors
+    # `constants.task_max_retries`'s task-level defensiveness.
+    if "max_retries" in row:
+        val = row["max_retries"]
+        if not isinstance(val, int) or isinstance(val, bool) or val < 1:
+            errs.append(f"shape {name!r}: max_retries must be an int >= 1 "
+                        f"(0/absent = inherit the global default), got {val!r}")
 
     return errs
 

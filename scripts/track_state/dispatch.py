@@ -366,7 +366,8 @@ def cmd_dispatch_next(track_dir, compact=True):
             # Per-task ceiling flows into BOTH the prompt (via pre → _build_executor)
             # and the envelope field below, so they agree — a raised-budget task
             # must not perceive itself past budget in the prompt on a late attempt.
-            max_retries = task_max_retries(tgt) if tgt else MAX_RETRIES
+            max_retries = (task_max_retries(tgt, state.get("workflow_shape"))
+                           if tgt else MAX_RETRIES)
             pre = dict(phase=result["phase"], task=result["task"],
                        subtask=result.get("subtask"), name=result.get("name", "?"),
                        tags=result.get("tags", []), max_retries=max_retries)
@@ -433,10 +434,12 @@ def _find_failed_exhausted(state):
         for ti, task in enumerate(phase.get("tasks", []), 1):
             for si, sub in enumerate(task.get("subtasks", []), 1):
                 if (sub.get("status") == "failed"
-                        and sub.get("retry_count", 0) >= task_max_retries(sub)):
+                        and sub.get("retry_count", 0)
+                                >= task_max_retries(sub, state.get("workflow_shape"))):
                     return pi, ti, si, sub, sub.get("name", "...")
             if (task.get("status") == "failed"
-                    and task.get("retry_count", 0) >= task_max_retries(task)):
+                    and task.get("retry_count", 0)
+                            >= task_max_retries(task, state.get("workflow_shape"))):
                 return pi, ti, None, task, task.get("name", "...")
     return None
 
@@ -505,7 +508,7 @@ def _emit_no_active_or_decision(track_dir, state, fixes, compact):
                 phase=fpi, task=fti, subtask=fsi,
                 name=name,
                 retry_count=tgt.get("retry_count", 0),
-                max_retries=task_max_retries(tgt),
+                max_retries=task_max_retries(tgt, state.get("workflow_shape")),
                 execution_mode="interactive",
             )
             if fixes:
@@ -824,7 +827,7 @@ def cmd_recover(track_dir, compact=True):
         phase=pi, task=ti, subtask=si,
         name=name, type=ttype,
         retry_count=tgt.get("retry_count", 0),
-        max_retries=task_max_retries(tgt),
+        max_retries=task_max_retries(tgt, state.get("workflow_shape")),
         last_failure_summary=tgt.get("last_failure_summary"),
         tags=sub_tags,
         execution_mode=state.get("execution_mode", "interactive"),
@@ -1018,7 +1021,7 @@ def prepare_dispatch(track_dir):
     pre = dict(action=action, phase=pi, task=ti, subtask=si, name=name,
                tags=tags, sync_count=synced, is_resume=is_resume,
                retry_count=tgt.get("retry_count", 0),
-               max_retries=task_max_retries(tgt),
+               max_retries=task_max_retries(tgt, state.get("workflow_shape")),
                last_failure_summary=tgt.get("last_failure_summary"),
                execution_mode=nxt.get("execution_mode", "interactive"),
                next=nxt)
@@ -1124,7 +1127,7 @@ def _synthesize_result_from_state(track_dir):
             subtask=si,
             task_name=name,
             attempt=tgt.get("retry_count", 0) + 1,
-            max_retries=task_max_retries(tgt),
+            max_retries=task_max_retries(tgt, state.get("workflow_shape")),
         )
     else:
         # Agent committed implementation code but forgot to write result.json.
@@ -1138,7 +1141,7 @@ def _synthesize_result_from_state(track_dir):
             subtask=si,
             task_name=name,
             attempt=tgt.get("retry_count", 0) + 1,
-            max_retries=task_max_retries(tgt),
+            max_retries=task_max_retries(tgt, state.get("workflow_shape")),
         )
 
 
@@ -1350,7 +1353,7 @@ def _attach_rail_a_next(result, track_dir):
         try:
             tgt = target(state, int(pi), int(ti), int(si) if si is not None else None)
             name = tgt.get("name", "?")
-            ceiling = task_max_retries(tgt)
+            ceiling = task_max_retries(tgt, state.get("workflow_shape"))
         except (IndexError, KeyError, TypeError, ValueError):
             return result
         rc = int(result.get("retry_count", 0) or 0)
@@ -2095,7 +2098,7 @@ def _step_assemble_failure_analyst_prompt(track_dir, state, pi, ti, si, name):
     ceiling = MAX_RETRIES
     try:
         tgt = target(state, int(pi), int(ti), int(si) if si is not None else None)
-        ceiling = task_max_retries(tgt)
+        ceiling = task_max_retries(tgt, state.get("workflow_shape"))
         retry_count = tgt.get("retry_count", 0)
     except (IndexError, KeyError, TypeError, ValueError):
         retry_count = 0
@@ -2871,8 +2874,9 @@ def _outcome_max_retries(track_dir, outcome):
         ti = int(outcome.get("task"))
         si = outcome.get("subtask")
         si = int(si) if si is not None else None
-        tgt = target(load(track_dir), pi, ti, si)
-        return task_max_retries(tgt)
+        state = load(track_dir)
+        tgt = target(state, pi, ti, si)
+        return task_max_retries(tgt, state.get("workflow_shape"))
     except (IndexError, KeyError, TypeError, ValueError):
         return MAX_RETRIES
 

@@ -129,6 +129,27 @@ class ShapeValidation(TestCase):
         errs = rv.validate_shapes(doc)
         self.assertTrue(any("unknown field" in e and "verifers" in e for e in errs), errs)
 
+    def test_good_max_retries_accepted(self):
+        # The shape-level retry budget: an int >= 1 (0/absent = inherit the
+        # global MAX_RETRIES). Not a closed vocab — any int >= 1 is valid.
+        doc = self._base()
+        doc["default"]["max_retries"] = 1
+        self.assertEqual(rv.validate_shapes(doc), [])
+        doc["default"]["max_retries"] = 7
+        self.assertEqual(rv.validate_shapes(doc), [])
+
+    def test_bad_max_retries_rejected(self):
+        # 0 = inherit (write it by omitting), negative / non-int / bool /
+        # float all rejected — mirrors task_max_retries' defensiveness so a
+        # bad row can never zero out or corrupt a retry budget.
+        for bad in (0, -1, "3", True, 1.5):
+            doc = self._base()
+            doc["default"]["max_retries"] = bad
+            errs = rv.validate_shapes(doc)
+            self.assertTrue(
+                any("max_retries must be an int >= 1" in e for e in errs),
+                (bad, errs))
+
     def test_non_list_nodes_rejected(self):
         doc = self._base()
         doc["default"]["nodes"] = "spec-planner"

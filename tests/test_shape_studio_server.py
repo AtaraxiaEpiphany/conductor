@@ -17,6 +17,7 @@ correctness contract the plan locked:
   that is not under the project's ``conductor/tracks/`` tree.
 """
 import json
+import os
 import tempfile
 import threading
 import urllib.error
@@ -421,13 +422,15 @@ class CheckpointPolicyControlSurfaceTests(TestCase):
         self.assertIn("checkpoint_policy", ss._vocab()["shapes"]["load_bearing"])
         self.assertIn("ac_grounding", ss._vocab()["shapes"]["load_bearing"])
         # verifiers + gates + checkpoint_policy + ac_grounding + planning_doc +
-        # signals = the six drives. planning_doc (planning-as-data) drives the
-        # planning layer; signals drives it too since Phase B — propose-shape
-        # ranks the description against them (new-track §2.1's selection step).
+        # signals + max_retries = the seven drives. planning_doc
+        # (planning-as-data) drives the planning layer; signals drives it too
+        # since Phase B — propose-shape ranks the description against them
+        # (new-track §2.1's selection step); max_retries drives the retry
+        # chain (task > shape > global).
         self.assertEqual(
             set(ss._vocab()["shapes"]["load_bearing"]),
             {"verifiers", "gates", "checkpoint_policy", "ac_grounding",
-             "planning_doc", "signals"})
+             "planning_doc", "signals", "max_retries"})
 
     def test_vocab_exposes_checkpoint_policy_scalar(self):
         self.assertEqual(
@@ -455,6 +458,77 @@ class CheckpointPolicyControlSurfaceTests(TestCase):
         # ac_grounding must NOT be lumped into the display/reference list anymore.
         self.assertNotIn(
             "ac_grounding</code> are display/reference", src)
+
+
+class MaxRetriesControlSurfaceTests(TestCase):
+    """The shape-level ``max_retries`` field's studio surface: an int field
+    (number input, not a vocab dropdown), resolved per-shape in the graph, and
+    honest-effects-badged as drives (it changes the retry chain). Direct unit
+    tests — no server."""
+
+    def test_effects_marks_max_retries_as_drives(self):
+        cls, _ = ss._SHAPE_FIELD_EFFECTS["max_retries"]
+        self.assertEqual(cls, "drives")
+
+    def test_vocab_exposes_int_fields(self):
+        self.assertEqual(ss._vocab()["shapes"]["int_fields"], ["max_retries"])
+
+    def test_shape_graph_carries_max_retries(self):
+        # 0 = inherit the global (the frontend renders the effective value
+        # with that fallback).
+        self.assertEqual(ss._shape_graph("default")["max_retries"], 0)
+
+    def test_save_cache_survives_endpoint_read(self):
+        # The staleness regression the plan suspected: a save must be visible
+        # to the same process's subsequent accessor reads. save_registry owns
+        # the cache clear (rs._cache_clear) — pin it end-to-end through the
+        # studio server: save an overlay budget, then resolve the shape.
+        # _shape_graph reads the ws accessors, whose project ladder is
+        # $CLAUDE_PROJECT_DIR-first — pin it (the studio's --project-dir pin
+        # feeds rs.* which take it explicitly; the accessor ladder needs env).
+        proj = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(proj, ignore_errors=True))
+        Path(proj, "conductor", "tracks").mkdir(parents=True)
+        prior = os.environ.get("CLAUDE_PROJECT_DIR")
+        os.environ["CLAUDE_PROJECT_DIR"] = proj
+        def _restore():
+            if prior is None:
+                os.environ.pop("CLAUDE_PROJECT_DIR", None)
+            else:
+                os.environ["CLAUDE_PROJECT_DIR"] = prior
+            from scripts.track_state import workflow_shapes as _ws
+            _ws._load.cache_clear()
+        self.addCleanup(_restore)
+        with _Server(proj) as srv:
+            status, body = _post(srv.base, "/api/registry/save", {
+                "which": "shapes", "target": "overlay",
+                "doc": {"shapes": {"k8s-rollout": {
+                    "nodes": ["task-executor"], "max_retries": 1}}},
+            })
+            self.assertEqual(status, 200, body)
+            self.assertTrue(body["ok"], body)
+            status, g = _get_json(srv.base, "/api/resolve?shape=k8s-rollout")
+            self.assertEqual(status, 200)
+            self.assertEqual(g["max_retries"], 1,
+                             "post-save resolve must see the saved budget "
+                             "(lru_cache staleness)")
+
+    def test_save_rejects_bad_max_retries(self):
+        # The strict-write gate: a non-int/negative budget is rejected at
+        # save, writes nothing.
+        proj = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(proj, ignore_errors=True))
+        Path(proj, "conductor", "tracks").mkdir(parents=True)
+        with _Server(proj) as srv:
+            status, body = _post(srv.base, "/api/registry/save", {
+                "which": "shapes", "target": "overlay",
+                "doc": {"shapes": {"bad-budget": {
+                    "nodes": ["task-executor"], "max_retries": "lots"}}},
+            })
+            self.assertEqual(status, 400)
+            self.assertFalse(body["ok"])
+            self.assertTrue(any("max_retries" in e for e in body.get("errors", [])),
+                            body)
 
 
 if __name__ == "__main__":

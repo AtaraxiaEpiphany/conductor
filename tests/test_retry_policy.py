@@ -110,6 +110,44 @@ class TaskMaxRetriesResolverTests(TestCase):
         self.assertEqual(task_max_retries(None), MAX_RETRIES)
 
 
+class TaskMaxRetriesShapeChainTests(TestCase):
+    """The three-tier chain: task.max_retries > shape max_retries > global.
+
+    The shape tier is the per-job-family default (``workflow_shapes.
+    max_retries_for``); ``task_max_retries`` resolves it when the caller
+    threads the track's workflow shape name. Patched at the accessor (not a
+    fabricated registry) so the chain logic is what's under test — the
+    accessor's own real-registry behavior is pinned in
+    test_workflow_shapes.MaxRetriesTests.
+    """
+    def _patched(self, shape_budget):
+        from unittest import mock
+        return mock.patch(
+            "scripts.track_state.workflow_shapes.max_retries_for",
+            return_value=shape_budget)
+
+    def test_task_budget_wins_over_shape(self):
+        with self._patched(1):
+            self.assertEqual(task_max_retries({"max_retries": 5}, "migration"), 5)
+
+    def test_shape_budget_used_when_task_absent_or_invalid(self):
+        with self._patched(1):
+            self.assertEqual(task_max_retries({}, "migration"), 1)
+            self.assertEqual(task_max_retries({"max_retries": 0}, "migration"), 1)
+            self.assertEqual(task_max_retries(None, "migration"), 1)
+
+    def test_invalid_shape_budget_falls_to_global(self):
+        # max_retries_for returns 0 for absent/malformed — 0 = inherit.
+        with self._patched(0):
+            self.assertEqual(task_max_retries({}, "migration"), MAX_RETRIES)
+
+    def test_no_shape_argument_falls_to_global(self):
+        # Back-compat: every pre-shape caller (no shape kwarg) is unchanged.
+        self.assertEqual(task_max_retries({}), MAX_RETRIES)
+        self.assertEqual(task_max_retries({}, None), MAX_RETRIES)
+        self.assertEqual(task_max_retries({}, ""), MAX_RETRIES)
+
+
 class PerTaskRetryBudgetTests(TestCase):
     def test_raised_budget_requeues_until_override(self):
         # max_retries=5 → requeue (pending) while retry_count < 5.

@@ -144,7 +144,7 @@ def _sync_handoff_index(track_dir, state=None):
                 task_emoji = "[ ]"
 
             retry_count = task.get("retry_count", 0)
-            retry_info = (f" ({retry_count}/{task_max_retries(task)})"
+            retry_info = (f" ({retry_count}/{task_max_retries(task, state.get('workflow_shape'))})"
                           if retry_count > 0 else "")
 
             task_rows.append(

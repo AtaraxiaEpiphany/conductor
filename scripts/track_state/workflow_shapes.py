@@ -381,6 +381,24 @@ def stop_condition_for(shape: str) -> str:
     return _shape(shape).get("stop_condition", "all_nodes_done")
 
 
+def max_retries_for(shape: str) -> int:
+    """The shape-level default retry budget, or ``0`` (= inherit the global).
+
+    A shape row may declare ``max_retries: <int >= 1>`` — the per-track retry
+    ceiling for its job family (e.g. a migration shape may want 1: each retry
+    re-runs a risky port; a research shape may want more: dead ends are the
+    job). The chain lives in :func:`constants.task_max_retries`:
+    task-level ``max_retries`` wins, then this, then the global ``MAX_RETRIES``.
+    Defensive read (cf. :func:`planning_doc_for`): absent/malformed/bool/``< 1``
+    → ``0`` = inherit — a bad registry row must never zero out the retry
+    budget for every task under the shape.
+    """
+    val = _shape(shape).get("max_retries")
+    if isinstance(val, int) and not isinstance(val, bool) and val >= 1:
+        return val
+    return 0
+
+
 def instruction_for(shape: str) -> str:
     """The optional prompt-shaping prose for the orchestrator when this shape is
     active (mirrors task-type ``workflow``). Absent (the common case) = ``""`` =

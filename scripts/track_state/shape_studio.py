@@ -107,6 +107,7 @@ _SHAPE_FIELD_EFFECTS = {
     "signals": ("drives", "Keyword list `track-state propose-shape` signal-matches against the track description to PROPOSE this shape (new-track §2.1's selection step — the planning-layer mirror of derive_task_tag). Only shapes that declare signals are candidates; absent = not a candidate (the default shape is the fail-open fallback, never a competitor). A proposal is always user-confirmed before it takes effect."),
     "instruction": ("display", "LEGACY inline planning prose (the pre-docfile small form). NOT injected into any prompt. For a full planning procedure prefer `planning_doc`; a row carrying both is rejected as a two-homes drift."),
     "when_to_use": ("display", "Human/tooling reference prose — the rationale gloss for the machine `signals`. NOT injected into any prompt."),
+    "max_retries": ("drives", "The shape-level default retry budget for tasks under this shape (int >= 1; 0/absent = inherit the global MAX_RETRIES=3). The chain: task.max_retries > shape max_retries > global — resolved by constants.task_max_retries at every enforcement site (fail requeue, exhausted scan, dispatch envelopes). Use when a job family needs a different ceiling — e.g. migration 1 (a retry re-runs a risky port), research 5 (dead ends are the job)."),
 }
 # Task-type fields: most of these DO drive behavior (routing, exemptions,
 # injected workflow prose) — the honesty story here is "nearly everything
@@ -154,6 +155,9 @@ def _vocab():
                 "ac_grounding": list(rv.AC_GROUNDINGS),
                 "checkpoint_policy": list(rv.CHECKPOINT_POLICIES),
             },
+            # int >= 1 fields (0/absent = inherit the global) — rendered as
+            # number inputs; validated by registry_validate's int branch.
+            "int_fields": ["max_retries"],
             "text_fields": ["instruction", "when_to_use", "planning_doc"],
             # LOAD-BEARING (drives dispatch) vs ADVISORY (records intent only) is
             # derived from _SHAPE_FIELD_EFFECTS so the badge, the field guide, and
@@ -187,6 +191,9 @@ def _shape_graph(shape):
         "stop_condition": ws.stop_condition_for(shape),
         "ac_grounding": ws.ac_grounding_for(shape),
         "checkpoint_policy": ws.checkpoint_policy_for(shape),
+        # 0 = inherit the global MAX_RETRIES (the frontend renders the
+        # effective value with that fallback).
+        "max_retries": ws.max_retries_for(shape),
     }
 
 
@@ -504,6 +511,10 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 result = rs.save_registry(which, target, doc, self._project_dir)
             except (OSError, ValueError) as exc:
                 result = {"ok": False, "error": f"save failed: {exc}"}
+            # No cache_clear needed here: save_registry owns it (its
+            # _cache_clear clears both registry modules' lru_cached _load —
+            # the studio server is one process and a save must be visible to
+            # its own subsequent accessor reads).
             _json_response(self, result, 200 if result.get("ok") else 400)
             return
 
@@ -977,6 +988,11 @@ function renderForm() {
       + '<option value=""'+(row[f]===undefined?' selected':'')+'>(inherit)</option>'
       + opts.map(o=>'<option'+(row[f]===o?' selected':'')+'>'+esc(o)+'</option>').join('')+'</select></div>';
   }
+  for (const f of (v.int_fields||[])) {
+    // int >= 1; empty = inherit the global default (0 on the wire).
+    html += '<div class="field"><label class="fld">'+esc(f)+fxPill(fx[f])+'</label>'
+      + '<input type="number" min="1" step="1" id="f-'+f+'" value="'+(row[f]!==undefined?esc(String(row[f])):'')+'" placeholder="(inherit)"></div>';
+  }
   if (v.bool_fields && v.bool_fields.length) {
     html += '<div class="field"><label class="fld">flags</label><div class="checks">';
     for (const f of v.bool_fields) html += '<label><input type="checkbox" id="f-'+f+'"'+(row[f]?' checked':'')+'> '+esc(f)+fxPill(fx[f])+'</label>';
@@ -1005,6 +1021,13 @@ function collectDoc() {
     }
   }
   for (const f of Object.keys(v.scalar_fields||{})) { const sel = $('f-'+f); if (sel.value) row[f] = sel.value; }
+  for (const f of (v.int_fields||[])) {
+    const inp = $('f-'+f); if (!inp) continue;
+    const n = parseInt(inp.value, 10);
+    // Only a well-formed int >= 1 lands (0/empty/NaN = inherit — mirror of
+    // the validator's int branch, which rejects everything else).
+    if (Number.isFinite(n) && n >= 1) row[f] = n;
+  }
   for (const f of (v.bool_fields||[])) { if ($('f-'+f).checked) row[f] = true; }
   for (const f of (v.text_fields||[])) { const val = $('f-'+f).value; if (val && val.trim()) row[f] = val; }
   const dk = dataKey();

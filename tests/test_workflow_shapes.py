@@ -199,6 +199,13 @@ class GatesForTests(TestCase):
         for field in ("gates", "ac_grounding"):
             self.assertIn(field, data["_fields"])
 
+    def test_fields_documents_max_retries(self):
+        # The shape-level retry budget is documented (the _fields coverage
+        # pin for the newest axis).
+        data = json.loads(REGISTRY.read_text(encoding="utf-8"))
+        self.assertIn("max_retries", data["_fields"])
+        self.assertIn("task.max_retries", data["_fields"]["max_retries"])
+
 
 class MigrationShapeTests(TestCase):
     """Stage 2c: the built-in ``migration`` shape — the first non-code shape.
@@ -785,6 +792,47 @@ class PhaseCodeFreeTests(TestCase):
         self.assertIn("L1_VERIFY_STATUS=passed", prompt)
         self.assertIn("BUILD_VERIFY_STATUS=passed", prompt)
         self.assertNotIn("skipped", prompt)
+
+
+class MaxRetriesTests(OverrideLayerTests):
+    """The shape-level ``max_retries`` accessor — 0 = inherit the global.
+
+    Subclasses OverrideLayerTests for the env/cache harness (a real overlay
+    file per case, `_load.cache_clear` in tearDown); the accessor reads the
+    merged registry exactly as production does.
+    """
+
+    def test_shipped_shapes_inherit(self):
+        # No shipped shape declares a budget — every one resolves 0 (inherit
+        # the global MAX_RETRIES; constants.task_max_reties' chain).
+        for shape in ("default", "migration", "research-first", "deliverable"):
+            self.assertEqual(ws.max_retries_for(shape), 0, shape)
+
+    def test_overlay_budget_resolves(self):
+        # A project shape declares a per-family ceiling with zero plugin
+        # edits — flows through the merged read like every other field.
+        proj = self._mk_project()
+        os.environ["CLAUDE_PROJECT_DIR"] = proj
+        self._write_overlay(proj, {"shapes": {"k8s-rollout": {
+            "nodes": ["task-executor"], "max_retries": 1}}})
+        ws._load.cache_clear()
+        self.assertEqual(ws.max_retries_for("k8s-rollout"), 1)
+
+    def test_malformed_budget_fails_open_to_inherit(self):
+        # A corrupt overlay value must not corrupt the budget: 0 / negative /
+        # string / bool / float / null all resolve 0 (inherit) — the same
+        # defensiveness task_max_retries holds one tier down.
+        for bad in (0, -2, "3", True, 1.5, None):
+            proj = self._mk_project()
+            os.environ["CLAUDE_PROJECT_DIR"] = proj
+            self._write_overlay(proj, {"shapes": {"risky": {
+                "nodes": ["task-executor"], "max_retries": bad}}})
+            ws._load.cache_clear()
+            self.assertEqual(ws.max_retries_for("risky"), 0, bad)
+
+    def test_unknown_shape_inherits(self):
+        # Fail-open shape: a typo resolves default's (absent) budget → 0.
+        self.assertEqual(ws.max_retries_for("typo-shape"), 0)
 
 
 if __name__ == "__main__":

@@ -43,18 +43,30 @@ SHA_MARKERS = {"x", "!", ">", "#", "-", "d"}
 MAX_RETRIES = 3
 
 
-def task_max_retries(task):
-    """Per-task retry ceiling, falling back to the global ``MAX_RETRIES``.
+def task_max_retries(task, shape=None):
+    """Per-task retry ceiling: task → shape → global ``MAX_RETRIES``.
 
     Single resolver for "how many attempts does this task get" — every enforcement
     site (``mutations._do_fail`` requeue decision, ``_do_fail_parent`` pin,
     ``dispatch._find_failed_exhausted``) reads the ceiling through here rather than
-    the bare ``MAX_RETRIES``, so a task carrying ``max_retries`` is honored. Absent
-    / invalid (non-int or < 1) → global default; defensive so a corrupt value can't
-    zero out a task's retry budget.
+    the bare ``MAX_RETRIES``, so a task carrying ``max_retries`` is honored. The
+    chain: a task-level ``max_retries`` (int ≥ 1) wins; else the track's workflow
+    shape's ``max_retries`` (``workflow_shapes.max_retries_for`` — a shape-level
+    default for its job family); else the global. ``shape`` accepts the resolved
+    shape NAME (string) callers already hold from
+    ``state["workflow_shape"]`` — import kept lazy so ``constants`` stays
+    import-light for the hooks. Absent/invalid at any tier → next tier;
+    defensive so a corrupt value can't zero out a task's retry budget.
     """
     mr = task.get("max_retries") if isinstance(task, dict) else None
-    return mr if isinstance(mr, int) and mr >= 1 else MAX_RETRIES
+    if isinstance(mr, int) and mr >= 1:
+        return mr
+    if shape:
+        from . import workflow_shapes as ws
+        smr = ws.max_retries_for(shape)
+        if smr >= 1:
+            return smr
+    return MAX_RETRIES
 
 
 # Loop-until-dry recovery backstops for the failure-analyze retry arm

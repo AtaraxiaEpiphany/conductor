@@ -209,7 +209,8 @@ def _do_fail(track_dir, p, t, s=None, summary="", retryable=True):
         tgt["retry_count"] = tgt.get("retry_count", -1) + 1
         tgt["last_failure_summary"] = summary
 
-        if retryable and tgt["retry_count"] < task_max_retries(tgt):
+        if retryable and tgt["retry_count"] < task_max_retries(
+                tgt, state.get("workflow_shape")):
             # Re-queue for retry — pending so dispatch-next finds it again.
             # retry_count and last_failure_summary are preserved for the retry agent.
             tgt["status"] = "pending"
@@ -245,7 +246,7 @@ def _do_fail_parent(track_dir, p, t, summary="", sha=None):
         failed_names = [sub["name"] for sub in tgt.get("subtasks", [])
                         if sub.get("status") == "failed"]
         tgt["status"] = "failed"
-        tgt["retry_count"] = task_max_retries(tgt)
+        tgt["retry_count"] = task_max_retries(tgt, state.get("workflow_shape"))
         tgt["last_failure_summary"] = summary or (
             "Subtasks failed: " + ", ".join(failed_names) if failed_names
             else "Subtasks failed"
