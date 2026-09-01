@@ -531,5 +531,317 @@ class MaxRetriesControlSurfaceTests(TestCase):
                             body)
 
 
+class TaskWorkflowEndpoint(TestCase):
+    """``/api/task-workflow`` — the per-task resolved graph (what dispatch
+    ACTUALLY runs for one task): route agent, docfile steps, narrowed
+    verifiers, gates composed with the tag's exemptions, retry budget."""
+
+    def _project(self, shape="default", tasks=None):
+        tmp = tempfile.mkdtemp()
+        tdir = Path(tmp, "conductor", "tracks", "auth")
+        tdir.mkdir(parents=True)
+        save(str(tdir), {
+            "track_id": "auth", "type": "feature", "status": "in_progress",
+            "workflow_shape": shape, "current_phase_index": 1,
+            "current_task_index": 1,
+            "phases": [{"name": "Phase 1", "status": "in_progress",
+                        "tasks": tasks or []}],
+        })
+        return tmp, tdir
+
+    def test_migrate_task_graph_on_migration_shape(self):
+        tmp, tdir = self._project(
+            shape="migration",
+            tasks=[{"name": "[Migrate] Rename foo to bar",
+                    "status": "in_progress"}])
+        with _Server(tmp) as srv:
+            status, g = _get_json(srv.base,
+                                  f"/api/task-workflow?track={tdir}&phase=1&task=1")
+            self.assertEqual(status, 200, g)
+            self.assertTrue(g["ok"])
+            self.assertEqual(g["route_agent"], "task-executor")
+            self.assertEqual(g["shape"], "migration")
+            # Steps come from the declared docfile (migrate.md), first label
+            # is its Step 1 — NOT the default TDD cycle.
+            self.assertEqual(g["steps_source"], "docfile")
+            self.assertEqual(g["docfile"]["name"], "migrate.md")
+            self.assertTrue(g["docfile"]["declared"])
+            self.assertTrue(g["steps"])
+            self.assertIn("DO NOT write new tests", g["steps"][0])
+            # migration drops tdd/coverage at the SHAPE level — reason says so.
+            by_name = {x["name"]: x for x in g["gates"]}
+            self.assertFalse(by_name["tdd"]["on"])
+            self.assertEqual(by_name["tdd"]["reason"], "shape drops it")
+            self.assertFalse(by_name["coverage"]["on"])
+            self.assertTrue(by_name["checkpoint"]["on"])
+            self.assertFalse(g["phase_code_free"])
+            self.assertIn("ac-tracer", g["verifiers"])
+
+    def test_default_shape_docs_task_composes_tag_exemptions(self):
+        # An all-code-free phase (every task exempt) narrows out the code
+        # tiers; the exemption reason is per-TAG, not per-shape.
+        tmp, tdir = self._project(tasks=[
+            {"name": "[Docs] Write the runbook", "status": "pending"},
+            {"name": "[Docs] More runbook", "status": "pending"},
+        ])
+        with _Server(tmp) as srv:
+            status, g = _get_json(srv.base,
+                                  f"/api/task-workflow?track={tdir}&phase=1&task=1")
+            self.assertEqual(status, 200)
+            by_name = {x["name"]: x for x in g["gates"]}
+            self.assertFalse(by_name["tdd"]["on"])
+            self.assertEqual(by_name["tdd"]["reason"], "tag exemption")
+            # code-free phase (ALL tasks code-free — the ANY-exempt task in a
+            # mixed phase would keep the code tiers) narrows the fan-out.
+            self.assertTrue(g["phase_code_free"])
+            self.assertEqual(g["verifiers"], ["ac-tracer"])
+
+    def test_untagged_task_full_gates_default_tdd(self):
+        # Mixed phase (one code task) keeps the code tiers for EVERY task in
+        # it; the untagged task runs full gates + the default TDD docfile.
+        tmp, tdir = self._project(tasks=[
+            {"name": "[Docs] Write the runbook", "status": "pending"},
+            {"name": "Plain feature work", "status": "pending"},
+        ])
+        with _Server(tmp) as srv:
+            status, g2 = _get_json(srv.base,
+                                   f"/api/task-workflow?track={tdir}&phase=1&task=2")
+            self.assertEqual(status, 200)
+            by_name2 = {x["name"]: x for x in g2["gates"]}
+            self.assertTrue(by_name2["tdd"]["on"])
+            self.assertEqual(g2["steps_source"], "default")
+            self.assertEqual(g2["docfile"]["name"], "default-tdd.md")
+            self.assertFalse(g2["docfile"]["declared"])
+            self.assertEqual(g2["route_agent"], "task-executor")
+            self.assertFalse(g2["phase_code_free"])
+            self.assertIn("test-runner", g2["verifiers"])
+
+    def test_route_agents_explore_and_manual(self):
+        tmp, tdir = self._project(tasks=[
+            {"name": "[Explore] Map the auth stack", "status": "pending"},
+            {"name": "[Manual] Deploy by hand", "status": "pending"},
+        ])
+        with _Server(tmp) as srv:
+            _, g = _get_json(srv.base,
+                             f"/api/task-workflow?track={tdir}&phase=1&task=1")
+            self.assertEqual(g["route_agent"], "explorer")
+            _, g = _get_json(srv.base,
+                             f"/api/task-workflow?track={tdir}&phase=1&task=2")
+            self.assertEqual(g["route_agent"], "user (manual)")
+
+    def test_subtask_graph_resolves(self):
+        tmp, tdir = self._project(tasks=[
+            {"name": "Parent", "status": "pending",
+             "subtasks": [{"name": "[Migrate] Sub one", "status": "pending"}]},
+        ])
+        with _Server(tmp) as srv:
+            status, g = _get_json(
+                srv.base,
+                f"/api/task-workflow?track={tdir}&phase=1&task=1&subtask=1")
+            self.assertEqual(status, 200)
+            self.assertEqual(g["card"]["subtask"], 1)
+            self.assertEqual(g["card"]["tag"], "Migrate")
+
+    def test_missing_task_is_404_not_500(self):
+        tmp, tdir = self._project(tasks=[{"name": "Only", "status": "pending"}])
+        with _Server(tmp) as srv:
+            status, body = _get_json(
+                srv.base, f"/api/task-workflow?track={tdir}&phase=9&task=9")
+            self.assertEqual(status, 404)
+            self.assertFalse(body["ok"])
+            self.assertIn("no task at 9.9", body["error"])
+
+    def test_bad_and_unsafe_params_rejected(self):
+        tmp, tdir = self._project(tasks=[{"name": "Only", "status": "pending"}])
+        with _Server(tmp) as srv:
+            status, body = _get_json(
+                srv.base, f"/api/task-workflow?track={tdir}&phase=x&task=1")
+            self.assertEqual(status, 400)
+            self.assertFalse(body["ok"])
+            # Traversal / foreign track_dir — same gate as the other
+            # track-taking endpoints.
+            status, _ = _get_json(srv.base,
+                                  "/api/task-workflow?track=/etc&phase=1&task=1")
+            self.assertEqual(status, 400)
+            status, _ = _get_json(
+                srv.base,
+                "/api/task-workflow?track=" + str(Path(tmp, "..", "etc")) +
+                "&phase=1&task=1")
+            self.assertEqual(status, 400)
+            # Missing params entirely.
+            status, _ = _get_json(srv.base, "/api/task-workflow")
+            self.assertEqual(status, 400)
+
+    def test_retry_budget_uses_the_three_tier_chain(self):
+        # task.max_retries=5 wins over shape and global — the same chain the
+        # enforcement sites use (constants.task_max_retries).
+        tmp, tdir = self._project(tasks=[
+            {"name": "Plain", "status": "pending", "max_retries": 5}])
+        with _Server(tmp) as srv:
+            _, g = _get_json(srv.base,
+                             f"/api/task-workflow?track={tdir}&phase=1&task=1")
+            self.assertEqual(g["max_retries"], 5)
+
+
+class DocfileEndpoint(TestCase):
+    """``/api/docfile`` — docfile CONTENT, TAG-keyed or shape-keyed. The client
+    never names a file (DOCFILE_NAME_RE-guarded resolvers, no path surface);
+    unknown keys are an honest 400, not a silent default render."""
+
+    def setUp(self):
+        self.srv = _Server(tempfile.mkdtemp())
+
+    def tearDown(self):
+        self.srv.stop()
+
+    def test_tag_docfile_serves_migrate_md(self):
+        status, d = _get_json(self.srv.base, "/api/docfile?tag=Migrate")
+        self.assertEqual(status, 200, d)
+        self.assertTrue(d["ok"])
+        self.assertEqual(d["name"], "migrate.md")
+        self.assertTrue(d["declared"])
+        self.assertEqual(d["origin"], "plugin")   # no project steps dir here
+        self.assertIn("MIGRATING", d["text"])
+        self.assertIn("DO NOT write new tests", d["text"])
+
+    def test_project_steps_dir_wins_over_plugin(self):
+        # A project conductor/workflow/steps/migrate.md overrides the shipped
+        # one — the override story made visible (origin=project).
+        tmp = tempfile.mkdtemp()
+        steps = Path(tmp, "conductor", "workflow", "steps")
+        steps.mkdir(parents=True)
+        (steps / "migrate.md").write_text("# project bespoke migrate\n")
+        import os
+        from unittest.mock import patch
+        with _Server(tmp) as srv:
+            with patch.dict(os.environ, {"CLAUDE_PROJECT_DIR": tmp}):
+                status, d = _get_json(srv.base, "/api/docfile?tag=Migrate")
+        self.assertEqual(status, 200)
+        self.assertEqual(d["origin"], "project")
+        self.assertIn("project bespoke migrate", d["text"])
+
+    def test_shape_docfile_serves_planning_doc(self):
+        status, d = _get_json(self.srv.base, "/api/docfile?shape=migration")
+        self.assertEqual(status, 200)
+        self.assertEqual(d["name"], "migration.md")
+        self.assertTrue(d["declared"])
+
+    def test_unknown_tag_and_shape_are_400(self):
+        for q in ("tag=Bogus", "tag=", "shape=bogus", "shape=",
+                  "tag=" + "..%2F..%2Fetc%2Fpasswd"):
+            status, body = _get_json(self.srv.base, "/api/docfile?" + q)
+            self.assertEqual(status, 400, q)
+            self.assertFalse(body["ok"], q)
+
+    def test_needs_a_key(self):
+        status, body = _get_json(self.srv.base, "/api/docfile")
+        self.assertEqual(status, 400)
+
+
+class RosterInNodesEndpoint(TestCase):
+    """``/api/nodes`` now carries the full roster (merged baseline ⊕ overlay)
+    with class/guard/recovery posture and the wrapper's preloaded skill — the
+    "where are the wrapper skills" surface."""
+
+    def setUp(self):
+        self.srv = _Server(tempfile.mkdtemp())
+
+    def tearDown(self):
+        self.srv.stop()
+
+    def test_roster_rows_present_with_posture(self):
+        status, body = _get_json(self.srv.base, "/api/nodes")
+        self.assertEqual(status, 200)
+        roster = body["roster"]
+        # The whole merged set (plugin baseline rows at minimum).
+        self.assertGreaterEqual(len(roster), 20)
+        self.assertIn("task-executor", roster)
+        self.assertIn("refuter", roster)
+        ex = roster["task-executor"]
+        self.assertEqual(ex["class"], "executor")
+        self.assertTrue(ex["single_writer"])     # dedupe-guarded
+        self.assertTrue(ex["retry"])
+        self.assertEqual(ex["recovery"], "result-file")
+        self.assertTrue(ex["registry_injection"])
+        ref = roster["refuter"]
+        self.assertEqual(ref["class"], "reviewer")
+        self.assertFalse(ref["single_writer"])
+
+    def test_wrapper_skill_read_from_project_frontmatter(self):
+        # roster add writes <project>/.claude/agents/<name>.md with a
+        # `skills: [...]` frontmatter line — wrapper_skill_for reads it back.
+        import os
+        from unittest.mock import patch
+        tmp = tempfile.mkdtemp()
+        agents = Path(tmp, ".claude", "agents")
+        agents.mkdir(parents=True)
+        (agents / "k8s-roller.md").write_text(
+            "---\nname: k8s-roller\ndescription: rolls out\ntools: Bash\n"
+            "skills: [k8s-rollout]\n---\n\nbody\n")
+        with patch.dict(os.environ, {"CLAUDE_PROJECT_DIR": tmp}):
+            from scripts.track_state import agent_roster as ar
+            ar._load.cache_clear()
+            self.addCleanup(ar._load.cache_clear)
+            self.assertEqual(ar.wrapper_skill_for("k8s-roller"), "k8s-rollout")
+            # No wrapper file / no frontmatter / bare-name traversal guard.
+            self.assertIsNone(ar.wrapper_skill_for("task-executor"))
+            self.assertIsNone(ar.wrapper_skill_for("no-such-agent"))
+            self.assertIsNone(ar.wrapper_skill_for("../../etc/passwd"))
+
+    def test_nodes_endpoint_reports_wrapper_skill(self):
+        import os
+        from unittest.mock import patch
+        tmp = tempfile.mkdtemp()
+        agents = Path(tmp, ".claude", "agents")
+        agents.mkdir(parents=True)
+        (agents / "k8s-roller.md").write_text(
+            "---\nname: k8s-roller\ndescription: rolls out\n"
+            "skills: [k8s-rollout]\n---\n\nbody\n")
+        # The roster overlay row that makes it dispatchable.
+        wf = Path(tmp, "conductor", "workflow")
+        wf.mkdir(parents=True)
+        (wf / "agent-roster.json").write_text(json.dumps(
+            {"agents": {"k8s-roller": {"class": "executor", "fence": "x",
+                                       "recovery": "result-file"}}}))
+        with patch.dict(os.environ, {"CLAUDE_PROJECT_DIR": tmp}):
+            from scripts.track_state import agent_roster as ar
+            ar._load.cache_clear()
+            self.addCleanup(ar._load.cache_clear)
+            with _Server(tmp) as srv:
+                status, body = _get_json(srv.base, "/api/nodes")
+        self.assertEqual(status, 200)
+        row = body["roster"]["k8s-roller"]
+        self.assertEqual(row["skill"], "k8s-rollout")
+        self.assertTrue(row["single_writer"])    # class executor + no explicit
+
+
+class DocfileStepsTests(TestCase):
+    """``_docfile_steps`` — ordered step labels from a docfile's numbered list
+    (bold labels when present, first clause otherwise, continuations folded)."""
+
+    def test_shipped_docfiles_parse(self):
+        templates = Path(__file__).resolve().parent.parent / "templates" / \
+            "workflow" / "steps"
+        tdd = ss._docfile_steps((templates / "default-tdd.md").read_text())
+        self.assertEqual(tdd[0], "Write Failing Tests (Red)")
+        self.assertEqual(tdd[1], "Implement to Pass Tests (Green)")
+        # migrate.md items carry no bold labels — first clause of each item,
+        # continuation lines folded into one label.
+        mig = ss._docfile_steps((templates / "migrate.md").read_text())
+        self.assertEqual(mig[0], "DO NOT write new tests")
+        self.assertTrue(all("\n" not in s for s in mig))
+
+    def test_label_truncation_and_limit(self):
+        text = ("1. " + "x" * 200 + "\n" + "   continued line\n"
+                "2. **Bold Label** – tail\n")
+        steps = ss._docfile_steps(text, limit=1)
+        self.assertEqual(len(steps), 1)
+        self.assertEqual(steps[0], "x" * 61 + "…")
+        self.assertEqual(ss._docfile_steps(text), ["x" * 61 + "…", "Bold Label"])
+
+    def test_no_numbered_list_is_empty(self):
+        self.assertEqual(ss._docfile_steps("# only headings\n\nno list\n"), [])
+
+
 if __name__ == "__main__":
     main()

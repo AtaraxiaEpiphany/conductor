@@ -261,6 +261,46 @@ def agent_file_names() -> tuple[str, ...]:
     return tuple(names)
 
 
+def wrapper_skill_for(name: str) -> str | None:
+    """The skill a wrapper agent's frontmatter preloads, or ``None``.
+
+    ``roster add`` writes the wrapper at ``<project>/.claude/agents/<name>.md``
+    with ``skills: [<skill>]`` frontmatter — the preload that puts a skill's
+    procedure up front in the dispatched context (procedure up front, fetch
+    reference on demand). This reads it back for surfaces that show which skill
+    wraps into which agent (the studio's roster legend). Project wrapper wins,
+    then the plugin's shipped agents dir — the same home order
+    :func:`agent_file_names` walks. Fail-open ``None`` (absent file, unreadable,
+    no skills line): a wrapper-less roster row is the common case, not an error.
+    """
+    if (not name or "/" in name or "\\" in name or name != name.strip()
+            or name.startswith(".")):
+        return None
+    homes = []
+    project = _project_root()
+    if project is not None:
+        homes.append(project / ".claude" / "agents")
+    homes.append(_plugin_root() / "agents")
+    for d in homes:
+        try:
+            text = (d / f"{name}.md").read_text(encoding="utf-8",
+                                                errors="replace")
+        except OSError:
+            continue
+        # Frontmatter = the first --- fenced block; a file without one is not
+        # a wrapper (a plain agent .md) — skip to the next home.
+        parts = text.split("---", 2)
+        if len(parts) < 3:
+            continue
+        for line in parts[1].splitlines():
+            stripped = line.strip()
+            if stripped.startswith("skills:"):
+                val = stripped[len("skills:"):].strip().strip("[]").strip()
+                first = val.split(",")[0].strip().strip("'\"")
+                return first or None
+    return None
+
+
 def canonical_name(name: str) -> str | None:
     """The roster key a dispatched agent name resolves to, or ``None``.
 

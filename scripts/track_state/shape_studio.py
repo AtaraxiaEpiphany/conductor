@@ -36,16 +36,20 @@ from __future__ import annotations
 import argparse
 import http.server
 import json
+import re
 import socketserver
 import sys
 import webbrowser
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from . import agent_roster as ar
 from . import registry_studio as rs
 from . import registry_validate as rv
 from . import task_profiles as tp
 from . import workflow_shapes as ws
+from .constants import task_max_retries
+from .core import load as _load_state
 from .helpers import extract_tags, flag
 from .misc import build_view_envelope
 
@@ -285,6 +289,121 @@ def _task_cards(env):
     return cards
 
 
+def _docfile_steps(text, limit=8):
+    """Ordered step labels from a workflow docfile's numbered list (studio-local).
+
+    Docfiles carry their procedure as a numbered list (``1.`` …), NOT ``##``
+    headings — verified against default-tdd.md + migrate.md. An item's short
+    label is its leading ``**Label**`` when present (the TDD cycle's bold step
+    names), else the first clause of the item; continuation lines (indented
+    under an item) collapse into it. Pure display enrichment for the per-task
+    graph — the executor still receives the full docfile verbatim
+    (:func:`task_profiles.resolve_workflow_doc` is untouched).
+    """
+    items = re.findall(r"^(\d+)\.\s+(.*?)(?=^\d+\.\s|\Z)", text, re.M | re.S)
+    steps = []
+    for _num, body in items:
+        joined = " ".join(body.split())
+        bold = re.match(r"\*\*(.+?)\*\*", joined)
+        label = bold.group(1) if bold else re.split(r"\s[—–-]\s", joined)[0]
+        if len(label) > 64:
+            label = label[:61].rstrip() + "…"
+        steps.append(label)
+        if len(steps) >= limit:
+            break
+    return steps
+
+
+def _task_graph(track_dir, phase, task, subtask):
+    """The resolved per-task workflow graph for one task unit, or ``None``.
+
+    THE composition the dispatch path actually runs for this task — not the
+    shape-level static graph: the route agent (``route`` → explorer /
+    task-executor / user), the tag's docfile steps (or default TDD), the
+    checkpoint with the shape's verifiers CODE_TIERS-narrowed for THIS task's
+    phase (:func:`task_profiles.phase_is_code_free` — the same predicate
+    :func:`misc.build_view_envelope` applies to the current phase), the
+    per-task gates (shape gates ∧ the tag's exemptions), and the effective
+    retry budget (``constants.task_max_retries`` — the three-tier chain W4a
+    threaded through every enforcement site). Everything reads through the
+    existing accessors + the ONE code-owned join so the studio cannot drift
+    from what dispatch computes.
+    """
+    env = build_view_envelope(track_dir)
+    shape = (env.get("resolved_workflow") or {}).get("shape", "default")
+    unit = None
+    for ph in env.get("task_tree") or []:
+        if ph.get("index") != phase:
+            continue
+        for tk in ph.get("tasks") or []:
+            if subtask is not None and tk.get("index") == task:
+                for sub in tk.get("subtasks") or []:
+                    if sub.get("index") == subtask:
+                        unit = sub
+            elif subtask is None and tk.get("index") == task:
+                unit = tk
+    if unit is None:
+        return None
+    card = _task_card(phase, unit, parent_task=task if subtask is not None else None)
+
+    # Steps: docfile (the declared workflow_doc, or the default TDD docfile
+    # for untagged/default tasks); inline `workflow` prose is the legacy small
+    # form — numbered lines if it has them, one node if not.
+    docfile = tp.resolve_workflow_doc(card["tag"]) if card["tag"] else \
+        tp.resolve_workflow_doc("")
+    declared = bool(card["workflow_doc"])
+    try:
+        steps = _docfile_steps(docfile.read_text(encoding="utf-8",
+                                                 errors="replace"))
+    except OSError:
+        steps = []
+    steps_source = "docfile" if declared else "default"
+    if not declared and card["workflow"]:
+        inline = card["workflow"]
+        steps = _docfile_steps(inline) or [inline.split("\n")[0][:64]]
+        steps_source = "inline"
+
+    # Verifiers narrowed for THIS task's phase (build_view_envelope narrows
+    # the current phase's — same predicate, applied at the task's own phase).
+    state = _load_state(track_dir)
+    verifiers = list(ws.verifiers_for(shape))
+    phase_code_free = tp.phase_is_code_free(state, phase)
+    if phase_code_free:
+        verifiers = [v for v in verifiers if v not in rv.CODE_TIERS]
+
+    # Gates composed per task: shape gate ∧ not the tag's exemption. An off
+    # gate carries WHY (shape-level drop vs per-task exemption) — the honest
+    # answer to "why is verify strict for this task".
+    shape_gates = set(ws.gates_for(shape))
+    gates = []
+    for name, exempt in (("tdd", card["tdd_exempt"]),
+                         ("coverage", card["coverage_exempt"])):
+        if name not in shape_gates:
+            gates.append({"name": name, "on": False, "reason": "shape drops it"})
+        elif exempt:
+            gates.append({"name": name, "on": False, "reason": "tag exemption"})
+        else:
+            gates.append({"name": name, "on": True, "reason": ""})
+    gates.append({"name": "checkpoint", "on": "checkpoint" in shape_gates,
+                  "reason": "" if "checkpoint" in shape_gates else "shape drops it"})
+
+    return {
+        "ok": True,
+        "track": (env.get("track") or {}).get("track_id"),
+        "shape": shape,
+        "card": card,
+        "route_agent": {"explore": "explorer", "executor": "task-executor",
+                        "manual": "user (manual)"}[card["route"]],
+        "steps": steps,
+        "steps_source": steps_source,
+        "docfile": {"name": docfile.name, "declared": declared},
+        "phase_code_free": phase_code_free,
+        "verifiers": verifiers,
+        "gates": gates,
+        "max_retries": task_max_retries(unit, shape),
+    }
+
+
 def _validate_track_dir(track_dir, project_dir):
     """Security gate for client-supplied track paths. Returns a resolved Path or None.
 
@@ -456,7 +575,123 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             # source (rv.SPINE_NODES/VERIFIERS), not hand-duplicated per entry.
             nodes = {n: {"kind": "spine" if n in rv.SPINE_NODES else "verifier", **doc}
                      for n, doc in NODE_DOCS.items()}
-            _json_response(self, {"nodes": nodes})
+            # Roster rows — the full dispatchable set (merged baseline ⊕
+            # overlay) with each agent's class, guard/recovery posture, and
+            # the skill its wrapper preloads (wrapper_skill_for reads the
+            # .claude/agents frontmatter roster add wrote). Where the
+            # registries + docfiles LIVE is static knowledge (plugin
+            # templates/workflow/ ⊕ project conductor/workflow/) — the
+            # frontend renders it as prose beside these rows.
+            roster = {}
+            for name in ar.merged_agent_names():
+                row = ar.row_for(name) or {}
+                roster[name] = {
+                    "class": row.get("class", "?"),
+                    "single_writer": ar.is_single_writer(name),
+                    "retry": bool(row.get("retry")),
+                    "recovery": ar.recovery_kind_for(name),
+                    "registry_injection": bool(row.get("registry_injection")),
+                    "skill": ar.wrapper_skill_for(name),
+                }
+            _json_response(self, {"nodes": nodes, "roster": roster})
+            return
+        if path == "/api/task-workflow":
+            # The per-task resolved graph — what dispatch ACTUALLY runs for
+            # one task (route agent, docfile steps, narrowed verifiers,
+            # composed gates, retry budget). Track validated like the other
+            # track-dir-taking endpoints.
+            resolved = _validate_track_dir(qs.get("track"), self._project_dir)
+            if resolved is None:
+                _json_response(self, {"ok": False,
+                                      "error": "invalid or unresolvable track"}, 400)
+                return
+
+            def _int_param(name):
+                raw = qs.get(name)
+                if raw is None or raw == "":
+                    return None
+                try:
+                    return int(raw)
+                except ValueError:
+                    return "bad"
+
+            phase = _int_param("phase")
+            task = _int_param("task")
+            subtask = _int_param("subtask")
+            if not isinstance(phase, int) or not isinstance(task, int) \
+                    or subtask == "bad":
+                _json_response(self, {"ok": False, "error":
+                                      "need integer ?phase= and ?task= "
+                                      "(optional ?subtask=)"}, 400)
+                return
+            try:
+                graph = _task_graph(str(resolved), phase, task, subtask)
+            except (OSError, KeyError, ValueError) as exc:
+                _json_response(self, {"ok": False, "error": str(exc)}, 400)
+                return
+            if graph is None:
+                where = f"{phase}.{task}" + (f".{subtask}" if subtask else "")
+                _json_response(self, {"ok": False,
+                                      "error": f"no task at {where}"}, 404)
+                return
+            _json_response(self, graph)
+            return
+        if path == "/api/docfile":
+            # Docfile CONTENT — TAG-keyed (task types) or shape-keyed (planning
+            # docs). The client never names a file: resolve_workflow_doc /
+            # resolve_planning_doc map registry keys to names already guarded
+            # by DOCFILE_NAME_RE (bare .md only), so there is no path surface
+            # here to traverse — the same posture as _validate_track_dir.
+            # Unknown keys are a hard 400 (honesty: rendering the default
+            # docfile under an unknown tag's name would lie about the vocab).
+            tag = qs.get("tag")
+            shape = qs.get("shape")
+            if tag is not None:
+                if not tag or tag not in tp.TAG_VOCAB():
+                    _json_response(self, {"ok": False,
+                                          "error": f"unknown tag {tag!r}"}, 400)
+                    return
+                docfile = tp.resolve_workflow_doc(tag)
+                declared = bool(tp.workflow_doc_for(tag))
+            elif shape is not None:
+                if not shape or shape not in ws.SHAPES_VOCAB():
+                    _json_response(self, {"ok": False,
+                                          "error": f"unknown shape {shape!r}"}, 400)
+                    return
+                docfile = ws.resolve_planning_doc(shape)
+                declared = bool(ws.planning_doc_for(shape))
+            else:
+                _json_response(self, {"ok": False,
+                                      "error": "need ?tag= or ?shape="}, 400)
+                return
+            try:
+                text = docfile.read_text(encoding="utf-8", errors="replace")
+            except OSError as exc:
+                _json_response(self, {"ok": False,
+                                      "error": f"unreadable docfile: {exc}"}, 400)
+                return
+            # Origin: project steps/planning dir over plugin templates —
+            # where the served bytes came from (the override story made
+            # visible; paths themselves are not leaked, only which home won).
+            # Both resolvers live under <project>/conductor/workflow|planning.
+            project = ws._project_root()  # noqa: SLF001 — read-side ladder probe
+            origin = "plugin"
+            if project is not None:
+                for sub in ("workflow", "planning"):
+                    try:
+                        docfile.resolve().relative_to(
+                            (Path(project) / "conductor" / sub).resolve())
+                        origin = "project"
+                        break
+                    except ValueError:
+                        continue
+            _json_response(self, {
+                "ok": True,
+                "name": docfile.name,
+                "declared": declared,
+                "origin": origin,
+                "text": text,
+            })
             return
         if path == "/api/task-profile":
             # One tag's resolved profile, fail-soft on an unknown/blank tag.
@@ -801,6 +1036,13 @@ _PAGE = r"""<!doctype html>
   .tag-chip { font-size:10px; font-weight:700; padding:2px 7px; border-radius:6px; color:var(--acc-2);
               background:var(--acc2-tint); border:1px solid var(--acc-2); }
   .tag-chip.unknown { color:var(--err); background:var(--err-tint); border-color:var(--err); }
+  /* Task cards are clickable (per-task resolved graph); the tag chip inside
+     one opens the docfile viewer instead (delegated listeners). */
+  .tcard[data-phase] { cursor:pointer; }
+  .tcard.sel { border-color:var(--acc); box-shadow:0 0 0 1px var(--acc); }
+  .tag-chip[data-tag] { cursor:pointer; }
+  .docfile-pre { white-space:pre-wrap; font-family:var(--mono); font-size:11.5px; line-height:1.55;
+                 max-height:420px; overflow:auto; margin:8px 0 0; }
   .wf { font-size:11px; color:var(--fg-dim); margin-top:6px; padding:7px 9px; background:var(--bg); border-radius:7px; border-left:3px solid var(--acc-2); }
   .sub { margin-left:20px; }
   .recipe { font-size:12px; line-height:1.65; }
@@ -878,6 +1120,7 @@ _PAGE = r"""<!doctype html>
     <h2>Resolved graph</h2>
     <div class="graph-wrap" id="graph-wrap"><div class="muted">Select an entry…</div></div>
     <div id="track-view"></div>
+    <div id="docfile-view"></div>
   </div>
   <div class="pane right">
     <h2>Edit</h2>
@@ -899,7 +1142,7 @@ _PAGE = r"""<!doctype html>
 </main>
 
 <script>
-let STATE = { tab:'shapes', data:null, selected:null, tracks:[], boundTrack:null, boundShape:null, nodes:{} };
+let STATE = { tab:'shapes', data:null, selected:null, tracks:[], boundTrack:null, boundShape:null, nodes:{}, roster:{}, taskSel:null };
 const $ = id => document.getElementById(id);
 
 async function api(path, opts) {
@@ -1073,12 +1316,38 @@ function renderNodeLegend() {
       + '<div class="ds">'+esc(d.role)+'</div>'
       + '<div class="pr">produces: '+esc(d.produces)+'</div></div></div>';
   }
+  // The roster: every dispatchable agent (merged baseline ⊕ project overlay)
+  // with its guard/recovery posture and the skill its wrapper preloads — the
+  // "where are the wrapper skills" answer (the file homes, below).
+  const roster = STATE.roster || {};
+  if (Object.keys(roster).length) {
+    html += '<div class="note" style="margin:8px 0 4px">roster — all dispatchable agents (merged registries)</div>';
+    for (const [name, r] of Object.entries(roster)) {
+      html += '<div class="node-row"><span class="nk '+(r.single_writer?'spine':'verifier')+'">'+esc(r.class)+'</span><div>'
+        + '<div class="nm">'+esc(name)+(r.skill?' <span class="pill sm">wraps skill: '+esc(r.skill)+'</span>':'')+'</div>'
+        + '<div class="ds">'+(r.single_writer?'single-writer (dedupe-guarded) · ':'')+(r.retry?'retryable · ':'')
+        + 'recovery: '+esc(r.recovery)+(r.registry_injection?' · registry-vocab injected':'')+'</div></div></div>';
+    }
+    html += '<div class="note" style="margin-top:8px">homes — registries: plugin <code>templates/workflow/*.json</code> ⊕ project <code>conductor/workflow/*.json</code> · step docfiles: <code>templates/workflow/steps/</code> ⊕ <code>conductor/workflow/steps/</code> (project wins) · planning docs: <code>templates/planning/</code> ⊕ <code>conductor/planning/</code> · wrapper agents (with <code>skills:</code> frontmatter): project <code>.claude/agents/*.md</code></div>';
+  }
   wrap.innerHTML = html || '<div class="muted">—</div>';
 }
 
 // --- resolved graph (SVG; data-driven, themed via CSS classes) --------------
-function renderGraph() {
+async function renderGraph() {
   const wrap = $('graph-wrap');
+  // A selected task card wins over the shape-level view: the per-task graph
+  // is the composition dispatch actually runs for THAT task (route agent,
+  // docfile steps, narrowed verifiers, composed gates). Cleared by the
+  // back affordance or a track change.
+  if (STATE.taskSel && STATE.boundTrack) {
+    const p = STATE.taskSel;
+    let q = '/api/task-workflow?track='+encodeURIComponent(STATE.boundTrack)+'&phase='+p.phase+'&task='+p.task;
+    if (p.subtask!=null) q += '&subtask='+p.subtask;
+    const g = await api(q);
+    wrap.innerHTML = g.ok ? taskSVG(g) : '<div class="muted">'+esc(g.error||'no task data')+'</div>';
+    return;
+  }
   if (!STATE.selected) { wrap.innerHTML = '<div class="muted">Select an entry…</div>'; return; }
   if (STATE.tab !== 'shapes') {
     const row = effectiveRow() || {};
@@ -1139,6 +1408,75 @@ function shapeSVG(g) {
   return s;
 }
 
+// --- per-task resolved graph (what dispatch actually runs for ONE task) -----
+function clearTaskSel() {
+  STATE.taskSel = null;
+  document.querySelectorAll('#track-view .tcard').forEach(n=>n.classList.remove('sel'));
+  renderGraph();
+}
+function onTrackCardClick(el) {
+  const sub = el.getAttribute('data-subtask');
+  STATE.taskSel = { phase:+el.getAttribute('data-phase'), task:+el.getAttribute('data-task'),
+                    subtask:(sub!=null && sub!=='') ? +sub : null };
+  document.querySelectorAll('#track-view .tcard').forEach(n=>n.classList.remove('sel'));
+  el.classList.add('sel');
+  $('docfile-view').innerHTML = '';
+  renderGraph();
+}
+async function showDocfile(tag) {
+  const d = await api('/api/docfile?tag='+encodeURIComponent(tag));
+  const wrap = $('docfile-view');
+  if (!d.ok) { wrap.innerHTML = '<div class="card" style="margin-top:10px;padding:10px 14px"><div class="muted">'+esc(d.error||'not found')+'</div></div>'; return; }
+  wrap.innerHTML = '<details class="card" open style="margin-top:10px;padding:10px 14px">'
+    + '<summary style="font-size:12px"><b>['+esc(tag)+']</b> workflow — '+esc(d.name)
+    + ' <span class="pill sm">'+esc(d.origin)+'</span>'
+    + (d.declared?'':' <span class="pill sm">default (tag declares no docfile)</span>')+'</summary>'
+    + '<pre class="docfile-pre">'+esc(d.text)+'</pre></details>';
+}
+function taskSVG(g) {
+  const c = g.card||{}, steps = g.steps||[], gates = g.gates||[], vers = g.verifiers||[];
+  const chain = [g.route_agent].concat(steps.length?steps:['(default TDD)']).concat(['phase-checker']);
+  const nodeW=154, nodeH=46, gap=34;
+  const W = Math.max(600, chain.length*(nodeW+gap)+10), H = 230;
+  let s = '<div class="row" style="margin-bottom:8px">'
+    + '<button class="btn ghost" onclick="clearTaskSel()" style="padding:2px 8px;font-size:11px">◀ shape graph</button>'
+    + '<span class="pill">task '+(c.phase)+'.'+(c.task)+(c.subtask!=null?'.'+c.subtask:'')+'</span>'
+    + '<span class="pill">shape: '+esc(g.shape)+'</span>'
+    + '<span class="fx drives">per-task resolved</span></div>';
+  s += '<svg width="100%" viewBox="0 0 '+W+' '+H+'" font-size="12" font-family="inherit" role="img" aria-label="resolved workflow for one task">'
+    + '<defs><marker id="tkarr" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path class="sg-arr" d="M0,0 L7,4 L0,8 z"/></marker></defs>';
+  chain.forEach((n,i)=>{ if(i>0){ const x=10+i*(nodeW+gap), px=x-gap; s += '<path class="sg-conn" d="M'+(px+2)+' '+(20+nodeH/2)+' L'+(x-2)+' '+(20+nodeH/2)+'" marker-end="url(#tkarr)"/>'; } });
+  chain.forEach((n,i)=>{
+    const x = 10 + i*(nodeW+gap);
+    s += '<rect class="sg-spine'+(i===0?' glow':'')+'" x="'+x+'" y="20" width="'+nodeW+'" height="'+nodeH+'" rx="11"/>';
+    s += '<text class="sg-node-text" x="'+(x+nodeW/2)+'" y="47" text-anchor="middle">'+esc(n.length>26?n.slice(0,24)+'…':n)+'</text>';
+    if (i>0 && i<chain.length-1) s += '<text class="sg-label" x="'+(x+nodeW/2)+'" y="80" text-anchor="middle">step '+i+'</text>';
+  });
+  s += '<text class="sg-label" x="10" y="100">checkpoint verifiers'+(g.phase_code_free?' · code-free phase (code tiers dropped)':' · load-bearing')+'</text>';
+  if (!vers.length) s += '<text class="sg-label" x="10" y="128">(none — no verifier fans out at the checkpoint)</text>';
+  vers.forEach((vn,i)=>{
+    const x = 10 + i*(nodeW+gap);
+    s += '<rect class="sg-verif" x="'+x+'" y="108" width="'+nodeW+'" height="36" rx="10"/>';
+    s += '<text class="sg-node-text" x="'+(x+nodeW/2)+'" y="131" text-anchor="middle">'+esc(vn)+'</text>';
+  });
+  s += '<text class="sg-label" x="10" y="172">gates for THIS task · composed with tag exemptions</text>';
+  gates.forEach((gg,i)=>{
+    const x = 10 + i*(nodeW+gap);
+    s += '<rect class="'+(gg.on?'sg-gate-on':'sg-gate-off')+'" x="'+x+'" y="180" width="'+nodeW+'" height="34" rx="9"/>';
+    s += '<text class="'+(gg.on?'sg-gate-on-txt':'sg-gate-off-txt')+'" x="'+(x+14)+'" y="201">'+(gg.on?'▣':'▢')+' '+esc(gg.name)+'</text>';
+    if (!gg.on) s += '<text class="sg-label" x="'+(x+14)+'" y="211" font-size="9">'+esc(gg.reason)+'</text>';
+  });
+  s += '</svg>';
+  s += '<div class="row" style="margin-top:8px">'
+    + '<span class="pill">steps: '+esc(g.steps_source)+'</span>'
+    + '<span class="pill">docfile: '+esc((g.docfile||{}).name||'—')+((g.docfile||{}).declared?'':' (default)')+'</span>'
+    + '<span class="pill">max_retries: '+esc(g.max_retries)+'</span>'
+    + (c.tag?'<span class="tag-chip" data-tag="'+esc(c.tag)+'" title="click to read the docfile">['+esc(c.tag)+'] docfile</span>':'<span class="pill sm">untagged → default TDD</span>')
+    + '</div>'
+    + '<div class="note" style="margin-top:6px">'+esc(c.name||'')+'</div>';
+  return s;
+}
+
 // --- track binding + whole-track live map -----------------------------------
 async function loadTracks() {
   const res = await api('/api/tracks');
@@ -1154,6 +1492,8 @@ async function loadTracks() {
 function onTrackChange() {
   const dir = $('track-select').value;
   STATE.boundTrack = dir || null;
+  STATE.taskSel = null;                       // a task graph belongs to its track
+  $('docfile-view').innerHTML = '';
   if (!dir) { STATE.boundShape = null; $('track-shape-info').innerHTML=''; $('track-view').innerHTML=''; renderGraph(); return; }
   const t = STATE.tracks.find(x=>x.dir===dir);
   STATE.boundShape = t ? t.workflow_shape : null;
@@ -1176,11 +1516,13 @@ function isHere(c, pos){
 }
 function taskCardHTML(c, pos) {
   const here = isHere(c, pos);
-  let h = '<div class="tcard'+(here?' here':'')+'">'
+  let h = '<div class="tcard'+(here?' here':'')+'" data-phase="'+c.phase+'" data-task="'+c.task+'"'
+    + (c.subtask!=null?(' data-subtask="'+c.subtask+'"'):'')
+    + ' title="click: per-task resolved workflow">'
     + '<div class="idx">'+(c.subtask!=null?(c.phase+'.'+c.task+'.'+c.subtask):(c.phase+'.'+c.task))+'</div>'
     + '<div class="body"><div class="tn">'+esc(c.name||'(unnamed)')+'</div>'
     + '<div class="meta"><span class="stat '+(c.status||'pending')+'">'+esc(statusLabel(c.status))+'</span>';
-  if (c.tag) h += '<span class="tag-chip'+(c.known?'':' unknown')+'" title="'+esc(c.when_to_use||'')+'">['+esc(c.tag)+']</span>';
+  if (c.tag) h += '<span class="tag-chip'+(c.known?'':' unknown')+'" data-tag="'+esc(c.tag)+'" title="click: read the workflow docfile — '+esc(c.when_to_use||'')+'">['+esc(c.tag)+']</span>';
   else h += '<span class="pill sm">default TDD</span>';
   if (c.tdd_exempt) h += '<span class="pill sm">tdd-exempt</span>';
   if (c.coverage_exempt) h += '<span class="pill sm">cov-exempt</span>';
@@ -1223,6 +1565,13 @@ function renderTrackView(env) {
     html += '</div>';
   }
   wrap.innerHTML = html;
+  // Re-apply the selected-card highlight after a re-render (the click handler
+  // set it on the prior DOM).
+  if (STATE.taskSel) {
+    const sel = wrap.querySelector('.tcard[data-phase="'+STATE.taskSel.phase+'"][data-task="'+STATE.taskSel.task+'"]'
+      + (STATE.taskSel.subtask!=null ? '[data-subtask="'+STATE.taskSel.subtask+'"]' : ':not([data-subtask])') + ')');
+    if (sel) sel.classList.add('sel');
+  }
 }
 
 // --- recipe (the honesty / how-to-change surface) ---------------------------
@@ -1239,11 +1588,23 @@ function renderRecipe() {
 // boot
 (function init(){
   renderRecipe();
+  // Delegated clicks (cards render as HTML strings, so no per-node handlers):
+  // a tag chip opens the docfile viewer; a task card selects that task's
+  // resolved graph. One handler serves both panes the chips appear in
+  // (#track-view cards, #graph-wrap footer chip).
+  const onStudioClick = e => {
+    const chip = e.target.closest('.tag-chip[data-tag]');
+    if (chip) { showDocfile(chip.getAttribute('data-tag')); return; }
+    const card = e.target.closest('.tcard[data-phase]');
+    if (card) onTrackCardClick(card);
+  };
+  $('track-view').addEventListener('click', onStudioClick);
+  $('graph-wrap').addEventListener('click', onStudioClick);
   fetch('/api/state').then(r=>r.json()).then(s=>{
     if (s && s.default_target) { const el=$('save-target'); if (el) el.value = s.default_target; }
     applyTheme((s && s.theme) || 'system');
   }).catch(()=>{ applyTheme('system'); });
-  fetch('/api/nodes').then(r=>r.json()).then(d=>{ STATE.nodes = d.nodes||{}; renderNodeLegend(); }).catch(()=>{});
+  fetch('/api/nodes').then(r=>r.json()).then(d=>{ STATE.nodes = d.nodes||{}; STATE.roster = d.roster||{}; renderNodeLegend(); }).catch(()=>{});
   loadRegistry();
   loadTracks();
 })();
