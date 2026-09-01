@@ -931,8 +931,32 @@ _PAGE = r"""<!doctype html>
                 cursor:pointer; font:inherit; font-weight:550; transition:.15s; }
   .seg button.active { background:var(--grad); color:#06121f; box-shadow:0 2px 10px var(--glow); }
   .seg button:not(.active):hover { color:var(--fg); background:var(--elev); }
-  main { display:grid; grid-template-columns:282px 1fr 384px; height:calc(100vh - 60px);
-         animation:fadein .28s ease-out; }
+  main { display:grid; grid-template-columns:minmax(220px,282px) 6px minmax(360px,1fr) 6px minmax(300px,384px);
+         height:calc(100vh - 60px); animation:fadein .28s ease-out; }
+  /* Drag splitters — thin columns between the panes; JS drag rewrites the
+     inline grid-template-columns (the resize guard below clears it when the
+     window crosses a breakpoint, so an inline override can never pin three
+     columns on a narrow window). */
+  .gsplit { cursor:col-resize; background:transparent; position:relative; }
+  .gsplit::after { content:""; position:absolute; inset:0 2px; border-radius:3px; background:var(--bd-soft);
+                   opacity:0; transition:.15s; }
+  .gsplit:hover::after, .gsplit.dragging::after { opacity:1; background:var(--acc); }
+  body.col-resizing, body.col-resizing * { cursor:col-resize !important; user-select:none !important; }
+  /* Responsive: none of the three panes survives 282/384px side columns on a
+     narrow window — stack center first (the graph is the point of the tool),
+     then the two side panes side-by-side, then single column on phones. */
+  @media (max-width:1100px) {
+    main { grid-template-columns:minmax(0,1fr) minmax(0,1fr); height:auto; }
+    .gsplit { display:none; }
+    .pane { overflow:visible; }
+    .pane.center { grid-column:1 / -1; grid-row:1; border-right:0; border-bottom:1px solid var(--bd); }
+    .pane.left { grid-column:1; grid-row:2; border-right:1px solid var(--bd); border-bottom:1px solid var(--bd); }
+    .pane.right { grid-column:2; grid-row:2; }
+  }
+  @media (max-width:760px) {
+    main { grid-template-columns:minmax(0,1fr); }
+    .pane.left, .pane.right { grid-column:1; grid-row:auto; border-right:0; }
+  }
   @keyframes fadein { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:none; } }
   @media (prefers-reduced-motion: reduce) {
     main { animation:none; } .tcard.here::before { animation:none; opacity:1; }
@@ -989,11 +1013,14 @@ _PAGE = r"""<!doctype html>
   .card { background:var(--panel); border:1px solid var(--bd); border-radius:14px; padding:14px; margin-bottom:14px;
           box-shadow:var(--shadow), inset 0 1px 0 rgba(255,255,255,.04); }
   /* Blueprint grid backdrop — the graph reads as an engineering surface. */
-  .graph-wrap { border:1px solid var(--bd); border-radius:12px; padding:14px; overflow:hidden;
+  .graph-wrap { border:1px solid var(--bd); border-radius:12px; padding:14px; overflow-x:auto; overflow-y:hidden;
                 background-image:linear-gradient(var(--bd-soft) 1px, transparent 1px),
                                   linear-gradient(90deg, var(--bd-soft) 1px, transparent 1px),
                                   linear-gradient(180deg,var(--panel-2),var(--bg));
                 background-size:24px 24px, 24px 24px, 100% 100%; }
+  /* Node text never squeezes: the SVG keeps its 600px floor and the wrap
+     scrolls horizontally instead of shrinking labels into overlap. */
+  .graph-wrap svg { min-width:600px; display:block; }
   .pill { font-size:11px; padding:3px 8px; border-radius:11px; background:var(--elev); border:1px solid var(--bd); color:var(--fg-dim); }
   .pill.sm { padding:2px 7px; }
   .note { font-size:11px; color:var(--muted); font-style:italic; }
@@ -1025,7 +1052,8 @@ _PAGE = r"""<!doctype html>
   @keyframes pulse { 0%,100%{opacity:.35;} 50%{opacity:1;} }
   .tcard .idx { font-size:10px; font-family:var(--mono); color:var(--muted); min-width:38px; padding-top:2px; }
   .tcard .body { flex:1; min-width:0; }
-  .tcard .tn { font-weight:600; font-size:12.5px; word-break:break-word; }
+  .tcard .tn { font-weight:600; font-size:12.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .tcard .tn.open { white-space:normal; overflow:visible; }
   .tcard .meta { display:flex; gap:5px; flex-wrap:wrap; margin-top:5px; align-items:center; }
   .stat { font-size:10px; font-weight:700; padding:2px 7px; border-radius:6px; border:1px solid; }
   .stat.completed { color:var(--ok); border-color:var(--ok); background:var(--ok-tint); }
@@ -1043,7 +1071,9 @@ _PAGE = r"""<!doctype html>
   .tag-chip[data-tag] { cursor:pointer; }
   .docfile-pre { white-space:pre-wrap; font-family:var(--mono); font-size:11.5px; line-height:1.55;
                  max-height:420px; overflow:auto; margin:8px 0 0; }
-  .wf { font-size:11px; color:var(--fg-dim); margin-top:6px; padding:7px 9px; background:var(--bg); border-radius:7px; border-left:3px solid var(--acc-2); }
+  .wf { font-size:11px; color:var(--fg-dim); margin-top:6px; padding:7px 9px; background:var(--bg); border-radius:7px; border-left:3px solid var(--acc-2);
+        display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; cursor:pointer; }
+  .wf.open { -webkit-line-clamp:unset; overflow:visible; }
   .sub { margin-left:20px; }
   .recipe { font-size:12px; line-height:1.65; }
   .recipe .kb { font-weight:700; display:block; margin-bottom:4px; }
@@ -1112,6 +1142,7 @@ _PAGE = r"""<!doctype html>
       <div class="node-grid" id="node-legend"></div>
     </details>
   </div>
+  <div class="gsplit" data-split="left" title="drag to resize"></div>
   <div class="pane center">
     <details open class="card" style="padding:0">
       <summary style="font-size:12px;color:var(--fg);font-weight:650;padding:12px 14px">How to change a workflow (the honest map)</summary>
@@ -1122,6 +1153,7 @@ _PAGE = r"""<!doctype html>
     <div id="track-view"></div>
     <div id="docfile-view"></div>
   </div>
+  <div class="gsplit" data-split="right" title="drag to resize"></div>
   <div class="pane right">
     <h2>Edit</h2>
     <div id="form"><div class="muted">Select an entry to edit.</div></div>
@@ -1520,7 +1552,7 @@ function taskCardHTML(c, pos) {
     + (c.subtask!=null?(' data-subtask="'+c.subtask+'"'):'')
     + ' title="click: per-task resolved workflow">'
     + '<div class="idx">'+(c.subtask!=null?(c.phase+'.'+c.task+'.'+c.subtask):(c.phase+'.'+c.task))+'</div>'
-    + '<div class="body"><div class="tn">'+esc(c.name||'(unnamed)')+'</div>'
+    + '<div class="body"><div class="tn" title="'+esc(c.name||'')+'">'+esc(c.name||'(unnamed)')+'</div>'
     + '<div class="meta"><span class="stat '+(c.status||'pending')+'">'+esc(statusLabel(c.status))+'</span>';
   if (c.tag) h += '<span class="tag-chip'+(c.known?'':' unknown')+'" data-tag="'+esc(c.tag)+'" title="click: read the workflow docfile — '+esc(c.when_to_use||'')+'">['+esc(c.tag)+']</span>';
   else h += '<span class="pill sm">default TDD</span>';
@@ -1593,6 +1625,9 @@ function renderRecipe() {
   // resolved graph. One handler serves both panes the chips appear in
   // (#track-view cards, #graph-wrap footer chip).
   const onStudioClick = e => {
+    // Long workflow prose expands in place (2-line clamp by default).
+    const wf = e.target.closest('.wf');
+    if (wf) { wf.classList.toggle('open'); return; }
     const chip = e.target.closest('.tag-chip[data-tag]');
     if (chip) { showDocfile(chip.getAttribute('data-tag')); return; }
     const card = e.target.closest('.tcard[data-phase]');
@@ -1600,6 +1635,42 @@ function renderRecipe() {
   };
   $('track-view').addEventListener('click', onStudioClick);
   $('graph-wrap').addEventListener('click', onStudioClick);
+  // Drag splitters between the three panes (desktop only — the splitters
+  // display:none under the 1100px breakpoint, and the resize guard clears
+  // any inline drag override the moment the window crosses it).
+  document.querySelectorAll('.gsplit').forEach(sp => {
+    sp.addEventListener('mousedown', e => {
+      e.preventDefault();
+      if (window.matchMedia('(max-width:1100px)').matches) return;
+      const main = document.querySelector('main');
+      const which = sp.getAttribute('data-split');
+      const startX = e.clientX;
+      const cols = getComputedStyle(main).gridTemplateColumns.split(' ').map(parseFloat);
+      const base = which === 'left' ? cols[0] : cols[4];
+      const grow = which === 'left' ? 1 : -1;
+      const lo = which === 'left' ? 220 : 300, hi = which === 'left' ? 460 : 560;
+      sp.classList.add('dragging');
+      document.body.classList.add('col-resizing');
+      const move = ev => {
+        const next = Math.max(lo, Math.min(hi, base + grow * (ev.clientX - startX)));
+        const c = which === 'left' ? [next, cols[2], cols[4]] : [cols[0], cols[2], next];
+        main.style.gridTemplateColumns =
+          c[0]+'px 6px minmax(360px,1fr) 6px '+c[2]+'px';
+      };
+      const up = () => {
+        sp.classList.remove('dragging');
+        document.body.classList.remove('col-resizing');
+        document.removeEventListener('mousemove', move);
+        document.removeEventListener('mouseup', up);
+      };
+      document.addEventListener('mousemove', move);
+      document.addEventListener('mouseup', up);
+    });
+  });
+  window.addEventListener('resize', () => {
+    if (window.matchMedia('(max-width:1100px)').matches)
+      document.querySelector('main').style.gridTemplateColumns = '';
+  });
   fetch('/api/state').then(r=>r.json()).then(s=>{
     if (s && s.default_target) { const el=$('save-target'); if (el) el.value = s.default_target; }
     applyTheme((s && s.theme) || 'system');
