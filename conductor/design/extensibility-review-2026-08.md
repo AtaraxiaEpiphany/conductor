@@ -14,12 +14,13 @@ sources:
   - agents/explorer
   - skills/adopt-skill/SKILL
   - "~/Documents/wiki (external; dynamic-workflows + graph-engineering + mattpocock-skills read at 2026-08-31)"
-last_verified: 2026-08-31
+last_verified: 2026-09-01
 ---
 
 # Extensibility Review — 2026-08 (dynamic workflow · task-type matching · skill distillation)
 
-Status: **Advisory** (2026-08-31, grill-resolved; nothing here is implemented).
+Status: **Advisory** (2026-08-31, grill-resolved; nothing here is implemented —
+except the **incident addendum** below, shipped 2026-09-01).
 Answers the ask — *task types, workflow shapes, skill-integration: are they
 really best practice for the any-job extensibility goal?* — with a verdict on
 the current design, three seam designs the grill selected, and a sequenced
@@ -94,6 +95,51 @@ confirm gates at every consequential branch).
    folk knowledge. Generalizes hygiene-audit finding 4 (Finding 5).
 5. **dispatch.py cohesion** — hygiene-audit finding 1 stands; every seam below
    touches that file.
+
+## Incident addendum — the refuter-registry incident (2026-09-01, SHIPPED)
+
+Four days after this review's verdict, a live track confirmed gap #1's *class*
+with a transcript. On a fresh plan (`git_visualizer_20260812`, project
+`git-visualizer`), the §2.3b refuter was dispatched and went sideways: "Let me
+find the tag vocabulary to verify which tags are tdd_exempt" → searched the
+project → checked CLAUDE.md → searched the conductor plugin → announced
+"The TAG_VOCAB registry isn't in the project" → **reconstructed the tag→
+exemption mapping from memory** and audited against the guess.
+
+**Root cause — two stacked defects, not a design failure:**
+
+1. **Namespace miss (mechanical).** Installed-plugin projects dispatch skills'
+   agents as `conductor:refuter`; roster keys are bare (`roster_add` validates
+   letters/digits/-/_ — a key can never contain `:`). Every name-keyed lookup
+   in five consumers (start-hook floor/reminder/registry/retry, stop-hook
+   gates, dispatch-dedupe single-writer) silently no-ops on the namespaced
+   form. The transcript's line 0 is the raw dispatch prompt — zero injection
+   of any kind reached the agent.
+2. **Dangling pointer (the Finding-2 class, generalized).** Agent prose named
+   registry data ("the `[Conductor Registry]` block") delivered by a
+   fail-open side channel the agent could neither cite nor grep — so when the
+   channel failed, the pointer dangled and the agent hunted for the artifact
+   it was told existed, then fabricated it. This is the same
+   *name-the-data, deliver-by-side-channel* shape as Finding 2's findings
+   edge; the incident extends the class from handoff artifacts to **registry
+   facts**, and adds the missing-agent-side-tripwire observation.
+
+**Shipped fix (hotfix, this session — precedes Track D, does not replace it):**
+
+| Item | Change |
+| :--- | :--- |
+| Namespace normalization | `agent_roster.canonical_name()` — single-home tail-strip before membership; `row_for`, start/stop hooks, dedupe all consume it |
+| Deterministic delivery | `track-state plan-refute-prompt` — §2.3b prompt assembled in code: CLAIM + recomputed `AC_EVIDENCE` + **resolved `TAG_VOCAB` rows embedded in the prompt itself** (skip-refute D3 precedent); skill pastes verbatim |
+| Agent-side tripwire | refuter §4.0: missing registry = `STATUS: FAILURE` ("registry vocab not delivered"), never a hunt or a guessed audit; §5.0 failure list updated; spec-reviewer §3.4 parity (skip-with-`ADVISORY`) |
+| Pointer wording | refuter §3.1 / spec-reviewer §3.4: vocab is GIVEN, "never search the project, CLAUDE.md, or the conductor plugin for it, and never reconstruct it from memory" |
+| Evidence rule | §4.0 exception: registry rows delivered by the two channels are citable as given (ground truth by construction) — closes the grep-for-grounding pressure the hunt came from |
+
+Tests: +26 (canonical_name unit, namespaced dispatch through start/stop/dedupe
+hooks, prompt-builder pins moved to the code per the skip-refute pattern,
+tripwire prose pins in both agent bodies). Suite 2767 green.
+
+**Menu unchanged.** Track D (findings edge) still first — the incident's
+generalized class argues for it more strongly, not less; D2 stays declined.
 
 ## Finding 1 — optimizing task-type match occurrence (S · doctrine + data)
 

@@ -208,6 +208,13 @@ def main():
     roster = _roster()
     result_file_agents = set(roster.result_file_agents()) if roster else set()
     stdout_block_agents = set(roster.stdout_block_agents()) if roster else set()
+    # Canonical roster key for the membership gates below: dispatch names
+    # arrive plugin-namespaced (conductor:task-executor) while roster keys are
+    # bare — without this, every recovery gate silently no-ops in
+    # installed-plugin projects (the 2026-09 refuter incident class). Telemetry
+    # above keeps the raw name; row-keyed lookups (recovery_instruction_for)
+    # canonicalize internally.
+    agent_key = roster.canonical_name(agent_type) if roster else None
 
     # Resolve the locked task ONCE for the whole stop. The result-file branch
     # below needs it again (line ~326 originally re-resolved) — nothing between
@@ -247,7 +254,7 @@ def main():
                 # fresh result in ANOTHER track can't satisfy this probe when
                 # the lock is gone. (When the lock is live this is unchanged.)
                 track_dir = td
-        if agent_type in result_file_agents:
+        if agent_key in result_file_agents:
             had = "1" if fresh_result_exists(cwd, track_dir=track_dir) else "0"
         else:
             had = "-"
@@ -263,7 +270,7 @@ def main():
     # A written FAILURE result.json is a valid signal — do NOT block (the
     # orchestrator's retry/skip path reads it). Only a missing file means the
     # agent never reached its result step.
-    if agent_type in result_file_agents:
+    if agent_key in result_file_agents:
         # Wave agents first: dispatch-wave drops a wave-agent.marker in each
         # member's worktree. wave-finalize owns that member's result synthesis +
         # retry, so this hook must NOT bound it via the singleton-cursor recovery
@@ -329,7 +336,7 @@ def main():
     # recovery turns that can never succeed — each one re-injecting "emit the
     # block" — and exhaust with no block, surfacing as the generic "no
     # dispatch-finalize recovery" warning. Bounded, it fails fast and clean.
-    if agent_type in stdout_block_agents:
+    if agent_key in stdout_block_agents:
         if _has_result_block(last_message):
             clear_session_recovery(session_id)
             write_hook_output()

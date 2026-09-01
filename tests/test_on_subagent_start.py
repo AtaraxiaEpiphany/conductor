@@ -80,8 +80,24 @@ class SubagentStartReminderTests(TestCase):
         self.assertIn("REFUTATION RESULT", ctx)
         self.assertIn("Validate every tool call", ctx)  # floor prepended
 
+    def test_namespaced_agent_gets_floor_and_reminder(self):
+        """Installed-plugin projects dispatch skills' agents as `conductor:<name>`
+        while roster keys stay bare — before agent_roster.canonical_name this
+        namespaced form matched no roster row, so the agent started with NO floor
+        and NO result reminder (the refuter-registry incident 2026-08)."""
+        out = _run("conductor:refuter")
+        ctx = out.get("hookSpecificOutput", {}).get("additionalContext", "")
+        self.assertIn("REFUTATION RESULT", ctx)
+        self.assertIn("Validate every tool call", ctx)
+
     def test_unknown_agent_gets_no_context(self):
         out = _run("mystery-agent")
+        self.assertNotIn("hookSpecificOutput", out)
+
+    def test_unknown_namespaced_agent_gets_no_context(self):
+        # Namespaced-but-unrostered still no-ops — normalization must not widen
+        # the coverage set beyond the roster (fail-open untouched).
+        out = _run("conductor:mystery-agent")
         self.assertNotIn("hookSpecificOutput", out)
 
 
@@ -320,6 +336,15 @@ class RetryContextInjectionTests(TestCase):
         self.assertIn("test_TC_1_1 timed out at 30s", ctx)
         self.assertIn("Suggested Next Step", ctx)
         self.assertIn("raise timeout to 120s", ctx)
+
+    def test_namespaced_retry_agent_receives_failure_record(self):
+        """`conductor:task-executor` (installed-plugin dispatch form) must pass
+        the retry_agents gate — before canonical_name it never did, so every
+        namespaced retry started blind to the prior failure."""
+        ctx = _ctx("conductor:task-executor", _flat_state(), _FAILURE_HANDOFF)
+        self.assertIn("[Conductor Retry]", ctx)
+        self.assertIn("test_TC_1_1 timed out at 30s", ctx)
+        self.assertIn("TASK RESULT", ctx)
 
     def test_fresh_task_gets_no_retry_context(self):
         """No prior Attempt records → no injection, but floor+reminder survive."""

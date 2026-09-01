@@ -177,6 +177,20 @@ class ReviewerInjectionTests(TestCase):
                    if tok not in block}
         self.assertFalse(missing, f"declared flags not emitted: {missing}")
 
+    def test_namespaced_dispatch_still_receives_registry_block(self):
+        """Incident regression (2026-08 refuter-registry): installed-plugin
+        projects dispatch skills' agents as `conductor:<name>` while roster keys
+        are bare — the membership gate missed, the block never injected, and the
+        refuter hunted the project/plugin for the vocab it was told (in agent
+        prose) it had. agent_roster.canonical_name normalizes the gate; pin that
+        the namespaced form now gets the block."""
+        for agent in self._REVIEWERS:
+            ctx = _run(f"conductor:{agent}").get(
+                "hookSpecificOutput", {}
+            ).get("additionalContext", "")
+            self.assertIn("[Conductor Registry]", ctx, f"conductor:{agent} missing the block")
+            self.assertIn("audit membership", ctx, f"conductor:{agent} missing reviewer lead")
+
     def test_overlay_tag_flags_reach_the_reviewer(self):
         # Headline end-to-end: a project overlay adds a tag carrying over_tag_risk.
         # It must surface in spec-reviewer's injected block WITH its flag — so the

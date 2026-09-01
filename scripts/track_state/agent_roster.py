@@ -261,9 +261,43 @@ def agent_file_names() -> tuple[str, ...]:
     return tuple(names)
 
 
+def canonical_name(name: str) -> str | None:
+    """The roster key a dispatched agent name resolves to, or ``None``.
+
+    Dispatch names arrive **plugin-namespaced** when the plugin is installed
+    (``conductor:refuter`` — the harness's agent id; the incident record is
+    extensibility-review-2026-08 §incident) while roster keys are bare —
+    :func:`roster_add` validates names to letters/digits/-/_, so no roster key
+    can contain ``:``. Before this normalizer, every name-keyed lookup and
+    membership check silently no-opped for namespaced dispatches: no floor, no
+    fence reminder, no registry-vocab block, no recovery — the fail-open
+    posture hid a fully-dead scaffold layer in installed-plugin projects.
+
+    Full name wins (a bare key, or a hypothetical namespaced key); the
+    tail-after-last-``:`` matches only when the full name is unrostered;
+    anything else is ``None`` (unrostered — dispatchable, no scaffold).
+    """
+    if not name:
+        return None
+    agents = _agents()
+    if name in agents:
+        return name
+    if ":" in name:
+        tail = name.rsplit(":", 1)[1]
+        if tail in agents:
+            return tail
+    return None
+
+
 def row_for(name: str) -> dict | None:
-    """The resolved row for one agent, or ``None`` when unrostered/malformed."""
-    row = _agents().get(name)
+    """The resolved row for one agent, or ``None`` when unrostered/malformed.
+
+    Namespace-aware: a ``conductor:refuter`` dispatch resolves the ``refuter``
+    row via :func:`canonical_name` (fail-open unchanged — unknown names stay
+    ``None``, never an error).
+    """
+    key = canonical_name(name)
+    row = _agents().get(key) if key else None
     return row if isinstance(row, dict) else None
 
 

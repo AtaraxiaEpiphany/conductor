@@ -212,7 +212,13 @@ def _retry_context(cwd, agent_type):
     # THE retry agent; explorer and the stdout-block agents dispatch fresh, so
     # injecting a stale failure record into a non-retry dispatch would mislead).
     roster = _roster()
-    if roster is None or agent_type not in roster.retry_agents():
+    if roster is None:
+        return None
+    # Namespaced dispatches (conductor:task-executor) resolve their bare roster
+    # key (agent_roster.canonical_name); the raw name only reaches the retry
+    # gate in the unrostered fail-open case.
+    agent_type = roster.canonical_name(agent_type) or agent_type
+    if agent_type not in roster.retry_agents():
         return None
     try:
         locked = resolve_locked_task(cwd)
@@ -317,41 +323,18 @@ def _resolve_active_shape(cwd):
 
 
 def _tag_summary_rows():
-    """One summary line per registered tag: ``[Tag] route tdd/coverage hint``.
+    """Thin re-export of the single-home renderer: ``task_profiles.tag_summary_rows``.
 
-    Reads the resolved registry (so project-overlay tags appear) and renders a
-    compact row per tag. Lazy import: this module is imported transitively by
-    the standalone hook scripts; resolving the registry can raise, and the
-    fail-open boundary must stay tight (the floor/reminder contract is primary).
+    The renderer moved to the registry module so the SubagentStart injection and
+    the code-assembled plan-refuter dispatch prompt
+    (``dispatch.cmd_plan_refute_prompt``) share ONE row shape — two hand-kept
+    renderers of the same vocab is exactly the drift class the
+    check-contract-registry-sync lint exists to kill. Lazy import keeps the
+    fail-open boundary tight (registry resolution can raise; the floor/reminder
+    contract is primary).
     """
-    from track_state import task_profiles as tp
-    rows = []
-    for tag in tp.TAG_VOCAB():
-        prof = tp._profile(tag)  # noqa: SLF001 — registry-internal profile lookup
-        route = prof.get("route", "executor")
-        flags = []
-        if prof.get("tdd_exempt"):
-            flags.append("tdd-exempt")
-        if prof.get("coverage_exempt"):
-            flags.append("coverage-exempt")
-        if prof.get("over_tag_risk"):
-            flags.append("over-tag")
-        hint = tp.when_to_use_for(tag)
-        flagstr = f" [{', '.join(flags)}]" if flags else ""
-        hintstr = f" — {hint}" if hint else ""
-        rows.append(f"[{tag}] route={route}{flagstr}{hintstr}")
-        # Surface the tag's explicit `signals` keywords so the planner can match a
-        # task description against them — the matcher DATA (tier-A), not the large
-        # `workflow` prose (tier-B on-demand via registry-doc --tag). Only emitted
-        # when the registry row EXPLICITLY declares `signals` (a list): tags like
-        # [Refactor] deliberately omit it (opt-in, not goal-detected), so we must
-        # not show the weaker tokens _signals_for would *derive* from when_to_use
-        # (those are for derive_task_tag's coarse fallback, not for human/planner
-        # signal-matching — showing them here would imply [Refactor] is matchable).
-        sig = prof.get("signals")
-        if isinstance(sig, list) and sig:
-            rows.append(f"  signals: {', '.join(str(s) for s in sig)}")
-    return rows
+    from track_state.task_profiles import tag_summary_rows
+    return tag_summary_rows()
 
 
 def reviewer_block_flags():
@@ -397,7 +380,13 @@ def _registry_context(agent_type, cwd):
     fetches the full catalog on demand via ``registry-doc`` — the tier-B join).
     """
     roster = _roster()
-    if roster is None or agent_type not in roster.registry_agents():
+    if roster is None:
+        return None
+    # Canonicalize BEFORE the membership gate + branch compares: a namespaced
+    # dispatch (conductor:refuter) must resolve the reviewer branch, not die at
+    # the registry_agents() membership check (the 2026-09 incident shape).
+    agent_type = roster.canonical_name(agent_type) or agent_type
+    if agent_type not in roster.registry_agents():
         return None
     try:
         if agent_type == "task-executor":
@@ -518,7 +507,9 @@ def _reset_tripwire_counter(cwd, agent_type):
     task-executor — any failure is non-fatal (the counter just starts stale,
     which biases toward tripping slightly early: safe).
     """
-    if agent_type != "task-executor":
+    roster = _roster()
+    key = roster.canonical_name(agent_type) if roster else None
+    if key != "task-executor" and agent_type != "task-executor":
         return
     try:
         locked = resolve_locked_task(cwd)

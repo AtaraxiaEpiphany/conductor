@@ -231,5 +231,25 @@ class SpecReviewerFourQuadrantLensTests(TestCase):
         self.assertIn("Q4", self.agent)
 
 
+class SpecReviewerTagVocabDeliveryTests(TestCase):
+    """§3.4 tag-audit pins (refuter-registry incident 2026-08): the spec-reviewer
+    audits tag membership against the injected [Conductor Registry] block, so the
+    body must forbid the hunt (searching project/plugin) and reconstruction from
+    memory, and must treat an absent block as skip-with-advisory — never a
+    guessed audit (parity with agents/refuter.md §4.0's FAILURE path)."""
+
+    def setUp(self):
+        self.agent = (ROOT / "agents" / "spec-reviewer.md").read_text(encoding="utf-8")
+
+    def test_vocab_is_given_not_hunted(self):
+        self.assertIn("RESOLVED TASK-TYPE TAG VOCAB", self.agent)
+        self.assertIn("never search the project or the conductor plugin for it", self.agent)
+        self.assertIn("never reconstruct it from memory", self.agent)
+
+    def test_missing_block_skips_audit_with_advisory(self):
+        self.assertIn("registry vocab not delivered", self.agent)
+        self.assertIn("a tag audit on a guessed vocab is worse than none", self.agent)
+
+
 if __name__ == "__main__":
     main()

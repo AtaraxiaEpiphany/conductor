@@ -370,6 +370,50 @@ class UnrosteredFailOpen(_ShippedRoster):
         self.assertNotIn("general-purpose", ar.stdout_block_agents())
 
 
+class CanonicalNameTests(_ShippedRoster):
+    """Namespaced dispatch (`conductor:refuter`) must resolve to the roster row.
+
+    Installed-plugin projects dispatch skills' agents as `plugin:agent` while
+    roster keys stay bare (`roster_add` validates letters/digits/-/_ only — a
+    key can never contain `:`). Every name-keyed lookup therefore sees an
+    unknown key and silently no-ops: no floor, no fence reminder, no registry
+    injection, no recovery — the refuter-registry incident 2026-08. The fix is
+    single-homed here: strip the namespace tail before membership.
+    """
+
+    def test_bare_name_resolves(self):
+        self.assertEqual(ar.canonical_name("refuter"), "refuter")
+
+    def test_namespaced_tail_resolves(self):
+        self.assertEqual(ar.canonical_name("conductor:refuter"), "refuter")
+
+    def test_unknown_bare_name_is_none(self):
+        self.assertIsNone(ar.canonical_name("general-purpose"))
+
+    def test_unknown_namespaced_tail_is_none(self):
+        self.assertIsNone(ar.canonical_name("conductor:general-purpose"))
+
+    def test_empty_is_none(self):
+        self.assertIsNone(ar.canonical_name(""))
+
+    def test_row_for_canonicalizes(self):
+        row = ar.row_for("conductor:refuter")
+        self.assertIsNotNone(row)
+        self.assertEqual(row.get("class"), "reviewer")
+
+    def test_reminder_for_canonicalizes(self):
+        # The fence reminder rode row_for before the fix; pin that a namespaced
+        # dispatch now actually receives it.
+        self.assertIn("---REFUTATION RESULT---", ar.reminder_for("conductor:refuter"))
+
+    def test_class_for_canonicalizes(self):
+        self.assertEqual(ar.class_for("conductor:task-executor"), "executor")
+
+    def test_single_writer_membership_canonicalizes(self):
+        self.assertTrue(ar.is_single_writer("conductor:task-executor"))
+        self.assertFalse(ar.is_single_writer("conductor:refuter"))
+
+
 class MergeLadder(TestCase):
     """Overlay semantics: project rows added / project wins / fail-open."""
 

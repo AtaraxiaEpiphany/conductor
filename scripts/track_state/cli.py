@@ -13,7 +13,7 @@ from .dispatch import (
     cmd_next, cmd_dispatch_next, cmd_dispatch_prepare, cmd_dispatch_finalize,
     cmd_recover, cmd_step, cmd_post_loop_step, cmd_post_loop_review,
     cmd_phase_verdict, cmd_phase_checkpoint_review,
-    cmd_skip_analyst_verdict, cmd_skip_refute_review,
+    cmd_skip_analyst_verdict, cmd_skip_refute_review, cmd_plan_refute_prompt,
     cmd_failure_analyst_verdict,
     cmd_phase_failure_analyst_verdict,
     cmd_amend_apply, cmd_amend_clear,
@@ -376,6 +376,10 @@ COMMAND_HELP = {
     "skip-refute-review": ("skip-refute-review <track-dir> --status <SUSTAINED|REFUTED|FAILURE> [--reasoning <text>]",
                            "Transcribe the refuter's STATUS onto the skip-analysis marker (stage=refuted); the next `step` "
                            "routes (REFUTED/FAILURE→skip+advance; SUSTAINED→halt). Owns the §3.6 skip-refute in code."),
+    "plan-refute-prompt": ("plan-refute-prompt <track-dir> [--user-answers <path>]",
+                           "Pre-assemble the §2.3b plan-refuter dispatch prompt (CLAIM + recomputed AC_EVIDENCE + the resolved "
+                           "TAG_VOCAB rows embedded — the deterministic registry-delivery channel). Read-only; paste the "
+                           "returned `prompt` verbatim into the conductor:refuter dispatch."),
     "failure-analyst-verdict": ("failure-analyst-verdict <track-dir> --category <deterministic_bug|spec_plan_defect|context_budget|environmental|stuck> "
                                 "--recommendation <retry_modified|replan|decompose|escalate> "
                                 "[--root-cause <text>] [--modification <text>] [--what-was-done <text>] "
@@ -878,6 +882,8 @@ def main():
         elif cmd == "skip-refute-review":
             cmd_skip_refute_review(
                 track_dir, flag(args, "--status"), flag(args, "--reasoning"))
+        elif cmd == "plan-refute-prompt":
+            cmd_plan_refute_prompt(track_dir, user_answers=flag(args, "--user-answers"))
         elif cmd == "failure-analyst-verdict":
             cmd_failure_analyst_verdict(
                 track_dir, flag(args, "--category"),

@@ -69,6 +69,19 @@ class RecoveryGuardTests(TestCase):
             self.assertEqual(rc, 2)
             self.assertIn("write-result", out["reason"])
 
+    # --- namespaced dispatch forms: canonical_name normalization (incident 2026-08) ---
+    # Installed-plugin projects dispatch as `conductor:<name>` while roster keys
+    # are bare — before normalization these membership checks missed, so a
+    # namespaced task-executor that stopped without result.json got NO recovery
+    # turn (the block silently allowed).
+
+    def test_namespaced_task_executor_without_result_blocks(self):
+        with tempfile.TemporaryDirectory() as d:
+            rc, out = self._run("conductor:task-executor", d)
+            self.assertEqual(rc, 2)
+            self.assertEqual(out["decision"], "block")
+            self.assertIn("write-result", out["reason"])
+
     # --- THE design change: a written FAILURE result is a valid signal ---
 
     def test_task_executor_failure_result_does_not_block(self):
@@ -134,6 +147,19 @@ class RecoveryGuardTests(TestCase):
             self.assertEqual(rc, 2)
             self.assertEqual(out["decision"], "block")
             self.assertIn("REVIEW RESULT", out["reason"])
+
+    def test_namespaced_code_reviewer_gates_the_same(self):
+        # Both directions of the namespaced form: with the close tag → allow,
+        # without → block (same gate as the bare name).
+        with tempfile.TemporaryDirectory() as d:
+            msg = "Review complete.\n---REVIEW RESULT---\nSTATUS: APPROVE\n---END REVIEW RESULT---"
+            rc, out = self._run("conductor:code-reviewer", d, last_message=msg)
+            self.assertEqual(rc, 0)
+            self.assertNotIn("decision", out)
+        with tempfile.TemporaryDirectory() as d:
+            rc, out = self._run("conductor:code-reviewer", d, last_message="stopped mid-review")
+            self.assertEqual(rc, 2)
+            self.assertEqual(out["decision"], "block")
 
     # --- stdout-block agents: corpus-writer + spec-planner gated on close tag ---
     # (doc-syncer was split into corpus-writer [Phase 1] + wiki-synthesizer

@@ -116,7 +116,7 @@ decidable experiment.
 
 ### 3.4 Plan Audit (dispatch-tag correctness)
 
-A task tag whose resolved registry profile is `tdd_exempt` is a **TDD exemption** — a wrong tag silently skips the Red→Green→Refactor cycle and the coverage gate. The closed tag set lives in your injected `[Conductor Registry]` block (`TAG_VOCAB`); do not enumerate it here. Audit for the **dangerous direction only**:
+A task tag whose resolved registry profile is `tdd_exempt` is a **TDD exemption** — a wrong tag silently skips the Red→Green→Refactor cycle and the coverage gate. The closed tag set lives in your injected `[Conductor Registry]` block (header `RESOLVED TASK-TYPE TAG VOCAB`); do not enumerate it here. It is authoritative and complete: never search the project or the conductor plugin for it, and never reconstruct it from memory — **if the block is absent from your context top, treat the tag audit as skipped and say so in `ADVISORY` ("registry vocab not delivered")**; a tag audit on a guessed vocab is worse than none. Audit for the **dangerous direction only**:
 
 - **Over-tagged (finding — must fix):** a task tagged with an exemption tag (a `tdd_exempt` tag — e.g. `[Docs]` for a no-code edit) whose description or `<!-- AC-n -->` refs name business
   logic/behavior it must implement → the exemption is wrong, the task needs full

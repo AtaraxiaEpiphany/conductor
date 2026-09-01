@@ -148,6 +148,23 @@ class DispatchDedupeHookTests(TestCase):
         self.assertEqual(
             out.get("hookSpecificOutput", {}).get("permissionDecision"), "deny")
 
+    def test_denies_namespaced_dispatch_form(self):
+        # `conductor:task-executor` (installed-plugin dispatch) must hit the
+        # single-writer gate — before agent_roster.canonical_name the lookup
+        # missed and an in-flight marker could not deny the duplicate.
+        _stamp_marker(self.track_dir, 1, 1, None, self.start_sha)
+        rc, out = _run_hook(self.repo, subagent_type="conductor:task-executor")
+        self.assertEqual(
+            out.get("hookSpecificOutput", {}).get("permissionDecision"), "deny")
+
+    def test_allows_namespaced_unrostered_agent(self):
+        # Fail-open preserved: a namespaced but unrostered agent is not
+        # single-writer-critical → allow (same as the bare unrostered form).
+        _stamp_marker(self.track_dir, 1, 1, None, self.start_sha)
+        rc, out = _run_hook(self.repo, subagent_type="conductor:mystery-agent")
+        self.assertEqual(
+            out.get("hookSpecificOutput", {}).get("permissionDecision"), "allow")
+
     def test_allows_after_head_advances_and_clears_marker(self):
         # Marker present but HEAD moved past the Start commit → not in flight.
         _stamp_marker(self.track_dir, 1, 1, None, self.start_sha)

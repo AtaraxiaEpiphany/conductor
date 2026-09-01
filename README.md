@@ -56,7 +56,7 @@ All interaction happens through Claude Code slash commands:
 ### `track-state` CLI
 
 <!-- conductor:begin:cli-groups -->
-The `bin/track-state` command provides direct state management. Run `bin/track-state help` for the full, current list (90 subcommands across 18 groups) — it is grouped and self-describing. The complete surface, straight from `track_state/commands.py` (the same single source the pre-command guard derives its sanctioned set from):
+The `bin/track-state` command provides direct state management. Run `bin/track-state help` for the full, current list (91 subcommands across 18 groups) — it is grouped and self-describing. The complete surface, straight from `track_state/commands.py` (the same single source the pre-command guard derives its sanctioned set from):
 
 | Group | Subcommands |
 |-------|-------------|
@@ -67,7 +67,7 @@ The `bin/track-state` command provides direct state management. Run `bin/track-s
 | **Handoff** | `get-handoff`, `append-handoff`, `harvest-candidates`, `compile-track-findings` |
 | **Result Processing** | `write-result`, `process-result` |
 | **Dispatch Composites** | `dispatch-prepare`, `dispatch-finalize`, `record-summary` |
-| **Rail B-min Spines** | `step`, `post-loop-step`, `post-loop-review`, `phase-verdict`, `phase-checkpoint-review`, `skip-analyst-verdict`, `skip-refute-review`, `failure-analyst-verdict`, `phase-failure-analyst-verdict`, `amend-apply`, `amend-clear`, `review-attest` |
+| **Rail B-min Spines** | `step`, `post-loop-step`, `post-loop-review`, `phase-verdict`, `phase-checkpoint-review`, `skip-analyst-verdict`, `skip-refute-review`, `plan-refute-prompt`, `failure-analyst-verdict`, `phase-failure-analyst-verdict`, `amend-apply`, `amend-clear`, `review-attest` |
 | **Wave Parallelism** | `dispatch-wave`, `wave-status`, `wave-finalize`, `wave-abort`, `wave-step` |
 | **Naming** | `derive-name`, `propose-shape`, `resolve-track`, `check` |
 | **New-Track Resume** | `new-track-resume`, `new-track-init`, `new-track-step`, `new-track-set-mode`, `new-track-finalize` |

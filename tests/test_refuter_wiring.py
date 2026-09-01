@@ -127,6 +127,32 @@ class RefuterWiring(unittest.TestCase):
         for param in ("DOMAIN", "CLAIM", "CONTEXT_PATHS"):
             self.assertIn(f"`{param}`", REFUTER, f"ASSIGNMENT table missing {param}")
 
+    def test_tag_vocab_is_given_not_hunted(self):
+        """Incident pin (2026-08 refuter-registry): the vocab arrives by the two
+        delivery channels (dispatch prompt TAG_VOCAB rows / injected
+        [Conductor Registry] block); the body must FORBID the hunt the incident
+        agent went on (searching project/CLAUDE.md/plugin) and reconstruction
+        from memory."""
+        self.assertIn("never", REFUTER)
+        self.assertIn("search the project, CLAUDE.md, or the conductor plugin", REFUTER)
+        self.assertIn("reconstruct it from memory", REFUTER)
+
+    def test_missing_registry_is_failure_not_hunt(self):
+        """The other incident pin: absent vocab is an agent-level FAILURE the
+        orchestrator can see — never a filesystem hunt, never a guessed audit."""
+        self.assertIn("Missing registry = FAILURE, not a hunt", REFUTER)
+        self.assertIn("registry vocab not delivered", REFUTER)
+        # §5.0's failure list must carry the same phrase so the FAILURE path is
+        # self-consistent with §4.0.
+        self.assertIn("registry vocab not delivered per §4.0", REFUTER)
+
+    def test_registry_facts_citable_as_given(self):
+        """Evidence grounding exception: registry rows delivered by the two
+        channels are ground truth by construction — without this exception the
+        agent would grep for a registry file to 'ground' each flag."""
+        self.assertIn("citable as given", REFUTER)
+        self.assertIn("ground truth by construction", REFUTER)
+
 
 if __name__ == "__main__":
     unittest.main()

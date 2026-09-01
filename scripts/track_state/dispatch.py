@@ -2201,6 +2201,81 @@ def _step_assemble_refuter_prompt(track_dir, marker):
     ])
 
 
+# The §2.3b plan-refute CLAIM, single-homed here (was hand-written in
+# skills/new-track §2.3b's fenced template — the one dispatch prompt still
+# orchestrator-composed, and the prompt whose tag-vocab half the refuter had no
+# deterministic channel for: see cmd_plan_refute_prompt).
+_PLAN_REFUTE_CLAIM = (
+    "The spec.md + plan.md are semantically sound — every acceptance criterion "
+    "reflects the user's stated intent, every AC is genuinely exercised by a "
+    "Test Scenario (not merely name-matched), no task is semantically orphaned "
+    "from the AC it claims to realize, AND every task tag is semantically "
+    "correct (no business-logic task is wrongly exempted from TDD by a "
+    "`tdd_exempt` tag).")
+
+
+def _render_ac_evidence(ac_evidence):
+    """Compact one-line-per-AC render of spec-integrity's ``ac_evidence``.
+
+    The refuter re-examines AC↔TC exercise, so each AC renders as
+    ``AC-n: TC-1.2=measured, TC-1.3=missing`` (test-grounded) or its anchor
+    status (review-grounded). Same data the orchestrator used to hand-paste;
+    rendering in code removes the transcription fumble surface.
+    """
+    if not ac_evidence:
+        return "(none — no ACs to trace)"
+    lines = []
+    for entry in ac_evidence:
+        ac = entry.get("ac", "?")
+        if "tcs" in entry:
+            parts = [f"{t.get('id', '?')}={t.get('status', '?')}"
+                     for t in entry.get("tcs", [])]
+            lines.append(f"{ac}: " + (", ".join(parts) if parts else "(no TCs)"))
+        else:
+            lines.append(f"{ac}: anchor={entry.get('anchor') or '?'} "
+                         f"({entry.get('status', '?')})")
+    return "; ".join(lines)
+
+
+def cmd_plan_refute_prompt(track_dir, user_answers=None):
+    """Pre-assemble the ``conductor:refuter`` DOMAIN=plan prompt (new-track §2.3b).
+
+    The deterministic-delivery half of the refuter-registry incident fix: the
+    tag vocab the refuter audits against traveled ONLY by SubagentStart
+    injection, referenced from agent prose by name — when the channel failed
+    (fail-open, no signal) the refuter got a dangling pointer, hunted the
+    project/plugin for a "TAG_VOCAB" artifact, and reconstructed the mapping
+    from memory. This assembler embeds the RESOLVED vocab rows
+    (:func:`task_profiles.tag_summary_rows` — the same single-home renderer the
+    injection block uses) plus the recomputed ``ac_evidence`` directly in the
+    dispatch prompt, so the ground truth rides the one channel that cannot
+    fail-open (the prompt itself). The CLAIM's proceed-when-uncertain framing
+    stays single-homed here (:data:`_PLAN_REFUTE_CLAIM`); read-only advisory —
+    the §2.3b verdict routing stays in the skill.
+    """
+    td = str(track_dir)
+    project_dir = _git_rev_parse_toplevel(track_dir) or td
+    ua = (user_answers or "").strip() or "N/A"
+    try:
+        from .spec_integrity import compute_ac_integrity
+        ac_evidence = compute_ac_integrity(td).get("ac_evidence") or []
+    except Exception:
+        ac_evidence = []
+    from .task_profiles import tag_summary_rows
+    vocab = tag_summary_rows()
+    prompt = "\n".join([
+        f"PROJECT_DIR={project_dir}",
+        "DOMAIN=plan",
+        f"CLAIM={_PLAN_REFUTE_CLAIM}",
+        f"CONTEXT_PATHS={td}/spec.md {td}/plan.md {ua}",
+        f"AC_EVIDENCE={_render_ac_evidence(ac_evidence)}",
+        "TAG_VOCAB (authoritative, resolved at dispatch — use these rows; do",
+        "NOT search the project or plugin for a registry):",
+        *(f"  {r}" for r in vocab),
+    ])
+    out(dict(ok=True, agent="refuter", prompt=prompt, track_dir=td))
+
+
 def _build_self_review_prompt(track_dir, state, code_sha):
     """Pre-assemble the ``conductor:code-reviewer`` self-review prompt (§3.6b).
 

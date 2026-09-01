@@ -135,6 +135,22 @@ def _result_exists(track_dir):
         return False
 
 
+def _canonical_roster_key(subagent_type):
+    """The bare roster key for a (possibly namespaced) dispatch name, or ``None``.
+
+    Single-writer membership is roster-keyed on bare names while Agent-tool
+    dispatches name the agent plugin-namespaced (``conductor:task-executor``)
+    when the plugin is installed — canonicalizing here keeps the dedupe guard
+    live in installed-plugin projects (mirrors agent_roster.canonical_name,
+    fail-open to ``None`` so an unimportable roster never crashes the guard).
+    """
+    try:
+        from track_state import agent_roster
+        return agent_roster.canonical_name(subagent_type)
+    except Exception:
+        return None
+
+
 def main():
     input_data = read_hook_input()
     subagent_type = (input_data.get("tool_input") or {}).get("subagent_type", "")
@@ -152,7 +168,7 @@ def main():
     _emit_probe(input_data, subagent_type, None, None, None,
                 marker="-", in_flight="-", decision="allow-not-write-or-early")
 
-    if subagent_type not in _single_writers():
+    if _canonical_roster_key(subagent_type) not in set(_single_writers()):
         write_hook_output(permission_decision="allow")
         return
 

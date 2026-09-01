@@ -197,15 +197,7 @@ When the user opts in, run ONE adversarial refuter pass to challenge the plan's 
 
 **Niche guard (do not duplicate §2.3).** The refuter must NOT re-derive what §2.3 already checked — AC→TC existence, dangling references, EARS well-formedness, and the TC/plan/verification coverage rates are §2.3's deterministic lane. Its value is the semantic layer above those: does a TC actually exercise its AC; does an AC match stated intent; does a task genuinely realize its AC.
 
-Dispatch `conductor:refuter`, prompt:
-
-```
-PROJECT_DIR={project_root}
-DOMAIN=plan
-CLAIM=The spec.md + plan.md are semantically sound — every acceptance criterion reflects the user's stated intent, every AC is genuinely exercised by a Test Scenario (not merely name-matched), no task is semantically orphaned from the AC it claims to realize, AND every task tag is semantically correct (no business-logic task is wrongly exempted from TDD by a `tdd_exempt` tag).
-CONTEXT_PATHS={track_dir}/spec.md {track_dir}/plan.md {USER_ANSWERS path or N/A}
-AC_EVIDENCE={the ac_evidence list from the §2.3 spec-integrity JSON — each AC's measured/claimed/missing TCs}
-```
+Assemble the dispatch in code: run **`track-state plan-refute-prompt "<track_dir>" [--user-answers <path>]`** (omit the flag when there is no user-answers file) and dispatch `conductor:refuter` pasting the returned `prompt` field **verbatim**. The CLAIM, the recomputed `AC_EVIDENCE`, and the resolved `TAG_VOCAB` rows are assembled by code — the tag vocab the refuter audits against rides the prompt itself (the deterministic delivery channel), not an injection the agent must trust-and-locate.
 
 > The CLAIM is framed as "the plan is sound" — the proceed-when-uncertain direction — because a consequential plan gate must not hard-block the track on a hunch. Why the direction is the CALLER's choice (and how the other domains frame theirs) is single-homed in `agents/refuter.md` §1.0 ("No decision field").
 
