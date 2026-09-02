@@ -17,11 +17,14 @@ last_verified: 2026-09-02
 
 # Grounding Fan-out — fog-gated pre-plan enumeration
 
-Status: **Advisory** (2026-09-02, grill-resolved; nothing here is implemented).
-Seeds a track without re-derivation. Answers the ask — *can we define a
-personal search space and use subagent enumeration to avoid result
-homogenization at new-track?* — by redirecting it from plan-diversity to
-plan-grounding, then extending the two seams that already exist.
+Status: **Shipped** (implemented 2026-09-02, commits `3170d05` + `09bc5b7` +
+`16152c1` — fog gate, §2.2.5 step + slice prompts, Track E fold-in; suite
+2874 green). This doc was the grill-resolved design; the seam claims below
+were verified on disk before implementation and the shipped code follows
+them. Answers the ask — *can we define a personal search space and use
+subagent enumeration to avoid result homogenization at new-track?* — by
+redirecting it from plan-diversity to plan-grounding, then extending the two
+seams that already exist.
 
 **Grill-resolved direction decisions** (this session, per
 [[runtime/contracts/grill-discipline]] — premise challenge first, then three
