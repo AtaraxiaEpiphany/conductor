@@ -24,7 +24,7 @@ COMMAND_GROUPS = [
     ("Rail B-min Spines", ["step", "post-loop-step", "post-loop-review",
                            "phase-verdict", "phase-checkpoint-review",
                            "skip-analyst-verdict", "skip-refute-review",
-                           "plan-refute-prompt",
+                           "plan-refute-prompt", "grounding-prompt",
                            "failure-analyst-verdict", "phase-failure-analyst-verdict",
                            "amend-apply", "amend-clear",
                            "review-attest"]),

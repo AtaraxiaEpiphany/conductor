@@ -14,6 +14,7 @@ from .dispatch import (
     cmd_recover, cmd_step, cmd_post_loop_step, cmd_post_loop_review,
     cmd_phase_verdict, cmd_phase_checkpoint_review,
     cmd_skip_analyst_verdict, cmd_skip_refute_review, cmd_plan_refute_prompt,
+    cmd_grounding_prompt,
     cmd_failure_analyst_verdict,
     cmd_phase_failure_analyst_verdict,
     cmd_amend_apply, cmd_amend_clear,
@@ -381,6 +382,12 @@ COMMAND_HELP = {
                            "Pre-assemble the §2.3b plan-refuter dispatch prompt (CLAIM + recomputed AC_EVIDENCE + the resolved "
                            "TAG_VOCAB rows embedded — the deterministic registry-delivery channel). Read-only; paste the "
                            "returned `prompt` verbatim into the conductor:refuter dispatch."),
+    "grounding-prompt": ("grounding-prompt <track-dir> --slice <1|2|3>",
+                         "Pre-assemble ONE grounding-fanout explorer prompt (new-track §2.2.5 — slice "
+                         "charter rides the prompt, never orchestrator-composed). Run it three times "
+                         "(--slice 1|2|3) and dispatch conductor:explorer three times in parallel, "
+                         "pasting each `prompt` verbatim. Reads the description from the new-track "
+                         "resume marker; read-only."),
     "failure-analyst-verdict": ("failure-analyst-verdict <track-dir> --category <deterministic_bug|spec_plan_defect|context_budget|environmental|stuck> "
                                 "--recommendation <retry_modified|replan|decompose|escalate> "
                                 "[--root-cause <text>] [--modification <text>] [--what-was-done <text>] "
@@ -892,6 +899,13 @@ def main():
                 track_dir, flag(args, "--status"), flag(args, "--reasoning"))
         elif cmd == "plan-refute-prompt":
             cmd_plan_refute_prompt(track_dir, user_answers=flag(args, "--user-answers"))
+        elif cmd == "grounding-prompt":
+            raw_slice = flag(args, "--slice")
+            try:
+                slice_n = int(raw_slice) if raw_slice else None
+            except ValueError:
+                slice_n = raw_slice  # let the command's validator reject it
+            cmd_grounding_prompt(track_dir, slice_n=slice_n)
         elif cmd == "failure-analyst-verdict":
             cmd_failure_analyst_verdict(
                 track_dir, flag(args, "--category"),

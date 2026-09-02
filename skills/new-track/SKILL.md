@@ -107,6 +107,32 @@ Before the §2.2 Q&A branch above, check for a **Track Brief** at `<track_dir>/b
 
 > The Brief is additive: it only changes behavior when present. A re-invoked new-track on a track with a Brief will plan from the Brief; without one, the original flow applies.
 
+### 2.2.5 Grounding Fan-out Gate (fog check)
+
+Compute-for-intelligence at planning time: when the ground looks unmapped, spend cheap parallel read-only explorers enumerating project facts BEFORE the planner freezes a plan (not plan-diversity — three grounded plans beat three opinions sharing one blind spot).
+
+**Skip this whole section when `$WORKFLOW_SHAPE` is `research-first`** — its Shape Prelude (§2.3) already dispatches an explorer; a fan-out on top would explore twice.
+
+1. Run the pure fog gate (deterministic signal-match, no model call):
+   ```bash
+   track-state propose-grounding "<description>" [--brief "<track_dir>/brief.md" when one exists]
+   ```
+2. `foggy: false` → proceed to §2.3 unchanged (quiet tracks pay nothing — no ask, no fan-out).
+3. `foggy: true` → ONE `AskUserQuestion`: *"Ground looks foggy (`<hits>` from the JSON) — run a 3-explorer grounding fan-out before planning? The explorers map the existing surfaces (modules, APIs, tests/history) so the planner names concrete files instead of guessing."* Options: **Yes, fan out (Recommended)** / **No, plan directly**. The ask is the anchor — compute is never spent silently. **No** → proceed to §2.3.
+4. **Yes → assemble and dispatch three sliced explorers IN PARALLEL** (one message, three Agent calls — pre-plan is the only safe parallel-dispatch window: no `track-state.json` exists yet, so the dedupe guard allows and nothing is inflight-stamped). Assemble each prompt in code, never hand-write it:
+   ```bash
+   track-state grounding-prompt "<track_dir>" --slice 1   # architecture / data-flow
+   track-state grounding-prompt "<track_dir>" --slice 2   # api / contracts
+   track-state grounding-prompt "<track_dir>" --slice 3   # tests / constraints / history
+   ```
+   Dispatch `conductor:explorer` three times, pasting each returned `prompt` **verbatim** (the charter rides the prompt — the deterministic-delivery rule). Each slice records into its own slot (`P0T1.md` / `P0T2.md` / `P0T3.md`).
+5. Parse each `---TASK RESULT---`:
+   - **SUCCESS** → collect that slice's `notes_path` for the envelope.
+   - **FAILURE** → announce the summary and drop that slice; planning proceeds with the survivors (a failed exploration never blocks planning). All three failed → set `RESEARCH_NOTES=N/A` and say so.
+6. Set `$RESEARCH_NOTES` to the surviving paths **semicolon-joined** (e.g. `<track_dir>/.conductor/handoff/P0T1.md;P0T3.md`) and use it in BOTH §2.3 envelopes — the first dispatch AND every re-dispatch's carry-forward line. Multiple paths are the fan-out's delivery: spec-planner reads each before its codebase scan.
+
+> No resume key is stamped for the fan-out: an interrupted re-run re-dispatches the slices and `append-handoff` stacks fresh timestamped sections — additive, not corrupting.
+
 ### 2.3 Dispatch Spec-Planner
 
 **Existing spec/plan guard (collision check).** Before regenerating, detect a pre-existing `plan.md` — the user may have re-invoked new-track, or a prior run wrote `plan.md` but left no resume marker. Skip this guard when resuming via §0.5 with `spec_planned` already in `steps_done` (that plan is owned by the active run).
@@ -149,7 +175,7 @@ PLAY_FILE={$PLAY_PATH}
 USER_ANSWERS={answers or N/A}
 RELATED_DOCS={paths or N/A}
 USER_CONTEXT={brief or N/A}
-RESEARCH_NOTES={exploration-notes path or N/A}
+RESEARCH_NOTES={exploration-notes path, semicolon-joined paths (§2.2.5 fan-out), or N/A}
 ```
 
 Parse `---SPEC PLAN RESULT---` block. Confirm `STATUS: SUCCESS` (halt on FAILURE and announce `SUMMARY`).

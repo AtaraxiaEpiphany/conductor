@@ -2253,6 +2253,87 @@ def cmd_plan_refute_prompt(track_dir, user_answers=None):
     out(dict(ok=True, agent="refuter", prompt=prompt, track_dir=td))
 
 
+# The grounding fan-out's slice table (new-track §2.2.5, design:
+# conductor/design/grounding-fanout §Mechanism 3) — single-homed here beside
+# the other prompt-assembler data. Three CONCERN-DISJOINT slices of the same
+# ground: three witnesses that must agree on facts, not opinions. Each slice
+# records into its OWN phase-0 task slot (P0T{1,2,3}) — append-handoff is a
+# plain read-modify-write, so distinct slots make a concurrent-writer race
+# structurally impossible.
+_GROUNDING_SLICES = {
+    1: ("architecture / data-flow",
+        "Name the concrete modules the work would touch, the dataflow "
+        "between them, entry points, and the two riskiest seams."),
+    2: ("api / contracts",
+        "Name the public interfaces, their call sites, invariants the work "
+        "must not break, and prior decisions that constrain the surface."),
+    3: ("tests / constraints / history",
+        "Name the test tiers covering the area, the gates that will judge it "
+        "(tags, shapes), and `git log` evidence of prior approaches that "
+        "failed and why."),
+}
+
+
+def cmd_grounding_prompt(track_dir, slice_n):
+    """Pre-assemble ONE grounding-fanout explorer prompt (new-track §2.2.5).
+
+    The ``plan-refute-prompt`` pattern applied to the fan-out: the slice
+    charter rides the prompt itself (assembled in code, never orchestrator-
+    composed — the deterministic-delivery lesson of the refuter-registry
+    incident). The skill runs this three times (``--slice 1|2|3``) and
+    dispatches ``conductor:explorer`` three times IN PARALLEL, pasting each
+    returned ``prompt`` verbatim.
+
+    Reads the track description from the new-track resume marker (§2.1
+    ``new-track-init`` writes it; it exists before any state artifact — that
+    is what makes the fan-out pre-plan safe). Read-only; no writes.
+    """
+    from .new_track import _nt_read_marker
+
+    td = str(track_dir)
+    if slice_n not in _GROUNDING_SLICES:
+        out(dict(ok=False, error=f"slice must be 1, 2, or 3, got {slice_n!r}",
+                 hint='track-state grounding-prompt "<track_dir>" --slice <1|2|3>'))
+        return
+    marker = _nt_read_marker(td)
+    if marker is None:
+        out(dict(ok=False,
+                 error="no new-track-progress marker — run new-track-init "
+                       "first (§2.1 creates it before §2.2.5 runs)",
+                 track_dir=td))
+        return
+    description = (marker.get("description") or "").strip() or "(no description)"
+    slice_name, charter = _GROUNDING_SLICES[slice_n]
+    prompt = "\n".join([
+        f"TRACK_DIR={td}",
+        "PHASE=0",
+        f"TASK={slice_n}",
+        f"NAME=Grounding — {slice_name} — {description}",
+        "",
+        "PRE_PLAN=1: plan.md and spec.md do NOT exist yet — this is a "
+        "pre-planning exploration, so there is no plan task to read (skip "
+        "that part of §3.0). Derive your investigation scope from the "
+        "SLICE/CHARTER below, not from a plan.",
+        f"SLICE={slice_name}",
+        f"CHARTER: {charter} Output = Exploration Notes.",
+        "",
+        f"Record your Exploration Notes with phase 0 task {slice_n} "
+        f'(track-state append-handoff "{td}" 0 {slice_n} --type explore) '
+        f"so this slice's map lives at .conductor/handoff/P0T{slice_n}.md, "
+        f"and write your result with --phase 0 --task {slice_n}.",
+    ])
+    out(dict(
+        ok=True,
+        agent="explorer",
+        slice=slice_n,
+        slice_name=slice_name,
+        slot=f"P0T{slice_n}",
+        notes_path=f"{td}/.conductor/handoff/P0T{slice_n}.md",
+        prompt=prompt,
+        track_dir=td,
+    ))
+
+
 def _build_self_review_prompt(track_dir, state, code_sha):
     """Pre-assemble the ``conductor:code-reviewer`` self-review prompt (§3.6b).
 
