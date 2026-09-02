@@ -790,7 +790,7 @@ def derive_task_tag(description: str) -> str | None:
 def tag_add(name, when_to_use=None, route=None, tdd_exempt=False,
             coverage_exempt=False, workflow=None, workflow_doc=None,
             refactor=False, auto_propose=False, over_tag_risk=False,
-            signals=None, force=False, project_dir=None) -> dict:
+            signals=None, examples=None, force=False, project_dir=None) -> dict:
     """Generate (or replace) a task-type row in the PROJECT overlay registry.
 
     The validating generator for project task types — the task-type counterpart
@@ -809,7 +809,9 @@ def tag_add(name, when_to_use=None, route=None, tdd_exempt=False,
     ``auto_propose`` means True, and an adopted/bespoke tag must never surface
     in the mechanical proposer (:func:`rank_tags`) without an explicit decision
     to opt in. ``over_tag_risk``/``refactor`` are written only when true;
-    ``signals`` when provided (comma-separated string, lowercased, deduped).
+    ``signals`` when provided (comma-separated string, lowercased, deduped);
+    ``examples`` when provided (semicolon-separated exemplar descriptions,
+    kept verbatim — Finding-1 method 4).
 
     ``when_to_use`` is REQUIRED here even though :func:`validate_tag_row` does
     not demand it: without it spec-planner's tag guidance silently degrades to
@@ -877,6 +879,17 @@ def tag_add(name, when_to_use=None, route=None, tdd_exempt=False,
     else:
         signal_list = []
 
+    # Few-shot exemplars (Finding-1 method 4): semicolon-separated task
+    # descriptions (an example's own commas are natural — ";" is the
+    # delimiter, unlike signals' ","). Kept verbatim (no lowercasing — they
+    # are prose a planner reads, not keywords a matcher splits).
+    if isinstance(examples, str):
+        example_list = [e.strip() for e in examples.split(";") if e.strip()]
+    elif examples:
+        example_list = [str(e).strip() for e in examples if str(e).strip()]
+    else:
+        example_list = []
+
     row = {"route": route or "executor",
            "when_to_use": when_to_use.strip(),
            "tdd_exempt": bool(tdd_exempt),
@@ -894,6 +907,8 @@ def tag_add(name, when_to_use=None, route=None, tdd_exempt=False,
         row["workflow_doc"] = workflow_doc
     if signal_list:
         row["signals"] = signal_list
+    if example_list:
+        row["examples"] = example_list
 
     # The overlay as it will exist AFTER this write: whole-doc adoption of the
     # existing file (preserves default/_comment/_fields/rows), this row

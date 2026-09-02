@@ -2318,6 +2318,13 @@ def cmd_registry_doc(tag=None, shape=None, roster=None):
         print()
         for sig_tag, sig in sig_rows:
             print(f"- `[{sig_tag}]`: {', '.join(str(k) for k in sig)}")
+            # Few-shot exemplars (Finding-1 method 4): judgment transfers
+            # through examples better than keyword lists — render each
+            # declared example verbatim under its tag's keyword line.
+            ex = tp._profile(sig_tag).get("examples")  # noqa: SLF001 — registry-internal profile lookup
+            if isinstance(ex, list) and ex:
+                for e in ex:
+                    print(f"    e.g. {e}")
         print()
 
     # --- Workflow shapes (the node sequence) ---------------------------------

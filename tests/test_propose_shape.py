@@ -364,12 +364,18 @@ class NewTrackSwapWiringTests(TestCase):
 
     def test_research_notes_in_both_envelopes(self):
         # First dispatch AND the regen retry envelope both carry the field —
-        # a retry must not silently lose the exploration notes.
-        self.assertEqual(self.skill.count("RESEARCH_NOTES="), 2)
+        # a retry must not silently lose the exploration notes. (§2.2.5's
+        # survivors prose mentions the field too, so the envelope fences are
+        # pinned explicitly, not by total count.)
+        first = self.skill.index("RESEARCH_NOTES={")
+        regen = self.skill.index("RESEARCH_NOTES={same value", first)
+        self.assertGreater(regen, first)
 
     def test_planner_input_row_exists(self):
         self.assertIn("`RESEARCH_NOTES`", self.planner)
-        self.assertIn("read it FIRST", self.planner)
+        # Multi-path (§2.2.5 fan-out): the row names semicolon-joined paths
+        # and the planner reads EACH first.
+        self.assertIn("read EACH", self.planner)
 
 
 class SpecPlannerDocfileCollapseTests(TestCase):

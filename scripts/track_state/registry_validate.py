@@ -110,7 +110,7 @@ _KNOWN_SHAPE_FIELDS = frozenset({
 _KNOWN_TAG_FIELDS = frozenset({
     "route", "tdd_exempt", "coverage_exempt", "when_to_use",
     "workflow", "workflow_doc", "refactor", "auto_propose", "over_tag_risk",
-    "signals",
+    "signals", "examples",
 })
 
 # Tag fields that must be booleans.
@@ -262,6 +262,17 @@ def validate_tag_row(name: str, row) -> list[str]:
         val = row["signals"]
         if not isinstance(val, list) or not all(isinstance(x, str) for x in val):
             errs.append(f"tag {name!r}: signals must be a list of strings")
+
+    # Few-shot exemplars (Finding-1 method 4): one-or-two task descriptions
+    # ("canonical case" / "borderline case") rendered into the registry-doc
+    # Tag Signals block the planner fetches — judgment transfers through
+    # examples better than keyword lists. Render-only data; no policy reads it.
+    if "examples" in row:
+        val = row["examples"]
+        if not isinstance(val, list) or not val or \
+                not all(isinstance(x, str) and x.strip() for x in val):
+            errs.append(f"tag {name!r}: examples must be a non-empty list "
+                        f"of non-empty strings")
 
     return errs
 

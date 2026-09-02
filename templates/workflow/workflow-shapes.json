@@ -54,7 +54,7 @@
       "verify_policy": "none",
       "stop_condition": "all_nodes_done",
       "planning_doc": "research-first.md",
-      "signals": ["research", "explore", "exploration", "map the codebase", "survey", "spike", "investigate", "understand", "understanding", "unfamiliar"],
+      "signals": ["research", "explore", "exploration", "map the codebase", "survey", "spike", "investigate", "understand", "understanding", "unfamiliar", "integrate", "integration", "cross-cutting", "cross-module", "multi-system"],
       "when_to_use": "A research-heavy track — one whose first need is UNDERSTANDING (map the codebase / survey a dependency / spike an approach) before planning. Explore-before-plan is honored at the PLANNING layer: this shape's planning docfile Prelude has the orchestrator dispatch explorer BEFORE spec-planner and pass the Exploration Notes forward as planning input. The dispatch spine itself still never reorders (`nodes` stays advisory — an off-topology dispatch surfaces a `shape_violation` disclosure), and the executor tasks afterward run the full inherited gates."
     },
     "migration": {

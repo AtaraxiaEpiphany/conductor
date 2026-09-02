@@ -416,41 +416,101 @@ def _init_core(track_dir, plan, track_id, track_type, description, execution_mod
     return result
 
 
-def _tag_signal_advisories(structure):
-    """Declared-vs-signals tag advisories — the R1 lint telemetry.
+def _tag_signal_samples(structure):
+    """Per-task declared-vs-signals label SAMPLES — the full instrument, not
+    just the disagreements.
 
-    Tags are planner-authored content (decision: task-type ownership); the
-    keyword matcher is advisory only. For each top-level task, compare the
-    DECLARED leading tag against what the conservative matcher
-    (:func:`task_profiles.derive_task_tag` over the tag-stripped name) would
-    have suggested. A disagreement is printed, never enforced — every run on
-    a real plan is a telemetry sample; silent agreement is the non-event.
-    Fail-open: any registry error inside the matcher yields no advisories
-    (init must never block on the lint).
+    Every top-level task contributes ``{"task", "declared", "suggested",
+    "name"}`` (tags lowercased, ``"untagged"`` for none) — agreements
+    INCLUDED, because the cross-track rates (disagreement per tag,
+    false-untagged rate) need the denominator. This is the labeling
+    telemetry Finding-1 method 5 persists at init;
+    :func:`_tag_signal_advisories` derives its stdout advisory list from
+    these samples (single home). Fail-open: any registry error inside the
+    matcher yields no sample for that task (init must never block on the
+    lint).
     """
-    advisories = []
+    samples = []
     for pi, phase in enumerate(structure.get("phases", []), 1):
         for ti, task in enumerate(phase.get("tasks", []), 1):
             name = task.get("name", "")
             # Original-case declared tag for display; lowercased for compare.
             from .helpers import extract_tags  # lazy: cycle-safe
             declared_tags = extract_tags(name)
-            declared = declared_tags[0].lower() if declared_tags else "default"
+            declared = declared_tags[0].lower() if declared_tags else "untagged"
             try:
                 suggested = derive_task_tag(strip_dispatch_tags(name))
             except Exception:
                 continue
-            suggested_type = suggested.lower() if suggested else "default"
-            if declared == suggested_type:
-                continue
-            shown_declared = (f"[{declared_tags[0]}]" if declared_tags
-                              else "untagged")
-            shown_suggested = f"[{suggested}]" if suggested else "untagged"
-            advisories.append(
-                f"P{pi}.T{ti}: declared {shown_declared}, signals suggest "
-                f"{shown_suggested} — planner judgment wins; double-check "
-                f"the label")
+            samples.append(dict(
+                task=f"P{pi}.T{ti}",
+                declared=declared,
+                suggested=suggested.lower() if suggested else "untagged",
+                # Display forms keep the registry's original case.
+                declared_display=(declared_tags[0] if declared_tags
+                                  else "untagged"),
+                suggested_display=suggested or "untagged",
+                name=strip_dispatch_tags(name),
+            ))
+    return samples
+
+
+def _tag_signal_advisories(structure):
+    """Declared-vs-signals tag advisories — the R1 lint telemetry.
+
+    Tags are planner-authored content (decision: task-type ownership); the
+    keyword matcher is advisory only. For each top-level task, the DECLARED
+    leading tag is compared against what the conservative matcher
+    (:func:`task_profiles.derive_task_tag` over the tag-stripped name) would
+    have suggested. A disagreement is printed, never enforced — every run on
+    a real plan is a telemetry sample; silent agreement is the non-event.
+    Derived from :func:`_tag_signal_samples` (the single home — the
+    persisted instrument); fail-open like the sampler.
+    """
+    advisories = []
+    for s in _tag_signal_samples(structure):
+        if s["declared"] == s["suggested"]:
+            continue
+        shown_declared = (f"[{s['declared_display']}]"
+                          if s["declared"] != "untagged" else "untagged")
+        shown_suggested = (f"[{s['suggested_display']}]"
+                           if s["suggested"] != "untagged" else "untagged")
+        advisories.append(
+            f"{s['task']}: declared {shown_declared}, signals suggest "
+            f"{shown_suggested} — planner judgment wins; double-check "
+            f"the label")
     return advisories
+
+
+def _persist_label_telemetry(track_dir, track_id, structure):
+    """Write the per-track labeling telemetry store (Finding-1 method 5).
+
+    ``<track_dir>/.conductor/label-telemetry.json``: every top-level task's
+    declared-vs-signals sample (agreements INCLUDED — the cross-track rates
+    need the denominator). The stdout advisories remain the run's signal;
+    this store is the durable instrument a probe or review reads after the
+    fact (disagreement rate per tag, false-untagged rate, MISROUTE feed).
+    Plain committed JSON — small, per-track, overwritten on re-init (the
+    plan's labels at init time are the sample of record). Fail-open: a write
+    failure is advisory, never init-blocking.
+    """
+    try:
+        cdir = conductor_dir(track_dir)
+        samples = [
+            {k: s[k] for k in ("task", "declared", "suggested", "name")}
+            for s in _tag_signal_samples(structure)
+        ]
+        payload = {
+            "track_id": track_id,
+            "generated_at": now_iso(),
+            "n_tasks": len(samples),
+            "samples": samples,
+        }
+        (cdir / "label-telemetry.json").write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8")
+    except OSError:
+        pass  # telemetry must never block init
 
 
 def cmd_init_from_plan(track_dir, track_id, track_type, description,
@@ -497,6 +557,10 @@ def cmd_init_from_plan(track_dir, track_id, track_type, description,
 
     result = _init_core(track_dir, structure, track_id, track_type,
                         description, execution_mode, force=force)
+    if result.get("ok"):
+        # The durable labeling-telemetry sample (agreements included) —
+        # stdout keeps the disagreement advisories below.
+        _persist_label_telemetry(track_dir, track_id, structure)
     # Structure was derived from plan.md itself, so count cross-checks always
     # pass; the only advisory notes are plan-syntax warnings from parse_plan.
     if plan_warnings and result.get("ok"):

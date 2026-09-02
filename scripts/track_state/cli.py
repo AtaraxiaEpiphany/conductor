@@ -320,14 +320,16 @@ COMMAND_HELP = {
                "contract) and upsert its agent-roster overlay row (defaults = the "
                "task-executor scaffold). Validated before write; keeps a .bak."),
     "tag": ("tag add <name> --when-to-use <text> [--route executor|manual|explore]\n"
-            "         [--signals \"a,b\"] [--tdd-exempt] [--coverage-exempt]\n"
+            "         [--signals \"a,b\"] [--examples \"canonical case;borderline case\"]\n"
+            "         [--tdd-exempt] [--coverage-exempt]\n"
             "         [--over-tag-risk] [--refactor] [--auto-propose]\n"
             "         [--workflow <prose> | --workflow-doc <name>.md] [--force] [--project-dir <dir>]",
             "Generate a project task-type: upsert one row into the project overlay "
             "conductor/workflow/task-type-profiles.json (existing rows/default preserved, "
             ".bak kept). Defaults = safe: executor route, both gates ON, auto_propose "
             "false (never surfaced by the init lint's signal suggestions without opting "
-            "in). Validated "
+            "in). --examples seeds the registry-doc Tag Signals few-shot block "
+            "(semicolon-separated). Validated "
             "before write; the tag is live in TAG_VOCAB/route_for immediately."),
     "probe": ("probe <name>",
               "Fetch a tier-B context snapshot by registered name (read-only, "
@@ -785,6 +787,7 @@ def main():
                 auto_propose="--auto-propose" in rest,
                 over_tag_risk="--over-tag-risk" in rest,
                 signals=flag(rest, "--signals"),
+                examples=flag(rest, "--examples"),
                 force="--force" in rest,
                 project_dir=flag(rest, "--project-dir"))
             out(result)
