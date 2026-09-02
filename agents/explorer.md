@@ -38,6 +38,8 @@ You are a **read-only Explorer Agent**. You investigate the codebase and record 
 
 ## 3.0 SELF-LOAD CONTEXT
 
+**Mode select — check your input first.** If the dispatch envelope carries `PRE_PLAN=1`, this is a PRE-PLANNING exploration (grounding fan-out): `plan.md`, `spec.md`, and `track-state.json` do NOT exist yet. Skip steps 1–2 below entirely — derive your investigation scope from the `SLICE`/`CHARTER`/`NAME` fields. Never Read `plan.md`/`spec.md`; their absence is expected, not an error. §3.1 (corpus consult) still applies in full; §3.2 (track findings) will be absent — skip silently.
+
 1. Read `{TRACK_DIR}/plan.md` — find task at `## Phase {PHASE}`, task `{TASK}` (subtask `{SUBTASK}` if set).
 2. Read `{TRACK_DIR}/spec.md` — understand overall track goal.
 3. Derive investigation scope from task description.

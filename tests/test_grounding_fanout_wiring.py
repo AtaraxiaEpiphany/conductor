@@ -31,6 +31,9 @@ from scripts.track_state.dispatch import (  # noqa: E402
 from scripts.track_state.new_track import (  # noqa: E402
     cmd_new_track_init, cmd_new_track_finalize,
 )
+from scripts.track_state.handoff import (  # noqa: E402
+    cmd_append_handoff, _write_task_handoff,
+)
 
 SKILL = ROOT / "skills" / "new-track" / "SKILL.md"
 PLANNER = ROOT / "agents" / "spec-planner.md"
@@ -184,6 +187,94 @@ class PlannerWiringTests(TestCase):
 
     def test_reads_each_before_scan(self):
         self.assertIn("read EACH", self.planner)
+
+
+EXPLORER = ROOT / "agents" / "explorer.md"
+
+_FULL_EXPLORE_JSON = json.dumps({
+    "summary": "Auth flows through middleware/session boundary.",
+    "findings": ["session middleware owns the boundary"],
+    "architecture": "request → middleware → session store",
+    "gotchas": ["session store is lazy"],
+    "files_inventory": [{"path": "src/auth.py", "purpose": "auth boundary",
+                         "key_exports": "", "related_docs": ""}],
+    "consulted_docs": [],
+    "recommended": "extend the middleware",
+    "out_of_scope": [],
+    "graduation_candidates": [],
+})
+
+
+class PrePlanRecordTests(TestCase):
+    """The fan-out's record channel is pre-state tolerant (fail-open).
+
+    §2.2.5 runs BEFORE init-from-plan creates track-state.json — the stateless
+    window is load-bearing (parallel dispatch safety). append-handoff must
+    record the P0T slices without state, never mint state, and keep the
+    completeness gate armed.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.td = Path(self._tmp.name) / "track"
+        (self.td / ".conductor").mkdir(parents=True)
+        # Deliberately NO track-state.json / plan.md / spec.md.
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_append_handoff_explore_pre_state(self):
+        res = _out_captured(cmd_append_handoff, str(self.td), 0, 1,
+                            "explore", _FULL_EXPLORE_JSON)
+        self.assertTrue(res.get("ok"), res)
+        notes = self.td / ".conductor" / "handoff" / "P0T1.md"
+        self.assertTrue(notes.is_file())
+        body = notes.read_text(encoding="utf-8")
+        self.assertIn("Exploration Notes", body)
+        self.assertIn("Task 1", body)  # stateless name fallback in the header
+
+    def test_sparse_gate_fires_pre_state(self):
+        with self.assertRaises(SystemExit):
+            cmd_append_handoff(str(self.td), 0, 2, "explore",
+                               json.dumps({"summary": "x"}))
+
+    def test_pre_state_append_mints_no_state(self):
+        _out_captured(cmd_append_handoff, str(self.td), 0, 3,
+                      "explore", _FULL_EXPLORE_JSON)
+        self.assertFalse((self.td / "track-state.json").exists())
+
+    def test_write_task_handoff_none_state_missing_file(self):
+        path = _write_task_handoff(str(self.td), 0, 1, "## section", None)
+        self.assertTrue(Path(path).is_file())
+
+    def test_pre_state_index_is_initializing_form(self):
+        _out_captured(cmd_append_handoff, str(self.td), 0, 1,
+                      "explore", _FULL_EXPLORE_JSON)
+        index = (self.td / "handoff.md").read_text(encoding="utf-8")
+        self.assertIn("Initializing", index)  # _ensure_handoff_index form
+        self.assertNotIn("*No tasks started yet.*", index)  # not the {} sync
+
+
+class ExplorerBodyTests(TestCase):
+    """The explorer body owns the PRE_PLAN mode branch (agent contract, not
+    just the assembled prompt line)."""
+
+    def setUp(self):
+        self.body = EXPLORER.read_text(encoding="utf-8")
+
+    def test_mode_branch_documented(self):
+        self.assertIn("Mode select — check your input first", self.body)
+        self.assertIn("PRE_PLAN=1", self.body)
+
+    def test_mode_branch_skips_plan_read(self):
+        sec = self.body[self.body.index("## 3.0 SELF-LOAD CONTEXT"):
+                        self.body.index("### 3.1")]
+        self.assertIn("Never Read `plan.md`/`spec.md`", sec)
+
+    def test_corpus_consult_survives_pre_plan(self):
+        sec = self.body[self.body.index("## 3.0 SELF-LOAD CONTEXT"):
+                        self.body.index("### 3.1")]
+        self.assertIn("§3.1 (corpus consult) still applies in full", sec)
 
 
 if __name__ == "__main__":

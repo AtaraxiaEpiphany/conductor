@@ -23,6 +23,18 @@ def _get_handoff_file(track_dir, phase, task):
         p1, t1 = phase, task
     return _get_handoff_dir(track_dir) / f"P{p1}T{t1}.md"
 
+def _load_state_tolerant(track_dir):
+    """``load()`` but ``None`` when track-state.json is absent/corrupt — the
+    pre-plan window (new-track §2.2.5 grounding fan-out) records handoffs
+    BEFORE ``init-from-plan`` creates state, so absence is a mode, not an
+    error. Callers normalize to ``{}`` for name lookups (their existing
+    IndexError/KeyError fallbacks then yield "Task N" / "Phase N")."""
+    try:
+        return load(track_dir)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+
+
 def _ensure_handoff_index(track_dir, state=None):
     """Ensure handoff.md index exists. Create if missing."""
     handoff_path = Path(track_dir) / "handoff.md"
@@ -30,10 +42,7 @@ def _ensure_handoff_index(track_dir, state=None):
         return handoff_path.read_text()
 
     if state is None:
-            try:
-                state = load(track_dir)
-            except (FileNotFoundError, json.JSONDecodeError):
-                state = None
+        state = _load_state_tolerant(track_dir)
 
     track_id = state.get("track_id", "unknown") if state else "unknown"
     description = state.get("description", "") if state else ""
@@ -92,7 +101,7 @@ No deviations recorded.
 def _sync_handoff_index(track_dir, state=None):
     """Sync handoff.md index with current state."""
     if state is None:
-        state = load(track_dir)
+        state = _load_state_tolerant(track_dir) or {}
 
     handoff_path = Path(track_dir) / "handoff.md"
     handoff_dir = _get_handoff_dir(track_dir)
@@ -230,7 +239,7 @@ def _write_task_handoff(track_dir, phase, task, content, state=None):
     handoff_file = _get_handoff_file(track_dir, phase, task)
 
     if state is None:
-        state = load(track_dir)
+        state = _load_state_tolerant(track_dir) or {}
 
     # Get task context
     try:
@@ -282,7 +291,13 @@ def _write_task_handoff(track_dir, phase, task, content, state=None):
         # Append content with separator
         handoff_file.write_text(existing + "\n" + content + "\n")
 
-    _sync_handoff_index(track_dir, state)
+    if state:
+        _sync_handoff_index(track_dir, state)
+    else:
+        # Pre-plan (no track-state.json): a full sync over {} would write a
+        # junk "Track ID: unknown" index — the stateless Initializing form is
+        # the designed placeholder until init-from-plan creates real state.
+        _ensure_handoff_index(track_dir)
     return str(handoff_file)
 
 def _append_execution_record(track_dir, phase, task, subtask, result_data, state=None):
@@ -416,7 +431,7 @@ def cmd_append_handoff(track_dir, phase, task, entry_type, content_json, subtask
         return
 
     ts = now_iso()
-    state = load(track_dir)
+    state = _load_state_tolerant(track_dir) or {}
 
     # Get task context
     try:
