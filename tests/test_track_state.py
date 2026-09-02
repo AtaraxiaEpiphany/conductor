@@ -1051,6 +1051,34 @@ class TestInitFromPlan(TestCase):
                          ["Subtask: GET endpoint", "Subtask: POST endpoint"])
         self.assertTrue(all(t["status"] == "pending" for t in ph1["tasks"]))
 
+    def test_init_clears_orphan_result_json(self):
+        # Pre-plan → post-plan boundary reap: the §2.2.5 grounding fan-out's
+        # parallel explorers share the single-slot result.json mailbox
+        # (last-write-wins, content unconsumed pre-plan). State creation must
+        # leave the slot clean — an orphan must NOT survive into the
+        # post-plan window where dispatch-finalize reads on existence.
+        d = self._plan(self.GOOD)
+        cond = Path(d, ".conductor")
+        cond.mkdir()
+        (cond / "result.json").write_text('{"status": "SUCCESS"}')
+        result, _ = _out_captured(cmd_init_from_plan, d, "demo_20260101",
+                                  "feature", "demo track")
+        self.assertTrue(result["ok"])
+        self.assertFalse((cond / "result.json").exists())
+        self.assertTrue(Path(d, "track-state.json").exists())
+
+    def test_init_check_does_not_clear_result_json(self):
+        # --check is read-only: validating a plan must not reap the mailbox.
+        d = self._plan(self.GOOD)
+        cond = Path(d, ".conductor")
+        cond.mkdir()
+        (cond / "result.json").write_text('{"status": "SUCCESS"}')
+        result, _ = _out_captured(cmd_init_from_plan, d, "demo_20260101",
+                                  "feature", "demo track", check=True)
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["check"])
+        self.assertTrue((cond / "result.json").exists())
+
     def test_init_from_plan_rejects_malformed(self):
         d = self._plan("## Phase 1: P\n- [X] bad\n")
         result, _ = _out_captured(cmd_init_from_plan, d, "demo_20260101",

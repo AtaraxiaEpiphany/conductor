@@ -13,6 +13,11 @@ Centralizing this here means the path list and freshness window have one
 definition; the SubagentStop guard no longer regex-scans prose (the source of
 the old ``[:2000]`` truncation bug and the ``SAFE_CONTEXT`` false-positive
 suppression).
+
+Invariant: result.json is a single-slot mailbox — exactly one content consumer
+(dispatch-finalize). Parallel writers are legal only in consumer-free windows
+(e.g. the pre-plan grounding fan-out); this probe reads presence/freshness
+only, never per-agent attribution.
 """
 import time
 from pathlib import Path

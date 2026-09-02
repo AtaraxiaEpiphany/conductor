@@ -292,6 +292,15 @@ def _init_core(track_dir, plan, track_id, track_type, description, execution_mod
 
     track_path.mkdir(parents=True, exist_ok=True)
 
+    # Pre-plan → post-plan boundary: any result.json present before state exists
+    # is an orphan from a consumer-free window (the §2.2.5 grounding fan-out's
+    # parallel explorers share the single-slot mailbox, last-write-wins). State
+    # creation implies the result slot is clean — dispatch-prepare would clear
+    # it anyway (dispatch.py _clear_stale_result); reaping HERE makes that
+    # ordering explicit instead of implicit-in-the-skill-flow. Raw path, not
+    # conductor_dir() (which mkdirs — a read must not mint .conductor/).
+    (track_path / ".conductor" / RESULT_MARKER).unlink(missing_ok=True)
+
     # Build track-state.json from the plan structure
     phases = []
     for phase in plan.get("phases", []):

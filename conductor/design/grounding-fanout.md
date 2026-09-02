@@ -19,7 +19,9 @@ last_verified: 2026-09-02
 
 Status: **Shipped** (implemented 2026-09-02, commits `3170d05` + `09bc5b7` +
 `16152c1` — fog gate, §2.2.5 step + slice prompts, Track E fold-in; suite
-2874 green). This doc was the grill-resolved design; the seam claims below
+2874 green; same-day hardening: pre-plan fail-open append-handoff + explorer
+PRE_PLAN mode branch, then §2.2.5 absent-block branch + `_init_core` boundary
+reap — see §6). This doc was the grill-resolved design; the seam claims below
 were verified on disk before implementation and the shipped code follows
 them. Answers the ask — *can we define a personal search space and use
 subagent enumeration to avoid result homogenization at new-track?* — by
@@ -177,6 +179,38 @@ No new `steps_done` key. If the run is interrupted mid-fan-out, a re-run
 re-dispatches the slices and `append-handoff` stacks fresh timestamped
 sections — additive, not corrupting. Revisit only if live runs show the
 re-spend mattering.
+
+### 6. Concurrency — the single-slot result mailbox
+
+The fan-out is the one legal multi-writer window for
+`{track_dir}/.conductor/result.json`, and it is legal precisely because no
+consumer runs inside it. The invariant (now single-homed here and in the
+`lib/result_probe` docstring):
+
+- `result.json` is a **single-slot mailbox** with exactly one content
+  consumer: `dispatch-finalize`. The serial spine keeps it single-writer via
+  the dispatch lock + inflight markers, and dispatch-prepare clears the slot
+  before each dispatch.
+- The fan-out's three explorers all write the slot (the stop-guard requires
+  a fresh result.json from result-file agents, so writing it is load-bearing;
+  `atomic_write_json` keeps every write untorn). Last-write-wins clobber is
+  acceptable because the window is consumer-free — the per-slice signal rides
+  the stdout `---TASK RESULT---` blocks and the distinct `P0T{n}.md` slots,
+  not the mailbox.
+- The harness probes (SubagentStop guard, output filter) read the file as a
+  **boolean** (presence/freshness), never per-agent attribution. That is why
+  §2.2.5 step 5 carries an absent-block branch: a sibling's fresh write can
+  mask one explorer's missing result, so the per-agent verdict is recovered at
+  the stdout-block layer, the only layer with per-agent identity.
+- Orphan hygiene: the fan-out's leftover result.json is reaped at the
+  pre-plan → post-plan boundary — `_init_core` (state creation) unlinks it —
+  so "state exists ⇒ result slot clean" holds regardless of how many parallel
+  windows wrote orphans. (dispatch-prepare would clear it two steps later
+  anyway; the boundary reap makes that ordering explicit.)
+- **Rule for future parallel windows**: a new parallel-dispatch window must
+  not read result.json content, must route its per-agent signal through
+  per-agent channels (stdout blocks / distinct slots), and must reap the
+  mailbox at its boundary or precede the next dispatch-prepare.
 
 ## Menu Track E folds in
 

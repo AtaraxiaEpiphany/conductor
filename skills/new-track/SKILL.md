@@ -129,6 +129,7 @@ Compute-for-intelligence at planning time: when the ground looks unmapped, spend
 5. Parse each `---TASK RESULT---`:
    - **SUCCESS** → collect that slice's `notes_path` for the envelope.
    - **FAILURE** → announce the summary and drop that slice; planning proceeds with the survivors (a failed exploration never blocks planning). All three failed → set `RESEARCH_NOTES=N/A` and say so.
+   - **Absent block** (explorer stopped without emitting §5.0 — the shared `result.json` cannot be attributed per explorer, so a sibling's fresh write can mask the miss) → treat as FAILURE: drop that slice and announce it. All three absent → set `RESEARCH_NOTES=N/A` and say so.
 6. Set `$RESEARCH_NOTES` to the surviving paths **semicolon-joined** (e.g. `<track_dir>/.conductor/handoff/P0T1.md;P0T3.md`) and use it in BOTH §2.3 envelopes — the first dispatch AND every re-dispatch's carry-forward line. Multiple paths are the fan-out's delivery: spec-planner reads each before its codebase scan.
 
 > No resume key is stamped for the fan-out: an interrupted re-run re-dispatches the slices and `append-handoff` stacks fresh timestamped sections — additive, not corrupting.

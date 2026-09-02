@@ -162,6 +162,16 @@ class SkillWiringTests(TestCase):
         self.assertIn("survivors", sec)
         self.assertIn("never blocks planning", sec)
 
+    def test_absent_block_drops_slice(self):
+        # The mask case: the stop-guard/filter probe result.json as a boolean
+        # on the SHARED file, so a sibling's fresh write masks one explorer's
+        # missing result — the per-agent verdict is recovered here, at the
+        # stdout-block layer (the only layer with per-agent identity).
+        sec = self.skill[self.skill.index("### 2.2.5"):
+                         self.skill.index("### 2.3 Dispatch")]
+        self.assertIn("Absent block", sec)
+        self.assertIn("treat as FAILURE", sec)
+
     def test_multi_path_research_notes_in_envelope(self):
         self.assertIn("semicolon-joined", self.skill)
         self.assertIn("RESEARCH_NOTES={exploration-notes path, "
