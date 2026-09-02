@@ -931,6 +931,123 @@ def cmd_propose_shape(description, brief_path=None):
     ))
 
 
+def _brief_section_items(brief_text, heading):
+    """Non-empty list-item count under a ``## <heading>`` brief section.
+
+    The brief's machine anchors are the English ``##`` headings (the same
+    ASCII-anchor convention spec.md uses); items are ``-``/``*``/``+`` bullets.
+    Returns ``None`` when the section is absent (no signal), ``0`` when present
+    but empty. Section body ends at the next ``## `` heading.
+    """
+    lines = brief_text.splitlines()
+    in_section = False
+    count = 0
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            if in_section:
+                break
+            in_section = stripped[3:].strip().lower() == heading.lower()
+            continue
+        if in_section and stripped[:2] in ("- ", "* ", "+ "):
+            if stripped[2:].strip():
+                count += 1
+    return count if in_section else None
+
+
+def cmd_propose_grounding(description, brief_path=None):
+    """The fog gate — should this track run a grounding fan-out before planning?
+
+    The grounding-fanout front door (new-track §2.2.5): a PURE signal match
+    over (description ⊕ brief when readable), the ``propose-shape`` precedent
+    exactly — deterministic, no model call, no filesystem writes. Two signal
+    families compose into ``score``:
+
+    - **Keyword hits** — the registry's top-level ``grounding_signals``
+      (complexity/cross-module wording) matched via
+      :func:`workflow_shapes.grounding_hits` (the shared word-boundary
+      matcher).
+    - **Brief structural signals** — ``## Open Questions`` with >= 2 non-empty
+      items (the planner will inherit unresolved fog) and ``## References``
+      present-but-empty (the planner will have no doc anchors). Plain section
+      parses, no judgment.
+
+    Output contract (new-track §2.2.5 consumes this, never re-derives):
+    ``foggy = score >= 1`` — one distinct signal is enough to ASK (the ask is
+    the anchor; over-firing costs one question, under-firing loses the
+    grounding). ``confirm_required`` mirrors ``foggy`` verbatim so the skill
+    switches on one field. ``--brief`` is fail-open: an absent/unreadable
+    brief never blocks the gate (``brief_used`` reports whether it landed).
+    Skip the whole step when the track's shape is ``research-first`` — its
+    Prelude already explores.
+    """
+    from . import workflow_shapes as ws
+
+    desc = (description or "").strip()
+    if not desc:
+        out(dict(ok=False, error="missing description",
+                 hint='track-state propose-grounding "<description>" '
+                      "[--brief <track_dir>/brief.md]"))
+        return
+
+    brief_text = None
+    brief_used = False
+    if brief_path:
+        try:
+            brief_text = Path(brief_path).read_text(encoding="utf-8")
+            brief_used = True
+        except OSError:
+            # Fail-open: a missing/unreadable brief gates on the description
+            # alone — the fog check must never halt on a stale pointer.
+            pass
+
+    hits = ws.grounding_hits(desc)
+    if brief_text is not None:
+        hits = hits + ws.grounding_hits(brief_text)
+    # Dedupe keyword hits across description/brief (a signal landing in both
+    # is one fog point, not two).
+    seen: list[str] = []
+    for h in hits:
+        if h not in seen:
+            seen.append(h)
+    hits = seen
+
+    brief_hits: list[str] = []
+    if brief_text is not None:
+        open_q = _brief_section_items(brief_text, "Open Questions")
+        if open_q is not None and open_q >= 2:
+            brief_hits.append(f"open questions in brief ({open_q})")
+        refs = _brief_section_items(brief_text, "References")
+        if refs == 0:
+            brief_hits.append("references section empty")
+
+    score = len(hits) + len(brief_hits)
+    parts = []
+    if hits:
+        parts.append(f"{len(hits)} complexity signal"
+                     f"{'s' if len(hits) != 1 else ''} ({', '.join(hits)})")
+    if brief_hits:
+        parts.append(f"{len(brief_hits)} brief signal"
+                     f"{'s' if len(brief_hits) != 1 else ''} "
+                     f"({'; '.join(brief_hits)})")
+    rationale = (" + ".join(parts) + " — the ground the planner needs may "
+                 "not be mapped yet") if parts else \
+        "no fog signals — quiet track, plan directly"
+
+    out(dict(
+        ok=True,
+        foggy=score >= 1,
+        score=score,
+        hits=hits + brief_hits,
+        confirm_required=score >= 1,
+        brief_used=brief_used,
+        rationale=rationale,
+        hint="foggy=false → proceed to §2.3, no ask; foggy=true → ONE "
+             "AskUserQuestion (recommended = run the 3-explorer fan-out). "
+             "Skip the whole gate when $WORKFLOW_SHAPE is research-first.",
+    ))
+
+
 def _candidate_roots(conductor_root):
     """Base dirs to probe when resolving a track dir, given the conductor root
     (the directory holding ``tracks.md`` = ``reg.parent``).

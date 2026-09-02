@@ -268,7 +268,10 @@ def validate_tag_row(name: str, row) -> list[str]:
 
 # Top-level keys allowed on a registry document (the two data keys + the
 # documentation blocks the editor must round-trip, never strip).
-_SHAPE_TOP_KEYS = frozenset({"default", "shapes", "_comment", "_fields"})
+# ``grounding_signals``: the fog gate's top-level keyword list (data, not a
+# doc block — see workflow_shapes.grounding_signals).
+_SHAPE_TOP_KEYS = frozenset({"default", "shapes", "_comment", "_fields",
+                             "grounding_signals"})
 _TAG_TOP_KEYS = frozenset({"default", "tags", "_comment", "_fields"})
 
 
@@ -291,6 +294,12 @@ def validate_shapes(doc) -> list[str]:
             errs.append("'default' must be an object")
         else:
             errs.extend(validate_shape_row("default", default))
+
+    gs = doc.get("grounding_signals")
+    if gs is not None and (not isinstance(gs, list)
+                           or not all(isinstance(x, str) for x in gs)):
+        errs.append("'grounding_signals' must be a list of strings "
+                    "(the fog-gate keywords)")
 
     shapes = doc.get("shapes")
     if shapes is not None:

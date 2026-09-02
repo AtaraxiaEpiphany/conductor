@@ -14,6 +14,19 @@
     "signals": "the keyword list `track-state propose-shape` matches against the track description ⊕ brief to rank this shape as a candidate (mirrors task-type `signals` / derive_task_tag: lowercase keywords, multi-word phrases allowed, substring-matched). Only shapes that declare `signals` are candidates; the `default` shape deliberately omits it — it is the fail-open fallback when no candidate clears the bar, never a competitor. Absent => not a propose-shape candidate.",
     "max_retries": "the shape-level default retry budget for tasks under this shape: an int >= 1 (0/absent => inherit the global MAX_RETRIES). The chain is task.max_retries > this > global (constants.task_max_retries resolves it; every enforcement site reads through that resolver). Use when a job family needs a different ceiling than the default 3 — e.g. a migration shape may declare 1 (each retry re-runs a risky port), a research shape may declare more (dead ends are the job)."
   },
+  "grounding_signals": [
+    "unfamiliar",
+    "integrate",
+    "integration",
+    "cross-cutting",
+    "cross-module",
+    "multi-system",
+    "investigate",
+    "understand how",
+    "map the codebase",
+    "migrate",
+    "refactor the"
+  ],
   "default": {
     "nodes": ["spec-planner", "task-executor", "phase-checker"],
     "verifiers": ["ac-tracer", "build-runner", "test-runner"],

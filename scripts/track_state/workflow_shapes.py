@@ -221,7 +221,18 @@ def _merge_overlay(baseline: dict) -> dict:
     if isinstance(overlay_default, dict):
         merged_default.update(overlay_default)
 
-    return {"default": merged_default, "shapes": merged_shapes}
+    merged = {"default": merged_default, "shapes": merged_shapes}
+    # ``grounding_signals`` is top-level DATA (the fog gate's keyword list),
+    # not a doc block like ``_comment``/``_fields`` — so it must SURVIVE the
+    # merge: the baseline's list carries through when the overlay declares
+    # none, and a declared overlay list replaces it wholesale (the same
+    # shallow-merge posture as ``shapes``/``default``).
+    base_gs = baseline.get("grounding_signals")
+    if isinstance(base_gs, list):
+        merged["grounding_signals"] = base_gs
+    if isinstance(overlay.get("grounding_signals"), list):
+        merged["grounding_signals"] = overlay["grounding_signals"]
+    return merged
 
 
 @lru_cache(maxsize=1)
@@ -513,6 +524,48 @@ def signals_for(shape: str) -> tuple[str, ...]:
         if k and k not in out:
             out.append(k)
     return tuple(out)
+
+
+def grounding_signals() -> tuple[str, ...]:
+    """The registry's top-level ``grounding_signals`` keyword tuple — the fog
+    gate's selection data (``propose-grounding`` matches a track description ⊕
+    brief against it). Lowercased + deduped, the same normalization
+    :func:`signals_for` applies. A registry without the key yields ``()`` — the
+    gate then never fires (fail-open QUIET, the correct direction for an
+    optional pre-planning spend).
+
+    Top-level rather than per-shape on purpose: the fog gate runs at new-track
+    §2.2.5 BEFORE the shape takes effect — it prices a spend, it does not
+    describe a topology. The project overlay replaces the whole list when it
+    declares one (see :func:`_merge_overlay`).
+    """
+    raw = _load().get("grounding_signals")
+    if not isinstance(raw, list) or not raw:
+        return ()
+    out: list[str] = []
+    for s in raw:
+        k = str(s).lower()
+        if k and k not in out:
+            out.append(k)
+    return tuple(out)
+
+
+def grounding_hits(text: str) -> list[str]:
+    """Distinct ``grounding_signals`` hits over free text — the pure keyword
+    half of ``propose-grounding``. Deterministic, no model call, no filesystem
+    writes; the caller composes these with the brief-structural signals and
+    owns the ``foggy`` decision. Matching is word-boundary-aware via
+    :func:`task_profiles._signal_in` (imported, not copied — one matcher, one
+    home), the same matcher :func:`rank_shapes` uses.
+    """
+    # Lazy import keeps this module import-cheap for the standalone hook
+    # scripts; task_profiles does not import this module (no cycle).
+    from .task_profiles import _signal_in
+
+    if not text or not text.strip():
+        return []
+    lowered = text.lower()
+    return [sig for sig in grounding_signals() if _signal_in(sig, lowered)]
 
 
 def rank_shapes(text: str) -> list[dict]:

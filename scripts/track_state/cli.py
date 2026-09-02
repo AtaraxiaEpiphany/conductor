@@ -28,6 +28,7 @@ from .misc import (
     cmd_registry_doc,
     cmd_record_summary, cmd_preflight, cmd_quality_snapshot,
     cmd_spec_integrity, cmd_view, cmd_status, cmd_derive_name, cmd_propose_shape,
+    cmd_propose_grounding,
     cmd_post_loop_status,
     cmd_resolve_track, cmd_check, _resolve_track_dir_or_halt,
 )
@@ -89,7 +90,7 @@ _BOOL_FLAGS = {"--full", "--fix", "--check", "--force", "--verify",
 _TD_NO_RESOLUTION_COMMANDS = {
     "init-from-plan", "new-track-init", "new-track-step",
     "new-track-set-mode", "new-track-finalize", "preflight", "derive-name",
-    "propose-shape",
+    "propose-shape", "propose-grounding",
     "brief-init", "brief-finalize", "brief-grill-done",
     "roster", "probe", "tag",
 }
@@ -490,6 +491,13 @@ COMMAND_HELP = {
                       "proposed/confirm_required + chosen entry (gates/verifiers/ac_grounding/"
                       "planning_doc path) — new-track §2.1's selection step; default is silent, "
                       "non-default asks one confirm. set-workflow-shape overrides later."),
+    "propose-grounding": ('propose-grounding "<description>" [--brief <path>]',
+                          "The fog gate (new-track §2.2.5): pure signal-match over description ⊕ "
+                          "optional brief (grounding_signals keywords + brief structural signals — "
+                          "deterministic, no model call). foggy/score/hits/confirm_required + "
+                          "rationale — foggy asks ONE confirm (run the 3-explorer grounding "
+                          "fan-out before planning); quiet tracks proceed. Skip when the shape "
+                          "is research-first (its Prelude already explores)."),
     "resolve-track": ("resolve-track [<query>] [--registry <path>]",
                       "Resolve a track_dir from conductor/tracks.md (exact id / shortname "
                       "prefix / auto-select the single active track). ALWAYS exits 0 — "
@@ -966,6 +974,9 @@ def main():
             # description — the other non-track-dir positional (see
             # _TD_NO_RESOLUTION_COMMANDS); --brief takes a value (flag()).
             cmd_propose_shape(sys.argv[2], flag(args, "--brief"))
+        elif cmd == "propose-grounding":
+            # description positional, same non-track-dir shape as propose-shape.
+            cmd_propose_grounding(sys.argv[2], flag(args, "--brief"))
         elif cmd == "new-track-init":
             cmd_new_track_init(track_dir,
                                flag(args, "--track-id") or "track",

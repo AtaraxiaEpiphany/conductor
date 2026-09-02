@@ -29,7 +29,7 @@ COMMAND_GROUPS = [
                            "amend-apply", "amend-clear",
                            "review-attest"]),
     ("Wave Parallelism", ["dispatch-wave", "wave-status", "wave-finalize", "wave-abort", "wave-step"]),
-    ("Naming", ["derive-name", "propose-shape",
+    ("Naming", ["derive-name", "propose-shape", "propose-grounding",
                 "resolve-track", "check"]),
     ("New-Track Resume", ["new-track-resume", "new-track-init", "new-track-step",
                           "new-track-set-mode", "new-track-finalize"]),
