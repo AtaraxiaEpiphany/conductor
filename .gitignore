@@ -83,3 +83,6 @@ references/
 # Un-ignore it under skills/ so the blanket rule above can't drop them on commit.
 !skills/**/references/
 !skills/**/references/**
+
+# CodeGraph index
+.codegraph/
