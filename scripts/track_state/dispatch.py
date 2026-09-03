@@ -1638,6 +1638,71 @@ def _verify_status_lines(marker, key, label, owed):
     return out
 
 
+def artifact_advisory(state, plan_tasks, harvested):
+    """Task-artifact advisory for the phase checker (findings/artifact edge).
+
+    Pure and fail-open: deterministic over its inputs (sorted iterations, no
+    clock, no mtimes — byte-identical on replay) and ``None`` on any internal
+    error. Report-only — surfaces in the envelope as ``ARTIFACT_ADVISORY=``
+    and NEVER gates the verdict (the enforcement bar is deliver + surface).
+
+    Cases:
+    - **orphan** — an artifact declared produced (plan ``produces:`` edge or
+      ledger roll) with no ``uses:`` edge anywhere: nothing will read it.
+    - **unattested** — a task that declared ``uses:`` and reached
+      ``completed`` with no matching ``artifacts_used`` attestation in the
+      ledger: the should-read vs did-read diff.
+
+    ``state`` supplies task statuses; ``plan_tasks`` is ``parse_plan``
+    output (``phases`` list); ``harvested`` is ``_extract_candidates`` output.
+    """
+    try:
+        produces_edges = {}   # path -> [at-label, ...] (plan producers)
+        uses_edges = {}       # path -> [((pi, ti), at-label), ...]
+        coord = {}            # (pi, ti) -> [at-label, name, status]
+        for pi, ph in enumerate(plan_tasks or [], 1):
+            for ti, t in enumerate(ph.get("tasks", []), 1):
+                at = f"P{pi}.T{ti}"
+                coord[(pi, ti)] = [at, t.get("name", ""), ""]
+                for p in t.get("produces_refs", []) or []:
+                    produces_edges.setdefault(p, []).append(at)
+                for u in t.get("uses_refs", []) or []:
+                    uses_edges.setdefault(u, []).append(((pi, ti), at))
+        for pi, ph in enumerate((state or {}).get("phases", [])):
+            for ti, t in enumerate(ph.get("tasks", [])):
+                slot = coord.get((pi + 1, ti + 1))
+                if slot is not None:
+                    slot[2] = t.get("status", "")
+
+        attested = {a.get("path") for a in
+                    (harvested or {}).get("artifacts_used", []) or []}
+        ledger_produced = {}
+        for a in (harvested or {}).get("artifacts_produced", []) or []:
+            p = a.get("path")
+            if p:
+                ledger_produced.setdefault(p, a.get("source", "?"))
+
+        notes = []
+        # (a) orphan — declared produced, no consumer edge anywhere.
+        for p in sorted(set(produces_edges) | set(ledger_produced)):
+            if p in uses_edges:
+                continue
+            where = ", ".join(produces_edges.get(p)
+                              or [f"ledger {ledger_produced[p]}"])
+            notes.append(f"orphan: {p} (produced by {where}) has no uses "
+                         f"edge — no consumer will read it")
+        # (b) unattested — completed consumer without a did-read attestation.
+        for p in sorted(uses_edges):
+            for key, at in uses_edges[p]:
+                if coord[key][2] == "completed" and p not in attested:
+                    notes.append(f"unattested: {at} '{coord[key][1]}' declared "
+                                 f"uses {p} and completed without an "
+                                 f"artifacts_used attestation")
+        return "; ".join(notes[:6]) if notes else None
+    except Exception:  # noqa: BLE001 — advisory, never fatal
+        return None
+
+
 def _build_phase_checker(track_dir, state, phase, marker):
     """``dispatch_phase_checker`` envelope body (the synthesizer) from the fanned
     verifier verdicts stored in the marker.
@@ -1681,6 +1746,24 @@ def _build_phase_checker(track_dir, state, phase, marker):
                                       owed="test-runner" in fanned))
     lines.extend(_verify_status_lines(marker, "build", "BUILD_VERIFY",
                                       owed="build-runner" in fanned))
+    # Task-artifact advisory (findings/artifact edge): present only when there
+    # is something to surface — orphan producers / unattested consumers.
+    # Gathering is fail-open; the helper itself is pure and deterministic.
+    advisory = None
+    try:
+        from pathlib import Path as _P
+        plan_path = _P(track_dir) / "plan.md"
+        plan_tasks = []
+        if plan_path.exists():
+            from .plan_parse import parse_plan as _pp
+            plan_tasks = _pp(plan_path).get("phases", [])
+        from .handoff import _extract_candidates as _xc
+        harvested = _xc(_P(track_dir) / ".conductor" / "handoff")
+        advisory = artifact_advisory(state, plan_tasks, harvested)
+    except Exception:  # noqa: BLE001 — advisory, never fatal
+        advisory = None
+    if advisory:
+        lines.append(f"ARTIFACT_ADVISORY={advisory}")
     return "\n".join(lines)
 
 

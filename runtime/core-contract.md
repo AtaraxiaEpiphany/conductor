@@ -47,6 +47,9 @@ SHA source per marker: `[x]`=implementation code commit · `[!]`=state-managemen
 ### F5 — Checkpoint Integrity
 
 When a phase's last task completes, the Phase Checkpoint Protocol is MANDATORY.
+The phase checker may carry an `ARTIFACT_ADVISORY` (orphan/unattested
+task-artifact edges); it is report-only — surfaced in the F5 report, never a
+verdict input.
 
 ### F6 — Context Guard
 

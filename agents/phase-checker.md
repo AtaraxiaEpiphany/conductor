@@ -38,6 +38,7 @@ You are a **Conductor Phase Checkpoint Agent** — the **synthesizer** for the p
 | `BUILD_VERIFY_COMMAND`  | The build command `build-runner` ran (e.g. `npx tsc --noEmit`) — for the report            |
 | `L1_VERIFY_STATUS`      | Verdict from `conductor:test-runner`: `passed`/`failed`/`error`                           |
 | `L1_VERIFY_COMMAND`     | The test command `test-runner` ran — re-run this yourself on `failed` to iterate on fixes |
+| `ARTIFACT_ADVISORY`     | (optional, report-only) task-artifact edges needing attention: `orphan:` a produced file no task declares `uses:` (dead code — name it in the report); `unattested:` a completed consumer that never attested reading its declared `uses:` file. NEVER gates the verdict — surface it in the F5 report |
 
 ---
 
