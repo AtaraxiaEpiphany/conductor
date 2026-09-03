@@ -173,3 +173,29 @@ human-as-adoption-anchor are the two invariants.
 *skill mining* (sounds like transcript scraping; the harvester reads
 conductor's own durable artifacts).
 
+## task artifact
+
+A durable file one task produced for a later task to consume — a baseline
+report, a mapping table, a recorded measurement. Declared in result.json
+(`artifacts` produced, `artifacts_used` attested), rolled into the task's
+handoff as a `## Task Artifacts` block, and catalogued in track-findings.
+Distinct from *Artifact Anchors* (spec-side AC grounding for review
+shapes) and from *build artifacts* (forbidden outputs like `dist/`).
+
+**Avoid:** *artifact anchor* (that term is the spec grounding mechanism),
+*output file* (too generic — the ledger is about the cross-task edge, not
+the file's existence).
+
+## produces/uses edge
+
+The plan-level dataflow annotation: `<!-- produces: path -->` on the
+producing task row, `<!-- uses: path -->` on the consuming row (paths
+repo-relative, forward references allowed). The lint warns on dangling
+`uses` (no producer, file absent) and orphan `produces` (no consumer
+anywhere); the checkpoint advisory repeats both at runtime and adds the
+unattested case (a consumer that completed without an attestation).
+Warnings only — the invariant is delivery, never forced consumption.
+
+**Avoid:** *artifact dependency* (conflates data flow with the `deps:`
+control couplet — deps order execution, edges deliver data).
+

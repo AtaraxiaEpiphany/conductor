@@ -347,6 +347,9 @@ adoption (loses the anchor; unverified crystallization of noise compounds).
 1. **Track D — findings edge** (Finding 2 · S–M). Envelope pointer +
    always-compile + wiring tests. First: the acute reported pain, the
    smallest diff, immediate relief for every complex track.
+   Extended 2026-09-03 with the artifact ledger + `produces:`/`uses:`
+   plan edges (one campaign, shared seams) — design:
+   [[conductor/design/findings-artifact-edge]].
 2. **Track E — labeling optimization** (Finding 1 · S). Complexity rule +
    research-first signals + `examples` field + telemetry persistence.
    Doctrine and data only; can run alongside D.
