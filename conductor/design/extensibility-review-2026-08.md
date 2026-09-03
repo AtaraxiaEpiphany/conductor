@@ -344,12 +344,13 @@ adoption (loses the anchor; unverified crystallization of noise compounds).
 
 ## Track menu (sequenced)
 
-1. **Track D — findings edge** (Finding 2 · S–M). Envelope pointer +
-   always-compile + wiring tests. First: the acute reported pain, the
-   smallest diff, immediate relief for every complex track.
-   Extended 2026-09-03 with the artifact ledger + `produces:`/`uses:`
-   plan edges (one campaign, shared seams) — design:
-   [[conductor/design/findings-artifact-edge]].
+1. **Track D — findings edge** (Finding 2 · S–M) — **SHIPPED 2026-09-03**
+   (`56e1c3d..69a70ff`, 2950 tests green). Envelope pointer + always-compile
+   + wiring tests; extended in the same campaign with the artifact ledger +
+   `produces:`/`uses:` plan edges + task-context delivery join +
+   `ARTIFACT_ADVISORY` checkpoint advisory — design:
+   [[conductor/design/findings-artifact-edge]]. Live proof pending (next
+   real track under `claude --plugin-dir . -p`).
 2. **Track E — labeling optimization** (Finding 1 · S). Complexity rule +
    research-first signals + `examples` field + telemetry persistence.
    Doctrine and data only; can run alongside D.

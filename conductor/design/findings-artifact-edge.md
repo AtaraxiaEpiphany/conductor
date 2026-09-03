@@ -18,8 +18,8 @@ last_verified: 2026-09-03
 
 # Findings & Artifact Edge — Track D extended (the dataflow contract)
 
-Status: **Planned** (design grill-resolved 2026-09-03; implementation
-campaign C1–C7). Extends the agreed Track D (Finding 2 of
+Status: **Shipped** (campaign C1–C7, `56e1c3d..69a70ff`, 2026-09-03, 2950
+tests green). Extends the agreed Track D (Finding 2 of
 [[conductor/design/extensibility-review-2026-08]]) from the compiled-findings
 channel to the broader class it generalizes: task-produced durable files.
 Decision record: [[conductor/design/decision-artifact-ledger]].
