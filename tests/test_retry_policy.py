@@ -44,17 +44,19 @@ def _task_status(d):
 
 class RetryPolicyTests(TestCase):
     def test_first_retryable_failure_requeues_as_pending(self):
-        # retry_count goes -1 → 0; 0 < MAX_RETRIES → re-queued as pending.
+        # retry_count is 1-based (counts failed attempts): absent → 1;
+        # 1 < MAX_RETRIES → re-queued as pending.
         d = _track_dir()
         retry_count, state = _do_fail(d, 1, 1, None, "boom")
-        self.assertEqual(retry_count, 0)
+        self.assertEqual(retry_count, 1)
         self.assertEqual(_task_status(d), "pending")
         self.assertEqual(state, load(d))  # returned state == fresh disk read
 
     def test_still_pending_just_under_threshold(self):
-        # After MAX_RETRIES fails, retry_count = MAX_RETRIES-1 < MAX_RETRIES → pending.
+        # After MAX_RETRIES-1 fails, retry_count = MAX_RETRIES-1 < MAX_RETRIES
+        # → pending (one attempt of the budget remains).
         d = _track_dir()
-        for _ in range(MAX_RETRIES):
+        for _ in range(MAX_RETRIES - 1):
             _do_fail(d, 1, 1, None, "boom")
         state = load(d)
         task = state["phases"][0]["tasks"][0]
@@ -62,9 +64,12 @@ class RetryPolicyTests(TestCase):
         self.assertEqual(task["retry_count"], MAX_RETRIES - 1)
 
     def test_flips_to_failed_at_threshold(self):
-        # One more fail pushes retry_count to MAX_RETRIES → failed permanently.
+        # The MAX_RETRIES-th fail pushes retry_count to MAX_RETRIES → failed
+        # permanently. task_max_retries is an ATTEMPT budget (constants.py:
+        # "how many attempts does this task get") — 1-based retry_count matches
+        # it exactly, so the task gets exactly MAX_RETRIES dispatches.
         d = _track_dir()
-        for _ in range(MAX_RETRIES + 1):
+        for _ in range(MAX_RETRIES):
             _do_fail(d, 1, 1, None, "boom")
         task = load(d)["phases"][0]["tasks"][0]
         self.assertEqual(task["status"], "failed")
@@ -75,7 +80,7 @@ class RetryPolicyTests(TestCase):
         # regardless of how far retry_count is from the threshold.
         d = _track_dir()
         retry_count, state = _do_fail(d, 1, 1, None, "boom", retryable=False)
-        self.assertEqual(retry_count, 0)
+        self.assertEqual(retry_count, 1)
         self.assertEqual(_task_status(d), "failed")
 
 
@@ -152,23 +157,21 @@ class PerTaskRetryBudgetTests(TestCase):
     def test_raised_budget_requeues_until_override(self):
         # max_retries=5 → requeue (pending) while retry_count < 5.
         d = _track_dir_with_max_retries(5)
-        for _ in range(5):
+        for _ in range(4):
             _do_fail(d, 1, 1, None, "boom")
         state = load(d)
         task = state["phases"][0]["tasks"][0]
         self.assertEqual(task["status"], "pending")  # retry_count 4 < 5
         self.assertEqual(task["retry_count"], 4)
-        # One more flips to failed (retry_count 5 >= 5).
+        # The 5th fail flips to failed (retry_count 5 >= 5).
         _do_fail(d, 1, 1, None, "boom")
         self.assertEqual(_task_status(d), "failed")
         self.assertEqual(load(d)["phases"][0]["tasks"][0]["retry_count"], 5)
 
     def test_lowered_budget_fails_immediately(self):
-        # max_retries=1 → first failure (retry_count 0 < 1 → pending); second
-        # (1 >= 1) → failed. So one requeue, then terminal.
+        # max_retries=1 → the budget IS one attempt: the first failure stores
+        # retry_count 1 >= 1 → failed at once, no requeue.
         d = _track_dir_with_max_retries(1)
-        _do_fail(d, 1, 1, None, "boom")
-        self.assertEqual(_task_status(d), "pending")
         _do_fail(d, 1, 1, None, "boom")
         self.assertEqual(_task_status(d), "failed")
 
@@ -176,7 +179,7 @@ class PerTaskRetryBudgetTests(TestCase):
         # No max_retries field → identical to the global policy (still pending at
         # MAX_RETRIES-1 fails, failed at MAX_RETRIES).
         d = _track_dir()
-        for _ in range(MAX_RETRIES):
+        for _ in range(MAX_RETRIES - 1):
             _do_fail(d, 1, 1, None, "boom")
         self.assertEqual(_task_status(d), "pending")
         _do_fail(d, 1, 1, None, "boom")

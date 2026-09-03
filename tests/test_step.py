@@ -255,9 +255,10 @@ class StepFinalizeRouteTests(TestCase):
         Path(d, "impl_a.py").write_text("x=1")
         o = _step(d)  # dirty tree → finalize (synthesize FAILURE-with-handoff)
         # Finalize ran the FAILURE path. retry_count is now set (was absent
-        # before) — first failure records retry_count=0 — and last_failure_summary
-        # is populated (only _do_fail sets it). Pre-fix this re-dispatched
-        # silently with retry_count never written, looping forever at attempt 1.
+        # before) — first failure records retry_count=1 (1-based: counts failed
+        # attempts) — and last_failure_summary is populated (only _do_fail sets
+        # it). Pre-fix this re-dispatched silently with retry_count never
+        # written, looping forever at attempt 1.
         tgt = load(d)["phases"][0]["tasks"][0]
         self.assertIn("retry_count", tgt,
                       "dirty tree must finalize (write retry_count), not "
@@ -265,14 +266,14 @@ class StepFinalizeRouteTests(TestCase):
         self.assertTrue(tgt.get("last_failure_summary"),
                         "finalize FAILURE must populate last_failure_summary")
         # The decisive regression check: a SECOND dirty-tree no-result step must
-        # ESCALATE retry_count (0→1) and attempt (1→2). Pre-fix, both stayed flat
+        # ESCALATE retry_count (1→2) and attempt (2→3). Pre-fix, both stayed flat
         # forever — the orchestrator re-dispatched without incrementing, exactly
         # the reported bug.
         Path(d, "impl_b.py").write_text("y=1")
         o2 = _step(d)
         tgt2 = load(d)["phases"][0]["tasks"][0]
-        self.assertEqual(tgt2["retry_count"], 1)
-        self.assertEqual(o2["attempt"], 2)
+        self.assertEqual(tgt2["retry_count"], 2)
+        self.assertEqual(o2["attempt"], 3)
 
     def test_step_reentry_after_clear_preserves_retry_count(self):
         # The user's reported bug: task-executor returned no result, session was

@@ -251,9 +251,14 @@ class DispatchDedupeHookTests(TestCase):
         delivers ``session_id`` empty. The transcript_path stem is the
         fallback. This pins the join-key fix: a probe with ``session=`` makes
         a captured relapse impossible to disambiguate from start/stop lines.
+
+        The payload cwd is a track-bearing project, so the hook's payload
+        promotion resolves CLAUDE_PROJECT_DIR → the lifecycle log lands in
+        ``<repo>/.conductor/logs`` — NOT under any CLAUDE_PLUGIN_DATA
+        redirect. This doubles as the live-ordering pin (project context
+        outranks the claude-injected plugin-data dir).
         """
-        tmp_data = tempfile.mkdtemp()
-        env = dict(os.environ, CLAUDE_PLUGIN_DATA=tmp_data)
+        env = dict(os.environ, CLAUDE_PLUGIN_DATA=tempfile.mkdtemp())
         sid = "deadbeef-0000-1111-2222-333333333333"
         payload = {
             "tool_name": "Agent", "cwd": self.repo,
@@ -267,7 +272,7 @@ class DispatchDedupeHookTests(TestCase):
             input=json.dumps(payload), capture_output=True, text=True, env=env,
         )
         self.assertEqual(proc.returncode, 0, msg=proc.stderr)
-        log_path = Path(tmp_data) / "logs" / "dispatch-lifecycle.log"
+        log_path = Path(self.repo) / ".conductor" / "logs" / "dispatch-lifecycle.log"
         self.assertTrue(log_path.exists(), "lifecycle log not written")
         probe_lines = [
             ln for ln in log_path.read_text().splitlines()

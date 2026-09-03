@@ -310,7 +310,9 @@ class BriefCounterLifecycleTests(TestCase):
     bump; legacy plain-int entries treated as absent."""
 
     def _counter_file(self, project):
-        return project / ".data" / "brief-grill-counters.json"
+        # The hook resolves CLAUDE_PROJECT_DIR (tier 1) → <project>/.conductor;
+        # _probe sets that env explicitly.
+        return project / ".conductor" / "brief-grill-counters.json"
 
     def test_stale_high_count_does_not_satisfy_floor(self):
         """THE bypass regression: a stale (TTL-expired) high count for a reused
@@ -359,11 +361,15 @@ class BriefCounterLifecycleTests(TestCase):
             for _ in range(_MIN_FLOOR):
                 _probe(project, "AskUserQuestion", cwd=str(td))
             self.assertTrue(self._counter_file(project).exists())
-            # Finalize in-process, with the data dir pointed at the temp
-            # project (get_data_dir reads env at call time). Restore the
-            # prior value — popping unconditionally would strip the suite-wide
-            # CLAUDE_PLUGIN_DATA pin (tests/conftest.py) for every later test.
-            prior = os.environ.get("CLAUDE_PLUGIN_DATA")
+            # Finalize in-process, with the project env matching _probe's
+            # (CLAUDE_PROJECT_DIR is tier 1 → <project>/.conductor, where the
+            # hook's bumps landed; CLAUDE_PLUGIN_DATA points the tier-3
+            # fallback at the same project). get_data_dir reads env at call
+            # time. Restore priors — popping unconditionally would strip the
+            # suite-wide CLAUDE_PLUGIN_DATA pin (tests/conftest.py).
+            priors = {k: os.environ.get(k)
+                      for k in ("CLAUDE_PLUGIN_DATA", "CLAUDE_PROJECT_DIR")}
+            os.environ["CLAUDE_PROJECT_DIR"] = str(project)
             os.environ["CLAUDE_PLUGIN_DATA"] = str(project / ".data")
             try:
                 buf = io.StringIO()
@@ -371,10 +377,11 @@ class BriefCounterLifecycleTests(TestCase):
                     br.cmd_brief_finalize(str(td))
                 result = json.loads(buf.getvalue())
             finally:
-                if prior is None:
-                    os.environ.pop("CLAUDE_PLUGIN_DATA", None)
-                else:
-                    os.environ["CLAUDE_PLUGIN_DATA"] = prior
+                for k, v in priors.items():
+                    if v is None:
+                        os.environ.pop(k, None)
+                    else:
+                        os.environ[k] = v
             self.assertTrue(result["ok"])
             data = json.loads(self._counter_file(project).read_text())
             self.assertNotIn(td.name, data)

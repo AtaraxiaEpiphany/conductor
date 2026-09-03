@@ -167,7 +167,12 @@ def _do_complete(track_dir, p, t, s=None, sha=None):
             resolved_sha = _last_subtask_sha(tgt)
         tgt["commit_sha"] = resolved_sha
         tgt["completed_at"] = now_iso()
-        clean(tgt, {"status", "commit_sha", "completed_at"})
+        # retry_count/last_failure_summary survive completion: the handoff's
+        # SUCCESS record derives its attempt number from the task's failure
+        # history (attempt = retry_count + 1), and state keeps that audit trail
+        # the same way _do_fail does.
+        clean(tgt, {"status", "commit_sha", "completed_at",
+                    "retry_count", "last_failure_summary"})
 
         parent_completed = False
         if si is not None:
@@ -206,7 +211,13 @@ def _do_fail(track_dir, p, t, s=None, summary="", retryable=True):
     si = int(s) if s is not None else None
     with transaction(track_dir) as state:
         tgt = target(state, pi, ti, si)
-        tgt["retry_count"] = tgt.get("retry_count", -1) + 1
+        # retry_count is 1-BASED: it counts failed attempts of this task (the
+        # first failure stores 1), matching task_max_retries' "how many
+        # attempts" ceiling and the dispatch envelope's ``attempt = rc + 1``.
+        # (A 0-based start made a fresh failure store 0 — the conductor commit
+        # read "failed (attempt 0)", the envelope numbered a retry "attempt 1",
+        # and MAX_RETRIES=3 actually bought 4 dispatches.)
+        tgt["retry_count"] = tgt.get("retry_count", 0) + 1
         tgt["last_failure_summary"] = summary
 
         if retryable and tgt["retry_count"] < task_max_retries(

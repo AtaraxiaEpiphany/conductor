@@ -50,8 +50,8 @@ def resolve_data_dir() -> tuple[Path, str]:
     """Resolve the runtime data dir AND report which tier fired.
 
     Returns ``(data_dir, tier_label)``. The path follows the resolution
-    priority documented in ``get_data_dir`` (explicit override → project → cwd
-    heuristic → plugin fallback). ``tier_label`` is a short human-readable name
+    priority documented in ``get_data_dir`` (project → cwd heuristic → plugin
+    data dir → plugin fallback). ``tier_label`` is a short human-readable name
     of the tier that fired, so callers that surface "where did logs land?"
     (e.g. ``track-state log-path``) report the tier that *actually* fired
     instead of re-deriving it and risking drift.
@@ -60,23 +60,29 @@ def resolve_data_dir() -> tuple[Path, str]:
     ``track_state.logs_read._resolve_tier`` both delegate here so the order and
     labels can't diverge.
     """
-    explicit = os.environ.get("CLAUDE_PLUGIN_DATA")
-    if explicit:
-        return Path(explicit), "CLAUDE_PLUGIN_DATA (explicit override)"
+    # Project context first. CLAUDE_PLUGIN_DATA is NOT checked before it:
+    # Claude Code injects CLAUDE_PLUGIN_DATA into every plugin-hook env (the
+    # plugin's own mutable-state dir, per the plugins reference — it persists
+    # across plugin updates and is shared across every project that runs this
+    # plugin). Letting it win put every project's telemetry in
+    # ~/.claude/plugins/data/<plugin>/logs even with a live track under the
+    # user's feet — the "logs in the wrong place" live symptom. It is an
+    # ambient fact about the *plugin*, never an instruction about the
+    # *project*, so project context outranks it.
     project_dir = os.environ.get("CLAUDE_PROJECT_DIR")
     if project_dir:
         return Path(project_dir) / ".conductor", "CLAUDE_PROJECT_DIR (project)"
     # cwd heuristic: Claude Code doesn't always inject ``CLAUDE_PROJECT_DIR``
-    # (seen empty even in live session shells), so without this tier the
-    # resolver would fall straight through to ``<plugin>/.data`` and land every
-    # log/failure event in the *plugin* tree instead of the project being run.
-    # The plugin only runs where a conductor track tree is present, so a
-    # ``conductor/tracks/`` dir in ``cwd`` is a reliable "we're in a real
-    # project" signal. The plugin repo itself has ``conductor/design/`` but no
-    # ``conductor/tracks/``, so this never false-positives on the plugin dir.
+    # (seen empty even in live session shells). The plugin only runs where a
+    # conductor track tree is present, so ``conductor/tracks/`` in cwd is a
+    # reliable "we're in a real project" signal — and it never matches the
+    # plugin repo itself (``conductor/design/`` but no tracks).
     cwd = Path.cwd()
     if (cwd / "conductor" / "tracks").is_dir():
         return cwd / ".conductor", "cwd heuristic (conductor/tracks/ present)"
+    explicit = os.environ.get("CLAUDE_PLUGIN_DATA")
+    if explicit:
+        return Path(explicit), "CLAUDE_PLUGIN_DATA (plugin data dir — no project context)"
     # Fail-safe: plugin-anchored (always writable, always exists). This is the
     # LAST resort — logs written here COLLIDE across concurrent projects (a
     # user running Conductor in two projects at once gets one merged,
@@ -92,28 +98,42 @@ def get_data_dir() -> Path:
     """Get the runtime data directory for project-scoped telemetry.
 
     Thin wrapper over ``resolve_data_dir`` (which owns the full tier ladder).
-    Resolution priority (explicit override first, project next, plugin last):
+    Resolution priority (project first — the telemetry IS project-scoped —
+    plugin last):
 
-      1. ``$CLAUDE_PLUGIN_DATA`` — explicit override (tests, sandboxes, custom
-         layouts). Returned verbatim.
-      2. ``$CLAUDE_PROJECT_DIR/.conductor`` — the project's runtime dir.
+      1. ``$CLAUDE_PROJECT_DIR/.conductor`` — the project's runtime dir.
          Conductor's logs/failures/recovery events are *project-scoped* (they
          describe a specific project's tracks), so they belong beside the
          project's ``conductor/`` tree — where you look when debugging — not
-         under the shared plugin dir (which collides across projects).
+         under any plugin-scoped dir (which collides across projects).
          ``CLAUDE_PROJECT_DIR`` is set by Claude Code for every project hook,
+         and the hook-payload cwd is promoted into it at the
+         ``read_hook_input`` chokepoint (``infer_project_dir_from_payload``),
          so this is the common path with zero config. The ``/.conductor/``
          root-anchored gitignore rule (setup §2.5) already covers it.
-      3. ``$cwd/.conductor`` when ``$cwd/conductor/tracks/`` exists — a cwd
-         heuristic that catches the common case where ``CLAUDE_PROJECT_DIR`` is
-         not injected (it has been observed empty even in live session shells).
-         Without this tier the resolver silently falls through to the plugin dir
-         and every log/failure event lands in the plugin tree instead of the
-         project being run. Gated on ``conductor/tracks/`` so it never matches
-         the plugin repo itself (which has ``conductor/design/`` but no tracks).
-      4. ``<plugin>/.data`` — fail-safe. Hooks that fire outside any project
-         (e.g. session-start before a track exists, or a non-project cwd) still
-         need a writable home; the plugin dir always exists.
+      2. ``$cwd/.conductor`` when ``$cwd/conductor/tracks/`` exists — a cwd
+         heuristic that catches the case where ``CLAUDE_PROJECT_DIR`` is not
+         injected (it has been observed empty even in live session shells).
+         Gated on ``conductor/tracks/`` so it never matches the plugin repo
+         itself (which has ``conductor/design/`` but no tracks).
+      3. ``$CLAUDE_PLUGIN_DATA`` — Claude Code injects this into every plugin
+         hook (the plugin's own mutable-state dir; per the plugins reference
+         it persists across plugin updates and is shared by every project
+         running the plugin). It is the right home for telemetry with NO
+         project context (a session-start in a non-project cwd, a scratch
+         shell) — but it is an ambient fact about the plugin, never a
+         placement instruction, so it fires only when tiers 1-2 found no
+         project. A user setting it deliberately (tests, sandboxes) gets the
+         same behavior: used absent project context, never overriding a
+         resolvable project.
+      4. ``<plugin>/.data`` — fail-safe when nothing at all is set. Hooks that
+         fire outside any project still need a writable home; the plugin dir
+         always exists.
+
+    The 1-beats-3 order is the live "logs in the wrong place" fix: Claude Code
+    sets ``CLAUDE_PLUGIN_DATA`` unconditionally for plugin hooks, so under the
+    old order (plugin-data first) every live session's telemetry landed in the
+    plugin's data dir regardless of the project being worked on.
 
     Returns:
         Data directory path (not yet created; callers mkdir as needed).

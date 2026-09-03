@@ -35,14 +35,43 @@ class GetDataDirResolutionTests(unittest.TestCase):
         reload(env)
         return env
 
-    def test_explicit_plugin_data_wins(self):
-        os.environ.pop("CLAUDE_PLUGIN_DATA", None)
+    def test_plugin_data_used_when_no_project_context(self):
         os.environ.pop("CLAUDE_PROJECT_DIR", None)
         tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
         os.environ["CLAUDE_PLUGIN_DATA"] = tmp
         env = self._import_env()
         self.assertEqual(env.get_data_dir(), Path(tmp))
+
+    def test_project_dir_beats_plugin_data(self):
+        """The live-session regression: Claude Code injects CLAUDE_PLUGIN_DATA
+        into every plugin hook (the plugin's own state dir). Project context
+        must outrank it — under the old order (plugin-data first) every live
+        session's telemetry landed in ~/.claude/plugins/data/<plugin>/logs
+        regardless of the project being worked on ("logs in the wrong place").
+        """
+        tmp_plugin = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp_plugin, ignore_errors=True)
+        tmp_project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp_project, ignore_errors=True)
+        os.environ["CLAUDE_PLUGIN_DATA"] = tmp_plugin
+        os.environ["CLAUDE_PROJECT_DIR"] = tmp_project
+        env = self._import_env()
+        self.assertEqual(env.get_data_dir(), Path(tmp_project) / ".conductor")
+
+    def test_cwd_tracks_beat_plugin_data(self):
+        """Same regression via the cwd tier: a conductor/tracks/ cwd resolves
+        the project even when the injected CLAUDE_PLUGIN_DATA is present."""
+        tmp_plugin = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp_plugin, ignore_errors=True)
+        os.environ["CLAUDE_PLUGIN_DATA"] = tmp_plugin
+        os.environ.pop("CLAUDE_PROJECT_DIR", None)
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        (Path(tmp) / "conductor" / "tracks").mkdir(parents=True)
+        os.chdir(tmp)
+        env = self._import_env()
+        self.assertEqual(env.get_data_dir(), Path(tmp) / ".conductor")
 
     def test_project_dir_env_used(self):
         os.environ.pop("CLAUDE_PLUGIN_DATA", None)

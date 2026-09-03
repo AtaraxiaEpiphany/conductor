@@ -341,12 +341,16 @@ def _append_execution_record(track_dir, phase, task, subtask, result_data, state
     # The attempt number is STATE-owned, never the executor's self-report.
     # Callers pass the post-transition state (result.py reads it after
     # ``_do_fail``/``_do_complete``; dispatch._finalize_task likewise), so the
-    # target's retry_count IS this record's attempt: a FAILURE record renders
-    # the just-incremented retry_count, a SUCCESS renders retry_count + 1 (the
-    # attempt that succeeded). The executor's ``--attempt`` write-back (default
-    # 1 on under-report) was the duplicate-"Attempt 1/3" bug — a second number
-    # source the single-source ladder deletes. Unresolvable target (corrupt
-    # state) falls back to the legacy result field rather than crashing.
+    # target's retry_count IS this record's attempt: retry_count is 1-based
+    # (counts failed attempts — first failure stores 1, matching the
+    # ``task_max_retries`` "how many attempts" ceiling), a FAILURE record
+    # renders the just-incremented retry_count, a SUCCESS renders
+    # retry_count + 1 (the attempt that succeeded; _do_complete preserves the
+    # failure history for exactly this). The executor's ``--attempt``
+    # write-back (default 1 on under-report) was the duplicate-"Attempt 1/3"
+    # bug — a second number source the single-source ladder deletes.
+    # Unresolvable target (corrupt state) falls back to the legacy result
+    # field rather than crashing.
     try:
         tgt = target(state, int(phase), int(task),
                      int(subtask) if subtask is not None else None)

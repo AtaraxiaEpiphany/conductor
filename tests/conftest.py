@@ -36,12 +36,14 @@ if str(_SCRIPTS) not in sys.path:
 # conductor/tracks/, with CLAUDE_PROJECT_DIR unset), so every lifecycle/log
 # write in them silently fell through the tier ladder to the shared
 # <plugin>/.data fallback — the plugin repo's .data/logs accumulated ~3k test
-# events (the "logs in the wrong place" symptom). CLAUDE_PLUGIN_DATA is tier 1
-# of ``lib.env.resolve_data_dir`` and wins over every cwd heuristic, so one
+# events (the "logs in the wrong place" symptom). The pin sets
+# CLAUDE_PLUGIN_DATA, which ``lib.env.resolve_data_dir`` uses whenever no
+# project context resolves (tier 3 of 4: CLAUDE_PROJECT_DIR → cwd
+# conductor/tracks/ heuristic → CLAUDE_PLUGIN_DATA → <plugin>/.data), so one
 # session-scoped pin here covers in-process writers AND
 # ``subprocess.run(env=dict(os.environ))`` spawners alike. Tests that exercise
-# the ladder's other tiers set or delete the var in their own env — ``setdefault``
-# never overrides them. The dir outlives the run (a NamedTemporaryDirectory would
-# delete it under still-open handles); the OS temp cleaner reaps it.
+# the ladder's other tiers set or delete the var in their own env — the guard
+# never overrides them. The dir outlives the run (a NamedTemporaryDirectory
+# would delete it under still-open handles); the OS temp cleaner reaps it.
 if "CLAUDE_PLUGIN_DATA" not in os.environ:
     os.environ["CLAUDE_PLUGIN_DATA"] = tempfile.mkdtemp(prefix="conductor-tests-")
