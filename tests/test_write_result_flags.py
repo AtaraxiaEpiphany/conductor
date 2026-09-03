@@ -62,7 +62,7 @@ class WriteResultFlagTests(TestCase):
              "--summary", "did the thing", "--files-changed", "a.ts,b.ts",
              "--tc-coverage", "TC-1.1", "--coverage-pct", "94",
              "--coverage-tool", "pytest", "--phase", "1", "--task", "2",
-             "--task-name", "Build X", "--attempt", "1", "--max-retries", "3"],
+             "--task-name", "Build X"],
         )
         self.assertEqual(code, 0)
         self.assertTrue(out["ok"])
@@ -73,7 +73,23 @@ class WriteResultFlagTests(TestCase):
         self.assertIsInstance(r["coverage_pct"], int)
         self.assertEqual(r["phase"], 1)
         self.assertEqual(r["task"], 2)
-        self.assertEqual(r["max_retries"], 3)
+
+    def test_attempt_flags_silently_ignored(self):
+        # --attempt/--max-retries were removed from the contract (the handoff
+        # record derives both from state; an under-reported attempt was the
+        # duplicate-"Attempt 1/3" bug). write-result must not error on a
+        # legacy executor still sending them — transition compat.
+        out, _err, code = _capture(
+            cmd_write_result, self.dir,
+            ["--status", "success", "--commit-sha", "abc1234",
+             "--phase", "1", "--task", "1",
+             "--attempt", "2", "--max-retries", "5"],
+        )
+        self.assertEqual(code, 0)
+        self.assertTrue(out["ok"])
+        r = self._read()
+        self.assertNotIn("attempt", r)
+        self.assertNotIn("max_retries", r)
 
     def test_failure_flags_populate_nested_failure_detail(self):
         out, _err, code = _capture(

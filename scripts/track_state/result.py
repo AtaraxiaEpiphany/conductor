@@ -252,8 +252,6 @@ _RESULT_FIELD_FLAGS = [
     ("--task", "task", int),
     ("--subtask", "subtask", int),
     ("--task-name", "task_name", str),
-    ("--attempt", "attempt", int),
-    ("--max-retries", "max_retries", int),
     ("--context-footprint", "context_footprint", str),
     ("--failure-done", ("failure_detail", "what_was_done"), str),
     ("--failure-reason", ("failure_detail", "failure_reason"), str),

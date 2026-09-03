@@ -256,7 +256,7 @@ Dual output: result file + terse stdout.
 
 ### 6.1 Result File
 
-Write via CLI (handles atomic write and validation). **Pass fields as flags** — `write-result` assembles and type-validates the JSON (never hand-write it; a stray quote/comma or `"94%"`-style slip fails the parse). Integer flags (`--phase`, `--task`, `--subtask`, `--coverage-pct`, `--attempt`, `--max-retries`) exit non-zero with a message naming the offending flag on a bad value.
+Write via CLI (handles atomic write and validation). **Pass fields as flags** — `write-result` assembles and type-validates the JSON (never hand-write it; a stray quote/comma or `"94%"`-style slip fails the parse). Integer flags (`--phase`, `--task`, `--subtask`, `--coverage-pct`) exit non-zero with a message naming the offending flag on a bad value. The attempt number is NOT reported here — track-state derives it from the task's retry_count when the record is written, so never pass an attempt-like field.
 
 **Success:**
 ```bash
@@ -268,8 +268,7 @@ track-state write-result "{TRACK_DIR}" \
   --tc-coverage "<TC IDs>" \
   --coverage-pct 94 \
   --coverage-tool "<command used>" \
-  --phase PHASE --task TASK ${SUBTASK:+--subtask "$SUBTASK"} --task-name NAME \
-  --attempt ATTEMPT --max-retries MAX_RETRIES
+  --phase PHASE --task TASK ${SUBTASK:+--subtask "$SUBTASK"} --task-name NAME
 ```
 
 **Failure:**
@@ -280,8 +279,7 @@ track-state write-result "{TRACK_DIR}" \
   --failure-done "<actions>" \
   --failure-reason "<error>" \
   --failure-suggested "<recommendation>" \
-  --phase PHASE --task TASK ${SUBTASK:+--subtask "$SUBTASK"} --task-name NAME \
-  --attempt ATTEMPT --max-retries MAX_RETRIES
+  --phase PHASE --task TASK ${SUBTASK:+--subtask "$SUBTASK"} --task-name NAME
 ```
 
 **Spec deviations** (only if an AC went unmet — otherwise omit entirely). Repeatable `--deviation`, each a small JSON object:
@@ -368,8 +366,7 @@ track-state write-result "{TRACK_DIR}" \
   --failure-done "<actions taken before the block>" \
   --failure-reason "<error>" \
   --failure-suggested "<recommendation for the retry agent>" \
-  --phase PHASE --task TASK ${SUBTASK:+--subtask "$SUBTASK"} --task-name NAME \
-  --attempt ATTEMPT --max-retries MAX_RETRIES
+  --phase PHASE --task TASK ${SUBTASK:+--subtask "$SUBTASK"} --task-name NAME
 ```
 
 Confirm both calls exit 0. The handoff feeds the retry agent (`track-state get-handoff`); the `result.json` carries your real failure detail to `process-result`.

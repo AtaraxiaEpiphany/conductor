@@ -5,7 +5,9 @@ import sys
 from pathlib import Path
 
 from .core import load
-from .helpers import conductor_dir, now_iso, out, _safe_task_name, _display_loc
+from .helpers import (
+    conductor_dir, now_iso, out, _safe_task_name, _display_loc, target,
+)
 from .constants import MAX_RETRIES, task_max_retries
 
 
@@ -336,8 +338,26 @@ def _append_execution_record(track_dir, phase, task, subtask, result_data, state
         state = load(track_dir)
 
     task_name = result_data.get("task_name", "unknown")
-    attempt = result_data.get("attempt", 1)
-    max_retries = result_data.get("max_retries", MAX_RETRIES)
+    # The attempt number is STATE-owned, never the executor's self-report.
+    # Callers pass the post-transition state (result.py reads it after
+    # ``_do_fail``/``_do_complete``; dispatch._finalize_task likewise), so the
+    # target's retry_count IS this record's attempt: a FAILURE record renders
+    # the just-incremented retry_count, a SUCCESS renders retry_count + 1 (the
+    # attempt that succeeded). The executor's ``--attempt`` write-back (default
+    # 1 on under-report) was the duplicate-"Attempt 1/3" bug — a second number
+    # source the single-source ladder deletes. Unresolvable target (corrupt
+    # state) falls back to the legacy result field rather than crashing.
+    try:
+        tgt = target(state, int(phase), int(task),
+                     int(subtask) if subtask is not None else None)
+        if result_data.get("status", "").upper() == "FAILURE":
+            attempt = int(tgt.get("retry_count", 0)) or 1
+        else:
+            attempt = int(tgt.get("retry_count", 0)) + 1
+        max_retries = task_max_retries(tgt, state.get("workflow_shape"))
+    except (IndexError, KeyError, TypeError, ValueError):
+        attempt = result_data.get("attempt", 1)
+        max_retries = result_data.get("max_retries", MAX_RETRIES)
     ts = now_iso()
 
     status = result_data.get("status", "").upper()
