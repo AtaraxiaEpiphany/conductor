@@ -38,3 +38,10 @@ at the checkpoint.
    finalizing: this shape drops tdd/coverage for the WHOLE track, so
    new-behavior tasks would silently escape their gates. Plan those as a
    separate default-shape track instead.
+5. **Declare durable cross-task files with `produces:`/`uses:` edges.** A
+   migration's baselines and mapping tables are exactly the class of file
+   later tasks read by path: the producing task declares
+   `<!-- produces: reports/baseline.md -->`, the consuming task declares
+   `<!-- uses: reports/baseline.md -->`. Every `produces:` should gain a
+   `uses:` before the final phase — an unconsumed artifact is dead code
+   (plan-format-contract.md rule 9).

@@ -130,6 +130,19 @@ _TC_REF = re.compile(r"TC-\d+\.\d+")
 _DEPS_COMMENT = re.compile(r"^\s*deps\s*:", re.IGNORECASE)
 _DEPS_REF = re.compile(r"P(\d+)\.T(\d+)")
 
+# Task-artifact edges (findings/artifact edge — plan-format-contract.md rule 9):
+# ``<!-- produces: reports/baseline.md -->`` on the producer's task line and
+# ``<!-- uses: reports/baseline.md -->`` on the consumer's. Paths are
+# repo-relative and comma-separated. Like deps these are advisory metadata —
+# parsed for the delivery join (task-context) and the checkpoint advisory, NOT
+# persisted into track-state.json (to_plan_structure drops them). validate_uses
+# flags dangling uses (no matching produces anywhere) and orphan produces (no
+# uses anywhere) — warnings, never errors (deliver + surface, never deny).
+_ARTIFACT_COMMENT = {
+    "produces": re.compile(r"^\s*produces\s*:", re.IGNORECASE),
+    "uses": re.compile(r"^\s*uses\s*:", re.IGNORECASE),
+}
+
 _VALID_MARKERS = set(MARKER_MAP.values())
 
 
@@ -249,6 +262,37 @@ def _extract_deps(rest):
     return deps_refs, has_deps_comment, failures
 
 
+def _extract_artifact_refs(rest, keyword):
+    """Pull repo-relative paths from a ``<!-- {keyword}: ... -->`` comment.
+
+    ``keyword`` is ``"produces"`` or ``"uses"`` (the task-artifact edge,
+    plan-format-contract.md rule 9). Returns ``(paths, has_comment)``:
+    - paths: de-duped comma-separated tokens, stripped, first-seen order. No
+      path validation here (parse is filesystem-free) — shape issues surface
+      via the empty-comment warning and the hook's malformed-deny.
+    - has_comment: True iff a ``<!-- {keyword}: ... -->`` comment was present,
+      so an empty payload (the modal typo) can be flagged.
+
+    Only a comment whose body starts with the keyword counts — a stray
+    ``produces`` inside an AC/TC or deps comment cannot trigger this.
+    """
+    paths, seen = [], set()
+    has_comment = False
+    pat = _ARTIFACT_COMMENT[keyword]
+    for m in _HTML_COMMENT.finditer(rest):
+        body = m.group(1)
+        if not pat.match(body):
+            continue
+        has_comment = True
+        payload = pat.sub("", body, count=1)
+        for tok in payload.split(","):
+            p = tok.strip()
+            if p and p not in seen:
+                seen.add(p)
+                paths.append(p)
+    return paths, has_comment
+
+
 def parse_plan(plan_path):
     """Parse plan.md → {"phases": [...], "errors": [...], "warnings": [...]}.
 
@@ -338,12 +382,20 @@ def parse_plan(plan_path):
                 current_task["subtasks"].append(name)
             else:
                 deps_refs, has_deps_comment, dep_failures = _extract_deps(rest)
+                produces_refs, produces_has_comment = _extract_artifact_refs(
+                    rest, "produces")
+                uses_refs, uses_has_comment = _extract_artifact_refs(
+                    rest, "uses")
                 current_task = {
                     "name": name, "subtasks": [], "line": lineno,
                     "ac_refs": ac_refs, "tc_refs": tc_refs,
                     "deps_refs": deps_refs,
                     "deps_has_comment": has_deps_comment,
                     "deps_failures": dep_failures,
+                    "produces_refs": produces_refs,
+                    "produces_has_comment": produces_has_comment,
+                    "uses_refs": uses_refs,
+                    "uses_has_comment": uses_has_comment,
                 }
                 current_phase["tasks"].append(current_task)
             continue
@@ -449,6 +501,14 @@ def parse_plan(plan_path):
             f"{issue['at']}: dependency annotation issue ({issue['kind']}) "
             f"— {issue['detail']}")
 
+    # Task-artifact edge validation (plan-format-contract.md rule 9). Same
+    # advisory posture as deps: warnings never block init — the enforcement
+    # bar is deliver + surface, never deny on an unconsumed artifact.
+    for issue in validate_uses({"phases": phases}):
+        warnings.append(
+            f"{issue['at']}: task-artifact edge issue ({issue['kind']}) "
+            f"— {issue['detail']}")
+
     return {"phases": phases, "errors": errors, "warnings": warnings}
 
 
@@ -547,6 +607,62 @@ def validate_deps(parsed):
                 edges.setdefault(src, []).append(tgt)
 
     issues.extend(_detect_dep_cycles(edges))
+    return issues
+
+
+def validate_uses(parsed):
+    """Validate ``<!-- produces:/uses: -->`` artifact edges across the plan.
+
+    Returns a list of advisory issue dicts (findings/artifact edge — the
+    plan-side declaration half of the ledger; result.json ``--artifacts`` is
+    the runtime half). Filesystem-free by construction: edges are matched
+    against each other, never against disk.
+
+    Issue kinds:
+    - ``produces_empty`` / ``uses_empty``: a comment present but no path
+      tokens (the modal typo — likely malformed). The authoring hook denies
+      this class; here it is a warning so a hand-run parse still surfaces it.
+    - ``orphan``: a produces path no task anywhere declares ``uses:`` — a
+      dead-edge candidate (the thing issue #1 of the extensibility review
+      named). Advisory: a late-track consumer may legitimately not exist yet
+      while the plan is being written in phases.
+    - ``dangling``: a uses path no task anywhere declares ``produces:`` —
+      either a typo in the path or an undeclared producer. The file may still
+      exist on disk (pre-track asset), so advisory.
+
+    Each issue: ``{"kind": str, "at": "P{p}.T{t}", "detail": str}``.
+    """
+    issues = []
+    phases = parsed.get("phases", [])
+
+    all_produced = set()
+    all_used = set()
+    for ph in phases:
+        for t in ph.get("tasks", []):
+            all_produced.update(t.get("produces_refs", []) or [])
+            all_used.update(t.get("uses_refs", []) or [])
+
+    for pi, ph in enumerate(phases, 1):
+        for ti, t in enumerate(ph.get("tasks", []), 1):
+            at = f"P{pi}.T{ti}"
+            if t.get("produces_has_comment") and not t.get("produces_refs"):
+                issues.append({"kind": "produces_empty", "at": at,
+                               "detail": "<!-- produces: --> comment has no "
+                                         "path token"})
+            if t.get("uses_has_comment") and not t.get("uses_refs"):
+                issues.append({"kind": "uses_empty", "at": at,
+                               "detail": "<!-- uses: --> comment has no "
+                                         "path token"})
+            for p in t.get("produces_refs", []) or []:
+                if p not in all_used:
+                    issues.append({"kind": "orphan", "at": at,
+                                   "detail": f"produces {p} but no task "
+                                             f"declares uses: {p}"})
+            for u in t.get("uses_refs", []) or []:
+                if u not in all_produced:
+                    issues.append({"kind": "dangling", "at": at,
+                                   "detail": f"uses {u} but no task declares "
+                                             f"produces: {u}"})
     return issues
 
 

@@ -131,3 +131,21 @@ A top-level task MAY declare which earlier tasks it depends on with a second HTM
 - **Coupled task** (builds on an artifact a sibling produced — a model, a utility, a config key): `<!-- deps: P1.T1 -->`. The task stays serial until `P1.T1` lands, then becomes wave-eligible. This is the common reason to declare deps.
 - **Independent task you want the wave scheduler to parallelize** (genuinely disjoint files/modules, flat, in a phase the user wants fanned out): `<!-- deps: -->` — an *empty* deps comment is the explicit "I have no dependencies" declaration. This is what makes a task a wave candidate; the scheduler treats it as deps-satisfied immediately. Emit it **deliberately** — an empty deps comment on an ordinary sequential task is clutter that buys nothing (the task would have run on time anyway on the serial spine).
 - **No comment at all** (the default for sequential work): the task is assumed serial-order-dependent and never wave-parallelized. It runs normally in declaration order; it just forgoes the parallel speedup — which is the correct outcome for the majority of tasks.
+
+## Task-Artifact Edges (optional, advisory — `produces:`/`uses:`)
+
+Deps (rule 8) name the *control* flow; task-artifact edges name the *data* flow: a durable file one task creates that a later task must consume. Without them, a plan can write `reports/baseline.md` at P1 and mention it only in prose at P6 — the consumer gets no delivered pointer and the artifact is dead code. The couplet:
+
+```markdown
+- [ ] Record pre-migration baseline <!-- AC-1, TC-1.1 --> <!-- produces: reports/baseline.md -->
+- [ ] Verify regression against baseline <!-- AC-3, TC-3.2 --> <!-- uses: reports/baseline.md -->
+```
+
+**Rules:**
+1. **Paths are repo-relative and comma-separated.** No leading `/` or `./`: `<!-- produces: reports/a.md, docs/b.md -->`.
+2. **The runtime half is the result ledger.** At SUCCESS the producer reports the same file via `track-state write-result --artifacts '{"path":"reports/baseline.md","role":"..."}'` and the consumer attests its read via `--artifacts-used reports/baseline.md`. The plan edge declares the intent; the ledger records what actually happened (rolled into the handoff, catalogued in track-findings).
+3. **Delivery is the join.** A consumer task's `uses:` refs are resolved and delivered in its task-context; the phase checker receives an `ARTIFACT_ADVISORY` line when a declared artifact has no consumer (orphan) or a consumer's `uses:` completes with no attestation (unattested). Advisory only — never gates a verdict.
+4. **Validated, never enforced.** `plan_parse.validate_uses` flags dangling uses (no matching `produces:` anywhere), orphan produces (no `uses:` anywhere), and empty comments — warnings at `init-from-plan --check`, plus the `check-plan-annotations` hook surfaces dangling/orphan as advisory context on the write. A *malformed* comment (`<!-- produces: -->` with no path tokens) is denied by the hook — the same silent-loss class as a missing AC annotation.
+5. **Top-level tasks only**, same as deps. Declare only files a *later task* should consume — not code the task itself changes (that rides the result's `files_changed`).
+
+**When to declare edges:** when a task's deliverable is a durable file (a baseline report, a mapping table, a coverage number, a generated inventory) whose only future consumer reads it by path. Every `produces:` should gain a `uses:` before the final phase — an orphan artifact is the dead-code case this rule exists to prevent.

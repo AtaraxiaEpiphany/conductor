@@ -29,6 +29,17 @@ them, so this hook is the only enforcement point for §6. An Edit whose
 ``new_string`` is only a description fragment (no ``- [`` anchor) is not scanned
 — a residual false-negative documented as a follow-on (a full-file PostToolUse
 re-scan), not a safety net that exists today.
+
+Task-artifact edges (plan-format-contract.md rule 9, findings/artifact edge)
+share this hook: ``_scan_artifact_edges`` DENIES a malformed ``<!-- produces:
+-->`` / ``<!-- uses: -->`` comment (present, zero path tokens — the same
+silent-loss class as a missing AC annotation), and surfaces advisory dangling /
+orphan edges as ``[Conductor]`` context on an ALLOW (deliver + surface, never
+deny on an unconsumed artifact). The advisory is graph-level (uses with no
+produces anywhere, produces with no uses anywhere) and computed on FULL-CONTENT
+writes only — an Edit fragment cannot see the whole plan, so a fragmentary
+write skips it (documented residual, same class as the AC fragment-blindness
+above); ``parse_plan.validate_uses`` covers the full plan at init time.
 """
 import re
 import sys
@@ -117,6 +128,56 @@ def _text_to_scan(tool_input: dict):
                 yield (f"edits[{i}].new_string", e["new_string"])
 
 
+def _scan_artifact_edges(text: str, max_hits: int = 8):
+    """Scan full plan content for malformed task-artifact edge comments.
+
+    Returns ``(deny_hits, advisory_lines)``:
+    - deny_hits: ``(lineno, raw)`` for a ``<!-- produces: -->`` or
+      ``<!-- uses: -->`` comment whose payload yields zero path tokens — the
+      malformed deny class (mirrors the AC-annotation silent-loss deny).
+    - advisory_lines: dangling/orphan notes (uses with no produces anywhere;
+      produces with no uses anywhere), formatted for additional_context. Empty
+      when ``_parse_plan_text``-level extraction finds a clean edge graph.
+
+    Computed via the parser's own extractor (``_extract_artifact_refs``) so the
+    hook and parser agree by construction.
+    """
+    from track_state.plan_parse import _extract_artifact_refs
+    deny_hits = []
+    produced = set()   # (path) declared by any produces comment
+    used = set()       # (path) declared by any uses comment
+    per_line = []      # (lineno, produces_paths, uses_paths)
+    for idx, raw in enumerate(text.splitlines()):
+        p_refs, p_has = _extract_artifact_refs(raw, "produces")
+        u_refs, u_has = _extract_artifact_refs(raw, "uses")
+        if p_has and not p_refs:
+            deny_hits.append((idx + 1, raw))
+            if len(deny_hits) >= max_hits:
+                break
+        if u_has and not u_refs:
+            deny_hits.append((idx + 1, raw))
+            if len(deny_hits) >= max_hits:
+                break
+        if p_refs or u_refs:
+            per_line.append((idx + 1, p_refs, u_refs))
+            produced.update(p_refs)
+            used.update(u_refs)
+    advisory_lines = []
+    for lineno, p_refs, u_refs in per_line:
+        for p in p_refs:
+            if p not in used:
+                advisory_lines.append(
+                    f"  line {lineno}: produces {p} but no task declares "
+                    f"`uses: {p}` — dead-edge candidate; give it a consumer "
+                    f"before the final phase")
+        for u in u_refs:
+            if u not in produced:
+                advisory_lines.append(
+                    f"  line {lineno}: uses {u} but no task declares "
+                    f"`produces: {u}` — check the path or declare the producer")
+    return deny_hits, advisory_lines[:max_hits]
+
+
 def main():
     input_data = read_hook_input()
     tool_input = input_data.get("tool_input", {}) or {}
@@ -129,11 +190,34 @@ def main():
         return
 
     all_hits = []
-    for _label, text in _text_to_scan(tool_input):
+    has_full_content = False
+    for label, text in _text_to_scan(tool_input):
+        if label == "content":
+            has_full_content = True
         all_hits.extend(_scan(text))
 
-    if not all_hits:
-        write_hook_output(hook_event_name="PreToolUse")
+    # Task-artifact edge scan (rule 9): malformed comments deny on any chunk;
+    # the dangling/orphan advisory needs the whole plan, so full content only.
+    edge_denies = []
+    edge_advisories = []
+    if has_full_content:
+        edge_denies, edge_advisories = _scan_artifact_edges(
+            tool_input["content"])
+
+    if not all_hits and not edge_denies:
+        if edge_advisories:
+            detail = "\n".join(
+                ["plan.md task-artifact edges (produces/uses) — advisory, "
+                 "the write lands; fix before the final phase:"] + edge_advisories)
+            write_hook_output(
+                hook_event_name="PreToolUse",
+                additional_context=f"[Conductor] {detail}",
+                permission_decision="allow",
+                permission_decision_reason=(
+                    "allowed; task-artifact edge advisory attached "
+                    "(plan-format-contract.md rule 9)"))
+        else:
+            write_hook_output(hook_event_name="PreToolUse")
         return
 
     lines = ["plan.md implementation tasks are missing their "
@@ -142,6 +226,14 @@ def main():
     for lineno, raw, fix in all_hits:
         lines.append(f"  line {lineno}:  {raw.strip()}")
         lines.append(f"    → fix: {fix}")
+    if edge_denies:
+        lines.append("plan.md carries a malformed task-artifact edge comment "
+                     "— the edge would be silently lost "
+                     "(plan-format-contract.md rule 9):")
+        for lineno, raw in edge_denies:
+            lines.append(f"  line {lineno}:  {raw.strip()}")
+            lines.append("    → fix: add at least one repo-relative path, "
+                         "comma-separated: <!-- produces: reports/a.md -->")
     detail = "\n".join(lines)
 
     write_hook_output(
@@ -153,6 +245,9 @@ def main():
             "<!-- AC-n, TC-n.n --> linking their ACs and test scenarios "
             "(plan-format-contract.md §6) — otherwise the task's traceability "
             "is silently lost. Add the comment and retry."
+            + (" Malformed <!-- produces:/uses: --> comments (no path tokens) "
+               "are denied too (rule 9) — add a repo-relative path."
+               if edge_denies else "")
         ),
     )
 

@@ -37,3 +37,10 @@ is witnessed by an artifact anchor + a review attestation, not by tests.
 4. **The review attestation is the grounding.** The review channel is the
    verification (the shape's checkpoint fans out ac-tracer only — no
    tests to run); do not plan test-writing tasks on this shape.
+5. **Declare durable cross-task files with `produces:`/`uses:` edges.** A
+   deliverable task's artifact is often consumed by a later task (an
+   inventory a report cites, a dataset an analysis reads): the producing
+   task declares `<!-- produces: docs/inventory.md -->`, the consuming
+   task declares `<!-- uses: docs/inventory.md -->`. Every `produces:`
+   should gain a `uses:` before the final phase — an unconsumed artifact
+   is dead code (plan-format-contract.md rule 9).

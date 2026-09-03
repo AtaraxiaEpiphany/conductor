@@ -241,5 +241,105 @@ class DenyPathTests(TestCase):
         self.assertNotIn("hookSpecificOutput", out)
 
 
+class ArtifactEdgeTests(TestCase):
+    """``_scan_artifact_edges`` (rule 9): malformed produces/uses comments
+    (present, zero path tokens) are deny hits; dangling/orphan edges are
+    advisory lines — never deny hits (deliver + surface)."""
+
+    def test_clean_couplet_no_hits(self):
+        deny, advisory = _mod._scan_artifact_edges(
+            "- [ ] a <!-- AC-1 --> <!-- produces: reports/x.md -->\n"
+            "- [ ] b <!-- AC-2 --> <!-- uses: reports/x.md -->\n")
+        self.assertEqual(deny, [])
+        self.assertEqual(advisory, [])
+
+    def test_empty_produces_comment_is_deny_hit(self):
+        deny, advisory = _mod._scan_artifact_edges(
+            "- [ ] a <!-- AC-1 --> <!-- produces: -->\n")
+        self.assertEqual(len(deny), 1)
+        self.assertEqual(deny[0][0], 1)
+        self.assertEqual(advisory, [])
+
+    def test_empty_uses_comment_is_deny_hit(self):
+        deny, _ = _mod._scan_artifact_edges(
+            "- [ ] a <!-- AC-1 --> <!-- uses: -->\n")
+        self.assertEqual(len(deny), 1)
+
+    def test_orphan_produces_is_advisory_not_deny(self):
+        deny, advisory = _mod._scan_artifact_edges(
+            "- [ ] a <!-- AC-1 --> <!-- produces: reports/orphan.md -->\n")
+        self.assertEqual(deny, [])
+        self.assertEqual(len(advisory), 1)
+        self.assertIn("produces reports/orphan.md", advisory[0])
+        self.assertIn("no task declares", advisory[0])
+
+    def test_dangling_uses_is_advisory_not_deny(self):
+        deny, advisory = _mod._scan_artifact_edges(
+            "- [ ] b <!-- AC-2 --> <!-- uses: reports/ghost.md -->\n")
+        self.assertEqual(deny, [])
+        self.assertEqual(len(advisory), 1)
+        self.assertIn("uses reports/ghost.md", advisory[0])
+
+    def test_lineno_carried_in_advisory(self):
+        deny, advisory = _mod._scan_artifact_edges(
+            "# Plan\n## Phase 1\n- [ ] a <!-- AC-1 --> "
+            "<!-- produces: reports/x.md -->\n")
+        self.assertEqual(deny, [])
+        self.assertTrue(advisory[0].startswith("  line 3:"))
+
+
+class ArtifactEdgeHookPathTests(TestCase):
+    """End-to-end through the hook process: malformed edges deny; advisory
+    edges ALLOW with [Conductor] context attached (the write lands)."""
+
+    def _run(self, tool_input):
+        proc = subprocess.run(
+            [sys.executable, str(_HOOK)],
+            input=json.dumps({"tool_input": tool_input}),
+            capture_output=True, text=True,
+        )
+        out = json.loads(proc.stdout) if proc.stdout.strip() else {}
+        return proc.returncode, out
+
+    def test_malformed_produces_denied(self):
+        rc, out = self._run({"file_path": "/t/plan.md",
+                             "content": "- [ ] Task: a <!-- AC-1, TC-1.1 --> "
+                                        "<!-- produces: -->"})
+        spec = out.get("hookSpecificOutput", {})
+        self.assertEqual(spec.get("permissionDecision"), "deny")
+        self.assertIn("rule 9", spec.get("permissionDecisionReason", ""))
+        ctx = spec.get("additionalContext", "")
+        self.assertIn("malformed task-artifact edge", ctx)
+
+    def test_orphan_edge_allowed_with_context(self):
+        # Deliver + surface, never deny: the orphan write LANDS, with an
+        # advisory naming the dead-edge candidate.
+        rc, out = self._run({"file_path": "/t/plan.md",
+                             "content": "- [ ] Task: a <!-- AC-1, TC-1.1 --> "
+                                        "<!-- produces: reports/orphan.md -->"})
+        spec = out.get("hookSpecificOutput", {})
+        self.assertEqual(spec.get("permissionDecision"), "allow")
+        ctx = spec.get("additionalContext", "")
+        self.assertIn("[Conductor]", ctx)
+        self.assertIn("reports/orphan.md", ctx)
+
+    def test_clean_couplet_no_hook_specific_output(self):
+        rc, out = self._run({"file_path": "/t/plan.md",
+                             "content": "- [ ] Task: a <!-- AC-1, TC-1.1 --> "
+                                        "<!-- produces: reports/x.md -->\n"
+                                        "- [ ] Task: b <!-- AC-2, TC-2.1 --> "
+                                        "<!-- uses: reports/x.md -->"})
+        self.assertNotIn("hookSpecificOutput", out)
+
+    def test_edit_fragment_skips_edge_scan(self):
+        # An Edit's new_string is a fragment — the edge advisory needs the
+        # whole plan, so a fragmentary orphan declares nothing (documented
+        # residual; parse-time validate_uses covers the full plan).
+        rc, out = self._run({"file_path": "/t/plan.md",
+                             "new_string": "- [ ] Task: a <!-- AC-1, TC-1.1 --> "
+                                           "<!-- produces: reports/orphan.md -->"})
+        self.assertNotIn("hookSpecificOutput", out)
+
+
 if __name__ == "__main__":
     main()

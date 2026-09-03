@@ -58,3 +58,10 @@ planning on a real map is the reason this shape exists.
    exploratory first phase — the Prelude already ran it. Phases are
    implementation (test-grounded; the shape inherits the full gate set
    for its executor tasks).
+4. **Declare durable cross-task files with `produces:`/`uses:` edges.**
+   Research artifacts the notes surfaced (or implementation tasks emit —
+   a coverage number, a comparison table) that a later task reads by
+   path get a `<!-- produces: reports/x.md -->` on the producer's task
+   line and a `<!-- uses: reports/x.md -->` on the consumer's. Every
+   `produces:` should gain a `uses:` before the final phase — an
+   unconsumed artifact is dead code (plan-format-contract.md rule 9).

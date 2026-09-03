@@ -32,3 +32,10 @@ code verified by tests.
 3. **Tasks default untagged.** No tag IS the correct default here (full
    TDD); the registry's per-tag `when_to_use` / `signals` rules apply as
    usual — this shape adds no shape-specific tag.
+4. **Declare durable cross-task files with `produces:`/`uses:` edges.** A
+   task whose deliverable includes a file a LATER task must read (a
+   baseline report, a mapping table) declares
+   `<!-- produces: reports/x.md -->` on its task line; the consuming task
+   declares `<!-- uses: reports/x.md -->`. Every `produces:` should gain a
+   `uses:` before the final phase — an unconsumed artifact is dead code
+   (plan-format-contract.md rule 9).
