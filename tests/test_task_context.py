@@ -10,6 +10,7 @@ AC refs, a missing spec, a missing task, and the CLI surface.
 """
 import contextlib
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -128,6 +129,100 @@ class ComputeTaskContextTests(TestCase):
         self.assertIsNone(ctx["name"])
         self.assertEqual(ctx["acs"], [])
         self.assertTrue(ctx["errors"], "expected a not-found error")
+
+
+def _seed_handoff_artifacts(track_dir, stem, produced=()):
+    """Write a handoff file whose ## Task Artifacts block declares the given
+    produced paths — the harvest source for the produced bucket."""
+    h = Path(track_dir) / ".conductor" / "handoff"
+    h.mkdir(parents=True, exist_ok=True)
+    bullets = "".join(f"- {p}\n" for p in produced)
+    (h / f"{stem}.md").write_text(
+        f"# {stem}\n\n## Task Artifacts | ts\n\n### Produced\n{bullets}")
+
+
+class ArtifactJoinTests(TestCase):
+    """The artifacts delivery join (findings/artifact edge): ``uses`` resolves
+    this task's plan edges against the project root; ``produced`` filters the
+    handoff ledger to strictly-earlier (phase, task). Fail-open everywhere."""
+
+    _PLAN = ("## Phase 1: P\n"
+             "- [ ] baseline <!-- AC-1 --> <!-- produces: reports/b.md -->\n"
+             "- [ ] [Manual] verify 1\n"
+             "## Phase 2: Q\n"
+             "- [ ] early <!-- AC-2 --> <!-- produces: reports/early.md -->\n"
+             "- [ ] consumer <!-- AC-3 --> <!-- uses: reports/b.md -->\n"
+             "- [ ] later <!-- AC-4 -->\n"
+             "- [ ] [Manual] verify 2\n")
+
+    def test_uses_resolved_against_project_root(self):
+        # The track lives at {root}/conductor/tracks/demo → the repo-relative
+        # uses ref resolves against {root}; existence is reported honestly.
+        with _track(self._PLAN, _SPEC) as td:
+            ctx = compute_task_context(td, 2, 2)
+        self.assertEqual(len(ctx["artifacts"]["uses"]), 1)
+        u = ctx["artifacts"]["uses"][0]
+        self.assertEqual(u["path"], "reports/b.md")
+        self.assertTrue(str(u["resolved"]).endswith("reports/b.md"))
+        self.assertIn("/conductor/tracks/demo", str(td))  # root derivation held
+        self.assertFalse(u["exists"])  # never created in this fixture
+
+    def test_uses_existence_true_when_file_present(self):
+        with _track(self._PLAN, _SPEC) as td:
+            root = Path(td).parents[2]
+            (root / "reports").mkdir()
+            (root / "reports" / "b.md").write_text("baseline\n")
+            ctx = compute_task_context(td, 2, 2)
+        self.assertTrue(ctx["artifacts"]["uses"][0]["exists"])
+
+    def test_produced_filtered_to_strictly_earlier(self):
+        # P1T1 (earlier phase), P2T1 (same-phase serial) reach the P2T2
+        # consumer; P2T2 (self), P2T3 (same-phase higher), P3T1 (future) never.
+        with _track(self._PLAN, _SPEC) as td:
+            _seed_handoff_artifacts(td, "P1T1", ["reports/b.md — baseline"])
+            _seed_handoff_artifacts(td, "P2T1", ["reports/early.md — early"])
+            _seed_handoff_artifacts(td, "P2T2", ["reports/self.md"])
+            _seed_handoff_artifacts(td, "P2T3", ["reports/higher.md"])
+            _seed_handoff_artifacts(td, "P3T1", ["reports/future.md"])
+            ctx = compute_task_context(td, 2, 2)
+        got = [(a["path"], a["role"], a["source"])
+               for a in ctx["artifacts"]["produced"]]
+        self.assertEqual(got, [
+            ("reports/b.md", "baseline", "P1T1"),
+            ("reports/early.md", "early", "P2T1"),
+        ])
+
+    def test_malformed_stem_skipped(self):
+        with _track(self._PLAN, _SPEC) as td:
+            _seed_handoff_artifacts(td, "P1T", ["reports/odd.md"])
+            ctx = compute_task_context(td, 2, 2)
+        self.assertEqual(ctx["artifacts"]["produced"], [])
+
+    def test_fail_open_no_plan_no_handoffs(self):
+        with tempfile.TemporaryDirectory() as d:
+            td = Path(d) / "conductor" / "tracks" / "demo"
+            td.mkdir(parents=True)
+            ctx = compute_task_context(td, 2, 2)
+        self.assertEqual(ctx["artifacts"]["uses"], [])
+        self.assertEqual(ctx["artifacts"]["produced"], [])
+
+    def test_bare_track_dir_leaves_paths_repo_relative(self):
+        # No conductor/tracks layout and no $CLAUDE_PROJECT_DIR → resolved and
+        # exists are None; the repo-relative path is still delivered.
+        with tempfile.TemporaryDirectory() as d:
+            td = Path(d)
+            (td / "plan.md").write_text(self._PLAN)
+            old = os.environ.get("CLAUDE_PROJECT_DIR")
+            os.environ.pop("CLAUDE_PROJECT_DIR", None)
+            try:
+                ctx = compute_task_context(td, 2, 2)
+            finally:
+                if old is not None:
+                    os.environ["CLAUDE_PROJECT_DIR"] = old
+        u = ctx["artifacts"]["uses"][0]
+        self.assertEqual(u["path"], "reports/b.md")
+        self.assertIsNone(u["resolved"])
+        self.assertIsNone(u["exists"])
 
 
 class TaskContextCLITests(TestCase):
