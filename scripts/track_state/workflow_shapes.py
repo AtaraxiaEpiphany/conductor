@@ -654,9 +654,9 @@ def resolve_shape(track_state_field) -> str:
     """Resolve the active shape name for a track.
 
     Reads the optional ``workflow_shape`` field from ``track-state.json``
-    (written by ``init-from-plan``; v1 always writes ``"default"``). Absent or
-    unknown → ``"default"`` (fail-open: a track predating this field, or one
-    with a typo, runs the standard loop rather than blocking).
+    (written by ``init-from-plan --shape <name>``; no flag → ``"default"``).
+    Absent or unknown → ``"default"`` (fail-open: a track predating this
+    field, or one with a typo, runs the standard loop rather than blocking).
 
     ``track_state_field`` is the raw value of that field (a str or None) — the
     caller is expected to pull it off the loaded state dict so this stays a pure

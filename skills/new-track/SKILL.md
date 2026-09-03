@@ -303,13 +303,11 @@ Store the user's choice as `$EXECUTION_MODE` for use in Section 2.6.
      --track-id <id> \
      --type <type> \
      --description '<desc>' \
-     --execution-mode <interactive|continuous>
+     --execution-mode <interactive|continuous> \
+     --shape "$WORKFLOW_SHAPE"
    ```
    This validates `plan.md` syntax and creates `track-state.json` + `index.md` in one call, extracting every task and subtask deterministically. On `ok: false` (malformed `plan.md`) → halt → announce the reported `errors`.
-   > **Shape (if non-default):** `init-from-plan` writes `workflow_shape: default`. If `$WORKFLOW_SHAPE` is non-default (e.g. `migration` from §2.1), set it now so the gate set and verifier fan-out resolve correctly from the first dispatch:
-   > ```bash
-   > track-state set-workflow-shape "<track_dir>" --shape "$WORKFLOW_SHAPE"
-   > ```
+   > **Shape:** `--shape` writes `workflow_shape` from `$WORKFLOW_SHAPE` (§2.1) in the same call, validated against the shape vocab — an unknown name fails the init with the known list, never a silent `default`. The gate set and verifier fan-out therefore resolve correctly from the first dispatch. Post-init changes: `track-state set-workflow-shape`.
    > **Resume:** `track-state new-track-step "<track_dir>" state_created`
 4. **Update Tracks Registry:** `track-state registry-add "<track_dir>"` — appends the canonical entry (`- [<marker>] <description> (conductor/tracks/<track_id>/)`) from `track-state.json`; idempotent and auto-locates `conductor/tracks.md`. **Never hand-write the line** — a freeform entry (no `(link)`, plain bullet, bold id) is silently dropped by `setup`/`resolve-track`, which breaks auto-select AND explicit `setup <track>`.
    > **Resume:** `track-state new-track-step "<track_dir>" registry_updated`

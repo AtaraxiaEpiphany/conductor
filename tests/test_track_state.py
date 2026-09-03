@@ -4,6 +4,7 @@ import shutil
 import tempfile
 import io
 import sys
+from contextlib import redirect_stdout
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from unittest import TestCase, main
@@ -1044,12 +1045,61 @@ class TestInitFromPlan(TestCase):
         state = load(d)
         self.assertEqual(state["track_id"], "demo_20260101")
         self.assertEqual(state["execution_mode"], "interactive")
+        # No --shape → the fail-open default topology.
+        self.assertEqual(state["workflow_shape"], "default")
         ph1 = state["phases"][0]
         self.assertEqual(ph1["name"], "Foundation")
         self.assertEqual(len(ph1["tasks"]), 3)  # 2 impl + 1 manual
         self.assertEqual([t["name"] for t in ph1["tasks"][1]["subtasks"]],
                          ["Subtask: GET endpoint", "Subtask: POST endpoint"])
         self.assertTrue(all(t["status"] == "pending" for t in ph1["tasks"]))
+
+    def test_init_from_plan_shape_writes_workflow_shape(self):
+        # Seam fix: the §2.1-confirmed shape lands ATOMICALLY with state
+        # creation (--shape) — not via a follow-up set-workflow-shape call
+        # the skill run can forget (the live "chose migration, state says
+        # default" incident).
+        d = self._plan(self.GOOD)
+        result, _ = _out_captured(cmd_init_from_plan, d, "demo_20260101",
+                                  "feature", "demo track", "interactive",
+                                  shape="migration")
+        self.assertTrue(result["ok"])
+        self.assertEqual(load(d)["workflow_shape"], "migration")
+
+    def test_init_from_plan_unknown_shape_hard_rejects(self):
+        # The set-workflow-shape contract: a deliberate declaration never
+        # silently no-ops to default. "migrate" is the shape's keyword SIGNAL,
+        # not the shape name — exactly the typo this hard gate catches.
+        d = self._plan(self.GOOD)
+        result, _ = _out_captured(cmd_init_from_plan, d, "demo_20260101",
+                                  "feature", "demo track", "interactive",
+                                  shape="migrate")
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("unknown workflow_shape" in e and "migration" in e
+                            for e in result["errors"]),
+                        result["errors"])
+        # Rejected with the other inputs — before mkdir/write, so no state.
+        self.assertFalse((Path(d, "track-state.json")).exists())
+
+    def test_init_from_plan_shape_flag_parses_at_cli(self):
+        # The CLI plumbing: --shape survives flag() parsing into cmd_init_from_plan.
+        from scripts.track_state.cli import main
+        d = self._plan(self.GOOD)
+        prev_argv = sys.argv
+        try:
+            sys.argv = ["track-state", "init-from-plan", d,
+                        "--track-id", "demo_20260101",
+                        "--type", "feature",
+                        "--description", "demo track",
+                        "--shape", "migration"]
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                main()
+        finally:
+            sys.argv = prev_argv
+        result = json.loads(buf.getvalue())
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(load(d)["workflow_shape"], "migration")
 
     def test_init_clears_orphan_result_json(self):
         # Pre-plan → post-plan boundary reap: the §2.2.5 grounding fan-out's

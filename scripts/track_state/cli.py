@@ -209,8 +209,11 @@ _RECOVERY_POLICY_CHOICES = "|".join(RECOVERY_POLICIES)
 COMMAND_HELP = {
     "init-from-plan": ("init-from-plan <track-dir> --track-id <id>\n"
                        "                  --type <feature|bugfix|chore|docs> --description <text>\n"
-                       f"                  [--execution-mode <{_EXEC_MODE_CHOICES}>] [--check] [--force]",
-                       "Create track-state.json by parsing plan.md (refuses to overwrite; --force re-bootstraps)"),
+                       f"                  [--execution-mode <{_EXEC_MODE_CHOICES}>] [--shape <name>]\n"
+                       "                  [--check] [--force]",
+                       "Create track-state.json by parsing plan.md (refuses to overwrite; --force re-bootstraps). "
+                       "--shape writes the confirmed workflow shape in the same call (validated; "
+                       "unknown name hard-rejects)"),
     "start": ("start <track-dir>",
               "Transition track from 'new' to 'in_progress'"),
     "set-mode": (f"set-mode <track-dir> --mode <{_EXEC_MODE_CHOICES}>",
@@ -964,7 +967,8 @@ def main():
                                flag(args, "--description") or "",
                                flag(args, "--execution-mode"),
                                check="--check" in args,
-                               force="--force" in args)
+                               force="--force" in args,
+                               shape=flag(args, "--shape"))
         elif cmd == "get-handoff":
             cmd_get_handoff(track_dir, pos[0], pos[1],
                            flag(args, "--subtask"))

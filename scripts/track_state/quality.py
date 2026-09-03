@@ -248,7 +248,7 @@ def _recovery_policy_error(policy, allow_none=False):
 
 
 def _init_core(track_dir, plan, track_id, track_type, description, execution_mode=None,
-               force=False):
+               force=False, shape=None):
     """Build track-state.json + index.md + handoff.md from a plan structure dict.
 
     Returns the result dict without printing. Consumed by cmd_init_from_plan
@@ -258,6 +258,11 @@ def _init_core(track_dir, plan, track_id, track_type, description, execution_mod
     Without it, an existing track-state.json is refused — re-running init on a
     live track would otherwise silently reconstruct state from plan.md and wipe
     every task's status/SHA (V7, core-contract.md).
+
+    ``shape`` (the ``--shape`` flag) writes the confirmed workflow shape into
+    the fresh state in the same call — validated against the resolved shape
+    vocab, unknown hard-rejected (a deliberate declaration never silently
+    no-ops). ``None`` → ``"default"``.
     """
     errors = _validate_plan_structure(plan)
     if errors:
@@ -266,6 +271,23 @@ def _init_core(track_dir, plan, track_id, track_type, description, execution_mod
     mode_err = _mode_error(execution_mode, allow_none=True)
     if mode_err:
         return dict(ok=False, errors=[mode_err])
+
+    # A deliberate shape declaration validates against the resolved vocab and
+    # hard-rejects an unknown name — the set_workflow_shape contract (a *set*
+    # must not silently become a no-op even though reads fail open to
+    # "default"). Checked with the other inputs BEFORE mkdir so a bad shape
+    # never creates a directory either. Lazy import: same boundary as
+    # set_workflow_shape (a set must never crash over registry resolution).
+    if shape is not None:
+        from .workflow_shapes import SHAPES_VOCAB
+        vocab = SHAPES_VOCAB()
+        if shape not in vocab:
+            return dict(ok=False, errors=[
+                f"unknown workflow_shape {shape!r} — known shapes: "
+                f"{', '.join(vocab)}",
+                "Pass a name from the list above, or omit --shape to write "
+                "the default shape.",
+            ])
 
     # schemas/track-state.schema.json:11 requires ^[a-z0-9_]+_\d{8}$ (shortname_YYYYMMDD).
     # "track" is the cli.py default when --track-id is omitted (ad-hoc CLI use); the
@@ -340,12 +362,15 @@ def _init_core(track_dir, plan, track_id, track_type, description, execution_mod
         "current_phase_index": 1,
         "current_task_index": 1,
         # Third-axis (workflow-shapes): the declared topology this track runs.
-        # v1 always writes "default" (the planner→executor→checker loop). A
-        # future init-from-plan may infer a shape from track-type; the dispatch
-        # spine reads this via workflow_shapes.resolve_shape (absent/unknown →
-        # "default", fail-open). Advisory load-bearing: a shape_violation is
+        # ``--shape <name>`` (validated above) writes the §2.1-confirmed shape
+        # atomically with state creation — no follow-up set-workflow-shape
+        # step for the skill to forget. Absent flag → "default" (the
+        # planner→executor→checker loop). Mutable post-init via
+        # set-workflow-shape; the dispatch spine reads this via
+        # workflow_shapes.resolve_shape (absent/unknown → "default",
+        # fail-open). Advisory load-bearing: a shape_violation is
         # surfaced when a dispatch agent is off-topology (no-silent-caps).
-        "workflow_shape": "default",
+        "workflow_shape": shape or "default",
         # Recovery policy for the failed-task path (decoupled from
         # execution_mode). New tracks default to ``auto``: route a failed+
         # exhausted task straight to the skip-analyst handshake instead of
@@ -523,7 +548,7 @@ def _persist_label_telemetry(track_dir, track_id, structure):
 
 
 def cmd_init_from_plan(track_dir, track_id, track_type, description,
-                       execution_mode=None, check=False, force=False):
+                       execution_mode=None, check=False, force=False, shape=None):
     """Create track-state.json by parsing <track-dir>/plan.md mechanically.
 
     Validates plan.md syntax first — errors block initialization so a malformed
@@ -532,6 +557,8 @@ def cmd_init_from_plan(track_dir, track_id, track_type, description,
     extracted deterministically.
 
     With --check, validate and print the derived structure without writing.
+    ``shape`` (``--shape <name>``) carries the §2.1-confirmed workflow shape so
+    it lands atomically with state creation (see :func:`_init_core`).
     """
     plan_path = Path(track_dir) / "plan.md"
     if not plan_path.exists():
@@ -565,7 +592,7 @@ def cmd_init_from_plan(track_dir, track_id, track_type, description,
         return
 
     result = _init_core(track_dir, structure, track_id, track_type,
-                        description, execution_mode, force=force)
+                        description, execution_mode, force=force, shape=shape)
     if result.get("ok"):
         # The durable labeling-telemetry sample (agreements included) —
         # stdout keeps the disagreement advisories below.
