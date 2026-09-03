@@ -5,6 +5,8 @@ Pins the contract that lets agents stop hand-writing result JSON:
 - integer fields are coerced and a bad value is rejected at write time (the
   type-validation the raw-JSON path lacked);
 - repeatable --deviation builds spec_deviation_detail[];
+- repeatable --artifacts/--artifacts-used build the task-artifact ledger
+  (produced declarations + read attestations; findings/artifact edge);
 - status is the one required field and must be SUCCESS|FAILURE;
 - --data and stdin remain as backward-compatible raw-JSON inputs.
 
@@ -108,6 +110,67 @@ class WriteResultFlagTests(TestCase):
         _capture(cmd_write_result, self.dir,
                  ["--status", "success", "--summary", "x", "--phase", "1", "--task", "1"])
         self.assertNotIn("subtask", self._read())
+
+    # ── task-artifact ledger flags (findings/artifact edge) ───────────
+
+    def test_repeatable_artifacts_both_forms_and_messy_json(self):
+        # --artifacts is repeatable in both --flag val and --flag=val forms;
+        # the JSON may carry spaces and single-quotes inside the role.
+        out, _err, code = _capture(
+            cmd_write_result, self.dir,
+            ["--status", "success", "--summary", "x", "--phase", "1", "--task", "1",
+             "--artifacts", '{"path": "reports/baseline.md", "role": "baseline metrics, 112 points"}',
+             "--artifacts={\"path\":\"maps/table.json\"}",
+             "--artifacts", '{"path":"docs/notes.md","role":"decoder\'s field guide"}'],
+        )
+        self.assertEqual(code, 0)
+        r = self._read()
+        self.assertEqual(r["artifacts"], [
+            {"path": "reports/baseline.md", "role": "baseline metrics, 112 points"},
+            {"path": "maps/table.json", "role": ""},
+            {"path": "docs/notes.md", "role": "decoder's field guide"},
+        ])
+
+    def test_artifacts_normalizes_leading_dot_slash(self):
+        _capture(cmd_write_result, self.dir,
+                 ["--status", "success", "--summary", "x", "--phase", "1", "--task", "1",
+                  "--artifacts", '{"path":"  ./reports/baseline.md  "}'])
+        r = self._read()
+        self.assertEqual(r["artifacts"][0]["path"], "reports/baseline.md")
+
+    def test_repeatable_artifacts_used(self):
+        out, _err, code = _capture(
+            cmd_write_result, self.dir,
+            ["--status", "success", "--summary", "x", "--phase", "1", "--task", "1",
+             "--artifacts-used", "reports/baseline.md",
+             "--artifacts-used", "./maps/table.json"],
+        )
+        self.assertEqual(code, 0)
+        r = self._read()
+        self.assertEqual(r["artifacts_used"],
+                         ["reports/baseline.md", "maps/table.json"])
+
+    def test_bad_artifacts_json_rejected(self):
+        out, _err, code = _capture(
+            cmd_write_result, self.dir,
+            ["--status", "success", "--summary", "x", "--phase", "1", "--task", "1",
+             "--artifacts", "not-json"],
+        )
+        self.assertNotEqual(code, 0)
+        self.assertIn("--artifacts", out["error"])
+        self.assertFalse(self._result_path().exists())
+
+    def test_artifacts_without_string_path_rejected(self):
+        # {"path": 3}, a JSON array, and an empty path are all rejected with
+        # the same message: --artifacts needs a string 'path'.
+        for bad in ('{"path": 3}', '[{"path": "a.md"}]', '{"path": "   "}'):
+            out, _err, code = _capture(
+                cmd_write_result, self.dir,
+                ["--status", "success", "--summary", "x", "--phase", "1", "--task", "1",
+                 "--artifacts", bad],
+            )
+            self.assertNotEqual(code, 0, f"must reject {bad}")
+            self.assertIn("path", out["error"])
 
     # ── validation ─────────────────────────────────────────────────────
 

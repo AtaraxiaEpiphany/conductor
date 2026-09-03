@@ -103,6 +103,15 @@ class TaskExecutorReadsTrackFindingsTests(unittest.TestCase):
         # empty" and skips Layer 1 work it should do.
         self.assertIn("No durable findings", TASK_EXECUTOR)
 
+    def test_reports_artifacts_via_flags(self):
+        # Write side of the ledger (design: findings/artifact edge): §6.1
+        # must document the repeatable --artifacts/--artifacts-used flags —
+        # without them in the body, executors never declare produced files
+        # and the whole delivery chain (handoff roll → catalog → task-context
+        # join → checkpoint advisory) has no producers.
+        self.assertIn("--artifacts", TASK_EXECUTOR)
+        self.assertIn("--artifacts-used", TASK_EXECUTOR)
+
 
 if __name__ == "__main__":
     unittest.main()

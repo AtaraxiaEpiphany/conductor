@@ -296,7 +296,46 @@ def _result_from_flags(args):
             out(dict(error=f"--deviation must be a JSON object: {e}"))
             sys.exit(1)
 
+    # Repeatable --artifacts '{"path": "...", "role": "..."}' → artifacts[]
+    # (the task-artifact ledger: durable files this task produced for a LATER
+    # task to consume — rolled into the handoff at finalize, catalogued in
+    # track-findings, delivered to consumers via task-context). Paths are
+    # repo-relative; the normalizer strips whitespace and a leading "./".
+    for a in flags_all(args, "--artifacts"):
+        try:
+            obj = json.loads(a)
+        except json.JSONDecodeError as e:
+            out(dict(error=f"--artifacts must be a JSON object: {e}"))
+            sys.exit(1)
+        if (not isinstance(obj, dict)
+                or not isinstance(obj.get("path"), str)
+                or not obj["path"].strip()):
+            out(dict(error="--artifacts needs a string 'path' "
+                           "(optional string 'role')"))
+            sys.exit(1)
+        result.setdefault("artifacts", []).append({
+            "path": _normalize_artifact_path(obj["path"]),
+            "role": str(obj.get("role", "") or "").strip(),
+        })
+
+    # Repeatable --artifacts-used <path> → artifacts_used[] (the attestation:
+    # which declared artifacts this task actually read — the checkpoint's
+    # should-read vs did-read diff).
+    for u in flags_all(args, "--artifacts-used"):
+        result.setdefault("artifacts_used", []).append(
+            _normalize_artifact_path(u))
+
     return result, bool(result)
+
+
+def _normalize_artifact_path(path):
+    """Normalize a task-artifact path for the ledger: stripped whitespace, no
+    leading ``./``. Absolute paths pass through unchanged (recorded verbatim;
+    repo-relative is the documented convention, not a hard gate)."""
+    p = str(path).strip()
+    while p.startswith("./"):
+        p = p[2:]
+    return p
 
 
 def cmd_write_result(track_dir, args=None):

@@ -339,6 +339,8 @@ COMMAND_HELP = {
               "`check` lints it."),
     "write-result": ("write-result <track-dir> --status success|failure --commit-sha <sha>\n"
                      "                                --summary <text> --coverage-pct <n> ...\n"
+                     "                  [--artifacts '{\"path\":..., \"role\":...}' ...] (repeatable)\n"
+                     "                  [--artifacts-used <path> ...] (repeatable)\n"
                      "                  <track-dir> [--data '<json>']   (or pipe JSON on stdin)",
                      "Write result.json from typed flags (no JSON), --data, or stdin"),
     "process-result": ("process-result <track-dir>",

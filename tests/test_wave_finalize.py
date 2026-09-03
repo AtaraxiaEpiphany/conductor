@@ -73,11 +73,14 @@ def _state(n_tasks):
     }
 
 
-def _simulate_agent(worktree, member, files, status="SUCCESS", summary="done"):
+def _simulate_agent(worktree, member, files, status="SUCCESS", summary="done",
+                    artifacts=None, artifacts_used=None):
     """Pretend to be the task-executor: commit code + write result.json.
 
     ``files``: {repo_rel_path: content} committed on the member's branch inside
     the worktree. The result.json lands in the worktree's own .conductor/.
+    ``artifacts``/``artifacts_used``: task-artifact ledger fields (findings/
+    artifact edge) — produced declarations + read attestations.
     """
     tip = None
     for path, content in files.items():
@@ -88,13 +91,18 @@ def _simulate_agent(worktree, member, files, status="SUCCESS", summary="done"):
         _git(worktree, "add", ".")
         _git(worktree, "commit", "-m", f"feat: implement {member['name']}")
         tip = _git(worktree, "rev-parse", "--short=7", "HEAD").stdout.strip()
-    cond = Path(worktree, ".conductor")
-    cond.mkdir(exist_ok=True)
-    (cond / "result.json").write_text(json.dumps({
+    result = {
         "status": status, "commit_sha": tip or "N/A", "summary": summary,
         "phase": member["phase"], "task": member["task"], "subtask": None,
         "task_name": member["name"],
-    }))
+    }
+    if artifacts is not None:
+        result["artifacts"] = artifacts
+    if artifacts_used is not None:
+        result["artifacts_used"] = artifacts_used
+    cond = Path(worktree, ".conductor")
+    cond.mkdir(exist_ok=True)
+    (cond / "result.json").write_text(json.dumps(result))
     return tip
 
 
@@ -140,6 +148,25 @@ class TestWaveFinalizeSuccess(unittest.TestCase):
         _simulate_agent(m1["worktree"], m1, {f"f{m1['task']}.py": "1\n"})
         out, _ = _capture(cmd_wave_finalize, self.d, m1["phase"], m1["task"])
         self.assertTrue(out["drained"])
+
+    def test_success_rolls_artifacts_ledger_into_main_handoff(self):
+        # Task-artifact ledger (findings/artifact edge): the member declares
+        # produced artifacts in its worktree result.json; finalize copies the
+        # result back and processes it on the MAIN track dir, so the roll must
+        # land in the main track's handoff (worktree torn down right after).
+        m = self.members[0]
+        _simulate_agent(m["worktree"], m, {f"feat_{m['task']}.py": "A\n"},
+                        artifacts=[{"path": "reports/overlap.md",
+                                    "role": "overlap analysis"}],
+                        artifacts_used=["docs/inventory.md"])
+        out, err = _capture(cmd_wave_finalize, self.d, m["phase"], m["task"])
+        self.assertEqual(out["member_status"], "finalized", err)
+        stem = f"P{m['phase']}T{m['task']}"
+        handoff = (Path(self.d) / ".conductor" / "handoff"
+                   / f"{stem}.md").read_text()
+        self.assertIn("## Task Artifacts", handoff)
+        self.assertIn("- reports/overlap.md — overlap analysis", handoff)
+        self.assertIn("- docs/inventory.md", handoff)
 
     def test_success_no_commits_routes_to_failure(self):
         # Agent reported SUCCESS but committed nothing → FAILURE transition.

@@ -23,6 +23,7 @@ from unittest import TestCase, main
 from scripts.track_state.core import save
 from scripts.track_state.handoff import (
     cmd_append_handoff, compile_track_findings, cmd_compile_track_findings,
+    _append_execution_record, _extract_candidates, _extract_subtask_section,
 )
 
 
@@ -350,6 +351,176 @@ class StampPathTests(TestCase):
 def _strip_compiled_at(text):
     """Drop the `_Last compiled:` line so idempotency compares stable content."""
     return "\n".join(l for l in text.splitlines() if not l.startswith("_Last compiled:"))
+
+
+class ArtifactsRollTests(TestCase):
+    """The task-artifact ledger roll (findings/artifact edge): a SUCCESS
+    finalize writes a ``## Task Artifacts`` block as its own ``##``-level
+    handoff section — the durable home, since result.json is reaped at
+    finalize. FAILURE never rolls (no artifact fact from an incomplete task);
+    the block must not corrupt the subtask slice above it."""
+
+    def setUp(self):
+        self.d = _make_track()
+        self.addCleanup(__import__("shutil").rmtree, self.d, ignore_errors=True)
+
+    def _handoff(self, p=1, t=1):
+        return (Path(self.d) / ".conductor" / "handoff" / f"P{p}T{t}.md"
+                ).read_text()
+
+    def _success_result(self):
+        return {"status": "SUCCESS", "task_name": "Task A", "attempt": 1,
+                "phase": 1, "task": 1,
+                "commit_sha": "abc1234", "summary": "wrote baseline",
+                "artifacts": [{"path": "reports/baseline.md",
+                               "role": "pre-migration metrics"}],
+                "artifacts_used": ["docs/inventory.md"]}
+
+    def test_success_rolls_artifacts_block(self):
+        _append_execution_record(self.d, 1, 1, None, self._success_result())
+        h = self._handoff()
+        self.assertIn("## Task Artifacts", h)
+        self.assertIn("### Produced", h)
+        self.assertIn("- reports/baseline.md — pre-migration metrics", h)
+        self.assertIn("### Used", h)
+        self.assertIn("- docs/inventory.md", h)
+
+    def test_success_without_artifacts_writes_no_block(self):
+        r = self._success_result()
+        del r["artifacts"], r["artifacts_used"]
+        _append_execution_record(self.d, 1, 1, None, r)
+        self.assertNotIn("## Task Artifacts", self._handoff())
+
+    def test_failure_never_rolls(self):
+        r = self._success_result()
+        r["status"] = "FAILURE"
+        r["failure_detail"] = {"what_was_done": "x", "failure_reason": "y",
+                               "suggested_next_step": "z"}
+        _append_execution_record(self.d, 1, 1, None, r)
+        self.assertNotIn("## Task Artifacts", self._handoff())
+
+    def test_legacy_process_result_success_rolls(self):
+        # The legacy raw-JSON finalize path shares _append_execution_record —
+        # one roll hook covers serial + wave + legacy.
+        from scripts.track_state.result import cmd_process_result
+        cond = Path(self.d) / ".conductor"
+        cond.mkdir(parents=True, exist_ok=True)
+        (cond / "result.json").write_text(
+            json.dumps(self._success_result()))
+        with io.StringIO() as buf:
+            old, sys.stdout = sys.stdout, buf
+            try:
+                cmd_process_result(self.d)
+            finally:
+                sys.stdout = old
+        self.assertIn("## Task Artifacts", self._handoff())
+
+    def test_subtask_slice_survives_artifacts_block(self):
+        # The roll writes AFTER the subtask section as a sibling ## heading.
+        # _extract_subtask_section terminates at the next ## header — the
+        # slice must still contain the final attempt and exclude the block.
+        _append_execution_record(
+            self.d, 1, 1, 2,
+            dict(self._success_result(), task_name="sub two"))
+        content = self._handoff()
+        slc = _extract_subtask_section(content, 2)
+        self.assertIn("## Subtask 2: sub two", slc)
+        self.assertIn("### Attempt 1", slc)          # final attempt intact
+        self.assertNotIn("## Task Artifacts", slc)   # block is not subtask's
+
+
+class ArtifactsHarvestRenderTests(TestCase):
+    """Harvest + catalog render: the roll's ## Task Artifacts blocks are
+    collected (deduped, capped, role-split) into artifacts_produced/used
+    buckets and rendered as a ## Task Artifacts catalog section — an
+    artifacts-only track is a real doc, never the empty stub."""
+
+    def setUp(self):
+        self.d = _make_track()
+        self.addCleanup(__import__("shutil").rmtree, self.d, ignore_errors=True)
+
+    def _handoff_dir(self):
+        h = Path(self.d) / ".conductor" / "handoff"
+        h.mkdir(parents=True, exist_ok=True)
+        return h
+
+    def _seed(self, stem, produced=(), used=()):
+        bullets = ""
+        if produced:
+            bullets += "### Produced\n" + "".join(
+                f"- {p}\n" for p in produced)
+        if used:
+            bullets += "### Used\n" + "".join(f"- {u}\n" for u in used)
+        (self._handoff_dir() / f"{stem}.md").write_text(
+            f"# {stem}\n\n## Task Artifacts | 2026-09-03T00:00:00+00:00\n\n"
+            f"{bullets}")
+
+    def test_roll_then_compile_renders_catalog(self):
+        _append_execution_record(
+            self.d, 1, 1, None,
+            {"status": "SUCCESS", "task_name": "Task A", "attempt": 1,
+             "summary": "s", "artifacts": [{"path": "reports/baseline.md",
+                                            "role": "pre-migration metrics"}],
+             "artifacts_used": []})
+        r = compile_track_findings(self.d)
+        self.assertEqual(r["artifacts_produced_count"], 1)
+        doc = (Path(self.d) / ".conductor" / "track-findings.md").read_text()
+        self.assertIn("## Task Artifacts", doc)
+        self.assertIn(
+            "- reports/baseline.md — pre-migration metrics _— source P1T1 (Phase 1)_",
+            doc)
+
+    def test_artifacts_only_track_is_not_stub(self):
+        self._seed("P1T1", produced=["reports/baseline.md — metrics"])
+        r = compile_track_findings(self.d)
+        self.assertTrue(r["compiled"])
+        self.assertEqual(r["artifacts_produced_count"], 1)
+        doc = (Path(self.d) / ".conductor" / "track-findings.md").read_text()
+        self.assertIn("reports/baseline.md", doc)
+        self.assertNotIn("No durable findings recorded yet", doc)
+
+    def test_role_split_and_no_role(self):
+        self._seed("P1T1", produced=["a.md — the role", "b.md"])
+        h = _extract_candidates(Path(self.d) / ".conductor" / "handoff")
+        self.assertEqual(h["artifacts_produced"], [
+            {"path": "a.md", "role": "the role", "source": "P1T1"},
+            {"path": "b.md", "role": "", "source": "P1T1"},
+        ])
+
+    def test_used_bucket_collected(self):
+        self._seed("P2T1", used=["a.md", "b.md"])
+        h = _extract_candidates(Path(self.d) / ".conductor" / "handoff")
+        self.assertEqual(h["artifacts_used"], [
+            {"path": "a.md", "source": "P2T1"},
+            {"path": "b.md", "source": "P2T1"},
+        ])
+
+    def test_dedup_across_handoffs(self):
+        self._seed("P1T1", produced=["shared.md — role"])
+        self._seed("P2T1", produced=["shared.md — role", "only-later.md"])
+        h = _extract_candidates(Path(self.d) / ".conductor" / "handoff")
+        self.assertEqual([a["path"] for a in h["artifacts_produced"]],
+                         ["shared.md", "only-later.md"])
+
+    def test_capped_per_kind_per_file(self):
+        self._seed("P1T1",
+                   produced=[f"p{i}.md" for i in range(10)],
+                   used=[f"u{i}.md" for i in range(10)])
+        h = _extract_candidates(Path(self.d) / ".conductor" / "handoff")
+        self.assertEqual(len(h["artifacts_produced"]), 8)
+        self.assertEqual(len(h["artifacts_used"]), 8)
+        self.assertIn("p7.md", [a["path"] for a in h["artifacts_produced"]])
+        self.assertNotIn("p8.md", [a["path"] for a in h["artifacts_produced"]])
+
+    def test_walk_stops_at_next_h2_block(self):
+        # A ## Task Artifacts block ends at the next ## heading — bullets in
+        # a later section must not leak into the ledger buckets.
+        (self._handoff_dir() / "P1T1.md").write_text(
+            "# P1T1\n\n## Task Artifacts | ts\n\n### Produced\n- a.md\n\n"
+            "## Execution Record\n\n- not-an-artifact.md\n")
+        h = _extract_candidates(Path(self.d) / ".conductor" / "handoff")
+        self.assertEqual([a["path"] for a in h["artifacts_produced"]],
+                         ["a.md"])
 
 
 if __name__ == "__main__":

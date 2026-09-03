@@ -128,10 +128,12 @@ class HarvestEdgeCaseTests(TestCase):
 
     def test_extract_candidates_missing_dir(self):
         # Direct helper call on a non-existent dir — graceful empty result
-        # (all four harvest buckets present and empty).
+        # (all six harvest buckets present and empty — the two artifacts
+        # buckets joined with the findings/artifact edge).
         r = _extract_candidates(Path(tempfile.mkdtemp()) / "nope" / "handoff")
         self.assertEqual(r, {"graduation": [], "decisions": [],
-                             "findings": [], "gotchas": []})
+                             "findings": [], "gotchas": [],
+                             "artifacts_produced": [], "artifacts_used": []})
 
     def test_ignores_non_handoff_md_files(self):
         """Only P*T*.md files are handoffs; stray .md in the dir is ignored."""

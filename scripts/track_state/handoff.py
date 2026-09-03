@@ -300,6 +300,36 @@ def _write_task_handoff(track_dir, phase, task, content, state=None):
         _ensure_handoff_index(track_dir)
     return str(handoff_file)
 
+def _render_artifacts_block(result_data, ts):
+    """Render the ``## Task Artifacts`` handoff block from a result dict, or
+    ``None`` when the result declares nothing (no block, no noise).
+
+    The task-artifact ledger's durable home: result.json is reaped at finalize,
+    so the roll lands here — a ``##``-level heading the harvest walks (unlike
+    the ``###`` attempt records) and later phases read via track-findings and
+    the task-context join. Bullets: ``- {path} — {role}`` (Produced, role
+    optional) and ``- {path}`` (Used, the attestation).
+    """
+    produced = [a for a in (result_data.get("artifacts") or [])
+                if isinstance(a, dict) and str(a.get("path", "")).strip()]
+    used = [str(u).strip() for u in (result_data.get("artifacts_used") or [])
+            if str(u).strip()]
+    if not produced and not used:
+        return None
+    lines = [f"\n## Task Artifacts | {ts}\n"]
+    if produced:
+        lines.append("### Produced\n")
+        for a in produced:
+            role = str(a.get("role", "") or "").strip()
+            lines.append(f"- {a['path']}" + (f" — {role}" if role else ""))
+        lines.append("")
+    if used:
+        lines.append("### Used\n")
+        for u in used:
+            lines.append(f"- {u}")
+        lines.append("")
+    return "\n".join(lines)
+
 def _append_execution_record(track_dir, phase, task, subtask, result_data, state=None):
     """Append an execution record (success or failure) to task handoff."""
     if state is None:
@@ -349,6 +379,16 @@ def _append_execution_record(track_dir, phase, task, subtask, result_data, state
         section_header = f"\n## Execution Record\n\n{record}\n"
 
     _write_task_handoff(track_dir, phase, task, section_header, state)
+
+    # Task-artifact ledger roll (design: findings/artifact edge): SUCCESS-only
+    # — a produced artifact or an attestation is a completed-task fact. Its own
+    # ##-level heading so the harvest walks it without touching the attempt
+    # record; it terminates the subtask slice ABOVE it, which is safe because
+    # SUCCESS means no later attempt for this subtask.
+    if status == "SUCCESS":
+        artifacts_block = _render_artifacts_block(result_data, ts)
+        if artifacts_block:
+            _write_task_handoff(track_dir, phase, task, artifacts_block, state)
 
 def _extract_subtask_section(content, subtask):
     """Return the ``## Subtask {n}`` slice of *content*, or ``''`` if absent.
@@ -590,13 +630,20 @@ _FINDINGS_CAP_PER_TASK = 8
 # `## Technical Decision: {title} | {ts}` rendered by the decision block.
 _DECISION_HEADING = re.compile(r"^##\s+Technical Decision:\s*(.+?)\s*(?:\|[^|]*)?$")
 _DECISION_FIELD = re.compile(r"^\*\*(Options|Chosen|Reasoning|Tradeoffs)\*\*:\s*(.*)$")
+# Task-artifact ledger block (design: findings/artifact edge): the
+# `## Task Artifacts | {ts}` heading the SUCCESS finalize roll writes.
+# Produced bullets carry `- {path} — {role}` (role optional, em-dash
+# separator); Used bullets are bare `- {path}` attestations.
+_ARTIFACTS_HEADING = re.compile(r"^##\s+Task Artifacts\b")
+_ARTIFACT_SUB_HEADING = re.compile(r"^###\s+(Produced|Used)\b")
+_ARTIFACT_ROLE_SEP = " — "
 
 
 def _extract_candidates(handoff_dir):
     """Parse durable findings from every ``P*T*.md`` handoff file in *handoff_dir*.
 
     Returns ``{"graduation": [...], "decisions": [...], "findings": [...],
-    "gotchas": [...]}``:
+    "gotchas": [...], "artifacts_produced": [...], "artifacts_used": [...]}``:
     - graduation: ``{"text", "source"}`` per non-``_None_`` bullet under any
       ``### Graduation Candidates`` section (de-duplicated by text; multiple
       sections per file — e.g. one per subtask — are all collected).
@@ -606,17 +653,24 @@ def _extract_candidates(handoff_dir):
       block's ``### Key Findings`` / ``### Gotchas & Constraints`` sections
       (de-duplicated by text; capped at ``_FINDINGS_CAP_PER_TASK`` bullets per
       kind per file; the ``- None`` empty-list sentinel is never collected).
+    - artifacts_produced / artifacts_used: ``{"path"[, "role"], "source"}``
+      from the SUCCESS finalize roll's ``## Task Artifacts`` blocks (the
+      task-artifact ledger; de-duplicated by path; same per-kind cap).
 
     ``source`` is the handoff stem (``P1T2``). Read-only; never creates the dir.
     """
     graduation, decisions = [], []
     findings, gotchas = [], []
+    artifacts_produced, artifacts_used = [], []
     if not handoff_dir.is_dir():
         return {"graduation": graduation, "decisions": decisions,
-                "findings": findings, "gotchas": gotchas}
+                "findings": findings, "gotchas": gotchas,
+                "artifacts_produced": artifacts_produced,
+                "artifacts_used": artifacts_used}
 
     seen = set()  # de-dup identical candidate text across handoffs
     seen_findings, seen_gotchas = set(), set()
+    seen_produced, seen_used = set(), set()
     for hf in sorted(handoff_dir.glob("P*T*.md")):
         source = hf.stem
         try:
@@ -690,8 +744,49 @@ def _extract_candidates(handoff_dir):
                     entry[{"Chosen": "chosen", "Reasoning": "reasoning"}[fm.group(1)]] = fm.group(2).strip()
             decisions.append(entry)
 
+        # Task-artifact ledger blocks (possibly several per file — one per
+        # SUCCESS finalize). Walk bounded by the next `## ` heading; subsection
+        # state via `### Produced` / `### Used`; bullets only. Same per-kind
+        # per-file cap as findings (the ledger needs the load-bearing head).
+        n_prod = n_used = 0
+        for idx, line in enumerate(lines):
+            if not _ARTIFACTS_HEADING.match(line):
+                continue
+            section = None
+            for l in lines[idx + 1:]:
+                if l.startswith("## "):
+                    break  # next ## block ends this Task Artifacts block
+                sm = _ARTIFACT_SUB_HEADING.match(l)
+                if sm:
+                    section = sm.group(1)
+                    continue
+                s = l.strip()
+                if not s.startswith("- "):
+                    continue  # blank/prose lines inside the block carry nothing
+                text = s[2:].strip()
+                if not text:
+                    continue
+                if section == "Produced" and n_prod < _FINDINGS_CAP_PER_TASK:
+                    if _ARTIFACT_ROLE_SEP in text:
+                        path, role = text.split(_ARTIFACT_ROLE_SEP, 1)
+                    else:
+                        path, role = text, ""
+                    path = path.strip()
+                    if path and path not in seen_produced:
+                        seen_produced.add(path)
+                        artifacts_produced.append(
+                            {"path": path, "role": role.strip(), "source": source})
+                        n_prod += 1
+                elif section == "Used" and n_used < _FINDINGS_CAP_PER_TASK:
+                    if text not in seen_used:
+                        seen_used.add(text)
+                        artifacts_used.append({"path": text, "source": source})
+                        n_used += 1
+
     return {"graduation": graduation, "decisions": decisions,
-            "findings": findings, "gotchas": gotchas}
+            "findings": findings, "gotchas": gotchas,
+            "artifacts_produced": artifacts_produced,
+            "artifacts_used": artifacts_used}
 
 
 def cmd_harvest_candidates(track_dir):
@@ -771,6 +866,7 @@ def _render_track_findings(track_dir, state, harvested, current_phase=None):
     decisions = harvested.get("decisions", [])
     findings = harvested.get("findings", [])
     gotchas = harvested.get("gotchas", [])
+    produced = harvested.get("artifacts_produced", [])
     description = state.get("description", "") if state else ""
     track_id = state.get("track_id", "track") if state else "track"
     title = description.strip() or track_id
@@ -790,7 +886,8 @@ def _render_track_findings(track_dir, state, harvested, current_phase=None):
         "",
     ]
 
-    if not graduation and not decisions and not findings and not gotchas:
+    if (not graduation and not decisions and not findings and not gotchas
+            and not produced):
         lines.append("_No durable findings recorded yet._")
         lines.append("")
         return "\n".join(lines)
@@ -840,6 +937,25 @@ def _render_track_findings(track_dir, state, harvested, current_phase=None):
     else:
         lines.append("_None._")
         lines.append("")
+    lines.append("## Task Artifacts")
+    lines.append("")
+    if produced:
+        lines.append("_Durable files earlier tasks produced for later "
+                     "consumption (paths repo-relative). Delivered to "
+                     "consuming tasks via the task-context join — or read by "
+                     "path; verify against code, older entries age like "
+                     "findings._")
+        lines.append("")
+        for a in produced:
+            src = a.get("source", "?")
+            role = str(a.get("role", "") or "").strip()
+            entry = a["path"] + (f" — {role}" if role else "")
+            lines.append(f"- {entry} _— source {src} "
+                         f"{_source_age_label(src, current_phase)}_")
+        lines.append("")
+    else:
+        lines.append("_None._")
+        lines.append("")
     return "\n".join(lines)
 
 
@@ -858,8 +974,9 @@ def compile_track_findings(track_dir, current_phase=None):
     path passes it; the manual CLI path omits it → source-phase-only labels).
 
     Returns a dict (``path``, ``graduation_count``, ``decisions_count``,
-    ``findings_count``, ``gotchas_count``, ``compiled`` bool). Does not emit —
-    the CLI wrapper and the stamp path decide what to do with the result.
+    ``findings_count``, ``gotchas_count``, ``artifacts_produced_count``,
+    ``compiled`` bool). Does not emit — the CLI wrapper and the stamp path
+    decide what to do with the result.
     """
     state = load(track_dir)
     handoff_dir = Path(track_dir) / ".conductor" / "handoff"
@@ -877,6 +994,8 @@ def compile_track_findings(track_dir, current_phase=None):
         "decisions_count": len(harvested.get("decisions", [])),
         "findings_count": len(harvested.get("findings", [])),
         "gotchas_count": len(harvested.get("gotchas", [])),
+        "artifacts_produced_count":
+            len(harvested.get("artifacts_produced", [])),
         "compiled": compiled,
     }
 

@@ -289,6 +289,13 @@ track-state write-result "{TRACK_DIR}" \
   --deviation '{"ac_id":"AC-2","reason":"<why>","suggested_revision":"<fix>"}'
 ```
 
+**Task artifacts** (success only). Declare durable files this task produced for later tasks, and attest files from earlier tasks this task actually read. Both repeatable; paths are repo-relative (no leading `/`, no `./`):
+```bash
+  --artifacts '{"path":"reports/baseline.md","role":"pre-migration baseline metrics"}'
+  --artifacts-used reports/baseline.md
+```
+Declare only files a later task should consume — not code changed by the task itself (that rides `--files-changed`). An attested `--artifacts-used` should name a file an earlier task declared `--artifacts` (or a plan `uses:` edge) — the phase checker receives an advisory when a declared artifact has no consumer, or a `uses:` consumer completes without attesting its read.
+
 Confirm the call exits 0 (prints `{"ok": true, ...}`); a non-zero exit means the result was rejected (bad/missing field) — fix it and retry, else report FAILURE.
 
 > Fallback: raw JSON is still accepted via `--data '<json>'` or piped on stdin (quoted heredoc) if a field the flags don't cover is ever needed. On failure, `commit_sha`/`files_changed` may be omitted — the orchestrator's retry/skip path reads `summary` + `failure_detail`.
