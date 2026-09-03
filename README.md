@@ -56,7 +56,7 @@ All interaction happens through Claude Code slash commands:
 ### `track-state` CLI
 
 <!-- conductor:begin:cli-groups -->
-The `bin/track-state` command provides direct state management. Run `bin/track-state help` for the full, current list (93 subcommands across 18 groups) — it is grouped and self-describing. The complete surface, straight from `track_state/commands.py` (the same single source the pre-command guard derives its sanctioned set from):
+The `bin/track-state` command provides direct state management. Run `bin/track-state help` for the full, current list (94 subcommands across 18 groups) — it is grouped and self-describing. The complete surface, straight from `track_state/commands.py` (the same single source the pre-command guard derives its sanctioned set from):
 
 | Group | Subcommands |
 |-------|-------------|
@@ -70,7 +70,7 @@ The `bin/track-state` command provides direct state management. Run `bin/track-s
 | **Rail B-min Spines** | `step`, `post-loop-step`, `post-loop-review`, `phase-verdict`, `phase-checkpoint-review`, `skip-analyst-verdict`, `skip-refute-review`, `plan-refute-prompt`, `grounding-prompt`, `failure-analyst-verdict`, `phase-failure-analyst-verdict`, `amend-apply`, `amend-clear`, `review-attest` |
 | **Wave Parallelism** | `dispatch-wave`, `wave-status`, `wave-finalize`, `wave-abort`, `wave-step` |
 | **Naming** | `derive-name`, `propose-shape`, `propose-grounding`, `resolve-track`, `check` |
-| **New-Track Resume** | `new-track-resume`, `new-track-init`, `new-track-step`, `new-track-set-mode`, `new-track-finalize` |
+| **New-Track Resume** | `new-track-resume`, `new-track-init`, `new-track-step`, `new-track-set-mode`, `new-track-set-shape`, `new-track-finalize` |
 | **Brief** | `brief-resume`, `pending-briefs`, `brief-init`, `brief-finalize`, `brief-grill-done` |
 | **Diagnostics** | `validate`, `gc`, `shas`, `post-loop-status`, `checklist-verify`, `deferred-report`, `phase-done`, `add-checkpoint`, `preflight`, `quality-snapshot`, `spec-integrity`, `spec-anchors`, `spec-delta`, `task-context`, `view`, `status` |
 | **Workflow Studio** | `shape-studio`, `registry-json`, `registry-save` |

@@ -45,7 +45,7 @@ from .wave import (
 )
 from .new_track import (
     cmd_new_track_init, cmd_new_track_step, cmd_new_track_set_mode,
-    cmd_new_track_resume, cmd_new_track_finalize,
+    cmd_new_track_set_shape, cmd_new_track_resume, cmd_new_track_finalize,
 )
 from .brief import (cmd_brief_init, cmd_brief_finalize, cmd_brief_resume,
                     cmd_brief_grill_done, cmd_brief_pending)
@@ -90,7 +90,8 @@ _BOOL_FLAGS = {"--full", "--fix", "--check", "--force", "--verify",
 # ``validate auth`` all work. See ``_resolve_track_dir_or_halt``.
 _TD_NO_RESOLUTION_COMMANDS = {
     "init-from-plan", "new-track-init", "new-track-step",
-    "new-track-set-mode", "new-track-finalize", "preflight", "derive-name",
+    "new-track-set-mode", "new-track-set-shape", "new-track-finalize",
+    "preflight", "derive-name",
     "propose-shape", "propose-grounding",
     "brief-init", "brief-finalize", "brief-grill-done",
     "roster", "probe", "tag",
@@ -528,6 +529,10 @@ COMMAND_HELP = {
                        "Stamp a resume step done (idempotent, order-preserving)"),
     "new-track-set-mode": (f"new-track-set-mode <track-dir> --mode <{_EXEC_MODE_CHOICES}>",
                           "Write execution_mode into the new-track resume marker"),
+    "new-track-set-shape": ("new-track-set-shape <track-dir> --shape <name>",
+                            "Write the §2.1-confirmed workflow_shape into the new-track "
+                            "resume marker (validated; unknown name hard-rejects) so it "
+                            "survives an interrupt before init-from-plan --shape"),
     "new-track-resume": ("new-track-resume",
                          "Detect any interrupted new-track (committed:false marker) and emit its "
                          "resume directive. ALWAYS exits 0 — action:none|resume"),
@@ -1013,6 +1018,8 @@ def main():
             cmd_new_track_step(track_dir, pos[0])
         elif cmd == "new-track-set-mode":
             cmd_new_track_set_mode(track_dir, flag(args, "--mode"))
+        elif cmd == "new-track-set-shape":
+            cmd_new_track_set_shape(track_dir, flag(args, "--shape"))
         elif cmd == "new-track-resume":
             cmd_new_track_resume()
         elif cmd == "new-track-finalize":

@@ -25,7 +25,7 @@ A new-track run can be interrupted before state artifacts exist (§2.6). A light
    - `none` → fresh track → proceed to §1.0.
    - `resume` → `candidates[]` is the partial track(s). For each candidate, `AskUserQuestion`:
      *"Found an incomplete track `<track_id>` ('<description>'), last reached `<last_step>`. Resume?"*
-     - **Yes (resume)** → adopt the candidate's `track_id` / `track_dir` / `description` / `type` / `execution_mode` for everything below, then **jump to the candidate's `resume_target`** — the first section whose step key is NOT in `steps_done` (`spec_planned` → §2.3, `reviewed` → §2.4, `state_created` → §2.6, `registry_updated` → §2.6). Skip sections already marked done.
+     - **Yes (resume)** → adopt the candidate's `track_id` / `track_dir` / `description` / `type` / `execution_mode` / `workflow_shape` for everything below (re-record `$WORKFLOW_SHAPE` from the candidate's `workflow_shape`; `null` means the interrupt hit before the §2.1 stamp → `$WORKFLOW_SHAPE=default`, fail-open), then **jump to the candidate's `resume_target`** — the first section whose step key is NOT in `steps_done` (`spec_planned` → §2.3, `reviewed` → §2.4, `state_created` → §2.6, `registry_updated` → §2.6). Skip sections already marked done.
      - **No** → warn the user an orphaned partial track exists at that `track_dir`, then proceed to a fresh track (§1.0).
 
 The marker is created in §2.1 (`new-track-init`) and deleted once the track is committed (`new-track-finalize`, end of §2.6).
@@ -78,6 +78,10 @@ CRITICAL: Validate every tool call. On failure → halt → announce.
 6. **Initialize resume marker** (skip if resuming — `new-track-resume` already found it). Creates `<track_dir>/.conductor/` and the marker in one call (idempotent — a no-op if the marker already exists):
    ```bash
    track-state new-track-init "<track_dir>" --track-id <id> --description "<desc>" --type <type>
+   ```
+   Then stamp the §2.1-confirmed shape into the marker immediately — the marker, not the session variable, must carry `$WORKFLOW_SHAPE` across an interrupt before §2.6:
+   ```bash
+   track-state new-track-set-shape "<track_dir>" --shape "$WORKFLOW_SHAPE"
    ```
 
 ### 2.2 Context Discovery (Paths Only)
@@ -307,7 +311,7 @@ Store the user's choice as `$EXECUTION_MODE` for use in Section 2.6.
      --shape "$WORKFLOW_SHAPE"
    ```
    This validates `plan.md` syntax and creates `track-state.json` + `index.md` in one call, extracting every task and subtask deterministically. On `ok: false` (malformed `plan.md`) → halt → announce the reported `errors`.
-   > **Shape:** `--shape` writes `workflow_shape` from `$WORKFLOW_SHAPE` (§2.1) in the same call, validated against the shape vocab — an unknown name fails the init with the known list, never a silent `default`. The gate set and verifier fan-out therefore resolve correctly from the first dispatch. Post-init changes: `track-state set-workflow-shape`.
+   > **Shape:** `--shape` writes `workflow_shape` from `$WORKFLOW_SHAPE` (§2.1; on a resume, re-recorded from the resume candidate's `workflow_shape` — `null` → `default`, fail-open) in the same call, validated against the shape vocab — an unknown name fails the init with the known list, never a silent `default`. The gate set and verifier fan-out therefore resolve correctly from the first dispatch. Post-init changes: `track-state set-workflow-shape`.
    > **Resume:** `track-state new-track-step "<track_dir>" state_created`
 4. **Update Tracks Registry:** `track-state registry-add "<track_dir>"` — appends the canonical entry (`- [<marker>] <description> (conductor/tracks/<track_id>/)`) from `track-state.json`; idempotent and auto-locates `conductor/tracks.md`. **Never hand-write the line** — a freeform entry (no `(link)`, plain bullet, bold id) is silently dropped by `setup`/`resolve-track`, which breaks auto-select AND explicit `setup <track>`.
    > **Resume:** `track-state new-track-step "<track_dir>" registry_updated`

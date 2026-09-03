@@ -66,6 +66,7 @@ class NewTrackInitTests(_MarkerTestCase):
         self.assertEqual(data["description"], "Foo thing")
         self.assertEqual(data["type"], "feature")
         self.assertIsNone(data["execution_mode"])
+        self.assertIsNone(data["workflow_shape"])
         self.assertEqual(data["steps_done"], [])
         self.assertFalse(data["committed"])
 
@@ -134,6 +135,31 @@ class NewTrackSetModeTests(_MarkerTestCase):
     def test_set_mode_errors_when_no_marker(self):
         bare = str(Path(self.tmp) / "nope")
         out = run(nt.cmd_new_track_set_mode, bare, "continuous")
+        self.assertIn("error", out)
+
+
+class NewTrackSetShapeTests(_MarkerTestCase):
+    def setUp(self):
+        super().setUp()
+        run(nt.cmd_new_track_init, self.td, "foo_20260710", "d", "feature")
+
+    def test_set_shape_writes_workflow_shape(self):
+        out = run(nt.cmd_new_track_set_shape, self.td, "migration")
+        self.assertTrue(out["ok"])
+        self.assertEqual(self.read_marker_file()["workflow_shape"], "migration")
+
+    def test_set_shape_rejects_unknown_without_mutation(self):
+        # The hard-gate contract: "migrate" is the shape's keyword SIGNAL, not
+        # the shape name — a deliberate declaration never silently no-ops.
+        run(nt.cmd_new_track_set_shape, self.td, "default")
+        out = run(nt.cmd_new_track_set_shape, self.td, "migrate")
+        self.assertIn("error", out)
+        self.assertIn("migration", out["hint"])
+        self.assertEqual(self.read_marker_file()["workflow_shape"], "default")
+
+    def test_set_shape_errors_when_no_marker(self):
+        bare = str(Path(self.tmp) / "nope")
+        out = run(nt.cmd_new_track_set_shape, bare, "migration")
         self.assertIn("error", out)
 
 
@@ -206,6 +232,7 @@ class NewTrackResumeTests(_MarkerTestCase):
         run(nt.cmd_new_track_step, self.td, "spec_planned")
         run(nt.cmd_new_track_step, self.td, "reviewed")
         run(nt.cmd_new_track_set_mode, self.td, "continuous")
+        run(nt.cmd_new_track_set_shape, self.td, "migration")
         out = run(nt.cmd_new_track_resume)
         self.assertEqual(out["action"], "resume")
         self.assertEqual(len(out["candidates"]), 1)
@@ -213,6 +240,9 @@ class NewTrackResumeTests(_MarkerTestCase):
         self.assertEqual(c["track_id"], "foo_20260710")
         self.assertEqual(c["description"], "Foo thing")
         self.assertEqual(c["execution_mode"], "continuous")
+        # The stamped shape rides the resume directive so a new session
+        # re-records $WORKFLOW_SHAPE without re-running the §2.1 matcher.
+        self.assertEqual(c["workflow_shape"], "migration")
         self.assertEqual(c["steps_done"], ["spec_planned", "reviewed"])
         self.assertEqual(c["last_step"], "reviewed")
         self.assertEqual(c["first_missing_step"], "state_created")
@@ -293,7 +323,8 @@ class NewTrackCliWiringTests(TestCase):
                            capture_output=True, text=True)
         self.assertIn("New-Track Resume", r.stdout)
         for cmd in ("new-track-resume", "new-track-init", "new-track-step",
-                    "new-track-set-mode", "new-track-finalize"):
+                    "new-track-set-mode", "new-track-set-shape",
+                    "new-track-finalize"):
             self.assertIn(cmd, r.stdout)
 
     def test_full_lifecycle_round_trip(self):

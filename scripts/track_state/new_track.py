@@ -16,8 +16,9 @@ so they read-modify-write with idempotent, order-preserving appends and a
 tolerant reader — the same invariants as the post-loop sidecar, without the
 ``python3 -c`` one-liner envelope. The skill never hand-edits the marker JSON.
 
-Lifecycle: ``init`` → ``step spec_planned`` → ``step reviewed`` → ``set-mode``
-→ ``step state_created`` → ``step registry_updated`` → ``finalize`` (deletes).
+Lifecycle: ``init`` → ``set-shape`` → ``step spec_planned`` → ``step reviewed``
+→ ``set-mode`` → ``step state_created`` → ``step registry_updated`` →
+``finalize`` (deletes).
 """
 from pathlib import Path
 
@@ -69,7 +70,8 @@ def cmd_new_track_init(track_dir, track_id, description, type_):
     data = {
         "track_id": track_id, "track_dir": str(track_dir),
         "description": description, "type": type_,
-        "execution_mode": None, "steps_done": [], "committed": False,
+        "execution_mode": None, "workflow_shape": None,
+        "steps_done": [], "committed": False,
     }
     _nt_write_marker(track_dir, data)
     out(dict(ok=True, action="created", track_dir=str(track_dir), steps_done=[]))
@@ -108,6 +110,38 @@ def cmd_new_track_set_mode(track_dir, mode):
     data["execution_mode"] = mode
     _nt_write_marker(track_dir, data)
     out(dict(ok=True, track_dir=str(track_dir), execution_mode=mode))
+
+
+def cmd_new_track_set_shape(track_dir, shape):
+    """Write ``workflow_shape`` (validated against the resolved shape vocab).
+
+    Mirrors :func:`cmd_new_track_set_mode`: the §2.1-confirmed shape must
+    survive an interrupt between §2.1 and §2.6 — a session variable
+    (``$WORKFLOW_SHAPE``) does not, the marker does. A resumed run re-records
+    ``$WORKFLOW_SHAPE`` from the resume candidate's ``workflow_shape`` and
+    passes it to ``init-from-plan --shape``, so the confirmed shape reaches
+    ``track-state.json`` even across sessions.
+
+    Hard-rejects an unknown name (the set_workflow_shape contract: a
+    deliberate declaration never silently no-ops, even though reads fail
+    open to ``default``).
+    """
+    # Local import: same fail-open boundary as quality.set_workflow_shape —
+    # a stamp must never crash over registry resolution.
+    from .workflow_shapes import SHAPES_VOCAB
+    vocab = SHAPES_VOCAB()
+    if shape not in vocab:
+        out(dict(error=f"unknown workflow_shape {shape!r}",
+                 hint=f"known shapes: {', '.join(vocab)}"))
+        return
+    data = _nt_read_marker(track_dir)
+    if data is None:
+        out(dict(error="no new-track-progress marker — run new-track-init first",
+                 track_dir=str(track_dir)))
+        return
+    data["workflow_shape"] = shape
+    _nt_write_marker(track_dir, data)
+    out(dict(ok=True, track_dir=str(track_dir), workflow_shape=shape))
 
 
 def cmd_new_track_finalize(track_dir):
@@ -153,6 +187,7 @@ def cmd_new_track_resume():
                 description=data.get("description"),
                 type=data.get("type"),
                 execution_mode=data.get("execution_mode"),
+                workflow_shape=data.get("workflow_shape"),
                 steps_done=done,
                 last_step=done[-1] if done else None,
                 first_missing_step=first_missing,
