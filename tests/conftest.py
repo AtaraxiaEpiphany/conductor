@@ -21,10 +21,27 @@ It lives in ``tests/`` rather than at the repo root so the shim is scoped to
 the test tree it serves — every test is under ``tests/``, so pytest loads this
 conftest for all of them, and the plugin root stays free of test-only config.
 """
+import os
 import sys
+import tempfile
 from pathlib import Path
 
 # tests/ → repo root → scripts/
 _SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
+
+# Pin the runtime data dir for the WHOLE suite. Tests that spawn hook scripts
+# as subprocesses inherit the ambient env (cwd = the plugin repo, which has no
+# conductor/tracks/, with CLAUDE_PROJECT_DIR unset), so every lifecycle/log
+# write in them silently fell through the tier ladder to the shared
+# <plugin>/.data fallback — the plugin repo's .data/logs accumulated ~3k test
+# events (the "logs in the wrong place" symptom). CLAUDE_PLUGIN_DATA is tier 1
+# of ``lib.env.resolve_data_dir`` and wins over every cwd heuristic, so one
+# session-scoped pin here covers in-process writers AND
+# ``subprocess.run(env=dict(os.environ))`` spawners alike. Tests that exercise
+# the ladder's other tiers set or delete the var in their own env — ``setdefault``
+# never overrides them. The dir outlives the run (a NamedTemporaryDirectory would
+# delete it under still-open handles); the OS temp cleaner reaps it.
+if "CLAUDE_PLUGIN_DATA" not in os.environ:
+    os.environ["CLAUDE_PLUGIN_DATA"] = tempfile.mkdtemp(prefix="conductor-tests-")

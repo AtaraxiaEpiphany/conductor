@@ -360,7 +360,10 @@ class BriefCounterLifecycleTests(TestCase):
                 _probe(project, "AskUserQuestion", cwd=str(td))
             self.assertTrue(self._counter_file(project).exists())
             # Finalize in-process, with the data dir pointed at the temp
-            # project (get_data_dir reads env at call time).
+            # project (get_data_dir reads env at call time). Restore the
+            # prior value — popping unconditionally would strip the suite-wide
+            # CLAUDE_PLUGIN_DATA pin (tests/conftest.py) for every later test.
+            prior = os.environ.get("CLAUDE_PLUGIN_DATA")
             os.environ["CLAUDE_PLUGIN_DATA"] = str(project / ".data")
             try:
                 buf = io.StringIO()
@@ -368,7 +371,10 @@ class BriefCounterLifecycleTests(TestCase):
                     br.cmd_brief_finalize(str(td))
                 result = json.loads(buf.getvalue())
             finally:
-                os.environ.pop("CLAUDE_PLUGIN_DATA", None)
+                if prior is None:
+                    os.environ.pop("CLAUDE_PLUGIN_DATA", None)
+                else:
+                    os.environ["CLAUDE_PLUGIN_DATA"] = prior
             self.assertTrue(result["ok"])
             data = json.loads(self._counter_file(project).read_text())
             self.assertNotIn(td.name, data)

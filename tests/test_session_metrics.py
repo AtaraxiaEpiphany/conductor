@@ -91,7 +91,17 @@ class MainStampBehaviorTests(TestCase):
 
     def _run_main(self, source, session_id, digest_marker=""):
         td = tempfile.mkdtemp()
-        self.addCleanup(os.environ.pop, "CLAUDE_PLUGIN_DATA", None)
+        # Restore the prior value (the conftest suite pin), never bare-pop:
+        # stripping it mid-suite sends every later env-inheriting writer to
+        # the tier-4 <plugin>/.data fallback.
+        prior = os.environ.get("CLAUDE_PLUGIN_DATA")
+
+        def _restore():
+            if prior is None:
+                os.environ.pop("CLAUDE_PLUGIN_DATA", None)
+            else:
+                os.environ["CLAUDE_PLUGIN_DATA"] = prior
+        self.addCleanup(_restore)
         os.environ["CLAUDE_PLUGIN_DATA"] = td
         # read_hook_input caches stdin in a module-global; reset it so each call
         # re-reads our fresh stdin instead of returning a prior test's payload.

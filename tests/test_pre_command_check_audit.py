@@ -33,6 +33,7 @@ _pcc = _load("pre_command_check_g11", "pre-command-check.py")
 def _run_main(command, cwd):
     """Drive main() with a Bash command. Returns the audit-log text (empty if none)."""
     td = tempfile.mkdtemp()
+    prior = os.environ.get("CLAUDE_PLUGIN_DATA")
     os.environ["CLAUDE_PLUGIN_DATA"] = td
     # read_hook_input caches stdin module-globally; reset so this call re-reads.
     _pcc.read_hook_input.__globals__["_cached_hook_input"] = None
@@ -49,6 +50,10 @@ def _run_main(command, cwd):
         pass  # write_hook_output exits 0/2 after deciding
     finally:
         sys.stdin, sys.stdout = old_in, old_out
+        if prior is None:
+            os.environ.pop("CLAUDE_PLUGIN_DATA", None)
+        else:
+            os.environ["CLAUDE_PLUGIN_DATA"] = prior
     log = Path(td) / "logs" / "override-audit.log"
     return log.read_text() if log.exists() else ""
 
@@ -56,11 +61,15 @@ def _run_main(command, cwd):
 class AuditGateUnitTests(TestCase):
     def test_writes_gate_and_hex_digest(self):
         td = tempfile.mkdtemp()
+        prior = os.environ.get("CLAUDE_PLUGIN_DATA")
         os.environ["CLAUDE_PLUGIN_DATA"] = td
         try:
             _pcc._audit_gate("dangerous_git", "git reset --hard HEAD~1")
         finally:
-            os.environ.pop("CLAUDE_PLUGIN_DATA", None)
+            if prior is None:
+                os.environ.pop("CLAUDE_PLUGIN_DATA", None)
+            else:
+                os.environ["CLAUDE_PLUGIN_DATA"] = prior
         log = (Path(td) / "logs" / "override-audit.log").read_text()
         self.assertIn("gate=dangerous_git", log)
         self.assertIn("digest=", log)
@@ -69,22 +78,30 @@ class AuditGateUnitTests(TestCase):
 
     def test_command_not_persisted_verbatim(self):
         td = tempfile.mkdtemp()
+        prior = os.environ.get("CLAUDE_PLUGIN_DATA")
         os.environ["CLAUDE_PLUGIN_DATA"] = td
         try:
             _pcc._audit_gate("f2_tdd", "git commit -m 'feat: super secret thing'")
         finally:
-            os.environ.pop("CLAUDE_PLUGIN_DATA", None)
+            if prior is None:
+                os.environ.pop("CLAUDE_PLUGIN_DATA", None)
+            else:
+                os.environ["CLAUDE_PLUGIN_DATA"] = prior
         log = (Path(td) / "logs" / "override-audit.log").read_text()
         self.assertNotIn("super secret thing", log)
 
     def test_write_failure_does_not_raise(self):
         """_audit_gate is best-effort — it must never block the gate decision."""
         # Point CLAUDE_PLUGIN_DATA at a path that can't be created.
+        prior = os.environ.get("CLAUDE_PLUGIN_DATA")
         os.environ["CLAUDE_PLUGIN_DATA"] = "/proc/cannot/create/here"
         try:
             _pcc._audit_gate("v10_commit", "git commit -m 'bad'")
         finally:
-            os.environ.pop("CLAUDE_PLUGIN_DATA", None)
+            if prior is None:
+                os.environ.pop("CLAUDE_PLUGIN_DATA", None)
+            else:
+                os.environ["CLAUDE_PLUGIN_DATA"] = prior
 
 
 class MainAuditIntegrationTests(TestCase):
