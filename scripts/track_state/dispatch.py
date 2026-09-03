@@ -45,7 +45,7 @@ from .git_ops import (
     docs_synced_for_track, wiki_phase2_committed_for_track,
     _git_rev_parse_toplevel,
 )
-from .handoff import _append_execution_record
+from .handoff import _append_execution_record, _track_findings_path
 from .misc import _get_all_shas, _stamp_checkpoint_in_plan
 from .quality import _finalize_track
 from .validate import _fix_plan_mismatches, ensure_healthy
@@ -1491,6 +1491,15 @@ def _build_executor(track_dir, pre, attempt):
     if si is not None:
         lines.append(f"SUBTASK={si}")
     lines.append(f"NAME={pre.get('name', '?')}")
+    # Cross-phase findings pointer (design: findings/artifact edge) — emitted on
+    # BOTH arms (explorers are the heaviest re-readers of prior findings), so it
+    # must sit ABOVE the explore early-return. Present only when the compiled
+    # doc exists: an absent line means "none recorded yet" — never a dangling
+    # pointer. Rides the prompt body like WORKFLOW_FILE (no COMPACT_FIELDS
+    # change) and, unlike it, is NOT a manifest (explorers owe no workflow).
+    findings_path = _track_findings_path(td)
+    if findings_path.exists():
+        lines.append(f"FINDINGS_FILE={findings_path}")
     if _classify_task(pre.get("tags", [])) == "explore":
         return "explorer", "\n".join(lines)
     lines.append(f"ATTEMPT={attempt}")
@@ -3420,6 +3429,12 @@ def cmd_phase_checkpoint_review(track_dir, status, sha, reason):
         # (both stamp paths funnel through it) — nothing to do here.
         out(dict(ok=True, stamped=True, phase=cp, sha=sha, track_dir=td))
     elif verdict == "FAILED":
+        # Compile findings on the FAILED arm too (advisory, fail-open): failed
+        # phases are often where the learning is — the recovery analyst and the
+        # retry cycle both benefit from a fresh .conductor/track-findings.md.
+        # PASSED compiles inside _stamp_checkpoint_in_plan (its single home).
+        from .misc import compile_track_findings_fail_open
+        compile_track_findings_fail_open(track_dir, int(cp))
         if _auto_route_failure(state):
             # Track 2 — route the phase failure through recovery instead of halting.
             # Carry the failing verifier verdicts (from the phase-cp marker the

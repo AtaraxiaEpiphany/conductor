@@ -313,16 +313,21 @@ class StampPathTests(TestCase):
         self.assertTrue(doc_path.exists(), "PASSED must compile track-findings.md")
         self.assertIn("phase-1 durable finding", doc_path.read_text())
 
-    def test_failed_checkpoint_does_not_compile(self):
+    def test_failed_checkpoint_compiles_without_stamp(self):
+        # Findings/artifact edge: the FAILED arm compiles too (fail-open) — a
+        # failed phase is often where the learning is, and the recovery
+        # analyst/retry cycle both read a fresh track-findings.md. No stamp:
+        # compiling must never read as an advance.
         from scripts.track_state.dispatch import cmd_phase_checkpoint_review
         d = self._track()
-        self._seed_finding(d, "should not graduate mid-track")
+        self._seed_finding(d, "failed-phase durable finding")
         o = self._capture(cmd_phase_checkpoint_review, d, "FAILED", None, "AC1 not met")
         self.assertTrue(o["ok"])
         self.assertFalse(o["stamped"])
         doc_path = Path(d) / ".conductor" / "track-findings.md"
-        self.assertFalse(doc_path.exists(),
-                         "FAILED must NOT compile track-findings (no advance)")
+        self.assertTrue(doc_path.exists(),
+                        "FAILED must compile track-findings (no stamp)")
+        self.assertIn("failed-phase durable finding", doc_path.read_text())
 
     def test_compile_failure_is_fail_open(self):
         # A broken compile must not block the checkpoint stamp. Monkeypatch

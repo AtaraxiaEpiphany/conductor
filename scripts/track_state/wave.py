@@ -41,6 +41,7 @@ from lib.atomic_io import atomic_write_json
 from lib.json_utils import load_json_safe
 from .dispatch import _classify_task, _finalize_task, _emit_quiescent_leaf
 from .dispatch_manifest import manifest_path, write_manifest
+from .handoff import _track_findings_path
 from .validate import ensure_healthy
 from .plan_parse import parse_plan, collect_deps
 from .git_ops import (
@@ -506,6 +507,16 @@ def prepare_wave(track_dir):
             "phase": p, "task": t, "subtask": None,
             "name": m["name"], "tags": extract_tags(m.get("name", "")),
         })
+        # Cross-phase findings mirror (design: findings/artifact edge): the
+        # compiled doc is gitignored, and the worktree checks out at base_sha —
+        # without this copy the member's FINDINGS_FILE line would be a
+        # permanent silent no-op. Copy-only-when-present: absent line = none
+        # recorded yet, matching the serial rail. Torn down with the worktree.
+        src_findings = _track_findings_path(track_dir)
+        if src_findings.exists():
+            dst_findings = _track_findings_path(wt_td)
+            dst_findings.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(src_findings, dst_findings)
         members.append({
             "phase": p, "task": t, "name": m["name"], "track_id": slug,
             "worktree": worktree, "branch": branch, "base_sha": base_sha,
@@ -775,6 +786,12 @@ def _wave_assemble_member_prompt(member, attempt=1):
         f"MAX_RETRIES={MAX_RETRIES}",
         f"WORKFLOW_FILE={manifest_path(member['worktree_track_dir'])}",
     ]
+    # Mirrors dispatch._build_executor's both-arms FINDINGS_FILE (the wave copy
+    # lands in the worktree at prepare time). Present only when the mirror
+    # exists — same absent-line contract as the serial rail.
+    findings_path = _track_findings_path(member["worktree_track_dir"])
+    if findings_path.exists():
+        lines.append(f"FINDINGS_FILE={findings_path}")
     return "\n".join(lines)
 
 

@@ -318,7 +318,11 @@ class EnvelopeWiringTests(TestCase):
     """WORKFLOW_FILE rides the executor envelope on every rail (serial
     dispatch-next, wave member prompts) — executor arm only: explorers owe no
     workflow, and no manifest is written for them. The pointer is APPENDED
-    after MAX_RETRIES on both rails (one shape, no interleaving)."""
+    after MAX_RETRIES on both rails (one shape, no interleaving).
+
+    FINDINGS_FILE (findings/artifact edge) rides BOTH arms and the wave member
+    prompt — emitted only when the compiled track-findings doc exists (absent
+    line = none recorded yet, never a dangling pointer)."""
 
     def test_serial_executor_envelope_carries_workflow_file(self):
         pre = _pre("[Migrate] port the legacy importer")
@@ -333,6 +337,35 @@ class EnvelopeWiringTests(TestCase):
         self.assertEqual(agent, "explorer")
         self.assertNotIn("WORKFLOW_FILE=", body)
 
+    def test_findings_line_absent_when_doc_missing(self):
+        # /tmp/t has no .conductor/track-findings.md — the line must be omitted
+        # entirely (absent line = none recorded), never a dangling pointer.
+        for pre in (_pre("[Migrate] port the importer"), _pre("[Explore] map")):
+            _, body = dz._build_executor("/tmp/t", pre, attempt=1)  # noqa: SLF001
+            self.assertNotIn("FINDINGS_FILE=", body)
+
+    def test_findings_line_present_on_both_arms_when_doc_exists(self):
+        td = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, td, True)
+        findings = Path(td) / ".conductor" / "track-findings.md"
+        findings.parent.mkdir(parents=True)
+        findings.write_text("# Track Findings\n", encoding="utf-8")
+        expected = f"FINDINGS_FILE={findings}"
+        # Executor arm: above ATTEMPT (before the explore early-return point).
+        pre = _pre("[Migrate] port the importer")
+        agent, body = dz._build_executor(td, pre, attempt=1)  # noqa: SLF001
+        self.assertEqual(agent, "task-executor")
+        self.assertIn(expected, body)
+        self.assertLess(body.index("NAME="), body.index("FINDINGS_FILE="))
+        self.assertLess(body.index("FINDINGS_FILE="), body.index("ATTEMPT="))
+        # Explorer arm: the heaviest re-reader of prior findings must also get
+        # the line — and still no WORKFLOW_FILE.
+        pre = _pre("[Explore] map the module")
+        agent, body = dz._build_executor(td, pre, attempt=1)  # noqa: SLF001
+        self.assertEqual(agent, "explorer")
+        self.assertIn(expected, body)
+        self.assertNotIn("WORKFLOW_FILE=", body)
+
     def test_wave_member_prompt_carries_worktree_manifest(self):
         member = {"worktree": "/tmp/wt",
                   "worktree_track_dir": "/tmp/wt/conductor/tracks/demo",
@@ -342,6 +375,25 @@ class EnvelopeWiringTests(TestCase):
             f"WORKFLOW_FILE={dm.manifest_path('/tmp/wt/conductor/tracks/demo')}",
             body)
         self.assertLess(body.index("MAX_RETRIES="), body.index("WORKFLOW_FILE="))
+
+    def test_wave_member_prompt_findings_line_mirrors_serial_contract(self):
+        # The worktree findings mirror lands at prepare time; the member prompt
+        # line follows the serial contract (present only when the copy exists).
+        member = {"worktree": "/tmp/wt",
+                  "worktree_track_dir": "/tmp/wt/conductor/tracks/demo",
+                  "phase": 2, "task": 3, "name": "[Migrate] x"}
+        body = wave_mod._wave_assemble_member_prompt(member)  # noqa: SLF001
+        self.assertNotIn("FINDINGS_FILE=", body)  # /tmp/wt has no mirror
+
+        wt_td = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, wt_td, True)
+        findings = Path(wt_td) / ".conductor" / "track-findings.md"
+        findings.parent.mkdir(parents=True)
+        findings.write_text("# Track Findings\n", encoding="utf-8")
+        member = {"worktree": "/tmp/wt", "worktree_track_dir": wt_td,
+                  "phase": 2, "task": 3, "name": "[Migrate] x"}
+        body = wave_mod._wave_assemble_member_prompt(member)  # noqa: SLF001
+        self.assertIn(f"FINDINGS_FILE={findings}", body)
 
 
 if __name__ == "__main__":

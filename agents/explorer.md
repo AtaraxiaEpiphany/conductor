@@ -57,11 +57,11 @@ The durable architecture you are paid to investigate is *already documented* in 
 
 ### 3.2 Track Findings (READ BEFORE code exploration)
 
-If `{TRACK_DIR}/.conductor/track-findings.md` exists, Read it. This is the **cross-phase bridge**: durable findings + technical decisions an earlier phase of *this track* recorded, compiled automatically at each phase checkpoint. It is prior art scoped to this track — read it before you explore so you don't rediscover what a prior phase already established.
+Read the file your envelope's `FINDINGS_FILE=` line names — the compiled doc at `{TRACK_DIR}/.conductor/track-findings.md` (compiled automatically at each phase checkpoint — on PASSED *and* FAILED verdicts). This is the **cross-phase bridge**: durable findings + technical decisions an earlier phase of *this track* recorded. It is prior art scoped to this track — read it before you explore so you don't rediscover what a prior phase already established.
 
+- An absent `FINDINGS_FILE` line (first phase, or no explorer ran yet) → skip silently. This is expected; it is not a missing-corpus signal.
 - Treat each finding as a starting point to **verify against code**, not inherit blindly.
 - Findings you build on (confirm, extend, or contradict) belong in your `consulted_docs` list (§3.1 step 4) as `{path: ".conductor/track-findings.md", relevance: "<one line>"}` so the downstream task-executor inherits them via your handoff.
-- If the file is absent (first phase, or no explorer ran yet) → skip silently. This is expected; it is not a missing-corpus signal.
 - If the file exists but reads `_No durable findings recorded yet._` (a prior checkpoint compiled an empty harvest) → treat it as absent: nothing durable to inherit, proceed to explore. Do not interpret the stub as a signal that exploration is pointless or that the area is documented.
 
 ---

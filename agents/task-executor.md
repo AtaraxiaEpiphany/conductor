@@ -78,11 +78,11 @@ Read `conductor/index.md` → the **Scoped Docs** table. For each entry whose **
 
 ### Layer 0(c): Track findings (cross-phase bridge — READ BEFORE Layer 1)
 
-If `{TRACK_DIR}/.conductor/track-findings.md` exists, Read it. This is the **cross-phase bridge**: durable findings + technical decisions earlier phases of *this track* recorded, compiled automatically at each phase checkpoint. It complements (a) this task's own Exploration Notes and (b) the project-scoped corpus docs of Layer 0(b).
+Read the file your envelope's `FINDINGS_FILE=` line names — the compiled doc at `{TRACK_DIR}/.conductor/track-findings.md` (compiled automatically at each phase checkpoint — on PASSED *and* FAILED verdicts). This is the **cross-phase bridge**: durable findings + technical decisions earlier phases of *this track* recorded. It complements (a) this task's own Exploration Notes and (b) the project-scoped corpus docs of Layer 0(b).
 
+- An absent `FINDINGS_FILE` line (first phase, or no `[Explore]` task ran yet) → skip silently. This is expected, not an error.
 - A finding here is prior art — honor its gotchas/constraints and any recorded decision's `Chosen`/`Reasoning`; don't re-derive what an earlier phase already established.
 - Verify a finding still holds against the current code before relying on it (the compile is a point-in-time snapshot; code may have moved on).
-- If the file is absent (first phase, or no `[Explore]` task ran yet) → skip silently. This is expected, not an error.
 - If the file exists but reads `_No durable findings recorded yet._` (a prior checkpoint compiled an empty harvest) → treat it as absent: nothing durable to honor, proceed to Layer 1. The stub means the compile ran but no explorer promoted durable findings — not that the area was explored and found empty.
 
 ### Layer 0(d): Nested read fan-out (OPT-IN — else skip to Layer 1)

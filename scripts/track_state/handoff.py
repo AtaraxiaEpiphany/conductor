@@ -713,8 +713,14 @@ def cmd_harvest_candidates(track_dir):
 # ── Track Findings (durable findings compiled for later phases) ──────
 
 def _track_findings_path(track_dir):
-    """Path to the compiled track-findings doc (track-scoped scratch)."""
-    return conductor_dir(track_dir) / "track-findings.md"
+    """Path to the compiled track-findings doc (track-scoped scratch).
+
+    PURE — never mints the ``.conductor/`` directory (``conductor_dir`` has an
+    mkdir side effect; an envelope-time existence probe must not create dirs
+    under a track dir that may not exist yet). The only writer
+    (``compile_track_findings``) mkdirs the parent itself.
+    """
+    return Path(track_dir) / ".conductor" / "track-findings.md"
 
 
 _SOURCE_PHASE = re.compile(r"^P(\d+)T\d+$")

@@ -25,6 +25,10 @@ TASK_EXECUTOR = (AGENTS / "task-executor.md").read_text(encoding="utf-8")
 # changes (handoff.py::_track_findings_path), this constant — and both agent
 # bodies — must move together; this test is the tripwire.
 FINDINGS_DOC = "track-findings.md"
+# The envelope line both readers are retargeted to (design: findings/artifact
+# edge) — the pointer rides the envelope, the bodies name it, so a body edit
+# that reverts to path-recall is caught here.
+FINDINGS_LINE = "FINDINGS_FILE="
 
 
 class ExplorerReadsTrackFindingsTests(unittest.TestCase):
@@ -33,6 +37,11 @@ class ExplorerReadsTrackFindingsTests(unittest.TestCase):
         # compiled path, the explorer re-explores from scratch every phase and
         # the durable findings a prior phase recorded never reach it.
         self.assertIn(FINDINGS_DOC, EXPLORER)
+
+    def test_section_3_2_names_envelope_pointer(self):
+        # The read trigger is the envelope line, not path recall — the weakest
+        # contract class the findings edge retired.
+        self.assertIn(FINDINGS_LINE, EXPLORER)
 
     def test_cross_phase_framing_present(self):
         # The reader must know WHY it is reading this file (prior art from an
@@ -63,6 +72,11 @@ class TaskExecutorReadsTrackFindingsTests(unittest.TestCase):
         # reference disappears, the task-executor implements blind to prior
         # phases' durable findings.
         self.assertIn(FINDINGS_DOC, TASK_EXECUTOR)
+
+    def test_layer_0c_names_envelope_pointer(self):
+        # Mirror of the explorer pin: the read trigger is the envelope line,
+        # not path recall.
+        self.assertIn(FINDINGS_LINE, TASK_EXECUTOR)
 
     def test_layer_label_present(self):
         # Pin the layer label so a renumbering is caught here, not silently in

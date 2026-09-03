@@ -1746,14 +1746,27 @@ def _stamp_checkpoint_in_plan(track_dir, p, sha):
     # cmd_phase_checkpoint_review's PASSED arm — Rail B), so the compile lives
     # here rather than at either call site. A PASSED checkpoint means the
     # phase's durable findings are settled; later phases' consumers read
-    # .conductor/track-findings.md. FAILED never stamps → never compiles.
-    # Advisory + fail-open: a compile error must never block the advance (the
-    # checkpoint is already stamped).
+    # .conductor/track-findings.md. FAILED never stamps but DOES compile (via
+    # compile_track_findings_fail_open at the review command's FAILED arm) —
+    # failed phases are often where the learning is. Advisory + fail-open: a
+    # compile error must never block the advance (the checkpoint is already
+    # stamped).
+    compile_track_findings_fail_open(track_dir, phase_num)
+    return dict(ok=True, phase=p, sha=sha)
+
+
+def compile_track_findings_fail_open(track_dir, phase_num=None):
+    """Advisory track-findings compile that can never raise (single behavior
+    home). Called from ``_stamp_checkpoint_in_plan`` (the PASSED stamp path,
+    same module) and from ``cmd_phase_checkpoint_review``'s FAILED arm — one
+    fail-open posture, two call sites. Calls the module-level
+    ``compile_track_findings`` binding (the monkeypatch target the fail-open
+    test patches), so keep the indirection — do not import it locally.
+    """
     try:
         compile_track_findings(track_dir, current_phase=phase_num)
     except Exception as exc:  # noqa: BLE001 — advisory, never fatal
         sys.stderr.write(f"track-findings compile skipped (advisory): {exc}\n")
-    return dict(ok=True, phase=p, sha=sha)
 
 
 def cmd_add_checkpoint(track_dir, p, sha):
