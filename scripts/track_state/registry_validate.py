@@ -79,6 +79,16 @@ CHECKPOINT_POLICIES = ("run", "skip-if-declared")
 #: Dispatch category for a task type (`route` field).
 ROUTES = ("manual", "explore", "executor")
 
+#: What "done, verified" means for a task class's DELIVERABLE (the tag-row
+#: `grounding` field) — the positive declaration the exemption booleans used
+#: to encode in negative space. Deliberately NOT the same vocab as
+#: AC_GROUNDINGS above (test|review only): that is the track-level
+#: spec-integrity scan mode; this is the task-class claim, where data-check
+#: (assert/probe output as evidence) and human-attest (a person signs off)
+#: are first-class. Loader fail-open home: ``task_profiles.grounding_of``
+#: derives a value when a row declares none.
+TAG_GROUNDINGS = ("test", "review", "data-check", "human-attest")
+
 #: Agent-roster role classes (the `class` field). `executor` derives
 #: single_writer=true (the dispatch-dedupe single-writer guard set); every
 #: other class derives false — an explicit `single_writer` override is the
@@ -108,9 +118,9 @@ _KNOWN_SHAPE_FIELDS = frozenset({
     "planning_doc", "signals", "max_retries",
 })
 _KNOWN_TAG_FIELDS = frozenset({
-    "route", "tdd_exempt", "coverage_exempt", "when_to_use",
-    "workflow", "workflow_doc", "refactor", "auto_propose", "over_tag_risk",
-    "signals", "examples",
+    "route", "tdd_exempt", "coverage_exempt", "gates", "grounding",
+    "when_to_use", "workflow", "workflow_doc", "refactor", "auto_propose",
+    "over_tag_risk", "signals", "examples",
 })
 
 # Tag fields that must be booleans.
@@ -233,9 +243,38 @@ def validate_tag_row(name: str, row) -> list[str]:
     if "route" in row and row["route"] not in ROUTES:
         errs.append(f"tag {name!r}: route={row['route']!r} not in {list(ROUTES)}")
 
+    if "grounding" in row and row["grounding"] not in TAG_GROUNDINGS:
+        errs.append(
+            f"tag {name!r}: grounding={row['grounding']!r} not in "
+            f"{list(TAG_GROUNDINGS)}")
+
     for b in _TAG_BOOL_FIELDS:
         if b in row and not isinstance(row[b], bool):
             errs.append(f"tag {name!r}: {b} must be a boolean")
+
+    if "gates" in row:
+        val = row["gates"]
+        if not isinstance(val, list) or not all(isinstance(g, str) for g in val):
+            errs.append(f"tag {name!r}: gates must be a list of strings")
+        else:
+            bad = [g for g in val if g not in GATES]
+            if bad:
+                errs.append(
+                    f"tag {name!r}: gates entries {bad!r} not in {list(GATES)}")
+            # Guards 1+2: the test-witnessing gates (tdd's red/green order,
+            # coverage's 80% line floor) only make sense for a class whose
+            # grounding IS test — they are unmeasurable for a review/data/
+            # human-attested deliverable. Raw-row check: only fires when the
+            # row itself declares grounding; a gates-only row may inherit a
+            # consistent grounding from the default (the merged-level check
+            # in validate_registry catches the inheritance that violates).
+            if ("tdd" in val or "coverage" in val) and \
+                    "grounding" in row and row["grounding"] != "test":
+                errs.append(
+                    f"tag {name!r}: gates include tdd/coverage but "
+                    f"grounding={row['grounding']!r} — those gates witness a "
+                    f"test-grounded deliverable; use grounding 'test' or drop "
+                    f"them from gates")
 
     for s in ("when_to_use", "workflow", "workflow_doc"):
         if s in row and not isinstance(row[s], str):

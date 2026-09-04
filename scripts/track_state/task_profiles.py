@@ -229,16 +229,86 @@ def _load() -> dict:
     return _merge_overlay(baseline)
 
 
+#: The gate vocabulary in canonical order. Validation home is
+#: ``registry_validate.GATES`` (the validator is deliberately independent of
+#: this loader — keep the two literals in sync). ``checkpoint`` is always
+#: owed in the synthesized form: the legacy exemption booleans had no
+#: checkpoint exemption to encode.
+_FULL_GATES = ("tdd", "coverage", "checkpoint")
+
+
+def _resolve_row(row: dict) -> dict:
+    """Normalize ONE registry row so ``gates`` and the exemption booleans are
+    always consistent — the compatibility seam between the two registry forms:
+
+    - positive: ``gates: ["tdd", "coverage", "checkpoint"]`` — a class owes
+      exactly the gates it lists;
+    - legacy: ``tdd_exempt``/``coverage_exempt`` booleans — a class lists what
+      it is spared.
+
+    Resolution is row-level (BEFORE the default-merge in :func:`_profile`), so
+    what the row itself declares always beats what the default carries: a
+    legacy-form overlay row on a positive-form default keeps its explicit
+    booleans (and the gates synthesized from them), never inheriting the
+    default's gates, and vice versa.
+
+    - Row declares ``gates``: the derived booleans are materialized
+      (``tdd_exempt ≡ "tdd" not in gates``; ``coverage_exempt ≡ "coverage"
+      not in gates``). A hand-edited row mixing both forms resolves with
+      ``gates`` winning (the validator rejects the mix at write time; this is
+      the fail-open runtime read). Malformed gates (non-list, or any entry
+      outside :data:`_FULL_GATES`) fail open to the full set — owing
+      everything, never silently granting an exemption to a typo.
+    - Row declares only the legacy booleans: ``gates`` is synthesized from
+      them (each gate present iff not exempt; ``checkpoint`` always present).
+    - Row declares neither: returned unchanged (inherits the resolved
+      default's values via the merge in :func:`_profile`).
+
+    Never mutates the input; returns a shallow copy when it normalizes.
+    """
+    if "gates" in row:
+        declared = row["gates"]
+        if isinstance(declared, list) and all(g in _FULL_GATES for g in declared):
+            gates = declared
+        else:
+            gates = list(_FULL_GATES)
+        row = dict(row)
+        row["gates"] = gates
+        row["tdd_exempt"] = "tdd" not in gates
+        row["coverage_exempt"] = "coverage" not in gates
+        return row
+    if "tdd_exempt" in row or "coverage_exempt" in row:
+        row = dict(row)
+        exemptions = (
+            ("tdd", bool(row.get("tdd_exempt", False))),
+            ("coverage", bool(row.get("coverage_exempt", False))),
+            ("checkpoint", False),
+        )
+        row["gates"] = [g for g, exempt in exemptions if not exempt]
+        return row
+    return row
+
+
+def _resolved_default() -> dict:
+    """The default profile, normalized (gates and booleans always consistent)."""
+    return _resolve_row(_load()["default"])
+
+
 def _profile(tag: str) -> dict:
-    """The profile for a single tag name, falling back to the default profile."""
+    """The profile for a single tag name, falling back to the default profile.
+
+    The default and the row are each normalized by :func:`_resolve_row`
+    BEFORE the merge, so what the row itself declares (``gates``, or the
+    legacy exemption booleans) always wins over the default's form.
+    """
     data = _load()
     prof = data["tags"].get(tag)
     if prof is None:
-        return data["default"]
+        return _resolve_row(data["default"])
     # Inherit any missing key from the default profile so a registry row only
     # has to state what it overrides.
-    merged = dict(data["default"])
-    merged.update(prof)
+    merged = dict(_resolve_row(data["default"]))
+    merged.update(_resolve_row(prof))
     return merged
 
 
@@ -274,6 +344,43 @@ def route_for(tags: list[str]) -> str:
     return "executor"
 
 
+def gates_of(tag: str) -> tuple[str, ...]:
+    """The gates a task class owes — the positive form of the exemption
+    booleans: a subset of ``("tdd", "coverage", "checkpoint")``, in that
+    canonical order.
+
+    Reads the normalized profile (:func:`_resolve_row`), so both registry
+    forms answer identically. A registry declaring neither form fails open
+    to the full set — owing everything, the same conservative floor as the
+    legacy missing-boolean read. Per-tag by design: task-level gate
+    semantics (a gate survives a multi-tag task only if EVERY tag carries
+    it) compose from this via the existing ANY-exemption predicates.
+    """
+    gates = _profile(tag).get("gates")
+    if isinstance(gates, list) and all(g in _FULL_GATES for g in gates):
+        return tuple(gates)
+    return _FULL_GATES
+
+
+def grounding_of(tag: str) -> str:
+    """What "done, verified" MEANS for a task class's deliverable:
+    ``test`` | ``review`` | ``data-check`` | ``human-attest``.
+
+    The positive declaration the executor and reviewers are told about — the
+    gates are the machinery, the grounding is the claim the deliverable makes.
+    Validation home is ``registry_validate.TAG_GROUNDINGS``. A row declaring
+    no grounding fails open to a gates-derived value: ``"test"`` when the
+    class owes the tdd or coverage gate, else ``"review"`` (never crash, and
+    never invent a human/data attestation the row didn't claim).
+    """
+    prof = _profile(tag)
+    declared = prof.get("grounding")
+    if isinstance(declared, str) and declared:
+        return declared
+    gates = gates_of(tag)
+    return "test" if ("tdd" in gates or "coverage" in gates) else "review"
+
+
 def is_tdd_exempt(tags: list[str]) -> bool:
     """True if the task is exempt from the TDD gate.
 
@@ -283,7 +390,7 @@ def is_tdd_exempt(tags: list[str]) -> bool:
     it still owes TDD/coverage, only the tactical-refactor flag is set).
     """
     if not tags:
-        return bool(_load()["default"].get("tdd_exempt", False))
+        return bool(_resolved_default().get("tdd_exempt", False))
     return any(_profile(t).get("tdd_exempt", False) for t in tags)
 
 
@@ -296,7 +403,7 @@ def is_coverage_exempt(tags: list[str]) -> bool:
     coverage-exempt).
     """
     if not tags:
-        return bool(_load()["default"].get("coverage_exempt", False))
+        return bool(_resolved_default().get("coverage_exempt", False))
     return any(_profile(t).get("coverage_exempt", False) for t in tags)
 
 
@@ -315,7 +422,7 @@ def _task_is_code_free(tags: list[str]) -> bool:
     test-runner).
     """
     if not tags:
-        return bool(_load()["default"].get("coverage_exempt", False))
+        return bool(_resolved_default().get("coverage_exempt", False))
     return all(_profile(t).get("coverage_exempt", False) for t in tags)
 
 
