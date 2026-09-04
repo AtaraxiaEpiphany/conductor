@@ -1787,6 +1787,56 @@ def compile_track_findings_fail_open(track_dir, phase_num=None):
         sys.stderr.write(f"track-findings compile skipped (advisory): {exc}\n")
 
 
+def _persist_gate_outcomes(track_dir, state, phase, verdict):
+    """Append per-class gate-outcome rows — telemetry feed 3, fail-open.
+
+    ``<track_dir>/.conductor/gate-outcomes.json`` = ``{"track_id", "rows"}``
+    where each row is ``{"phase", "class", "gate", "verdict"}``. Called from
+    BOTH arms of ``cmd_phase_checkpoint_review`` (the single trigger — a phase
+    verdict settles the phase): the verdict applies to every gate every
+    top-level task's class owed (leading tag via :func:`extract_tags`,
+    untagged → ``"default"``; gates via :func:`task_profiles.gates_of`).
+    Per-verifier attribution intentionally lives in the phase-cp marker, not
+    here — this store records what the class-level gate machinery produced,
+    which is the calibration question ("dead gates / always-failing gates")
+    the probe asks. Append-not-overwrite: a FAILED-then-PASSED cycle is two
+    real observations, not a correction. Advisory + fail-open like
+    :func:`compile_track_findings_fail_open` — telemetry must never block the
+    checkpoint advance.
+    """
+    try:
+        phases = state.get("phases", [])
+        if not (1 <= int(phase) <= len(phases)):
+            return
+        from .task_profiles import gates_of  # lazy: registry read, cycle-safe
+        rows = []
+        for task in phases[int(phase) - 1].get("tasks", []):
+            tags = extract_tags(task.get("name", ""))
+            # Label lowercased (label-telemetry convention); the gates lookup
+            # keeps the plan's original case (registry row keys are cased).
+            klass = tags[0].lower() if tags else "default"
+            for gate in gates_of(tags[0] if tags else "default"):
+                rows.append({"phase": int(phase), "class": klass,
+                             "gate": gate, "verdict": verdict})
+        if not rows:
+            return
+        path = conductor_dir(track_dir) / "gate-outcomes.json"
+        prior_rows: list = []
+        try:
+            prior = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(prior, dict) and isinstance(prior.get("rows"), list):
+                prior_rows = prior["rows"]
+        except (OSError, json.JSONDecodeError):
+            pass  # absent or corrupt store → start fresh, never block the advance
+        payload = {"track_id": state.get("track_id"),
+                   "rows": prior_rows + rows}
+        path.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8")
+    except Exception as exc:  # noqa: BLE001 — advisory, never fatal
+        sys.stderr.write(f"gate-outcome telemetry skipped (advisory): {exc}\n")
+
+
 def cmd_add_checkpoint(track_dir, p, sha):
     """Add or update checkpoint SHA for a phase in plan.md (CLI wrapper)."""
     out(_stamp_checkpoint_in_plan(track_dir, p, sha))

@@ -46,7 +46,7 @@ from .git_ops import (
     _git_rev_parse_toplevel,
 )
 from .handoff import _append_execution_record, _track_findings_path
-from .misc import _get_all_shas, _stamp_checkpoint_in_plan
+from .misc import _get_all_shas, _stamp_checkpoint_in_plan, _persist_gate_outcomes
 from .quality import _finalize_track
 from .validate import _fix_plan_mismatches, ensure_healthy
 
@@ -3538,6 +3538,9 @@ def cmd_phase_checkpoint_review(track_dir, status, sha, reason):
         _phase_recovery_clear_marker(track_dir)
         # track-findings compile: single-homed in _stamp_checkpoint_in_plan
         # (both stamp paths funnel through it) — nothing to do here.
+        # Gate-outcome telemetry (feed 3, fail-open): the phase verdict settles
+        # every gate the phase's task classes owed.
+        _persist_gate_outcomes(track_dir, state, int(cp), "passed")
         out(dict(ok=True, stamped=True, phase=cp, sha=sha, track_dir=td))
     elif verdict == "FAILED":
         # Compile findings on the FAILED arm too (advisory, fail-open): failed
@@ -3546,6 +3549,9 @@ def cmd_phase_checkpoint_review(track_dir, status, sha, reason):
         # PASSED compiles inside _stamp_checkpoint_in_plan (its single home).
         from .misc import compile_track_findings_fail_open
         compile_track_findings_fail_open(track_dir, int(cp))
+        # Gate-outcome telemetry (feed 3, fail-open) — BEFORE the auto/ask
+        # branch so both failure surfaces record the observation.
+        _persist_gate_outcomes(track_dir, state, int(cp), "failed")
         if _auto_route_failure(state):
             # Track 2 — route the phase failure through recovery instead of halting.
             # Carry the failing verifier verdicts (from the phase-cp marker the

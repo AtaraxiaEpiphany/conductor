@@ -9,6 +9,18 @@
     "test-state": {
       "description": "Latest test-run verdicts (on-test-run.log)",
       "kind": "builtin"
+    },
+    "label-accuracy": {
+      "description": "Declared-vs-signals tag agreement across tracks (label-telemetry.json)",
+      "kind": "builtin"
+    },
+    "skill-fires": {
+      "description": "Dispatch starts per executor agent + wrapped skill (dispatch-lifecycle.log)",
+      "kind": "builtin"
+    },
+    "gate-outcomes": {
+      "description": "Pass/fail counts per task class per gate across tracks (gate-outcomes.json)",
+      "kind": "builtin"
     }
   }
 }
