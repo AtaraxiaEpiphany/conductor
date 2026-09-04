@@ -414,6 +414,32 @@ def retry_agents() -> tuple[str, ...]:
     )
 
 
+def executor_slot(name: str) -> str | None:
+    """The spine slot a dispatched agent occupies, or ``None`` if it owns none.
+
+    Persona binding: a class-bound ``agent`` (a rostered wrapper) dispatches IN
+    PLACE OF task-executor, so it occupies the task-executor SLOT — every
+    task-executor-keyed surface (shape-topology check, tripwire reset, registry
+    injection) must count it as task-executor, not as a foreign name. An agent
+    occupies the slot iff its resolved roster row's class is ``executor`` AND
+    it is not itself a spine node: ``explorer`` is executor-class but owns its
+    own slot; ``task-executor`` IS the slot (returns ``None`` — no mapping
+    needed, callers compare against ``"task-executor"`` directly). Fail-open
+    ``None`` for unknown/unrostered/malformed names (an unrostered dispatch
+    keeps its own name everywhere — the established posture).
+    """
+    key = canonical_name(name)
+    if key is None or key in ("task-executor", "explorer"):
+        return None
+    from .registry_validate import SPINE_NODES
+    if key in SPINE_NODES:
+        return None
+    row = _agents().get(key)
+    if row is not None and row.get("class") == "executor":
+        return "task-executor"
+    return None
+
+
 def recovery_kind_for(name: str) -> str:
     """The SubagentStop completion signal kind: ``result-file`` |
     ``stdout-block`` | ``none``. Unrostered/malformed → ``"none"`` (fail-open:

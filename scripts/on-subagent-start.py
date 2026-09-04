@@ -399,7 +399,12 @@ def _registry_context(agent_type, cwd):
     if agent_type not in roster.registry_agents():
         return None
     try:
-        if agent_type == "task-executor":
+        # A class-bound persona (rostered wrapper, registry_injection: true)
+        # passes the membership gate above but needs the EXECUTOR block — its
+        # resolved profile + gate sets — same as task-executor. executor_slot
+        # maps only executor-class non-spine agents, so explorer/spec-reviewer
+        # still fall through to their own branches (or None).
+        if agent_type == "task-executor" or roster.executor_slot(agent_type):
             return _registry_for_executor(cwd)
         if agent_type in ("spec-reviewer", "refuter"):
             return _registry_for_reviewer()
@@ -517,17 +522,25 @@ def _registry_for_executor(cwd):
 
 
 def _reset_tripwire_counter(cwd, agent_type):
-    """Reset the PreToolUse tripwire round-counter for a fresh task-executor dispatch.
+    """Reset the PreToolUse tripwire round-counter for a fresh executor dispatch.
 
     ``on-pre-tool-tripwire.py`` counts task-executor's rounds against the locked
     task; SubagentStart fires once per dispatch, so this is the natural reset
     point. A retry therefore starts the count at 0. Best-effort and scoped to
-    task-executor — any failure is non-fatal (the counter just starts stale,
-    which biases toward tripping slightly early: safe).
+    the task-executor SLOT — task-executor itself plus any class-bound persona
+    occupying its slot (``executor_slot``; without this a persona dispatch
+    would inherit a stale counter and trip early) — any failure is non-fatal
+    (the counter just starts stale, which biases toward tripping slightly
+    early: safe).
     """
     roster = _roster()
     key = roster.canonical_name(agent_type) if roster else None
-    if key != "task-executor" and agent_type != "task-executor":
+    if roster is not None:
+        # Slot-aware: a persona (rostered wrapper bound via a tag row's
+        # `agent` field) IS the executor for its dispatch.
+        if key != "task-executor" and not roster.executor_slot(agent_type):
+            return
+    elif agent_type != "task-executor":
         return
     try:
         locked = resolve_locked_task(cwd)

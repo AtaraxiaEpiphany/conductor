@@ -373,7 +373,11 @@ def cmd_dispatch_next(track_dir, compact=True):
                        tags=result.get("tags", []), max_retries=max_retries)
             agent, prompt = build_dispatch_prompt(
                 "dispatch_executor", track_dir, pre=pre, attempt=attempt)
-            if agent == "task-executor":
+            if action == "dispatch_executor":
+                # Action-based, not name-based: a persona binding means
+                # `agent` names a rostered wrapper, and the wrapper NEEDS the
+                # manifest (its procedure rides WORKFLOW_FILE) exactly as
+                # task-executor does.
                 # The envelope's WORKFLOW_FILE line needs the manifest on disk.
                 # dispatch-prepare normally wrote it (prepare_dispatch); this
                 # idempotent ensure covers a caller that reached dispatch-next
@@ -877,7 +881,7 @@ def _dispatch_inflight_clear_all(track_dir):
     _inflight.clear_all(track_dir)
 
 
-def _emit_redispatch_telemetry(track_dir, pi, ti, si):
+def _emit_redispatch_telemetry(track_dir, pi, ti, si, tags=None):
     """Emit a ``re-dispatch`` dispatch-lifecycle event for the interrupted branch.
 
     ``cmd_step`` re-dispatches a task *without* finalize when HEAD is still the
@@ -897,13 +901,18 @@ def _emit_redispatch_telemetry(track_dir, pi, ti, si):
     an interrupted dispatch: only finalize/reap clear it). A run of
     ``re-dispatch gen=1``, ``gen=2``, ``gen=3`` (each one higher than the last)
     is the loop signature: successive interruptions of fresh dispatches.
+
+    ``agent`` follows the dispatch chokepoint — the class-bound persona for
+    *tags* (fail-open ``task-executor``) — so the log names the agent that
+    actually re-dispatches, not the default slot.
     """
     try:
         from lib import dispatch_lifecycle as lifecycle
+        from .task_profiles import agent_for
         gen = _inflight.read_gen(track_dir, pi, ti, si)
         lifecycle.emit(
             event="re-dispatch", session="-",
-            agent="task-executor",
+            agent=agent_for(tags or []) or "task-executor",
             phase=pi, task=ti, subtask=si,
             gen=str(gen) if gen else "-",
         )
@@ -1483,7 +1492,10 @@ def _build_executor(track_dir, pre, attempt):
     """``dispatch_executor`` / ``dispatch_explorer`` envelope body.
 
     ``SUBTASK`` is emitted only when present (flat tasks omit the line); the
-    agent is ``explorer`` for an explore-classified task, else ``task-executor``.
+    agent is ``explorer`` for an explore-classified task, else the class-bound
+    PERSONA (``agent_for(pre["tags"])`` — a rostered wrapper bound on the
+    leading tag's row) failing open to ``task-executor``. Both rails converge
+    here, so this is the single agent-name choice site for task dispatch.
     """
     td = str(track_dir)
     lines = [f"TRACK_DIR={td}", f"PHASE={pre['phase']}", f"TASK={pre['task']}"]
@@ -1514,7 +1526,13 @@ def _build_executor(track_dir, pre, attempt):
     # only: explorers owe no workflow (and no manifest is written for them).
     from .dispatch_manifest import manifest_path
     lines.append(f"WORKFLOW_FILE={manifest_path(td)}")
-    return "task-executor", "\n".join(lines)
+    # The persona seam: a class-bound `agent` on the leading tag's row wins —
+    # the rostered wrapper dispatches IN PLACE OF task-executor, procedure
+    # riding the WORKFLOW_FILE manifest above (which is why the manifest gate
+    # below is action-based, not name-based). Fail-open None → default.
+    from .task_profiles import agent_for
+    persona = agent_for(pre.get("tags", []))
+    return (persona or "task-executor"), "\n".join(lines)
 
 
 def resolve_phase_gate(track_dir, state, phase):
@@ -1914,12 +1932,20 @@ def shape_allows(track_dir, agent, state=None):
     through here — they are checkpoint *children* governed by
     :func:`verifiers_for`, not spine nodes, so a phase-checker dispatching its
     verifiers never trips ``shape_violation``.
+
+    A class-bound persona (a rostered wrapper dispatched in place of
+    task-executor) OCCUPIES the task-executor slot: the membership test runs
+    against its spine slot (:func:`agent_roster.executor_slot`), so a persona
+    dispatch never emits a spurious violation — the shape's nodes list spine
+    slots, not personas.
     """
     from .workflow_shapes import resolve_shape, nodes_for
+    from .agent_roster import executor_slot
     if state is None:
         state = load(track_dir)
     shape = resolve_shape(state.get("workflow_shape"))
-    return agent in nodes_for(shape), shape
+    slot = executor_slot(agent) or agent
+    return slot in nodes_for(shape), shape
 
 
 # --------------------------------------------------------------------------- #
@@ -3364,7 +3390,8 @@ def cmd_step(track_dir, compact=True):
             # tree, no result. Re-dispatch WITHOUT finalize so we don't burn a
             # retry on a dispatch that never ran. prepare's is_resume path
             # skips the start commit.
-            _emit_redispatch_telemetry(track_dir, pi, ti, si)
+            _emit_redispatch_telemetry(
+                track_dir, pi, ti, si, tgt.get("tags", []))
             return _step_emit_dispatch(track_dir, compact)
 
     # No in_progress task awaiting finalize → resolve the next leaf.

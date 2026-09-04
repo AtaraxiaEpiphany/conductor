@@ -23,10 +23,28 @@ class's ``[Tag]`` tasks dispatch instead of task-executor). These tests pin:
 
 import json
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import TestCase
+
+
+def _clear_registry_caches():
+    """Clear BOTH module identities of each registry loader.
+
+    The hook scripts import ``track_state.X`` (``scripts/`` on sys.path) while
+    these tests import ``scripts.track_state.X`` — two module objects with
+    separate lru_caches. A stale one of the pair is exactly the bug shape the
+    installed-plugin incident taught (registry does NOT refresh mid-process),
+    so every env flip clears both.
+    """
+    for modname in ("track_state.agent_roster", "track_state.task_profiles",
+                    "scripts.track_state.agent_roster",
+                    "scripts.track_state.task_profiles"):
+        mod = sys.modules.get(modname)
+        if mod is not None:
+            mod._load.cache_clear()
 
 
 class _ProjectEnv(TestCase):
@@ -45,8 +63,7 @@ class _ProjectEnv(TestCase):
             os.environ.pop("CLAUDE_PROJECT_DIR", None)
         else:
             os.environ["CLAUDE_PROJECT_DIR"] = self._prior_proj
-        self.tp._load.cache_clear()
-        self.ar._load.cache_clear()
+        _clear_registry_caches()
 
     def _mk_project(self):
         proj = tempfile.mkdtemp()
@@ -57,20 +74,19 @@ class _ProjectEnv(TestCase):
 
     def _set_project(self, proj):
         os.environ["CLAUDE_PROJECT_DIR"] = proj
-        self.tp._load.cache_clear()
-        self.ar._load.cache_clear()
+        _clear_registry_caches()
 
     def _write_profiles_overlay(self, proj, data):
         Path(proj, "conductor", "workflow", "task-type-profiles.json").write_text(
             json.dumps(data), encoding="utf-8",
         )
-        self.tp._load.cache_clear()
+        _clear_registry_caches()
 
     def _write_roster_overlay(self, proj, agents):
         Path(proj, "conductor", "workflow", "agent-roster.json").write_text(
             json.dumps({"agents": agents}), encoding="utf-8",
         )
-        self.ar._load.cache_clear()
+        _clear_registry_caches()
 
 
 class AgentForTests(_ProjectEnv):
@@ -193,7 +209,7 @@ class RosterAddParityTests(TestCase):
             os.environ.pop("CLAUDE_PROJECT_DIR", None)
         else:
             os.environ["CLAUDE_PROJECT_DIR"] = self._prior_proj
-        self.ar._load.cache_clear()
+        _clear_registry_caches()
 
     def _project(self):
         proj = tempfile.mkdtemp()
@@ -346,8 +362,7 @@ class TaskGraphPersonaTests(TestCase):
             os.environ.pop("CLAUDE_PROJECT_DIR", None)
         else:
             os.environ["CLAUDE_PROJECT_DIR"] = self._prior_proj
-        self.tp._load.cache_clear()
-        self.ar._load.cache_clear()
+        _clear_registry_caches()
 
     def _project(self, tasks, profiles_overlay):
         tmp = tempfile.mkdtemp()
@@ -371,8 +386,7 @@ class TaskGraphPersonaTests(TestCase):
                 "registry_injection": True, "retry": True}}}),
             encoding="utf-8")
         os.environ["CLAUDE_PROJECT_DIR"] = tmp
-        self.tp._load.cache_clear()
-        self.ar._load.cache_clear()
+        _clear_registry_caches()
         return tmp, tdir
 
     _DATA_ROW = {"route": "executor", "when_to_use": "pipeline work",
@@ -454,6 +468,220 @@ class RosterLintJoinTests(_ProjectEnv):
         from scripts.track_state import misc
         findings = misc._roster_lint_findings()
         self.assertFalse([f for f in findings if "persona" in f], findings)
+
+
+_PERSONA_ROW = {"class": "executor",
+                "fence": "---TASK RESULT--- ... ---END RESULT---",
+                "registry_injection": True, "retry": True}
+
+
+def _hook_module():
+    """Load on-subagent-start.py as a module (the test_on_subagent_start
+    pattern), on first use."""
+    import importlib.util
+    scripts = Path(__file__).resolve().parent.parent / "scripts"
+    spec = importlib.util.spec_from_file_location(
+        "on_subagent_start_persona", scripts / "on-subagent-start.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+class ExecutorSlotTests(_ProjectEnv):
+    """``executor_slot``: which dispatched agents occupy the task-executor
+    slot (executor-class roster rows that are not themselves spine nodes)."""
+
+    def test_spine_and_non_executor_agents_own_their_names(self):
+        # task-executor IS the slot; explorer is executor-class but owns its
+        # own spine slot; phase-checker is a spine node; code-reviewer/doc-probe
+        # are reviewer/advisory class.
+        self.assertIsNone(self.ar.executor_slot("task-executor"))
+        self.assertIsNone(self.ar.executor_slot("explorer"))
+        self.assertIsNone(self.ar.executor_slot("phase-checker"))
+        self.assertIsNone(self.ar.executor_slot("code-reviewer"))
+        self.assertIsNone(self.ar.executor_slot("doc-probe"))
+        self.assertIsNone(self.ar.executor_slot("ghost-agent"), "unrostered")
+        self.assertIsNone(self.ar.executor_slot(""))
+
+    def test_executor_class_wrapper_occupies_the_slot(self):
+        proj = self._mk_project()
+        self._write_roster_overlay(proj, {"data-plumber": dict(_PERSONA_ROW)})
+        self._set_project(proj)
+        self.assertEqual(self.ar.executor_slot("data-plumber"), "task-executor")
+        # Namespaced dispatch names resolve (the canonical_name contract).
+        self.assertEqual(self.ar.executor_slot("conductor:data-plumber"),
+                         "task-executor")
+
+
+class DispatchChokepointTests(_ProjectEnv):
+    """``_build_executor`` — the single agent-name choice site for task
+    dispatch: the class-bound persona wins, failing open to task-executor."""
+
+    def _persona_project(self):
+        proj = self._mk_project()
+        self._write_profiles_overlay(proj, {"tags": {"Data": {
+            "route": "executor", "when_to_use": "pipeline work",
+            "gates": ["checkpoint"], "grounding": "data-check",
+            "agent": "data-plumber",
+        }}})
+        self._write_roster_overlay(proj, {"data-plumber": dict(_PERSONA_ROW)})
+        self._set_project(proj)
+        return proj
+
+    def test_persona_dispatched_with_manifest_and_attempt(self):
+        from scripts.track_state import dispatch as dz
+        self._persona_project()
+        pre = dict(phase=1, task=1, name="[Data] Pump", tags=["Data"],
+                   max_retries=3)
+        agent, body = dz._build_executor("/tmp/t", pre, attempt=2)
+        self.assertEqual(agent, "data-plumber")
+        self.assertIn("WORKFLOW_FILE=", body,
+                      "the persona's procedure rides the manifest")
+        self.assertIn("ATTEMPT=2", body)
+        self.assertIn("MAX_RETRIES=3", body)
+
+    def test_unbound_class_fails_open_to_task_executor(self):
+        from scripts.track_state import dispatch as dz
+        proj = self._mk_project()
+        self._set_project(proj)
+        agent, _ = dz._build_executor(
+            "/tmp/t", dict(phase=1, task=1, name="x", tags=["Docs"]), 1)
+        self.assertEqual(agent, "task-executor")
+
+    def test_explore_arm_unchanged(self):
+        from scripts.track_state import dispatch as dz
+        proj = self._mk_project()
+        self._set_project(proj)
+        agent, body = dz._build_executor(
+            "/tmp/t", dict(phase=1, task=1, name="[Explore] x",
+                           tags=["Explore"]), 1)
+        self.assertEqual(agent, "explorer")
+        self.assertNotIn("ATTEMPT=", body)
+
+
+class ShapeAllowsSlotTests(_ProjectEnv):
+    """``shape_allows`` counts a persona against the task-executor SLOT, not
+    its own name — a persona dispatch never trips a spurious violation."""
+
+    def test_persona_occupies_the_executor_slot(self):
+        from scripts.track_state.dispatch import shape_allows
+        proj = self._mk_project()
+        self._write_roster_overlay(proj, {"data-plumber": dict(_PERSONA_ROW)})
+        self._set_project(proj)
+        allowed, shape = shape_allows(
+            "/td", "data-plumber", state={"workflow_shape": "default"})
+        self.assertTrue(allowed)
+        self.assertEqual(shape, "default")
+
+    def test_unrostered_name_still_not_admitted(self):
+        # Fail-open must not over-admit: a name with no roster row keeps its
+        # own name and fails the nodes membership on a default shape.
+        from scripts.track_state.dispatch import shape_allows
+        proj = self._mk_project()
+        self._set_project(proj)
+        allowed, _ = shape_allows(
+            "/td", "ghost-agent", state={"workflow_shape": "default"})
+        self.assertFalse(allowed)
+
+
+class RegistryContextPersonaTests(_ProjectEnv):
+    """``_registry_context``: a persona with ``registry_injection: true``
+    passes the membership gate and must land the EXECUTOR block (its class's
+    resolved profile + gate sets) — not fall through to None."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.hook = _hook_module()
+
+    def test_persona_gets_executor_registry_block(self):
+        proj = self._mk_project()
+        self._write_roster_overlay(proj, {"data-plumber": dict(_PERSONA_ROW)})
+        self._set_project(proj)
+        block = self.hook._registry_context("data-plumber", proj)
+        self.assertIsNotNone(block)
+        self.assertIn("RESOLVED GATE SETS", block)
+
+    def test_persona_without_injection_flag_gets_none(self):
+        # registry_injection: false keeps the agent OUT of registry_agents —
+        # the membership gate (not the persona arm) decides.
+        proj = self._mk_project()
+        row = dict(_PERSONA_ROW, registry_injection=False)
+        self._write_roster_overlay(proj, {"data-plumber": row})
+        self._set_project(proj)
+        self.assertIsNone(self.hook._registry_context("data-plumber", proj))
+
+    def test_explorer_still_gets_none(self):
+        proj = self._mk_project()
+        self._set_project(proj)
+        self.assertIsNone(self.hook._registry_context("explorer", proj))
+
+
+class TripwireResetSlotTests(_ProjectEnv):
+    """``_reset_tripwire_counter`` is slot-aware: a persona dispatch resets the
+    round counter exactly as a task-executor dispatch does (otherwise every
+    persona retry starts from a stale count and trips early)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.hook = _hook_module()
+
+    def _locked_project(self, agent_name):
+        from scripts.track_state.core import save
+        proj = self._mk_project()
+        tdir = Path(proj, "conductor", "tracks", "auth")
+        tdir.mkdir(parents=True)
+        save(str(tdir), {
+            "track_id": "auth", "type": "feature", "status": "in_progress",
+            "workflow_shape": "default", "current_phase_index": 1,
+            "current_task_index": 1,
+            "phases": [{"name": "Phase 1", "status": "in_progress",
+                        "tasks": [{"name": "[Data] Pump", "status":
+                                   "in_progress"}]}],
+        })
+        trip = tdir / ".conductor" / ".tripwire-1-1.count"
+        trip.parent.mkdir(parents=True, exist_ok=True)
+        trip.write_text("5", encoding="utf-8")
+        self._write_roster_overlay(proj, {"data-plumber": dict(_PERSONA_ROW)})
+        self._set_project(proj)
+        return proj, trip
+
+    def test_reset_fires_for_persona(self):
+        proj, trip = self._locked_project("data-plumber")
+        self.hook._reset_tripwire_counter(proj, "data-plumber")
+        self.assertFalse(trip.exists())
+
+    def test_reset_skips_explorer(self):
+        proj, trip = self._locked_project("explorer")
+        self.hook._reset_tripwire_counter(proj, "explorer")
+        self.assertTrue(trip.exists())
+
+
+class RedispatchTelemetryTests(_ProjectEnv):
+    """The re-dispatch lifecycle event names the agent that actually
+    re-dispatches — the persona, not the hardcoded default slot."""
+
+    def _emit(self, tags):
+        from scripts.track_state import dispatch as dz
+        proj = self._mk_project()
+        self._write_profiles_overlay(proj, {"tags": {"Data": {
+            "route": "executor", "when_to_use": "pipeline work",
+            "gates": ["checkpoint"], "grounding": "data-check",
+            "agent": "data-plumber",
+        }}})
+        self._set_project(proj)
+        dz._emit_redispatch_telemetry(str(Path(proj, "no-track")), 1, 1, None,
+                                      tags)
+        return Path(proj, ".conductor", "logs",
+                    "dispatch-lifecycle.log").read_text(encoding="utf-8")
+
+    def test_event_names_the_persona(self):
+        log = self._emit(["Data"])
+        self.assertIn("event=re-dispatch", log)
+        self.assertIn("agent=data-plumber", log)
+
+    def test_untagged_event_names_task_executor(self):
+        log = self._emit([])
+        self.assertIn("agent=task-executor", log)
 
 
 if __name__ == "__main__":
