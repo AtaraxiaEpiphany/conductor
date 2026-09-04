@@ -2,7 +2,7 @@
 name: adopt-skill
 description: Adopt an outside skill into the conductor — two roads. Road A adopts it as a project TASK TYPE (tag row + workflow docfile; [<Tag>] tasks run the skill's procedure inside task-executor). Road B adopts it as a WRAPPER AGENT (.claude/agents/<name>.md + agent-roster row). Each road is one validated command.
 when_to_use: User wants a skill (from another plugin, the marketplace, or their own collection) to run under conductor dispatch — either woven into task execution as a tagged task type (Road A) or as a dedicated dispatched agent with full scaffold (Road B). Not for skills the user just wants to invoke manually.
-argument-hint: "[road: tag|wrapper] <Tag>|<name> --skill <skill> [--signals \"a,b\"] [--tdd-exempt] [--coverage-exempt] | [--description <text>] [--class <c>] [--recovery <kind>] [--force]"
+argument-hint: "[road: tag|wrapper] <Tag>|<name> --skill <skill> [--signals \"a,b\"] [--gates tdd,coverage,checkpoint] [--grounding test|review|data-check|human-attest] | [--description <text>] [--class <c>] [--recovery <kind>] [--force]"
 allowed-tools: Bash, Read, Write, Edit, AskUserQuestion
 model: sonnet
 ---
@@ -57,7 +57,8 @@ yours), plus a one-line `when_to_use`. Then:
 
 ```bash
 track-state tag add <Tag> --when-to-use "<one line>" [--signals "a,b"] \
-  [--tdd-exempt] [--coverage-exempt] --workflow-doc <docfile>.md
+  [--gates tdd,coverage,checkpoint] [--grounding test|review|data-check|human-attest] \
+  --workflow-doc <docfile>.md
 ```
 
 - Add `--force` when adopting onto an existing tag.

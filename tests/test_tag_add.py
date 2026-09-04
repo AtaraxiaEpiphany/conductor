@@ -93,24 +93,35 @@ class TagAddWritesTests(_EnvIsolated):
         # Signals lowercased, split, deduped (whitespace tolerated).
         self.assertEqual(row["signals"], ["lint", "linting"])
 
-    def test_exemptions_and_optin_flags_written_when_set(self):
+    def test_gates_and_optin_flags_written_when_set(self):
         d = self._track_dir()
         r = tag_add("Deploy", when_to_use="Deploy the stack",
-                    route="manual", tdd_exempt=True, coverage_exempt=True,
+                    route="manual", gates=["checkpoint"],
                     over_tag_risk=True, auto_propose=True,
                     signals="deployit", project_dir=d)
         self.assertTrue(r["ok"], r)
         row = json.loads(Path(r["registry_path"]).read_text(
             encoding="utf-8"))["tags"]["Deploy"]
         self.assertEqual(row["route"], "manual")
-        # Both-exempt flags land as checkpoint-only gates + review grounding
-        # (the derived fail-open value; an explicit --grounding can override).
+        # gates=["checkpoint"] lands as checkpoint-only gates + review
+        # grounding (the derived fail-open value; explicit grounding can
+        # override).
         self.assertEqual(row["gates"], ["checkpoint"])
         self.assertEqual(row["grounding"], "review")
         self.assertNotIn("tdd_exempt", row)
         self.assertNotIn("coverage_exempt", row)
         self.assertIs(row["auto_propose"], True)
         self.assertTrue(row["over_tag_risk"])
+
+    def test_unknown_gate_token_refused(self):
+        d = self._track_dir()
+        r = tag_add("Typo", when_to_use="typo'd gates",
+                    gates=["tdd", "covrage"], project_dir=d)
+        self.assertFalse(r["ok"])
+        self.assertTrue(any("unknown gate" in e for e in r["errors"]))
+        # Nothing written — the refusal precedes the write gate.
+        self.assertFalse((d / "conductor" / "workflow" /
+                          "task-type-profiles.json").exists())
 
     def test_existing_overlay_rows_and_doc_blocks_preserved(self):
         d = self._track_dir()
@@ -313,7 +324,7 @@ class TagAddErrorTests(_EnvIsolated):
 class TagCliWiringTests(TestCase):
     """The tag command is registered in the CLI surface. The _BOOL_FLAGS
     membership is load-bearing: without it positional() treats the next token
-    after each boolean flag as that flag's VALUE (e.g. `--tdd-exempt Foo`
+    after each boolean flag as that flag's VALUE (e.g. `--auto-propose Foo`
     silently eats Foo)."""
 
     def test_tag_listed_in_help(self):
@@ -344,9 +355,16 @@ class TagCliWiringTests(TestCase):
 
     def test_generator_bool_flags_registered(self):
         from scripts.track_state import cli
-        for f in ("--tdd-exempt", "--coverage-exempt", "--auto-propose",
-                  "--over-tag-risk", "--refactor"):
+        for f in ("--auto-propose", "--over-tag-risk", "--refactor"):
             self.assertIn(f, cli._BOOL_FLAGS, f)
+
+    def test_exempt_flags_left_bool_set(self):
+        # The legacy exemption flags are gone from the arg surface — the
+        # positive --gates/--grounding flags replace them.
+        from scripts.track_state import cli
+        for f in ("--tdd-exempt", "--coverage-exempt"):
+            self.assertNotIn(f, cli._BOOL_FLAGS, f)
+            self.assertNotIn(f, cli.COMMAND_HELP["tag"][0])
 
     def test_tag_via_cli(self):
         d = _project()
@@ -356,6 +374,8 @@ class TagCliWiringTests(TestCase):
         buf = io.StringIO()
         sys.argv = ["track-state", "tag", "add", "Cli-Tag",
                     "--when-to-use", "cli tag", "--signals", "clix, clix",
+                    "--gates", "coverage, checkpoint",
+                    "--grounding", "data-check",
                     "--project-dir", str(d)]
         sys.stdout = buf
         os.environ.pop("CLAUDE_PROJECT_DIR", None)
@@ -374,6 +394,10 @@ class TagCliWiringTests(TestCase):
                           "task-type-profiles.json").read_text(
                               encoding="utf-8"))["tags"]["Cli-Tag"]
         self.assertEqual(row["signals"], ["clix"])
+        # --gates parses as a comma-separated subset (whitespace tolerated),
+        # --grounding lands verbatim.
+        self.assertEqual(row["gates"], ["coverage", "checkpoint"])
+        self.assertEqual(row["grounding"], "data-check")
 
     def test_tag_missing_when_to_use_errors(self):
         d = _project()

@@ -909,8 +909,8 @@ def derive_task_tag(description: str) -> str | None:
 
 # --- overlay generator ----------------------------------------------------------
 
-def tag_add(name, when_to_use=None, route=None, tdd_exempt=False,
-            coverage_exempt=False, grounding=None, workflow=None,
+def tag_add(name, when_to_use=None, route=None, gates=None,
+            grounding=None, workflow=None,
             workflow_doc=None, refactor=False, auto_propose=False,
             over_tag_risk=False, signals=None, examples=None, force=False,
             project_dir=None) -> dict:
@@ -1021,12 +1021,21 @@ def tag_add(name, when_to_use=None, route=None, tdd_exempt=False,
     else:
         example_list = []
 
-    # Positive form only: gates derived from the boolean flags (checkpoint
-    # always owed), grounding derived from the gates unless explicitly given
-    # — always explicit on the row (never inherit a contradicting grounding).
-    gates = [g for g, exempt in (("tdd", bool(tdd_exempt)),
-                                 ("coverage", bool(coverage_exempt)),
-                                 ("checkpoint", False)) if not exempt]
+    # Positive form only: gates default to the full set (the safe default —
+    # every gate owed; a class earns an exemption by omitting the gate), and
+    # grounding derives from the gates unless explicitly given — always
+    # explicit on the row (never inherit a contradicting grounding). Unknown
+    # gate tokens are refused outright (not silently dropped) — a typo'd
+    # --gates value must never read back as a narrower gate set than asked.
+    if gates is not None:
+        unknown = [g for g in gates
+                   if g not in ("tdd", "coverage", "checkpoint")]
+        if unknown:
+            return dict(ok=False, name=name, errors=[
+                f"unknown gate(s) {', '.join(repr(g) for g in unknown)}: "
+                "gates are a subset of tdd, coverage, checkpoint"])
+    gates = [g for g in ("tdd", "coverage", "checkpoint")
+             if gates is None or g in gates]
     if grounding is None:
         grounding = "test" if ("tdd" in gates or "coverage" in gates) \
             else "review"

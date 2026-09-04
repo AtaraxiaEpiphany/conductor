@@ -65,8 +65,7 @@ from .commands import (
 
 
 _BOOL_FLAGS = {"--full", "--fix", "--check", "--force", "--verify",
-               "--tdd-exempt", "--coverage-exempt", "--auto-propose",
-               "--over-tag-risk", "--refactor"}
+               "--auto-propose", "--over-tag-risk", "--refactor"}
 
 # Commands EXCLUDED from short-id resolution (their ``<track-dir>`` positional
 # is not "an existing track to locate"):
@@ -325,12 +324,14 @@ COMMAND_HELP = {
                "task-executor scaffold). Validated before write; keeps a .bak."),
     "tag": ("tag add <name> --when-to-use <text> [--route executor|manual|explore]\n"
             "         [--signals \"a,b\"] [--examples \"canonical case;borderline case\"]\n"
-            "         [--tdd-exempt] [--coverage-exempt]\n"
+            "         [--gates tdd,coverage,checkpoint] [--grounding test|review|data-check|human-attest]\n"
             "         [--over-tag-risk] [--refactor] [--auto-propose]\n"
             "         [--workflow <prose> | --workflow-doc <name>.md] [--force] [--project-dir <dir>]",
             "Generate a project task-type: upsert one row into the project overlay "
             "conductor/workflow/task-type-profiles.json (existing rows/default preserved, "
-            ".bak kept). Defaults = safe: executor route, both gates ON, auto_propose "
+            ".bak kept). Defaults = safe: executor route, all gates ON "
+            "(omit a gate name from --gates to exempt the class from it), "
+            "grounding derived from the gates, auto_propose "
             "false (never surfaced by the init lint's signal suggestions without opting "
             "in). --examples seeds the registry-doc Tag Signals few-shot block "
             "(semicolon-separated). Validated "
@@ -777,20 +778,24 @@ def main():
         elif cmd == "tag":
             # No track-dir: positionals are `add <name>` (flags start at
             # argv[2] — see registry-doc). Only `add` today; the arg surface
-            # mirrors tag_add's generator flags. The five booleans must stay
+            # mirrors tag_add's generator flags. The three booleans must stay
             # in _BOOL_FLAGS or positional() swallows the next token as each
-            # flag's value.
+            # flag's value. --gates takes a comma-separated subset; grounding
+            # omitted = derived from the gates by tag_add.
             rest = sys.argv[2:]
             tpos = positional(rest)
             if not tpos or tpos[0] != "add" or len(tpos) < 2:
                 out(dict(error="usage: track-state tag add <name> --when-to-use <text>",
                          hint="generate a project task-type overlay row"))
                 sys.exit(1)
+            gates_val = flag(rest, "--gates")
+            gates = ([g.strip().lower() for g in gates_val.split(",") if g.strip()]
+                     if gates_val else None)
             result = tag_add(
                 tpos[1], flag(rest, "--when-to-use"),
                 route=flag(rest, "--route"),
-                tdd_exempt="--tdd-exempt" in rest,
-                coverage_exempt="--coverage-exempt" in rest,
+                gates=gates,
+                grounding=flag(rest, "--grounding"),
                 workflow=flag(rest, "--workflow"),
                 workflow_doc=flag(rest, "--workflow-doc"),
                 refactor="--refactor" in rest,
