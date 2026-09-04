@@ -75,13 +75,17 @@ class TagAddWritesTests(_EnvIsolated):
                          d / "conductor" / "workflow" / "task-type-profiles.json")
         row = json.loads(Path(r["registry_path"]).read_text(
             encoding="utf-8"))["tags"]["Lint"]
-        # Safe defaults: executor route, both gates ON, auto_propose opt-out
-        # written EXPLICIT (absent means True at read time — a generated tag
-        # must never join the proposer's candidates by accident).
+        # Safe defaults: executor route, full gates + test grounding (the
+        # positive form — the generator never writes legacy booleans),
+        # auto_propose opt-out written EXPLICIT (absent means True at read
+        # time — a generated tag must never join the proposer's candidates
+        # by accident).
         self.assertEqual(row["route"], "executor")
         self.assertEqual(row["when_to_use"], "Run the repo linters")
-        self.assertFalse(row["tdd_exempt"])
-        self.assertFalse(row["coverage_exempt"])
+        self.assertEqual(row["gates"], ["tdd", "coverage", "checkpoint"])
+        self.assertEqual(row["grounding"], "test")
+        self.assertNotIn("tdd_exempt", row)
+        self.assertNotIn("coverage_exempt", row)
         self.assertIs(row["auto_propose"], False)
         # Opt-in-only extras stay OFF the row entirely.
         self.assertNotIn("over_tag_risk", row)
@@ -99,8 +103,12 @@ class TagAddWritesTests(_EnvIsolated):
         row = json.loads(Path(r["registry_path"]).read_text(
             encoding="utf-8"))["tags"]["Deploy"]
         self.assertEqual(row["route"], "manual")
-        self.assertTrue(row["tdd_exempt"])
-        self.assertTrue(row["coverage_exempt"])
+        # Both-exempt flags land as checkpoint-only gates + review grounding
+        # (the derived fail-open value; an explicit --grounding can override).
+        self.assertEqual(row["gates"], ["checkpoint"])
+        self.assertEqual(row["grounding"], "review")
+        self.assertNotIn("tdd_exempt", row)
+        self.assertNotIn("coverage_exempt", row)
         self.assertIs(row["auto_propose"], True)
         self.assertTrue(row["over_tag_risk"])
 

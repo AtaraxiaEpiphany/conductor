@@ -141,7 +141,7 @@ class DeterminismTests(TestCase):
 
 class PathDecisionTests(TestCase):
     """The ONE resolution this dispatch owes, per precedence:
-    workflow_doc → inline `workflow` → tdd_exempt fast-path → default TDD."""
+    workflow_doc → inline `workflow` → both-exempt fast-path → default TDD."""
 
     def test_untagged_task_pins_default_docfile(self):
         body = dm.compose_manifest("/tmp/t", _state("plain impl task"),
@@ -164,6 +164,27 @@ class PathDecisionTests(TestCase):
         self.assertIn("path: fast-path", body)
         self.assertIn("skip Steps 3-7", body)
         self.assertIn("- tdd_exempt: true", body)
+
+    def test_tdd_only_exempt_tag_does_not_fast_path(self):
+        # The trap the tightening closes: a tdd-only-exempt EXECUTOR tag owes
+        # the 80% coverage floor, and a fast-path executor cannot see the
+        # gate it fails. Baseline escapes only because its one tdd-only-exempt
+        # tag (Explore) routes to explorer — so construct the case via
+        # overlay, the only place it can exist.
+        d = tempfile.mkdtemp()
+        proj = Path(d)
+        wf = proj / "conductor" / "workflow"
+        wf.mkdir(parents=True)
+        (wf / "task-type-profiles.json").write_text(json.dumps(
+            {"tags": {"SpecDraft": {"route": "executor",
+                                    "gates": ["coverage", "checkpoint"],
+                                    "grounding": "test"}}}))
+        self.addCleanup(shutil.rmtree, str(proj), True)
+        name = "[SpecDraft] draft the acceptance spec"
+        with _OverlayEnv(proj):
+            body = dm.compose_manifest(str(proj), _state(name), _pre(name))
+        self.assertNotIn("path: fast-path", body)
+        self.assertIn("path: docfile `default-tdd.md`", body)
 
     def test_shape_drives_gates_independently_of_tags(self):
         # Gates come from the workflow-shape; exemptions from the tag profile;

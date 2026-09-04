@@ -895,9 +895,10 @@ def derive_task_tag(description: str) -> str | None:
 # --- overlay generator ----------------------------------------------------------
 
 def tag_add(name, when_to_use=None, route=None, tdd_exempt=False,
-            coverage_exempt=False, workflow=None, workflow_doc=None,
-            refactor=False, auto_propose=False, over_tag_risk=False,
-            signals=None, examples=None, force=False, project_dir=None) -> dict:
+            coverage_exempt=False, grounding=None, workflow=None,
+            workflow_doc=None, refactor=False, auto_propose=False,
+            over_tag_risk=False, signals=None, examples=None, force=False,
+            project_dir=None) -> dict:
     """Generate (or replace) a task-type row in the PROJECT overlay registry.
 
     The validating generator for project task types — the task-type counterpart
@@ -910,9 +911,17 @@ def tag_add(name, when_to_use=None, route=None, tdd_exempt=False,
     ``extract_tags``, which builds its regex from the vocab) with zero Python
     edits.
 
-    Field policy: ``route``/``when_to_use``/``tdd_exempt``/``coverage_exempt``
-    are always written explicitly; ``auto_propose`` is always written too — a
-    *generated* tag defaults to ``false`` because at read time an absent
+    Field policy: ``route``/``when_to_use``/``gates``/``grounding`` are
+    always written explicitly — the POSITIVE form only (the generator never
+    writes the legacy exemption booleans; a row carrying both is the
+    two-homes form violation the validator rejects), and grounding is always
+    explicit so a gates-only row can never inherit a contradicting grounding
+    from an overlaid default block (the merged-level guard). Grounding
+    derives from the gates when the caller passes no explicit value:
+    ``test`` when tdd/coverage is owed, else ``review`` (the
+    ``grounding_of`` fail-open floor — pass an explicit value for
+    data-check/human-attest classes). ``auto_propose`` is always written too
+    — a *generated* tag defaults to ``false`` because at read time an absent
     ``auto_propose`` means True, and an adopted/bespoke tag must never surface
     in the mechanical proposer (:func:`rank_tags`) without an explicit decision
     to opt in. ``over_tag_risk``/``refactor`` are written only when true;
@@ -997,10 +1006,19 @@ def tag_add(name, when_to_use=None, route=None, tdd_exempt=False,
     else:
         example_list = []
 
+    # Positive form only: gates derived from the boolean flags (checkpoint
+    # always owed), grounding derived from the gates unless explicitly given
+    # — always explicit on the row (never inherit a contradicting grounding).
+    gates = [g for g, exempt in (("tdd", bool(tdd_exempt)),
+                                 ("coverage", bool(coverage_exempt)),
+                                 ("checkpoint", False)) if not exempt]
+    if grounding is None:
+        grounding = "test" if ("tdd" in gates or "coverage" in gates) \
+            else "review"
     row = {"route": route or "executor",
            "when_to_use": when_to_use.strip(),
-           "tdd_exempt": bool(tdd_exempt),
-           "coverage_exempt": bool(coverage_exempt),
+           "gates": gates,
+           "grounding": grounding,
            # Always explicit: at read time absent means True, and a generated
            # tag must not join the proposer's candidates by accident.
            "auto_propose": bool(auto_propose)}

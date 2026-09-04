@@ -86,12 +86,18 @@ def _rel_home(resolved: Path) -> tuple[str, str]:
 def _path_decision(state, pre):
     """The ONE workflow resolution this dispatch owes: ``(kind, detail)``.
 
-    kind ∈ ``fast-path`` (tdd-exempt tag → Step 8 only), ``docfile`` (follow
+    kind ∈ ``fast-path`` (both-exempt tag → Step 8 only), ``docfile`` (follow
     the named steps-library docfile), ``inline`` (legacy small-overlay
     ``workflow`` prose — fetch via registry-doc). Precedence mirrors
     task-executor §4.0: a declared ``workflow_doc`` wins, then inline prose,
     then the exemption, then default TDD. Fail-open: any miss falls through
     to ``("docfile", DEFAULT_WORKFLOW_DOC)``.
+
+    Fast-path keys on BOTH exemptions (gates ⊆ [checkpoint]), not tdd alone:
+    a tdd-only-exempt executor tag still owes the 80% coverage floor, and a
+    fast-path executor cannot see the gate it fails. The baseline escapes
+    the old looser check only because its one tdd-only-exempt tag (Explore)
+    routes to explorer — a project overlay tag exposed the trap.
     """
     leading = _leading_tag(pre)
     try:
@@ -101,7 +107,7 @@ def _path_decision(state, pre):
                 return "docfile", doc
             if workflow_for(leading):
                 return "inline", leading
-            if is_tdd_exempt([leading]):
+            if is_tdd_exempt([leading]) and is_coverage_exempt([leading]):
                 return "fast-path", None
     except Exception:
         pass

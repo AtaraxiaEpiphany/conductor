@@ -231,9 +231,19 @@ def validate_shape_row(name: str, row) -> list[str]:
     return errs
 
 
-def validate_tag_row(name: str, row) -> list[str]:
+def validate_tag_row(name: str, row, *, form_checks: bool = True) -> list[str]:
     """Errors for a single task-type row (the ``default`` block or one ``tags``
     entry). Empty list = valid.
+
+    ``form_checks`` gates the two-homes FORM guard (a row carrying both
+    ``gates`` and the legacy exemption booleans): it must run on rows AS
+    WRITTEN (overlay fragments, generator output) but NOT on MERGED rows —
+    the merged registry legitimately mixes forms across files (a legacy
+    overlay row inherits the positive default's ``gates``), and runtime
+    resolves that per-row in ``task_profiles._resolve_row``. Semantic guards
+    (grounding vocab, guard 1) always run: on merged rows the inherited
+    values are present in the dict, so the checks read exactly what runtime
+    would resolve.
     """
     errs: list[str] = []
     for k in row:
@@ -269,14 +279,25 @@ def validate_tag_row(name: str, row) -> list[str]:
             # while its findings report is review-grounded). Raw-row check:
             # only fires when the row itself declares grounding; a gates-only
             # row may inherit a consistent grounding from the default (the
-            # merged-level check in validate_registry catches the
-            # inheritance that violates).
+            # merged-level pass re-runs this on inherited values).
             if "tdd" in val and "grounding" in row and row["grounding"] != "test":
                 errs.append(
-                    f"tag {name!r}: gates include tdd/coverage but "
+                    f"tag {name!r}: gates include tdd but "
                     f"grounding={row['grounding']!r} — those gates witness a "
                     f"test-grounded deliverable; use grounding 'test' or drop "
                     f"them from gates")
+
+    # Two-homes FORM guard: one fact (which gates a class owes), two encodings
+    # — a row carrying BOTH `gates` and the legacy exemption booleans would
+    # resolve with gates winning while the booleans silently rot. Precedent:
+    # the workflow/workflow_doc guard below. Fragment-level only
+    # (``form_checks``) — see the docstring for why the merged pass skips it.
+    if form_checks and "gates" in row and \
+            ("tdd_exempt" in row or "coverage_exempt" in row):
+        errs.append(
+            f"tag {name!r}: carries both `gates` and the legacy "
+            f"tdd_exempt/coverage_exempt booleans — two homes for one fact; "
+            f"keep `gates` (the positive form) and drop the booleans")
 
     for s in ("when_to_use", "workflow", "workflow_doc"):
         if s in row and not isinstance(row[s], str):
@@ -366,9 +387,12 @@ def validate_shapes(doc) -> list[str]:
     return errs
 
 
-def validate_task_types(doc) -> list[str]:
+def validate_task_types(doc, *, form_checks: bool = True) -> list[str]:
     """Errors for a task-type-profiles document fragment. Same present-only
     philosophy as :func:`validate_shapes`. Empty list = valid.
+
+    ``form_checks`` threads to :func:`validate_tag_row` (fragment rows are
+    validated as written; merged results pass ``False``).
     """
     if not isinstance(doc, dict):
         return ["task-type registry top-level must be an object"]
@@ -382,7 +406,8 @@ def validate_task_types(doc) -> list[str]:
         if not isinstance(default, dict):
             errs.append("'default' must be an object")
         else:
-            errs.extend(validate_tag_row("default", default))
+            errs.extend(validate_tag_row("default", default,
+                                         form_checks=form_checks))
 
     tags = doc.get("tags")
     if tags is not None:
@@ -393,7 +418,8 @@ def validate_task_types(doc) -> list[str]:
                 if not isinstance(row, dict):
                     errs.append(f"tag {name!r} must be an object")
                     continue
-                errs.extend(validate_tag_row(name, row))
+                errs.extend(validate_tag_row(name, row,
+                                             form_checks=form_checks))
     return errs
 
 
@@ -491,13 +517,55 @@ def validate_merged_shapes(merged) -> list[str]:
 
 
 def validate_merged_task_types(merged) -> list[str]:
-    """Errors for a RESOLVED (baseline ⊕ overlay) task-type document — adds the
-    ``default`` requirement to :func:`validate_task_types`.
+    """Errors for a RESOLVED (baseline ⊕ overlay) task-type document.
+
+    Adds two things to :func:`validate_task_types`:
+
+    - the ``default`` requirement — the merged result MUST declare a
+      top-level ``default`` object, the fail-open fallback target;
+    - the merged-level grounding guard (guard 4): the merged document keeps
+      each tag row wholesale (``_merge_overlay`` does not materialize
+      default-inheritance into rows — :func:`_profile` does that at read
+      time), so a raw-row guard CANNOT see what a gates-only overlay row
+      inherits from an overlaid default block. This pass resolves each row
+      exactly as runtime would (``task_profiles._resolve_row`` over the
+      resolved default, then row) and re-runs guard 1 on the result — a row
+      resolving to tdd-gates + a declared non-test grounding (its own or
+      inherited) fails HERE, at the save gate, instead of silently at
+      runtime. An ABSENT grounding never fires (runtime fail-opens to
+      "test" when tdd is owed — mirroring that floor exactly).
+
+    Rows re-validate with ``form_checks=False``: the merged *default* is a
+    per-key merge and can legitimately carry both encodings (a legacy
+    overlay default's booleans beside the positive baseline's gates);
+    ``_resolve_row`` settles which wins at runtime.
     """
-    errs = validate_task_types(merged)
-    if isinstance(merged, dict) and not isinstance(merged.get("default"), dict):
+    errs = validate_task_types(merged, form_checks=False)
+    if not isinstance(merged, dict) or not isinstance(merged.get("default"), dict):
         errs.append(
             "merged task-type registry must declare a top-level 'default' object")
+        return errs
+    default_row = merged["default"]
+    # Lazy import (probes-precedent): the validator stays import-light on the
+    # hook path, and importing the loader here is safe — task_profiles never
+    # imports registry_validate at module level.
+    from .task_profiles import _resolve_row
+    resolved_default = _resolve_row(default_row)
+    tags = merged.get("tags")
+    if not isinstance(tags, dict):
+        return errs
+    for name, row in tags.items():
+        if not isinstance(row, dict):
+            continue
+        prof = {**resolved_default, **_resolve_row(row)}
+        grounding = prof.get("grounding")
+        if grounding is not None and "tdd" in (prof.get("gates") or []) \
+                and grounding != "test":
+            errs.append(
+                f"tag {name!r}: resolved gates include tdd but "
+                f"grounding={grounding!r} (own or inherited from 'default') — "
+                f"tdd gates witness a test-grounded deliverable; use "
+                f"grounding 'test' or drop tdd from gates")
     return errs
 
 

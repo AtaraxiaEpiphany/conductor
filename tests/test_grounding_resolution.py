@@ -293,6 +293,86 @@ class ValidateTagRowFormsTests(TestCase):
         # (added with the tag_add writer) catches violating inheritance.
         self.assertEqual(self.validate("X", {"gates": ["tdd", "checkpoint"]}), [])
 
+    def test_form_xor_guard_both_encodings_rejected(self):
+        # One fact (which gates a class owes), two encodings — the row must
+        # pick a form; resolution would let the booleans silently rot.
+        errs = self.validate("X", {"gates": ["checkpoint"],
+                                   "tdd_exempt": True, "coverage_exempt": True})
+        self.assertEqual(len(errs), 1)
+        self.assertIn("two homes for one fact", errs[0])
+        # Legacy booleans alone: still the accepted overlay form.
+        self.assertEqual(self.validate(
+            "X", {"tdd_exempt": True, "coverage_exempt": True}), [])
+
+
+class ValidateMergedGuardTests(TestCase):
+    """validate_merged_task_types: the inheritance-aware guard (a merged doc
+    keeps tag rows wholesale — default-inheritance is NOT materialized — so
+    the raw-row guard cannot see what a gates-only row inherits).
+    """
+
+    def setUp(self):
+        from scripts.track_state.registry_validate import validate_merged_task_types
+        self.validate_merged = validate_merged_task_types
+
+    def _merged(self, default, tags):
+        return {"default": default, "tags": tags}
+
+    def test_baseline_shaped_merged_clean(self):
+        self.assertEqual(self.validate_merged(self._merged(
+            {"route": "executor", "gates": ["tdd", "coverage", "checkpoint"],
+             "grounding": "test"},
+            {"Explore": {"route": "explore",
+                         "gates": ["coverage", "checkpoint"],
+                         "grounding": "review"},
+             "Legacy": {"route": "executor", "tdd_exempt": True,
+                        "coverage_exempt": True}})), [])
+
+    def test_gates_only_row_inheriting_contradicting_grounding_fails(self):
+        # The motivating case: overlay default is itself coherent
+        # (checkpoint-only, review); a tdd-gated row without its own
+        # grounding inherits review — guard 1 must fire on the RESOLVED row,
+        # not the raw one (the row alone carries no grounding to check).
+        errs = self.validate_merged(self._merged(
+            {"route": "executor", "gates": ["checkpoint"], "grounding": "review"},
+            {"Port": {"route": "executor",
+                      "gates": ["tdd", "checkpoint"]}}))
+        self.assertEqual(len(errs), 1)
+        self.assertIn("resolved gates include tdd", errs[0])
+        self.assertIn("inherited", errs[0])
+
+    def test_row_declared_grounding_checked_at_both_layers(self):
+        # A row declaring the contradiction itself trips the raw guard AND
+        # the resolved-level guard — both layers name it.
+        errs = self.validate_merged(self._merged(
+            {"route": "executor", "gates": ["tdd", "coverage", "checkpoint"],
+             "grounding": "test"},
+            {"Port": {"route": "executor",
+                      "gates": ["tdd", "checkpoint"],
+                      "grounding": "review"}}))
+        self.assertTrue(any("gates include tdd" in e for e in errs))
+        self.assertTrue(any("resolved gates include tdd" in e for e in errs))
+
+    def test_absent_grounding_never_fires(self):
+        # Runtime fail-opens to "test" when tdd is owed (grounding_of floor)
+        # — the merged guard mirrors that floor: only a DECLARED contradicting
+        # grounding (own or inherited) fails.
+        self.assertEqual(self.validate_merged(self._merged(
+            {"route": "executor", "tdd_exempt": False, "coverage_exempt": False},
+            {"Port": {"route": "executor",
+                      "gates": ["tdd", "checkpoint"]}})), [])
+
+    def test_merged_default_may_carry_both_encodings(self):
+        # The merged default is a per-key merge: a legacy overlay default's
+        # booleans beside the positive baseline's gates is legitimate
+        # (form_checks=False on the merged pass); _resolve_row settles which
+        # wins at runtime.
+        self.assertEqual(self.validate_merged(self._merged(
+            {"route": "executor", "gates": ["checkpoint"], "grounding": "review",
+             "tdd_exempt": True, "coverage_exempt": True},
+            {"Docs": {"route": "executor",
+                      "gates": ["checkpoint"], "grounding": "review"}})), [])
+
 
 if __name__ == "__main__":
     unittest.main()
