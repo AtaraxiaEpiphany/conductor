@@ -21,10 +21,11 @@ How it fires
 ------------
 PreToolUse (per the Claude Code hooks reference) fires **inside a subagent's
 own tool loop**, with ``agent_type``/``agent_id`` added to the input when
-running under ``--agent``. So this hook sees every tool call task-executor
-makes — not just the orchestrator's dispatch call. It filters in-code on
-``agent_type == "task-executor"``; all other agents / main-session calls are
-a no-op (allow, no context).
+running under ``--agent``. So this hook sees every tool call the dispatched
+executor makes — not just the orchestrator's dispatch call. It filters
+in-code on the task-executor SLOT (``task-executor`` itself plus any
+class-bound persona occupying the slot — ``agent_roster.executor_slot``); all
+other agents / main-session calls are a no-op (allow, no context).
 
 Resolution + counting
 ---------------------
@@ -61,7 +62,24 @@ from lib.locked_task import resolve as resolve_locked_task
 # the point is to trip before a context overflow, not proportionally to the cap.
 TRIPWIRE_HARD = 38
 
-_TARGET_AGENT = "task-executor"
+
+def _is_executor_slot(agent_type):
+    """True iff *agent_type* is task-executor or a persona occupying its slot.
+
+    Slot-occupancy (``agent_roster.executor_slot``) is what keeps a class-bound
+    wrapper inside the tripwire: without this check a persona escaped the
+    round-count entirely (counter never bumped, shutdown directive never
+    injected — a run to maxTurns context-overflow death). Roster-import failure
+    fail-opens to False → the hook no-ops (allow), the unrostered behavior —
+    a misbehaving guard is worse than none.
+    """
+    if agent_type == "task-executor":
+        return True
+    try:
+        from track_state import agent_roster
+        return agent_roster.executor_slot(agent_type) == "task-executor"
+    except Exception:
+        return False
 
 # The shutdown directive. Echoes agents/task-executor.md §6/§7 so the model
 # recognizes the channel it has been told to use for its shutdown artifacts.
@@ -112,9 +130,9 @@ def _bump_count(path: Path) -> int:
 def main():
     input_data = read_hook_input()
 
-    # Only task-executor is in scope. PreToolUse adds agent_type when running
-    # inside a subagent; main-session calls have no agent_type → no-op.
-    if input_data.get("agent_type") != _TARGET_AGENT:
+    # Only the executor SLOT is in scope. PreToolUse adds agent_type when
+    # running inside a subagent; main-session calls have no agent_type → no-op.
+    if not _is_executor_slot(input_data.get("agent_type")):
         write_hook_output(permission_decision="allow")
         return
 

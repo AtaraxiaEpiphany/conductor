@@ -684,5 +684,161 @@ class RedispatchTelemetryTests(_ProjectEnv):
         self.assertIn("agent=task-executor", log)
 
 
+class _HookProcessEnv(_ProjectEnv):
+    """Shared fixture for the two PreToolUse hooks that scope on the executor
+    slot: subprocess-run with an explicit env carrying the roster overlay."""
+
+    def _run_hook(self, hook_name, payload, proj):
+        import json as _json
+        import subprocess
+        env = dict(os.environ)
+        env["CLAUDE_PROJECT_DIR"] = proj
+        proc = subprocess.run(
+            [sys.executable,
+             str(Path(__file__).resolve().parent.parent / "scripts"
+                 / hook_name)],
+            input=_json.dumps(payload), capture_output=True, text=True,
+            env=env)
+        out = _json.loads(proc.stdout) if proc.stdout.strip() else {}
+        return out
+
+    @staticmethod
+    def _decision(out):
+        return out.get("hookSpecificOutput", {}).get("permissionDecision")
+
+    @staticmethod
+    def _context(out):
+        return out.get("hookSpecificOutput", {}).get("additionalContext") or ""
+
+    def _write_locked_track(self, proj):
+        from scripts.track_state.core import save
+        tdir = Path(proj, "conductor", "tracks", "auth")
+        tdir.mkdir(parents=True)
+        save(str(tdir), {
+            "track_id": "auth", "type": "feature", "status": "in_progress",
+            "workflow_shape": "default", "current_phase_index": 1,
+            "current_task_index": 1,
+            "phases": [{"name": "Phase 1", "status": "in_progress",
+                        "tasks": [{"name": "[Data] Pump", "status":
+                                   "in_progress"}]}],
+        })
+        return tdir
+
+    def _run_hook(self, hook_name, payload, proj):
+        import json as _json
+        import subprocess
+        env = dict(os.environ)
+        env["CLAUDE_PROJECT_DIR"] = proj
+        proc = subprocess.run(
+            [sys.executable,
+             str(Path(__file__).resolve().parent.parent / "scripts"
+                 / hook_name)],
+            input=_json.dumps(payload), capture_output=True, text=True,
+            env=env)
+        out = _json.loads(proc.stdout) if proc.stdout.strip() else {}
+        return out
+
+
+class TripwireHookPersonaTests(_HookProcessEnv):
+    """on-pre-tool-tripwire counts a persona's rounds — the worst T2 gap: a
+    persona bound via `agent` previously escaped the round-count tripwire
+    ENTIRELY (counter never bumped, shutdown directive never injected)."""
+
+    def _count_file(self, tdir):
+        return tdir / ".conductor" / ".tripwire-1-1.count"
+
+    def test_persona_rounds_counted_and_directive_injected(self):
+        proj = self._mk_project()
+        self._write_roster_overlay(proj, {"data-plumber": dict(_PERSONA_ROW)})
+        self._set_project(proj)
+        tdir = self._write_locked_track(proj)
+        trip = self._count_file(tdir)
+        trip.parent.mkdir(parents=True, exist_ok=True)
+        trip.write_text("37", encoding="utf-8")  # one round below the wire
+        out = self._run_hook("on-pre-tool-tripwire.py", {
+            "tool_name": "Bash", "cwd": proj, "agent_type": "data-plumber",
+            "tool_input": {"command": "echo hi"},
+        }, proj)
+        self.assertEqual(trip.read_text().strip(), "38",
+                         "the persona's round must bump the SAME counter")
+        self.assertEqual(self._decision(out), "allow")
+        self.assertIn("CONDUCTOR TRIPWIRE", self._context(out),
+                      "at the wire the shutdown directive injects")
+
+    def test_explorer_rounds_still_no_op(self):
+        proj = self._mk_project()
+        self._set_project(proj)
+        tdir = self._write_locked_track(proj)
+        out = self._run_hook("on-pre-tool-tripwire.py", {
+            "tool_name": "Bash", "cwd": proj, "agent_type": "explorer",
+            "tool_input": {"command": "echo hi"},
+        }, proj)
+        self.assertEqual(self._decision(out), "allow")
+        self.assertFalse(self._count_file(tdir).exists())
+
+
+class CleanTreeHookPersonaTests(_HookProcessEnv):
+    """on-write-result-clean-tree gates a persona's SUCCESS claim — without
+    slot-occupancy a persona bypassed the stranded-files guard."""
+
+    def _dirty_repo(self):
+        import subprocess
+        proj = self._mk_project()
+        subprocess.run(["git", "init", "-q"], cwd=proj, check=True)
+        subprocess.run(["git", "config", "user.email", "t@t.t"], cwd=proj,
+                       check=True)
+        subprocess.run(["git", "config", "user.name", "t"], cwd=proj,
+                       check=True)
+        return proj
+
+    def test_persona_success_on_dirty_tree_denied(self):
+        proj = self._dirty_repo()
+        self._write_roster_overlay(proj, {"data-plumber": dict(_PERSONA_ROW)})
+        self._set_project(proj)
+        tdir = self._write_locked_track(proj)
+        # An untracked implementation file — the stranded-files shape.
+        (Path(proj) / "impl_thing.py").write_text("x = 1\n", encoding="utf-8")
+        out = self._run_hook("on-write-result-clean-tree.py", {
+            "tool_name": "Bash", "cwd": proj, "agent_type": "data-plumber",
+            "tool_input": {"command": f'track-state write-result "{tdir}" '
+                                      f'--status success --summary done'},
+        }, proj)
+        self.assertEqual(self._decision(out), "deny")
+
+    def test_explorer_success_claim_untouched(self):
+        proj = self._dirty_repo()
+        self._set_project(proj)
+        tdir = self._write_locked_track(proj)
+        (Path(proj) / "impl_thing.py").write_text("x = 1\n", encoding="utf-8")
+        out = self._run_hook("on-write-result-clean-tree.py", {
+            "tool_name": "Bash", "cwd": proj, "agent_type": "explorer",
+            "tool_input": {"command": f'track-state write-result "{tdir}" '
+                                      f'--status success --summary done'},
+        }, proj)
+        self.assertEqual(self._decision(out), "allow")
+
+
+class WrapperMaxTurnsTests(TestCase):
+    """The wrapper template's maxTurns matches task-executor's 64 — with the
+    tripwire active, 38-of-48 left only 10 shutdown rounds vs 26."""
+
+    def test_template_writes_64(self):
+        from scripts.track_state import agent_roster as ar
+        self.assertIn("maxTurns: 64", ar._WRAPPER_TEMPLATE)
+        self.assertNotIn("maxTurns: 48", ar._WRAPPER_TEMPLATE)
+
+    def test_generated_wrapper_carries_64(self):
+        from scripts.track_state import agent_roster as ar
+        import tempfile
+        proj = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(proj,
+                                                            ignore_errors=True))
+        Path(proj, "conductor", "tracks").mkdir(parents=True)
+        res = ar.roster_add("data-plumber", "data-pipeline", project_dir=proj)
+        self.assertTrue(res["ok"], res)
+        text = (Path(res["agent_path"])).read_text(encoding="utf-8")
+        self.assertIn("maxTurns: 64", text)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -512,7 +512,7 @@ description: {description}
 tools: Bash, Read, Edit, Write, Grep, Glob
 model: sonnet
 effort: high
-maxTurns: 48
+maxTurns: 64
 skills: [{skill}]
 ---
 

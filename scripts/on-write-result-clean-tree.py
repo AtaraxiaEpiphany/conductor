@@ -35,10 +35,11 @@ can't.
 How it fires
 ------------
 PreToolUse fires inside a subagent's own tool loop; ``agent_type`` is added to
-the input under ``--agent``. This hook filters in-code on
-``agent_type == "task-executor"`` AND ``tool_name == "Bash"`` AND the command
-being a ``write-result`` invocation carrying ``--status success`` (visible flag
-form only). Everything else is a no-op (allow).
+the input under ``--agent``. This hook filters in-code on the task-executor
+SLOT (``task-executor`` itself plus any class-bound persona occupying the
+slot — ``agent_roster.executor_slot``) AND ``tool_name == "Bash"`` AND the
+command being a ``write-result`` invocation carrying ``--status success``
+(visible flag form only). Everything else is a no-op (allow).
 
 Resolution + uncommitted-file test
 ----------------------------------
@@ -75,8 +76,25 @@ from lib.git_utils import implementation_uncommitted_files, head_commit_files
 from lib.constants import is_build_artifact_path
 
 
-_TARGET_AGENT = "task-executor"
 _MAX_LISTED = 10  # cap the file list in the deny reason so it stays readable
+
+
+def _is_executor_slot(agent_type):
+    """True iff *agent_type* is task-executor or a persona occupying its slot.
+
+    Slot-occupancy (``agent_roster.executor_slot``) is what keeps a class-bound
+    wrapper inside the stranded-files guard: without this check a persona
+    bypassed the clean-tree gate and could report SUCCESS off an unclean tree.
+    Roster-import failure fail-opens to False → no-op (allow), the unrostered
+    behavior — a misbehaving guard is worse than none.
+    """
+    if agent_type == "task-executor":
+        return True
+    try:
+        from track_state import agent_roster
+        return agent_roster.executor_slot(agent_type) == "task-executor"
+    except Exception:
+        return False
 
 # A write-result invocation. Anchored on the subcommand token so we don't match
 # an unrelated command that merely mentions the string.
@@ -109,9 +127,10 @@ def _is_target_call(command):
 def main():
     input_data = read_hook_input()
 
-    # Only task-executor reporting success is in scope. PreToolUse adds
-    # agent_type inside a subagent; main-session / other agents → no-op.
-    if input_data.get("agent_type") != _TARGET_AGENT:
+    # Only the executor SLOT reporting success is in scope (task-executor or a
+    # class-bound persona). PreToolUse adds agent_type inside a subagent;
+    # main-session / other agents → no-op.
+    if not _is_executor_slot(input_data.get("agent_type")):
         write_hook_output(permission_decision="allow")
         return
 
