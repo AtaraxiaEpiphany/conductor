@@ -380,6 +380,62 @@ def cmd_set_max_retries(track_dir, p, t, s=None, max_retries=None):
     out(dict(ok=True, phase=pi, task=ti, subtask=si, max_retries=max_retries))
 
 
+def cmd_amend_task(track_dir, p, t, tag):
+    """Amend a top-level task's dispatch ``[Tag]`` — the sanctioned mid-flight
+    task-class mutation (B3).
+
+    The user-facing generalization of the misroute reroute: a wrong class on a
+    task is fixed by amending the AUTHORITATIVE name in both homes — the
+    plan.md task line via :func:`misc._amend_plan_task_tag` (position-keyed,
+    never name-guessed) and the state mirror with ``task_type`` re-derived and
+    subtasks inheriting the parent's type — never by a dispatch-time override
+    (decision: task-type ownership). ``tag`` is validated against the LIVE
+    registry vocab (:func:`task_profiles.TAG_VOCAB`): an unknown tag
+    hard-errors (the same contract ``tag add`` enforces) so a typo cannot
+    strand a task outside every class profile. Subtasks never carry their own
+    tag, so the amend targets top-level tasks only. Idempotent — an
+    already-present tag rewrites nothing and reports the unchanged name. The
+    CLI never commits (the `_bookkeeping_commit_line` convention); the caller
+    stages via its normal flow.
+    """
+    from .task_profiles import TAG_VOCAB, derive_task_type
+    from .misc import _amend_plan_task_tag
+    from .sync import _do_sync_plan
+
+    vocab = TAG_VOCAB()
+    if tag not in vocab:
+        out(dict(error=f"unknown tag: [{tag}]",
+                 hint="known tags: " + ", ".join(f"[{v}]" for v in vocab) +
+                      " — add a row with `track-state tag add <Tag>` first"))
+        return
+    try:
+        pi, ti = int(p), int(t)
+    except (TypeError, ValueError):
+        out(dict(error=f"phase and task must be integers (1-based), got {p!r} {t!r}"))
+        return
+    amend = _amend_plan_task_tag(track_dir, pi, ti, tag)
+    if not amend.get("ok"):
+        out(dict(error=amend.get("error")))
+        return
+    new_name = amend.get("name")
+    with transaction(track_dir) as state:
+        tgt = target(state, pi, ti)
+        previous = tgt.get("name")
+        if new_name and new_name != previous:
+            tgt["name"] = new_name
+            tgt["task_type"] = derive_task_type(new_name)
+            for sub in tgt.get("subtasks", []):
+                # Subtasks inherit the parent's tag (never carry their own) —
+                # keep the mirror in lockstep, as the reroute path does.
+                sub["task_type"] = tgt["task_type"]
+        state["updated_at"] = now_iso()
+    # Post-save sync (state is authoritative for checkboxes): normalizes any
+    # residual drift so plan.md and track-state.json land identical.
+    _do_sync_plan(track_dir, load(track_dir))
+    out(dict(ok=True, phase=pi, task=ti, tag=tag, previous=previous,
+             name=new_name, task_type=derive_task_type(new_name)))
+
+
 def reactivate_for_modified_retry(track_dir, p, t, s=None):
     """Flip a ``failed`` task back to ``pending`` for a failure-analyst
     ``retry_modified`` re-dispatch — WITHOUT resetting retry history.

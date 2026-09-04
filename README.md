@@ -56,13 +56,13 @@ All interaction happens through Claude Code slash commands:
 ### `track-state` CLI
 
 <!-- conductor:begin:cli-groups -->
-The `bin/track-state` command provides direct state management. Run `bin/track-state help` for the full, current list (95 subcommands across 18 groups) — it is grouped and self-describing. The complete surface, straight from `track_state/commands.py` (the same single source the pre-command guard derives its sanctioned set from):
+The `bin/track-state` command provides direct state management. Run `bin/track-state help` for the full, current list (96 subcommands across 18 groups) — it is grouped and self-describing. The complete surface, straight from `track_state/commands.py` (the same single source the pre-command guard derives its sanctioned set from):
 
 | Group | Subcommands |
 |-------|-------------|
 | **Lifecycle** | `init-from-plan`, `start`, `set-mode`, `set-recovery-policy`, `set-workflow-shape`, `finalize`, `archive` |
 | **Navigation** | `next`, `dispatch-next`, `recover`, `indices` |
-| **State Mutations** | `lock`, `complete`, `fail`, `skip`, `defer`, `block`, `reset`, `set-max-retries`, `split` |
+| **State Mutations** | `lock`, `complete`, `fail`, `skip`, `defer`, `block`, `reset`, `set-max-retries`, `split`, `amend-task` |
 | **Sync & Registry** | `sync-plan`, `reconcile-plan`, `sync-handoff`, `registry-update`, `registry-add`, `registry-doc` |
 | **Handoff** | `get-handoff`, `append-handoff`, `harvest-candidates`, `compile-track-findings` |
 | **Result Processing** | `write-result`, `process-result` |

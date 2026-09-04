@@ -14,7 +14,7 @@ COMMAND_GROUPS = [
     ("Lifecycle", ["init-from-plan", "start", "set-mode", "set-recovery-policy", "set-workflow-shape", "finalize", "archive"]),
     ("Navigation", ["next", "dispatch-next", "recover", "indices"]),
     ("State Mutations", ["lock", "complete", "fail", "skip", "defer", "block", "reset",
-                         "set-max-retries", "split"]),
+                         "set-max-retries", "split", "amend-task"]),
     ("Sync & Registry", ["sync-plan", "reconcile-plan", "sync-handoff",
                          "registry-update", "registry-add", "registry-doc"]),
     ("Handoff", ["get-handoff", "append-handoff", "harvest-candidates",
@@ -53,7 +53,7 @@ COMMAND_GROUPS = [
 # command-surface story is one module.
 INDEX_COMMANDS = frozenset({
     "lock", "complete", "fail", "skip", "block", "defer",
-    "set-max-retries", "split",
+    "set-max-retries", "split", "amend-task",
 })
 
 # Subcommands the pre-command rm/mv guard sanctions (its Layer A allowlist):

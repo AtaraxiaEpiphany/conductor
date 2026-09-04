@@ -7,7 +7,7 @@ from pathlib import Path
 from .core import load
 from .constants import EXECUTION_MODES, RECOVERY_POLICIES
 from .helpers import out, flag, flags_all
-from .mutations import cmd_lock, cmd_fail, cmd_skip, cmd_block, cmd_defer, cmd_set_max_retries, cmd_split
+from .mutations import cmd_lock, cmd_fail, cmd_skip, cmd_block, cmd_defer, cmd_set_max_retries, cmd_split, cmd_amend_task
 from .cmd_complete import cmd_complete
 from .dispatch import (
     cmd_next, cmd_dispatch_next, cmd_dispatch_prepare, cmd_dispatch_finalize,
@@ -259,6 +259,12 @@ COMMAND_HELP = {
                         "Set a per-task max_retries override (absent → global MAX_RETRIES). "
                         "Lets a hard task get more attempts or an easy one fewer; honored by the "
                         "retry policy, handoff N/M display, and dispatch-prepare/recover output."),
+    "amend-task": ("amend-task <track-dir> <phase> <task> --tag <Tag>\n"
+                   "          amend-task <track-dir> --phase <n> --task <n> --tag <Tag>",
+                   "Prepend a dispatch [Tag] onto a top-level task (the sanctioned mid-flight "
+                   "class change): amends the plan.md line and the state mirror (task_type "
+                   "re-derived, subtasks inherit). Validated against the live tag registry — "
+                   "unknown tags hard-error. Top-level only; subtasks inherit the parent's tag."),
     "split": ("split <track-dir> <phase> <task> [<subtask>] --subtasks \"a;b;c\" [--note <text>]\n"
               "      split <track-dir> --phase <n> --task <n> [--subtask <n>] --subtasks <a;b;c> [--note <text>]",
               "Decompose a task/subtask: skip the original (commit_sha preserved) and append the "
@@ -679,6 +685,17 @@ def main():
                     out(dict(error=f"--max-retries requires an integer, got: {mr!r}"))
                     sys.exit(1)
                 cmd_set_max_retries(track_dir, p, t, s, max_retries=mr_val)
+            elif cmd == "amend-task":
+                tag = flag(args, "--tag")
+                if not tag:
+                    out(dict(error="--tag is required (a registered task-type tag; "
+                                   "`track-state registry-doc` lists them)"))
+                    sys.exit(1)
+                if s is not None:
+                    out(dict(error="amend-task targets top-level tasks only — "
+                                   "subtasks inherit the parent's tag; amend the parent"))
+                    sys.exit(1)
+                cmd_amend_task(track_dir, p, t, tag=tag)
             elif cmd == "split":
                 names_raw = flag(args, "--subtasks") or ""
                 note = flag(args, "--note")
