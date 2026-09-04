@@ -114,17 +114,17 @@ The JSON carries:
 - `ac_refs` / `tc_refs` — the IDs from the task's `<!-- AC-n, TC-n.m -->` annotation.
 - `acs` — each ref resolved to its AC text (`{id, text}`) from spec.md.
 - `tcs` — the TC rows tracing to those ACs (`{id, ac}`) from spec.md's Test Scenarios table.
-- `tag_profile` — the leading tag's resolved profile (`route`/`tdd_exempt`/`coverage_exempt`/`workflow`/`refactor`); `null` for an untagged default task. Drives the Layer 1.5 fast path.
+- `tag_profile` — the leading tag's resolved profile (`route`/`gates`/`grounding`/`workflow`/`refactor`); `null` for an untagged default task. Drives the Layer 1.5 fast path.
 
 If `errors`/`warnings` are present (e.g. a dangling AC ref, or spec.md absent), read `plan.md`/`spec.md` directly to diagnose — the join is best-effort, not a gate.
 
 ### Layer 1.5: Read Your Dispatch Manifest
 
-Read your **dispatch manifest** — the file named by `WORKFLOW_FILE` in your envelope (`{TRACK_DIR}/.conductor/dispatch-manifest.md` on the serial rail; your worktree track dir on a wave). It is code-composed at dispatch time and carries THIS dispatch's resolved gates (workflow-shape ⊕ tag exemptions) and the one **Workflow path** decision (`fast-path` | `docfile` | `inline`). The `tag_profile` from the Layer 1 fetch and the injected `[Conductor Registry]` block are the deterministic floor — the same resolution independently recomputed. If manifest and injected block ever disagree, STOP and report it as a `SPEC_DEVIATION` (an inconsistent dispatch machinery, not something to guess between).
+Read your **dispatch manifest** — the file named by `WORKFLOW_FILE` in your envelope (`{TRACK_DIR}/.conductor/dispatch-manifest.md` on the serial rail; your worktree track dir on a wave). It is code-composed at dispatch time and carries THIS dispatch's resolved gates (workflow-shape ⊕ the task class's owed gates) and the one **Workflow path** decision (`fast-path` | `docfile` | `inline`). The `tag_profile` from the Layer 1 fetch and the injected `[Conductor Registry]` block are the deterministic floor — the same resolution independently recomputed. If manifest and injected block ever disagree, STOP and report it as a `SPEC_DEVIATION` (an inconsistent dispatch machinery, not something to guess between).
 
 Branch on the manifest's `path:` line:
 
-- **`fast-path`** (a tdd-exempt tag with no bespoke workflow — the config/docs/chore-style exemption; §5.0 exempts F2/F3):
+- **`fast-path`** (a both-exempt tag — `gates` omit `tdd` AND `coverage`, the config/docs/chore-style class — with no bespoke workflow; §5.0 exempts F2/F3):
   - **Skip Layer 2** — no AC/TC annotations, so spec.md AC extraction doesn't apply.  (If the task description or Layer 0 notes name an out-of-scope boundary, honor it directly.)
   - **In Layer 3, skip `testing/strategy.md` and the styleguide** — read only Step 8 (commit-message format) of the default workflow docfile, `${CLAUDE_PLUGIN_ROOT}/templates/workflow/steps/default-tdd.md`.
   - Then go **straight to §4.0 Step 8**.
@@ -171,9 +171,9 @@ Do NOT repeat the same approach; focus on "Suggested Next Step". The handoff is 
 
 **Gate check first:** the TDD cycle below is owed only if your dispatch manifest lists `tdd` in its `gates` (the `gates` line in your injected `[Conductor Registry]` block carries the same resolution). A non-code shape (e.g. `migration`) drops `tdd`/`coverage` at the track level — on such a track, tag your task with the shape's workflow tag (e.g. `[Migrate]` on a `migration` track) so the manifest's path decision resolves to its docfile and governs your steps; Step 6's 80% floor does not apply. The branching below assumes `tdd` is on (the common case).
 
-Follow your manifest's **Workflow path** decision (§1.5) — it is the single resolution of this task's leading tag (route / `tdd_exempt` / `coverage_exempt` / bespoke workflow); do not re-derive it from the injected block:
+Follow your manifest's **Workflow path** decision (§1.5) — it is the single resolution of this task's leading tag (route / `gates` / `grounding` / bespoke workflow); do not re-derive it from the injected block:
 
-- **`fast-path`** — the tdd_exempt config/docs/chore-style exemption → go **straight to Step 8** (commit-message format only; skip Steps 3-7).
+- **`fast-path`** — the both-exempt config/docs/chore-style class (`gates` omit `tdd` and `coverage`) → go **straight to Step 8** (commit-message format only; skip Steps 3-7).
 - **`docfile`** — follow the named workflow docfile verbatim (bespoke, e.g. `migrate.md` for a migration tag) instead of default TDD; it tells you exactly which steps to run, skip, and how to commit. `default-tdd.md` names the full cycle below (the untagged/default case — the majority of tasks).
 - **`inline`** — this tag carries bespoke executor prose (a project-overlay tag's small `workflow`). **Fetch the prose on demand with one Bash call — `track-state registry-doc --tag <Tag>` — and follow it verbatim** instead of default TDD. The prose is large + conditional (only this leading tag needs it), so it is fetched, never injected — zero edits here.
 - **`route: explore`** (`[Explore]` tag) → **ERROR**: report **FAILURE**. Exploration routes to the `explorer` agent, not you — you produce no findings, only code.
@@ -233,7 +233,7 @@ PURPOSE=coverage
 
 ## 5.0 FIREWALL
 
-Mandatory gates resolve from your track's shape — the `gates` line in your injected `[Conductor Registry]` block names them (today: F2 TDD, F3 Coverage, F6 Context Guard). A non-code shape (e.g. `migration`) drops F2/F3 at the track level; a gate then fires only if it is listed AND your task's tag is not exempt. Exempted tags are resolved from the registry profile, not enumerated here — the same block carries the resolved `coverage_exempt`/`tdd_exempt` sets.
+Mandatory gates resolve from your track's shape — the `gates` line in your injected `[Conductor Registry]` block names them (today: F2 TDD, F3 Coverage, F6 Context Guard). A non-code shape (e.g. `migration`) drops F2/F3 at the track level; a gate then fires only if it is listed AND your task's class owes it (`gates` includes it). Class gate obligations are resolved from the registry profile, not enumerated here — the same block carries the resolved per-tag gate sets.
 
 Prohibited: V1 (code before test), V3 (skip coverage), V8 (modify state).
 SHA handling: orchestrator appends SHAs — you do NOT modify plan markers.

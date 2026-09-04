@@ -34,12 +34,12 @@ class TaskExecutorWorkflowPointerTests(TestCase):
     def test_keeps_tag_routing_table(self):
         # Tag -> workflow dispatch is now registry-driven, not a restated table:
         # §4.0 branches on the leading-tag profile injected via the
-        # [Conductor Registry] block (tdd_exempt / workflow / route) rather than
-        # enumerating [Docs]/[Config]/[Chore] inline. A project-overlay
+        # [Conductor Registry] block (gates / grounding / workflow / route) rather
+        # than enumerating [Docs]/[Config]/[Chore] inline. A project-overlay
         # tag with a `workflow` flows here with zero plugin edits.
         self.assertIn("[Conductor Registry]", self.agent)
         self.assertIn("workflow", self.agent)
-        self.assertIn("tdd_exempt", self.agent)
+        self.assertIn("gates", self.agent)
         # The [Explore] -> ERROR rule is genuinely agent-specific (exploration
         # routes to the explorer agent, not the executor) and stays inline.
         self.assertIn("[Explore]", self.agent)

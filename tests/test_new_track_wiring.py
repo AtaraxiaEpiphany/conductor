@@ -115,8 +115,9 @@ class NewTrackPlanRefuterWiringTests(TestCase):
         self.assertIn("NOT search the project or plugin for a registry", self.prompt)
         # The rows come from the single-home renderer shared with the
         # SubagentStart injection block — at least one profile row must ride
-        # the prompt (the shipped registry always has tdd-exempt profiles).
-        self.assertIn("tdd-exempt", self.prompt)
+        # the prompt (the shipped registry always declares gates + grounding).
+        self.assertIn("gates=", self.prompt)
+        self.assertIn("grounding=", self.prompt)
 
     def test_code_builder_computes_ac_evidence(self):
         # AC_EVIDENCE is recomputed at dispatch (the deterministic lane), not

@@ -52,11 +52,12 @@ Refute on:
   the `[Conductor Registry]` block at the top of your context (header
   `RESOLVED TASK-TYPE TAG VOCAB`). It is authoritative and complete: **never
   search the project, CLAUDE.md, or the conductor plugin for it, and never
-  reconstruct it from memory** — the rows name which profiles are `tdd_exempt`
-  (an **exemption from TDD**), and a wrong tag silently disables a safety gate,
+  reconstruct it from memory** — the rows name each profile's owed
+  `gates`/`grounding` (a tag whose `gates` omit `tdd` is an **exemption from
+  TDD**), and a wrong tag silently disables a safety gate,
   so challenge each tagged task against its description and AC refs:
-  - **Over-tagged** (the dangerous direction): a task carrying a `tdd_exempt` tag
-    whose description or `<!-- AC-n -->` refs name **business logic / behavior**
+  - **Over-tagged** (the dangerous direction): a task carrying a tdd-exempt tag
+    (its row's `gates` omit `tdd`) whose description or `<!-- AC-n -->` refs name **business logic / behavior**
     it must implement. The exemption is inappropriate — the task needs TDD and the
     coverage gate (F2/F3). Refute.
   - **Under-tagged**: a task that is genuinely config/docs/migration-shaped but carries **no tag** is *not* a refutation — no-tag is the safe default (full TDD), so an unnecessary Red cycle is the only cost; it does not break a safety net. Leave it; at most note it under `CHALLENGED_CLAIM` as advisory. Do NOT refute on under-tagging alone.

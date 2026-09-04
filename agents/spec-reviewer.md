@@ -117,13 +117,13 @@ decidable experiment.
 
 ### 3.4 Plan Audit (dispatch-tag correctness)
 
-A task tag whose resolved registry profile is `tdd_exempt` is a **TDD exemption** — a wrong tag silently skips the Red→Green→Refactor cycle and the coverage gate. The closed tag set lives in your injected `[Conductor Registry]` block (header `RESOLVED TASK-TYPE TAG VOCAB`); do not enumerate it here. It is authoritative and complete: never search the project or the conductor plugin for it, and never reconstruct it from memory — **if the block is absent from your context top, treat the tag audit as skipped and say so in `ADVISORY` ("registry vocab not delivered")**; a tag audit on a guessed vocab is worse than none. Audit for the **dangerous direction only**:
+A task tag whose resolved registry `gates` omit `tdd` is a **TDD exemption** — a wrong tag silently skips the Red→Green→Refactor cycle and the coverage gate. The closed tag set lives in your injected `[Conductor Registry]` block (header `RESOLVED TASK-TYPE TAG VOCAB`); do not enumerate it here. It is authoritative and complete: never search the project or the conductor plugin for it, and never reconstruct it from memory — **if the block is absent from your context top, treat the tag audit as skipped and say so in `ADVISORY` ("registry vocab not delivered")**; a tag audit on a guessed vocab is worse than none. Audit for the **dangerous direction only**:
 
-- **Over-tagged (finding — must fix):** a task tagged with an exemption tag (a `tdd_exempt` tag — e.g. `[Docs]` for a no-code edit) whose description or `<!-- AC-n -->` refs name business
+- **Over-tagged (finding — must fix):** a task tagged with an exemption tag (a tag whose `gates` omit `tdd` — e.g. `[Docs]` for a no-code edit) whose description or `<!-- AC-n -->` refs name business
   logic/behavior it must implement → the exemption is wrong, the task needs full
   TDD. Tags whose profile carries `over_tag_risk` are the highest-priority
   scrutinies (the no-code, no-gate tags whose misapplication hides business logic
-  most easily), but any `tdd_exempt` tag on a task with real behavior is a
+  most easily), but any tdd-exempt tag on a task with real behavior is a
   finding. Record as a finding with the suggested fix (drop the tag).
 - **Under-tagged (advisory only — NOT a finding):** a task that looks
   config/docs/migration-shaped but has no tag is **not an error** — no-tag is the

@@ -312,14 +312,14 @@ class FloorAgreementTests(TestCase):
         # the agreement is "nothing bespoke" on both sides.
         self._agree(
             "plain impl task",
-            ["RESOLVED EXEMPTION SETS"],
+            ["RESOLVED GATE SETS"],
             ["path: docfile `default-tdd.md`"],
             injected_absent=["workflow:"])
 
     def test_exempt_tag_agrees_on_fast_path(self):
         self._agree(
             "[Docs] tweak readme",
-            ["coverage_exempt: True"],
+            ["gates: checkpoint"],
             ["path: fast-path", "- task class gates: checkpoint"])
 
     def test_overlay_inline_tag_agrees(self):

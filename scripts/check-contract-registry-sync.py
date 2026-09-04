@@ -332,8 +332,8 @@ def _scan_doc(path, literals):
                    f"closed-set enumeration of {len(found)} vocab literals "
                    f"({listed}) — a hand-listed complete set is a drift surface "
                    f"(a registry/overlay change silently contradicts it). Reference "
-                   f"the registry instead: 'task types whose profile is "
-                   f"tdd_exempt' / 'the injected [Conductor Registry] block'.")
+                   f"the registry instead: 'task types whose `gates` omit `tdd`' / "
+                   f"'the injected [Conductor Registry] block'.")
             continue
 
 
@@ -633,9 +633,8 @@ def main():
             "Reference the registry instead: the resolved vocab is rendered by "
             "`track-state registry-doc` (full tables) / `--tag <Name>` / "
             "`--shape <name>`, the [Conductor Registry] block injected into "
-            "agents is authoritative at dispatch, and the F2/F3 exemption sets "
-            "derive from each tag's `tdd_exempt`/`coverage_exempt` profile "
-            "field.\n"
+            "agents is authoritative at dispatch, and the F2/F3 gate sets "
+            "derive from each tag's `gates`/`grounding` profile fields.\n"
             "Findings:\n" + "\n".join(findings)
         )
 

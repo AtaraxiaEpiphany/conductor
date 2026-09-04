@@ -686,35 +686,33 @@ def when_to_use_for(tag: str) -> str:
 
 
 def tag_summary_rows() -> list[str]:
-    """One summary line per registered tag: ``[Tag] route tdd/coverage hint``.
+    """One summary line per registered tag: ``[Tag] route gates grounding hint``.
 
     The single-home renderer for the resolved tag vocab in compact form — read
     by BOTH delivery channels so they cannot drift: the SubagentStart
     registry-vocab block (on-subagent-start's reviewer/executor injections) and
     the code-assembled plan-refuter dispatch prompt
     (:func:`dispatch.cmd_plan_refute_prompt`, the deterministic channel the
-    2026-09 refuter incident added). Row shape: route, the reviewer flags
-    (``tdd-exempt`` / ``coverage-exempt`` / ``over-tag`` — the same tokens
-    ``on_subagent_start.reviewer_block_flags`` maps), the ``when_to_use`` hint,
-    and the row's EXPLICIT ``signals`` (only when declared as a list — tags like
-    [Refactor] deliberately omit it; showing the weaker derived tokens would
-    imply [Refactor] is matchable — see :func:`_signals_for`).
+    2026-09 refuter incident added). Row shape: route, the class's owed
+    ``gates`` and ``grounding`` (the positive declaration — the same tokens
+    ``on_subagent_start.reviewer_block_flags`` maps), ``over-tag`` when the row
+    carries it, the ``when_to_use`` hint, and the row's EXPLICIT ``signals``
+    (only when declared as a list — tags like [Refactor] deliberately omit it;
+    showing the weaker derived tokens would imply [Refactor] is matchable —
+    see :func:`_signals_for`).
     """
     rows = []
     for tag in TAG_VOCAB():
         prof = _profile(tag)
         route = prof.get("route", "executor")
         flags = []
-        if prof.get("tdd_exempt"):
-            flags.append("tdd-exempt")
-        if prof.get("coverage_exempt"):
-            flags.append("coverage-exempt")
         if prof.get("over_tag_risk"):
             flags.append("over-tag")
         hint = when_to_use_for(tag)
         flagstr = f" [{', '.join(flags)}]" if flags else ""
         hintstr = f" — {hint}" if hint else ""
-        rows.append(f"[{tag}] route={route}{flagstr}{hintstr}")
+        rows.append(f"[{tag}] route={route} gates={','.join(gates_of(tag))} "
+                    f"grounding={grounding_of(tag)}{flagstr}{hintstr}")
         sig = prof.get("signals")
         if isinstance(sig, list) and sig:
             rows.append(f"  signals: {', '.join(str(s) for s in sig)}")

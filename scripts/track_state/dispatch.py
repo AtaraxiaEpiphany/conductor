@@ -1562,8 +1562,9 @@ def _build_verifier_wave(track_dir, state, phase, verifiers=None):
     if verifiers is None:
         shape = resolve_shape(state.get("workflow_shape"))
         verifiers = verifiers_for(shape)
-    # Phase-composition narrowing: a phase of pure coverage_exempt tasks
-    # ([Config]/[Docs]/[Chore]/[Manual]) produces no code → no tests AND nothing
+    # Phase-composition narrowing: a phase where no task's class gates include
+    # coverage ([Config]/[Docs]/[Chore]/[Manual]) produces no code → no tests AND
+    # nothing
     # to compile, so both CODE tiers (test-runner + build-runner) have nothing to
     # run. Drop them from the fan-out (ac-tracer still runs — ACs are still
     # declared and traced). Auto-detected from the live task tags; no directive,
@@ -1618,7 +1619,7 @@ def _verify_status_lines(marker, key, label, owed):
 
     An empty verdict is coerced to ``"skipped (no code-producing tasks)"`` when
     the tier was NOT fanned (``owed=False``): either the phase is code-free
-    (coverage_exempt tasks → the code tiers were narrowed out of the wave) OR the
+    (no task owes the coverage gate → the code tiers were narrowed out of the wave) OR the
     resolved workflow-shape dropped the tier itself — a ``deliverable`` shape fans
     only ``ac-tracer``, so build-runner/test-runner never run and an empty verdict
     is EXPECTED, not a dispatch defect. A genuinely empty verdict when the tier

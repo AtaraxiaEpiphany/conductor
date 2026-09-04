@@ -350,17 +350,19 @@ def reviewer_block_flags():
 
     The drift lint (``check-contract-registry-sync.py``) asserts that every flag
     name a watched agent's prose references is a key here, and that the block
-    emits the key's value — so prose that defers to a flag (``over_tag_risk``,
-    ``tdd_exempt``, …) is guaranteed the data it names. The mapping is EXPLICIT,
-    not ``name.replace('_', '-')``, because one flag shortens in the block:
-    ``over_tag_risk`` -> ``over-tag`` (the renderer's compact token). A unit test
-    asserts each value IS emitted by the renderers, so this declaration can't
-    drift from the block silently. Canonical underscored keys match how prose
-    references the flags; the kebab values are the rendering detail.
+    emits the key's value — so prose that defers to a flag (``gates``,
+    ``grounding``, ``over_tag_risk``, …) is guaranteed the data it names. The
+    mapping is EXPLICIT, not ``name.replace('_', '-')``, because the values are
+    rendering details: the positive form renders as ``gates=tdd,...`` /
+    ``grounding=test`` prefixes, and ``over_tag_risk`` shortens to ``over-tag``.
+    A unit test asserts each value IS emitted by the renderers, so this
+    declaration can't drift from the block silently. Canonical underscored keys
+    match how prose references the flags; the kebab/prefix values are the
+    rendering detail.
     """
     return {
-        "tdd_exempt": "tdd-exempt",
-        "coverage_exempt": "coverage-exempt",
+        "gates": "gates=",
+        "grounding": "grounding=",
         "over_tag_risk": "over-tag",
     }
 
@@ -410,13 +412,13 @@ def _registry_for_reviewer():
     """spec-reviewer + refuter: full tag vocab with the review flags.
 
     The reviewers audit tag MEMBERSHIP — an over-tag (``over_tag_risk``)
-    exemption applied to business logic. They reason over the same flags the
-    dispatch layer reads, so the block surfaces those flags per row (the tag row
-    carries ``over-tag``). The reviewer's prose then points at the flag NAME
-    rather than restating which tags carry it — a restated literal set is the
-    first thing to drift, and the producer side of the adversarial pair must read
-    the same ground truth as the verifier. See :data:`reviewer_block_flags` for
-    the lint-facing contract.
+    exemption applied to business logic. They reason over the same profile the
+    dispatch layer reads, so the block surfaces each row's owed ``gates`` and
+    ``grounding`` (plus ``over-tag`` when the row carries it). The reviewer's
+    prose then points at the field NAME rather than restating which tags carry
+    it — a restated literal set is the first thing to drift, and the producer
+    side of the adversarial pair must read the same ground truth as the
+    verifier. See :data:`reviewer_block_flags` for the lint-facing contract.
     """
     lines = [f"{_REGISTRY_LEAD}", "",
              "RESOLVED TASK-TYPE TAG VOCAB (audit membership; flags name the risk):"]
@@ -428,14 +430,14 @@ def _registry_for_executor(cwd):
     """task-executor: this task's leading-tag profile + an on-demand workflow pointer.
 
     Resolves the locked task's leading tag and surfaces its resolved profile
-    (route/tdd_exempt/coverage_exempt). The ``workflow`` prose itself is NOT
+    (route/gates/grounding). The ``workflow`` prose itself is NOT
     injected — it is large + conditional (only the leading tag needs it), so it
     is read on demand: when the profile carries a ``workflow``, emit a one-line
     POINTER telling the executor to fetch it via
     ``track-state registry-doc --tag <Tag>`` (tier B, not tier A — see the
     three-tier context model). A project overlay tag with a bespoke ``workflow``
     flows to the executor here (the pointer names it; the prose is fetched,
-    never inlined). If no task/type resolves, emits the resolved exemption
+    never inlined). If no task/type resolves, emits the resolved gate
     summary derived from TAG_VOCAB (so the executor still sees the closed set
     rather than a hardcoded enumeration).
     """
@@ -447,8 +449,8 @@ def _registry_for_executor(cwd):
         lines.append("")
         lines.append(f"RESOLVED PROFILE for this task's leading tag [{tag}]:")
         lines.append(f"  - route: {prof.get('route', 'executor')}")
-        lines.append(f"  - tdd_exempt: {prof.get('tdd_exempt', False)}")
-        lines.append(f"  - coverage_exempt: {prof.get('coverage_exempt', False)}")
+        lines.append(f"  - gates: {', '.join(tp.gates_of(tag))}")
+        lines.append(f"  - grounding: {tp.grounding_of(tag)}")
         workflow = tp.workflow_for(tag)
         doc = tp.workflow_doc_for(tag)
         if doc:
@@ -483,16 +485,24 @@ def _registry_for_executor(cwd):
             )
         else:
             lines.append("  - refactor: false (no tactical refactorer; Step 5 mechanical refactor still runs in-task)")
-    # Always surface the resolved exemption set so §5.0 is registry-driven too —
-    # a project overlay tag's exemptions are visible even when no task resolves.
+    # Always surface the resolved gate sets so §5.0 is registry-driven too —
+    # a project overlay tag's gate obligations are visible even when no task
+    # resolves.
     lines.append("")
-    lines.append("RESOLVED EXEMPTION SETS (F2/F3 gating reads these from the registry):")
-    exempt = [t for t in tp.TAG_VOCAB() if tp._profile(t).get("coverage_exempt")]  # noqa: SLF001
-    lines.append(f"  - coverage(F2/F3)-exempt tags: {', '.join(f'[{t}]' for t in exempt) or '(none)'}")
-    tdd_exempt = [t for t in tp.TAG_VOCAB() if tp._profile(t).get("tdd_exempt")]  # noqa: SLF001
-    lines.append(f"  - tdd(F2)-exempt tags: {', '.join(f'[{t}]' for t in tdd_exempt) or '(none)'}")
+    lines.append("RESOLVED GATE SETS (F2/F3 gating reads these from the registry):")
+    cov = [t for t in tp.TAG_VOCAB() if "coverage" in tp.gates_of(t)]
+    lines.append(f"  - tags owing the coverage gate (F3): {', '.join(f'[{t}]' for t in cov) or '(none)'}")
+    tdd = [t for t in tp.TAG_VOCAB() if "tdd" in tp.gates_of(t)]
+    lines.append(f"  - tags owing the TDD gate (F2): {', '.join(f'[{t}]' for t in tdd) or '(none)'}")
+    # The third line keeps the block's completeness property under the positive
+    # form: every registered tag (including project-overlay tags) is named on
+    # exactly its lines, so a no-task-resolved dispatch still shows the whole
+    # closed vocab — the both-exempt class lands here (§1.5's fast-path set).
+    neither = [t for t in tp.TAG_VOCAB()
+               if not ({"tdd", "coverage"} & set(tp.gates_of(t)))]
+    lines.append(f"  - tags owing neither F2 nor F3 (fast-path class): {', '.join(f'[{t}]' for t in neither) or '(none)'}")
     # The track's resolved shape — the portability axis. Which gates the track
-    # enforces (a gate fires iff listed here AND the task's tag is not exempt),
+    # enforces (a gate fires iff listed here AND the task's class owes it),
     # and the workflow a tagless task defaults to. Lets task-executor's §4.0/§5.0
     # defer to the track's paradigm: a shape dropping tdd/coverage (e.g.
     # migration) means the executor owes neither and follows the shape's workflow

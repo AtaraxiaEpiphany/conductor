@@ -128,8 +128,8 @@ class PlannerOnDemandTests(TestCase):
 
 class ReviewerInjectionTests(TestCase):
     """spec-reviewer + refuter AUDIT tag membership, so they receive the
-    resolved vocab WITH the review flags (over_tag_risk / tdd_exempt /
-    coverage_exempt) per row — letting their prose defer to the flag names
+    resolved vocab WITH the review flags (gates / grounding /
+    over_tag_risk) per row — letting their prose defer to the flag names
     instead of restating which tags carry them (a restated set is the first
     thing to drift; the producer side of the adversarial pair must read the
     same ground truth as the verifier)."""
@@ -154,12 +154,11 @@ class ReviewerInjectionTests(TestCase):
     def test_reviewers_see_the_review_flags_per_row(self):
         # The block surfaces the flag tokens the reviewers' prose names — the
         # data the lint's flag-coverage assertion guarantees. Pinned on the
-        # baseline tags that carry each flag so a dropped emission is caught
-        # (over-tag from Docs/Config/Chore; tdd-exempt + coverage-exempt from
-        # the exempt tags).
+        # baseline registry so a dropped emission is caught (gates + grounding
+        # render on every row; over-tag from the over_tag_risk tags).
         for agent in self._REVIEWERS:
             ctx = _run(agent).get("hookSpecificOutput", {}).get("additionalContext", "")
-            for token in ("over-tag", "tdd-exempt", "coverage-exempt"):
+            for token in ("over-tag", "gates=", "grounding="):
                 self.assertIn(token, ctx, f"{agent} missing flag token {token!r}")
 
     def test_reviewer_block_flags_map_is_honest(self):
@@ -223,9 +222,9 @@ class ExecutorInjectionTests(TestCase):
             ctx = _run("task-executor", cwd=cwd).get("hookSpecificOutput", {}).get("additionalContext", "")
         self.assertIn("[Conductor Registry]", ctx)
         self.assertIn("RESOLVED PROFILE for this task's leading tag [Refactor]", ctx)
-        # [Refactor] is NOT TDD/coverage-exempt — it still owes a working test.
-        self.assertIn("tdd_exempt: False", ctx)
-        self.assertIn("coverage_exempt: False", ctx)
+        # [Refactor] is NOT TDD/coverage-exempt — it owes every gate.
+        self.assertIn("gates: tdd, coverage, checkpoint", ctx)
+        self.assertIn("grounding: test", ctx)
         # The load-bearing flag: refactor: true tells §3.6c to dispatch refactorer.
         self.assertIn("refactor: true", ctx)
 
@@ -238,19 +237,19 @@ class ExecutorInjectionTests(TestCase):
 
     def test_executor_default_task_gets_no_profile(self):
         # An untagged (default) task resolves no leading tag → only the
-        # exemption-set summary is injected (no RESOLVED PROFILE line).
+        # gate-set summary is injected (no RESOLVED PROFILE line).
         state = _flat_state(name="plain impl task", task_type="default")
         with _track(state) as cwd:
             ctx = _run("task-executor", cwd=cwd).get("hookSpecificOutput", {}).get("additionalContext", "")
         self.assertIn("[Conductor Registry]", ctx)
-        self.assertIn("RESOLVED EXEMPTION SETS", ctx)
+        self.assertIn("RESOLVED GATE SETS", ctx)
         self.assertNotIn("RESOLVED PROFILE", ctx)
 
-    def test_executor_no_locked_task_still_sees_exemption_sets(self):
+    def test_executor_no_locked_task_still_sees_gate_sets(self):
         ctx = _run("task-executor").get("hookSpecificOutput", {}).get("additionalContext", "")
         self.assertIn("[Conductor Registry]", ctx)
-        self.assertIn("RESOLVED EXEMPTION SETS", ctx)
-        # The exemption sets are the data-driven replacement for the old hardcoded
+        self.assertIn("RESOLVED GATE SETS", ctx)
+        # The gate sets are the data-driven replacement for the old hardcoded
         # "Exempted: [Docs], [Config], [Chore]" enumeration.
         for cov in ("Docs", "Config", "Chore", "Manual"):
             self.assertIn(f"[{cov}]", ctx)

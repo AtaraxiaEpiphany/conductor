@@ -27,11 +27,11 @@ Before marking `[~]`, verify no more than ONE parent `[~]` and ONE child `[~]` e
 
 ### F2 — TDD Gate
 
-Write the failing test first, implement only against red — no implementation code before a failing test. **Exempted:** task types whose resolved registry profile is `tdd_exempt` (resolve live via `track-state registry-doc` / the injected `[Conductor Registry]` block — do not enumerate the tags here, the set derives from each tag's `tdd_exempt` field). All others: TDD is MANDATORY.
+Write the failing test first, implement only against red — no implementation code before a failing test. **Exempted:** task types whose resolved registry `gates` omit `tdd` (resolve live via `track-state registry-doc` / the injected `[Conductor Registry]` block — do not enumerate the tags here, the set derives from each tag's `gates` field). All others: TDD is MANDATORY.
 
 ### F3 — Coverage Gate
 
-Run the coverage tool and commit only at ≥ 80% — never assume the number. **Exempted:** task types whose resolved registry profile is `coverage_exempt` (same registry-derived set as F2 — note Explore is `tdd_exempt` but NOT `coverage_exempt`: it produces no code yet must not skip coverage accounting on adjacent changes).
+Run the coverage tool and commit only at ≥ 80% — never assume the number. **Exempted:** task types whose resolved registry `gates` omit `coverage` (same registry-derived family as F2 — note `[Explore]` owes no TDD but DOES owe coverage: it produces no code yet must not skip coverage accounting on adjacent changes).
 
 ### F4 — SHA Must Exist
 
