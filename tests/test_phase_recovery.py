@@ -47,7 +47,7 @@ from scripts.track_state.constants import (
 from scripts.track_state import cli
 
 from tests.test_step import (
-    _phase_complete_track, _git_track_dir, _make_state, _step)
+    _phase_complete_track, _git_track_dir, _make_state, _step, _head_short)
 
 
 def _run(fn, *args):
@@ -396,7 +396,7 @@ class ResolutionTests(TestCase):
         # A recovering marker a retry cycle would leave; a PASSED clears it.
         _phase_recovery_marker(d, stage="recovering", analysis_rounds=2)
         _run(cmd_phase_verdict, d, "passed", None, None, "passed", "pytest -q")
-        o = _run(cmd_phase_checkpoint_review, d, "PASSED", "abc1234", None)
+        o = _run(cmd_phase_checkpoint_review, d, "PASSED", _head_short(d), None)
         self.assertTrue(o["ok"])
         self.assertTrue(o["stamped"])
         # Marker cleared → the next step advances instead of re-routing.

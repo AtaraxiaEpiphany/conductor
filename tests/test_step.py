@@ -68,6 +68,22 @@ def _git_track_dir(state, plan_content=None, with_initial_commit=True):
     return d
 
 
+def _head_short(d, width=None):
+    """A REAL short sha from a `_git_track_dir` repo (optionally widened).
+
+    The stamp home verifies the sha resolves to a commit (hallucination guard),
+    so any test that stamps through `_stamp_checkpoint_in_plan` /
+    `add-checkpoint` / `phase-checkpoint-review` PASSED in a git-backed dir
+    must use one of these, not a fabricated "abc1234". `width` exercises the
+    7-40 gate (git auto-extends past 7 on large repos).
+    """
+    argv = ["git", "-C", d, "log", "-1", "--format=%h"]
+    if width:
+        argv = ["git", "-C", d, "rev-parse", f"--short={width}", "HEAD"]
+    proc = subprocess.run(argv, check=True, capture_output=True, text=True)
+    return proc.stdout.strip()
+
+
 def _step(track_dir):
     """Capture cmd_step stdout as a dict."""
     old_out, old_err = sys.stdout, sys.stderr

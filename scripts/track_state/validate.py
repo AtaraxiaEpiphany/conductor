@@ -100,7 +100,12 @@ def _validate_plan_consistency(track_dir, state, errors, warnings):
             m = re.match(r"^##\s+Phase\s+(\d+)\b", line.rstrip("\n"))
             if m:
                 phase_num = int(m.group(1))
-                has_checkpoint[phase_num] = bool(re.search(r"\[checkpoint:\s*[0-9a-f]{7}\]", line))
+                # {7,} not {7}: the write gates accept git's own %h output,
+                # which auto-extends past 7 on large repos — all four
+                # checkpoint detectors must agree (plan_parse._CHECKPOINT,
+                # helpers._phase_needs_checkpoint, the stamp-strip regex all
+                # use + already).
+                has_checkpoint[phase_num] = bool(re.search(r"\[checkpoint:\s*[0-9a-f]{7,}\]", line))
 
     for pi, phase in enumerate(state.get("phases", []), 1):
         pname = phase.get("name", f"Phase {pi}")

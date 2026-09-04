@@ -1,12 +1,14 @@
 """Miscellaneous track-state commands."""
 import json
 import re
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
 
 from .core import load, save
 from lib.markers import json_marker_read  # tolerant marker read, single-homed
+from lib.atomic_io import atomic_write_text
 from .helpers import (
     out, now_iso, target, extract_tags, _reset_task,
     _any_phase_needs_checkpoint, conductor_dir, _tag_exempt_from_coverage,
@@ -1715,28 +1717,65 @@ def cmd_post_loop_status(track_dir):
     ))
 
 
+def _verify_checkpoint_sha(track_dir, sha):
+    """Fail-closed hallucination guard: the sha must resolve to a real commit.
+
+    A well-formed but fabricated sha would otherwise stamp a lying artifact —
+    and the defect surfaces far away, when the NEXT phase's scoped-doc diff
+    (``git diff <checkpoint> HEAD``) breaks on an unresolvable object. Enforced
+    only where a git repo is discoverable from the track dir; a repo-less dir
+    (plain fixtures, exports) fails OPEN — the format gate in the caller has
+    already run. Returns ``None`` when the sha checks out or verification is
+    impossible, an error string otherwise.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(track_dir), "cat-file", "-e", f"{sha}^{{commit}}"],
+            capture_output=True, text=True, timeout=10)
+    except Exception as exc:  # noqa: BLE001 — no git binary / infra failure
+        sys.stderr.write(f"checkpoint sha verification skipped: {exc}\n")
+        return None
+    if proc.returncode == 0:
+        return None
+    err = (proc.stderr or "").lower()
+    if "not a git repository" in err or "not a git dir" in err:
+        return None  # repo-less track dir — cannot verify, fail-open
+    return (f"SHA {sha} does not resolve to a commit in this repo — "
+            "re-run `git log -1 --format=%h` and stamp the sha it prints")
+
+
 def _stamp_checkpoint_in_plan(track_dir, p, sha):
     """Add or update the ``[checkpoint: <sha>]`` marker on Phase <p>'s heading in
     plan.md. Returns a result dict (no printing) so both the ``add-checkpoint``
     CLI command and the phase-checkpoint handshake (``cmd_phase_checkpoint_review``)
     can stamp without double-printing. ``ok`` on success; ``error`` on a missing
-    plan.md, malformed SHA, or phase heading not found.
+    plan.md, non-integer phase, malformed/unresolvable SHA, or phase heading not
+    found.
 
-    A successful stamp also compiles ``.conductor/track-findings.md`` for this
-    phase and stages the phase-gate replan offer (both advisory, fail-open) —
-    the single home for both triggers; see the comments at the tail of this
-    function."""
+    The single home for ALL PASSED boundary effects: a successful stamp
+    compiles ``.conductor/track-findings.md``, stages the phase-gate replan
+    offer, clears the phase-cp + phase-recovery markers, and records the
+    ``passed`` gate-outcome telemetry (all advisory, fail-open — see the
+    comments at the tail of this function)."""
     plan_path = Path(track_dir) / "plan.md"
     if not plan_path.exists():
         return dict(error="plan.md not found")
-    if not re.match(r"^[0-9a-f]{7}$", sha):
-        return dict(error="Invalid SHA format: must be 7 hex characters")
+    try:
+        phase_num = int(p)  # 1-based phase number, matches "## Phase N" in plan.md
+    except (TypeError, ValueError):
+        return dict(error=f"phase must be an integer (1-based), got {p!r}",
+                    hint="add-checkpoint takes the 1-based PHASE_INDEX from the assignment")
+    if not re.match(r"^[0-9a-f]{7,40}$", sha):
+        return dict(error="Invalid SHA format: must be 7-40 hex characters "
+                          "(git %h — large repos extend past 7)")
+    sha_err = _verify_checkpoint_sha(track_dir, sha)
+    if sha_err:
+        return dict(error=sha_err)
 
     with open(plan_path) as f:
         lines = f.readlines()
 
     result = []
-    phase_num = int(p)  # 1-based phase number, matches "## Phase N" in plan.md
     found = False
     for line in lines:
         stripped = line.rstrip("\n")
@@ -1756,10 +1795,13 @@ def _stamp_checkpoint_in_plan(track_dir, p, sha):
     if not found:
         return dict(error=f"Phase {phase_num} heading not found in plan.md")
 
-    with open(plan_path, "w") as f:
-        f.write("\n".join(result))
-        if result and not result[-1].endswith("\n"):
-            f.write("\n")
+    # Atomic (the spec_amend.splice_amendment precedent): a crash mid-write must
+    # not corrupt the checkpoint-bearing plan.md — the stamp IS the durable
+    # advance marker everything downstream diffs against.
+    text = "\n".join(result)
+    if result:
+        text += "\n"
+    atomic_write_text(plan_path, text)
 
     # Single-homed track-findings compile: BOTH stamp paths funnel through this
     # helper (cmd_add_checkpoint — Rail A / the phase-checker agent — and
@@ -1775,7 +1817,49 @@ def _stamp_checkpoint_in_plan(track_dir, p, sha):
     # Same funnel, second boundary effect: stage the phase-gate replan offer
     # (see _write_replan_marker_fail_open). Also fail-open by the same logic.
     _write_replan_marker_fail_open(track_dir, phase_num)
-    return dict(ok=True, phase=p, sha=sha)
+    # Same funnel, remaining PASSED boundary effects — these MUST live here, not
+    # at the review command: the agent's binding Step-8 self-stamp (both rails
+    # dispatch phase-checker with add-checkpoint) means review's PASSED arm
+    # early-returns on the happy path, so anything left there never ran —
+    # telemetry feed 3 recorded only FAILED rows, and a stale phase-recovery
+    # marker survived a recovery-then-pass (re-routing the failure analyst for
+    # a PASSED phase). Housing them at the stamp makes both rails converge on
+    # identical boundary effects.
+    _clear_checkpoint_markers_fail_open(track_dir)
+    _persist_gate_outcomes_fail_open(track_dir, phase_num)
+    return dict(ok=True, phase=phase_num, sha=sha)
+
+
+def _clear_checkpoint_markers_fail_open(track_dir):
+    """Clear the phase-cp + phase-recovery markers (stamp-home tail, fail-open).
+
+    The stamp itself IS the checkpoint's durable record, so both transient
+    markers are spent the moment it lands: the synth-pending phase-cp marker
+    (a stale one re-dispatches phase-checker for an already-stamped phase) and
+    a phase-recovery marker (a retry cycle that finally PASSED is resolved — a
+    stale one re-routes the failure analyst). Lazy-imports dispatch (which
+    imports this module at load time — the cmd_phase_done precedent).
+    """
+    try:
+        from .dispatch import _phase_cp_clear_marker, _phase_recovery_clear_marker
+        _phase_cp_clear_marker(track_dir)
+        _phase_recovery_clear_marker(track_dir)
+    except Exception as exc:  # noqa: BLE001 — advisory, never fatal
+        sys.stderr.write(f"checkpoint marker clear skipped (advisory): {exc}\n")
+
+
+def _persist_gate_outcomes_fail_open(track_dir, phase_num):
+    """Record ``passed`` gate-outcome rows (stamp-home tail, fail-open).
+
+    Loads state here so the stamp home needs no ``state`` parameter — the
+    stamp paths (add-checkpoint / review PASSED) converge on this one effect,
+    which is what lets telemetry feed 3 see PASSES and not just failures. Row
+    shape and store layout: :func:`_persist_gate_outcomes` below.
+    """
+    try:
+        _persist_gate_outcomes(track_dir, load(track_dir), int(phase_num), "passed")
+    except Exception as exc:  # noqa: BLE001 — advisory, never fatal
+        sys.stderr.write(f"gate-outcome telemetry skipped (advisory): {exc}\n")
 
 
 def _write_replan_marker_fail_open(track_dir, phase_num):
@@ -1870,8 +1954,9 @@ def _persist_gate_outcomes(track_dir, state, phase, verdict):
 
     ``<track_dir>/.conductor/gate-outcomes.json`` = ``{"track_id", "rows"}``
     where each row is ``{"phase", "class", "gate", "verdict"}``. Called from
-    BOTH arms of ``cmd_phase_checkpoint_review`` (the single trigger — a phase
-    verdict settles the phase): the verdict applies to every gate every
+    the stamp-home tail (``_persist_gate_outcomes_fail_open`` — the PASSED
+    side, both rails) and ``cmd_phase_checkpoint_review``'s FAILED arm: a
+    phase verdict settles the phase. The verdict applies to every gate every
     top-level task's class owed (leading tag via :func:`extract_tags`,
     untagged → ``"default"``; gates via :func:`task_profiles.gates_of`).
     Per-verifier attribution intentionally lives in the phase-cp marker, not

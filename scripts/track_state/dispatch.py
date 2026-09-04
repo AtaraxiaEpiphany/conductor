@@ -549,6 +549,27 @@ def _bookkeeping_commit_line(message):
             + shlex.quote(message))
 
 
+def _fix_envelope_keys(fixes, result, phase=None):
+    """Thread ``ensure_healthy`` auto-fixes onto a verdict-handshake envelope.
+
+    The live incident: the phase-boundary auto-fixes (phase-status propagation,
+    index advancement, SHA recovery) leave track-state.json dirty with NO
+    relayed commit — the one mutator path outside the
+    :func:`_bookkeeping_commit_line` convention, so the phase-checker hit a
+    modification it did not make at Step 6 with no contract guidance (turn
+    tax, or a compliance ``git restore`` that un-completes the phase). When
+    fixes ran, surface them AND the bookkeeping one-liner so the teleoperator
+    stages the state file instead of reverting it. Mutates and returns
+    ``result`` — the verdict commands build their envelopes incrementally.
+    """
+    if fixes:
+        result["fixes_applied"] = fixes
+        where = f" [P{phase}]" if phase else ""
+        result["bookkeeping"] = _bookkeeping_commit_line(
+            f"chore(conductor): track-state auto-fix{where}")
+    return result
+
+
 def _failed_task_decision(track_dir, pi, ti, si, name, retry_count):
     """Build the pre-computed Retry/Skip/Block ``decision`` blob for an
     interactive failed+exhausted task (the #1 transducer win).
@@ -1554,6 +1575,40 @@ def resolve_phase_gate(track_dir, state, phase):
     return {"verifiers": verifiers_for(shape)}
 
 
+def _narrowed_verifiers(state, phase, verifiers=None):
+    """The shape-declared verifier set AFTER phase-composition narrowing.
+
+    The exact predicate :func:`_build_verifier_wave` fans out, factored out so
+    ``cmd_phase_verdict``'s ``missing_verdicts`` advisory predicts the fanned
+    set without rebuilding the wave members — one predicate, so the advisory
+    and the fan-out can never drift.
+
+    Phase-composition narrowing: a phase where no task's class gates include
+    coverage ([Config]/[Docs]/[Chore]/[Manual]) produces no code → no tests AND
+    nothing to compile, so both CODE tiers (test-runner + build-runner) are
+    dropped from the fan-out (ac-tracer still runs — ACs are still declared and
+    traced). Auto-detected from the live task tags; no directive, no authoring
+    — the lightweight alternative to the per-phase verify apparatus. Shared by
+    BOTH rails (``cmd_dispatch_next`` threads ``verifiers=`` through;
+    ``_step_emit_dispatch_batch`` resolves here). Guard: never narrows to an
+    empty set — a project-overlay shape declaring ``verifiers=['test-runner']``
+    (no ac-tracer) would drop to () → a checkpoint that fans out zero verifiers
+    and can produce no verdict (stall). Keep at least one tier in that
+    pathological case.
+    """
+    from .workflow_shapes import resolve_shape, verifiers_for
+    from .task_profiles import phase_is_code_free
+    from .registry_validate import CODE_TIERS
+    if verifiers is None:
+        shape = resolve_shape(state.get("workflow_shape"))
+        verifiers = verifiers_for(shape)
+    if phase_is_code_free(state, phase) and any(v in CODE_TIERS for v in verifiers):
+        non_code = tuple(v for v in verifiers if v not in CODE_TIERS)
+        if non_code:
+            verifiers = non_code
+    return tuple(verifiers)
+
+
 def _build_verifier_wave(track_dir, state, phase, verifiers=None):
     """The pre-assembled checkpoint verifier fan-out — one wave member per
     verifier the resolved workflow-shape fans out.
@@ -1570,37 +1625,13 @@ def _build_verifier_wave(track_dir, state, phase, verifiers=None):
 
     ``verifiers`` lets a caller that already resolved the gate plan via
     :func:`resolve_phase_gate` pass the tuple through (avoids a double-resolve);
-    when ``None`` it is resolved here. Read-only verifiers run on the main
+    when ``None`` it is resolved here. Narrowing (a code-free phase drops the
+    CODE tiers) is :func:`_narrowed_verifiers` — the one predicate shared with
+    the verdict-completeness advisory. Read-only verifiers run on the main
     checkout (no worktree pinning, unlike wave members). ``name`` mirrors the
     wave member shape (a display label).
     """
-    from .workflow_shapes import resolve_shape, verifiers_for
-    from .task_profiles import phase_is_code_free
-    from .registry_validate import CODE_TIERS
-    if verifiers is None:
-        shape = resolve_shape(state.get("workflow_shape"))
-        verifiers = verifiers_for(shape)
-    # Phase-composition narrowing: a phase where no task's class gates include
-    # coverage ([Config]/[Docs]/[Chore]/[Manual]) produces no code → no tests AND
-    # nothing
-    # to compile, so both CODE tiers (test-runner + build-runner) have nothing to
-    # run. Drop them from the fan-out (ac-tracer still runs — ACs are still
-    # declared and traced). Auto-detected from the live task tags; no directive,
-    # no authoring — the lightweight alternative to the per-phase verify
-    # apparatus. Lives in this shared builder so BOTH rails
-    # (cmd_dispatch_next threads verifiers= through; _step_emit_dispatch_batch
-    # resolves here) narrow identically — putting it only in resolve_phase_gate
-    # would miss Rail B, which does not call it.
-    if phase_is_code_free(state, phase) and any(v in CODE_TIERS for v in verifiers):
-        # Guard: never narrow to an empty wave. A shipped shape pairs the code
-        # tiers with ac-tracer, but a project-overlay shape declaring
-        # verifiers=['test-runner'] (no ac-tracer) would drop to () here → a
-        # checkpoint that fans out zero verifiers and can produce no verdict
-        # (stall). Keep at least one tier in that pathological case rather than
-        # emitting an empty wave.
-        non_code = tuple(v for v in verifiers if v not in CODE_TIERS)
-        if non_code:
-            verifiers = non_code
+    verifiers = _narrowed_verifiers(state, phase, verifiers)
     members = []
     for verifier in verifiers:
         members.append({
@@ -3451,7 +3482,7 @@ def cmd_phase_verdict(track_dir, ac_verdict, ac_gate, ac_n_ungrounded,
         out(dict(error=f"unrecognized build-status: {build_status!r}", track_dir=td,
                  hint=f"one of: {', '.join(_BUILD_STATUSES)} (from ---BUILD VERIFY RESULT--- STATUS)"))
         return
-    state, _fixes, verrors = ensure_healthy(track_dir)
+    state, fixes, verrors = ensure_healthy(track_dir)
     if state is None:
         out(dict(error="track state unhealthy", errors=verrors, track_dir=td))
         return
@@ -3472,16 +3503,37 @@ def cmd_phase_verdict(track_dir, ac_verdict, ac_gate, ac_n_ungrounded,
         "build_command": build_command or None,
     }
     _phase_cp_write_marker(track_dir, marker)
+    # Verdict-completeness advisory: predict the fanned verifier set (the exact
+    # wave predicate) and flag any verifier with no transcribed status. A
+    # transcription miss surfaces HERE, at the CLI, instead of at the agent's
+    # expensive "dispatch defect → FAILURE" backstop (phase-checker §2.5/§3
+    # treat an empty verdict as a defect, not a pass). ac-tracer's verdict is
+    # the required positional, so only the build/test tiers can be missing —
+    # and they are legitimately absent only when the phase's composition
+    # narrowed them out.
+    verdicts_by_verifier = {
+        "ac-tracer": ac_verdict,
+        "build-runner": build_status,
+        "test-runner": l1_status,
+    }
+    missing = [v for v in _narrowed_verifiers(state, cp)
+               if not verdicts_by_verifier.get(v)]
     # Rail A paste-verbatim (design D3): the verdict transcription is the last
     # input the synthesizer prompt needs, so emit the phase-checker dispatch
     # envelope here — skills/implement §3.2 Step 3 pastes `prompt` verbatim
     # instead of hand-writing the field block. Same builder the `step` spine
     # uses (stage=synth_pending → dispatch_phase_checker); verdict-first order
     # now matches Rail B exactly.
-    out(dict(ok=True, phase=cp, stage="synth_pending", track_dir=td,
-             next_action="dispatch_phase_checker", agent="phase-checker",
-             prompt=_step_assemble_phase_checker_prompt(
-                 track_dir, state, cp, marker)))
+    envelope = dict(ok=True, phase=cp, stage="synth_pending", track_dir=td,
+                    next_action="dispatch_phase_checker", agent="phase-checker",
+                    prompt=_step_assemble_phase_checker_prompt(
+                        track_dir, state, cp, marker))
+    if missing:
+        envelope["missing_verdicts"] = missing
+        envelope["hint"] = ("a fanned verifier has no transcribed verdict — parse "
+                            "its RESULT block and re-run phase-verdict with its "
+                            "--build-status / --l1-status before dispatching")
+    out(_fix_envelope_keys(fixes, envelope, phase=cp))
 
 
 def cmd_phase_checkpoint_review(track_dir, status, sha, reason):
@@ -3511,7 +3563,7 @@ def cmd_phase_checkpoint_review(track_dir, status, sha, reason):
     """
     td = str(track_dir)
     verdict = (status or "").strip()
-    state, _fixes, verrors = ensure_healthy(track_dir)
+    state, fixes, verrors = ensure_healthy(track_dir)
     if state is None:
         out(dict(error="track state unhealthy", errors=verrors, track_dir=td))
         return
@@ -3519,29 +3571,28 @@ def cmd_phase_checkpoint_review(track_dir, status, sha, reason):
     if cp is None:
         # Already stamped (e.g. a duplicate review call after a PASSED) — clean.
         _phase_cp_clear_marker(track_dir)
-        out(dict(ok=True, stamped=False, reason="no_pending_checkpoint", phase=None,
-                 track_dir=td,
-                 hint="checkpoint already present — nothing to review"))
+        out(_fix_envelope_keys(
+            fixes, dict(ok=True, stamped=False, reason="no_pending_checkpoint",
+                        phase=None, track_dir=td,
+                        hint="checkpoint already present — nothing to review")))
         return
     if verdict == "PASSED":
-        if not sha or not re.match(r"^[0-9a-f]{7}$", sha):
-            out(dict(error="PASSED requires a valid --sha (7 hex)",
+        if not sha or not re.match(r"^[0-9a-f]{7,40}$", sha):
+            out(dict(error="PASSED requires a valid --sha (7-40 hex)",
                      track_dir=td, hint="CHECKPOINT_SHA from ---CHECKPOINT RESULT---"))
             return
         result = _stamp_checkpoint_in_plan(track_dir, cp, sha)
         if "error" in result:
             out(dict(error=result["error"], track_dir=td))
             return
-        _phase_cp_clear_marker(track_dir)
-        # A phase-recovery retry cycle that finally PASSED is resolved — clear it so
-        # the next step advances instead of re-routing (idempotent if none present).
-        _phase_recovery_clear_marker(track_dir)
-        # track-findings compile: single-homed in _stamp_checkpoint_in_plan
-        # (both stamp paths funnel through it) — nothing to do here.
-        # Gate-outcome telemetry (feed 3, fail-open): the phase verdict settles
-        # every gate the phase's task classes owed.
-        _persist_gate_outcomes(track_dir, state, int(cp), "passed")
-        out(dict(ok=True, stamped=True, phase=cp, sha=sha, track_dir=td))
+        # Everything else a PASSED owes — phase-cp/phase-recovery marker clears,
+        # track-findings compile, replan offer, gate-outcome telemetry — is
+        # single-homed in _stamp_checkpoint_in_plan (both stamp paths funnel
+        # through it; the agent's binding Step-8 self-stamp means this arm
+        # early-returns on the happy path anyway). Nothing to do here.
+        out(_fix_envelope_keys(
+            fixes, dict(ok=True, stamped=True, phase=cp, sha=sha, track_dir=td),
+            phase=cp))
     elif verdict == "FAILED":
         # Compile findings on the FAILED arm too (advisory, fail-open): failed
         # phases are often where the learning is — the recovery analyst and the
@@ -3581,17 +3632,21 @@ def cmd_phase_checkpoint_review(track_dir, status, sha, reason):
                     int(prior.get("consecutive_empty_rounds", 0) or 0),
             })
             _phase_cp_clear_marker(track_dir)
-            out(dict(ok=True, stamped=False, phase=cp, track_dir=td,
-                     routed_recovery=True,
-                     reason=reason or "phase-checker FAILED",
-                     hint="FAILED routed to phase-level recovery — run "
-                          "`track-state step` to dispatch the phase failure-analyst"))
+            out(_fix_envelope_keys(
+                fixes, dict(ok=True, stamped=False, phase=cp, track_dir=td,
+                            routed_recovery=True,
+                            reason=reason or "phase-checker FAILED",
+                            hint="FAILED routed to phase-level recovery — run "
+                                 "`track-state step` to dispatch the phase failure-analyst"),
+                phase=cp))
         else:
             # ask-surface track (legacy default) — byte-identical to pre-Track-2.
             _phase_cp_clear_marker(track_dir)
-            out(dict(ok=True, stamped=False, phase=cp, track_dir=td,
-                     reason=reason or "phase-checker FAILED",
-                     hint="announce the reason and STOP; edit spec/plan then re-invoke to re-run the phase"))
+            out(_fix_envelope_keys(
+                fixes, dict(ok=True, stamped=False, phase=cp, track_dir=td,
+                            reason=reason or "phase-checker FAILED",
+                            hint="announce the reason and STOP; edit spec/plan then re-invoke to re-run the phase"),
+                phase=cp))
     else:
         out(dict(error=f"unrecognized status: {verdict!r}", track_dir=td,
                  hint="PASSED | FAILED (from ---CHECKPOINT RESULT--- STATUS)"))

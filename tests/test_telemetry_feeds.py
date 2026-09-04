@@ -31,7 +31,7 @@ from scripts.track_state.probes import run_probe, probe_names
 
 # Integration fixtures: the git-backed "phase 1 complete, no checkpoint" track
 # (same reuse as test_phase_checkpoint_handshake).
-from tests.test_step import _phase_complete_track
+from tests.test_step import _phase_complete_track, _head_short
 from scripts.track_state.dispatch import (
     cmd_phase_verdict, cmd_phase_checkpoint_review)
 
@@ -157,7 +157,7 @@ class ReviewIntegrationTests(TestCase):
         d = _phase_complete_track()
         self.addCleanup(shutil.rmtree, d, ignore_errors=True)
         _run(cmd_phase_verdict, d, "passed", None, None, "passed", "pytest -q")
-        sha = "abc1234" if status == "PASSED" else None
+        sha = _head_short(d) if status == "PASSED" else None
         return d, _run(cmd_phase_checkpoint_review, d, status, sha, None)
 
     def test_passed_persists(self):

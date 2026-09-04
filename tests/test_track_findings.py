@@ -25,6 +25,7 @@ from scripts.track_state.handoff import (
     cmd_append_handoff, compile_track_findings, cmd_compile_track_findings,
     _append_execution_record, _extract_candidates, _extract_subtask_section,
 )
+from tests.test_step import _head_short  # real commit shas (stamp home verifies)
 
 
 def _out_captured(fn, *args, **kwargs):
@@ -283,7 +284,7 @@ class StampPathTests(TestCase):
         from scripts.track_state.misc import _stamp_checkpoint_in_plan
         d = self._track()
         self._seed_finding(d, "stamp-path durable finding")
-        o = _stamp_checkpoint_in_plan(d, 1, "abc1234")
+        o = _stamp_checkpoint_in_plan(d, 1, _head_short(d))
         self.assertTrue(o["ok"])
         doc_path = Path(d) / ".conductor" / "track-findings.md"
         self.assertTrue(doc_path.exists(), "a successful stamp must compile")
@@ -296,7 +297,7 @@ class StampPathTests(TestCase):
         from scripts.track_state.misc import cmd_add_checkpoint
         d = self._track()
         self._seed_finding(d, "rail-a durable finding")
-        o = self._capture(cmd_add_checkpoint, d, 1, "abc1234")
+        o = self._capture(cmd_add_checkpoint, d, 1, _head_short(d))
         self.assertTrue(o["ok"])
         doc_path = Path(d) / ".conductor" / "track-findings.md"
         self.assertTrue(doc_path.exists(),
@@ -307,7 +308,7 @@ class StampPathTests(TestCase):
         from scripts.track_state.dispatch import cmd_phase_checkpoint_review
         d = self._track()
         self._seed_finding(d, "phase-1 durable finding")
-        o = self._capture(cmd_phase_checkpoint_review, d, "PASSED", "abc1234", None)
+        o = self._capture(cmd_phase_checkpoint_review, d, "PASSED", _head_short(d), None)
         self.assertTrue(o["ok"])
         self.assertTrue(o["stamped"])
         doc_path = Path(d) / ".conductor" / "track-findings.md"
@@ -341,7 +342,7 @@ class StampPathTests(TestCase):
         try:
             from scripts.track_state.misc import _stamp_checkpoint_in_plan
             d = self._track()
-            o = _stamp_checkpoint_in_plan(d, 1, "abc1234")
+            o = _stamp_checkpoint_in_plan(d, 1, _head_short(d))
             # Stamp still succeeds — the advisory compile error was swallowed.
             self.assertTrue(o["ok"], "checkpoint must stamp even if compile raises")
         finally:

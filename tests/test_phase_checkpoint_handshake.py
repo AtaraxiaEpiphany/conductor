@@ -23,7 +23,8 @@ from scripts.track_state.dispatch import (
 from scripts.track_state import cli
 
 # Reuse the git-backed "phase 1 complete, no checkpoint" track fixture + builder.
-from tests.test_step import _phase_complete_track, _git_track_dir, _make_state
+from tests.test_step import (
+    _phase_complete_track, _git_track_dir, _make_state, _head_short)
 
 
 def _run(fn, *args):
@@ -164,10 +165,11 @@ class PhaseCheckpointReviewTests(TestCase):
         d = _phase_complete_track()
         self.addCleanup(shutil.rmtree, d, ignore_errors=True)
         _run(cmd_phase_verdict, d, "passed", None, None, "passed", "pytest -q")
-        o = _run(cmd_phase_checkpoint_review, d, "PASSED", "abc1234", None)
+        sha = _head_short(d)  # real commit — the stamp home verifies it resolves
+        o = _run(cmd_phase_checkpoint_review, d, "PASSED", sha, None)
         self.assertTrue(o["ok"])
         self.assertTrue(o["stamped"])
-        self.assertEqual(o["sha"], "abc1234")
+        self.assertEqual(o["sha"], sha)
         plan = (Path(d) / "plan.md").read_text()
         self.assertTrue(_has_checkpoint(plan, 1),
                         "PASSED must stamp [checkpoint: <sha>] on the phase heading")
@@ -234,6 +236,181 @@ class PhaseCheckpointReviewTests(TestCase):
         o = _run(cmd_phase_checkpoint_review, d, "PASSED", "abc1234", None)
         self.assertTrue(o["ok"])
         self.assertFalse(o["stamped"])
+
+
+class StampHomeBoundaryEffectsTests(TestCase):
+    """A1: the stamp home owns ALL PASSED boundary effects — the phase-cp +
+    phase-recovery marker clears and the ``passed`` gate-outcome telemetry live
+    in ``_stamp_checkpoint_in_plan``, so the agent's binding Step-8 self-stamp
+    (Rail A ``add-checkpoint``) and the review command's PASSED arm converge on
+    identical effects. Pre-fix, only review performed them — but review
+    early-returns once the agent has stamped, so telemetry feed 3 recorded only
+    FAILED rows and a stale recovery marker survived a recovery-then-pass."""
+
+    def _gate_rows(self, d):
+        return json.loads(
+            (Path(d) / ".conductor" / "gate-outcomes.json").read_text())["rows"]
+
+    def test_agent_self_stamp_clears_markers_and_records_telemetry(self):
+        from scripts.track_state.dispatch import (
+            _phase_recovery_write_marker, _phase_recovery_read_marker)
+        from scripts.track_state.misc import cmd_add_checkpoint
+        d = _phase_complete_track()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        _run(cmd_phase_verdict, d, "passed", None, None, "passed", "pytest -q")
+        # A recovering marker a retry cycle would leave; a PASSED resolves it.
+        _phase_recovery_write_marker(
+            d, {"phase": 1, "stage": "recovering", "analysis_rounds": 2})
+        o = _run(cmd_add_checkpoint, d, 1, _head_short(d))
+        self.assertTrue(o["ok"])
+        self.assertFalse(_phase_cp_marker_path(d).exists(),
+                         "the self-stamp must clear the synth-pending marker")
+        self.assertIsNone(_phase_recovery_read_marker(d),
+                          "the self-stamp must resolve a recovery cycle")
+        rows = self._gate_rows(d)
+        self.assertTrue(rows, "the self-stamp must record passed gate rows")
+        self.assertTrue(all(r["verdict"] == "passed" for r in rows))
+
+    def test_review_after_self_stamp_converges_without_duplicate_rows(self):
+        # The live-path sequence: agent self-stamps (Rail A), then the
+        # teleoperator transcribes the result to review PASSED. Review becomes
+        # an idempotent router — it must NOT double-append telemetry.
+        from scripts.track_state.misc import cmd_add_checkpoint
+        d = _phase_complete_track()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        _run(cmd_phase_verdict, d, "passed", None, None, "passed", "pytest -q")
+        sha = _head_short(d)
+        _run(cmd_add_checkpoint, d, 1, sha)
+        o = _run(cmd_phase_checkpoint_review, d, "PASSED", sha, None)
+        self.assertTrue(o["ok"])
+        self.assertFalse(o["stamped"], "already stamped — idempotent router")
+        self.assertEqual(len(self._gate_rows(d)), 3,
+                         "one settlement, one set of rows")
+
+    def test_eight_char_sha_accepted(self):
+        # A3: git %h auto-extends past 7 on large repos — the write gates
+        # accept git's own output instead of spuriously FAILEDing the
+        # checkpoint at Step 8.
+        from scripts.track_state.misc import cmd_add_checkpoint
+        d = _phase_complete_track()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        sha = _head_short(d, width=8)
+        self.assertEqual(len(sha), 8)
+        o = _run(cmd_add_checkpoint, d, 1, sha)
+        self.assertTrue(o["ok"])
+        self.assertIn(f"[checkpoint: {sha}]",
+                      (Path(d) / "plan.md").read_text())
+
+    def test_non_integer_phase_errors_cleanly(self):
+        # A4: cli passes the positional raw — a non-integer phase must error
+        # as JSON, not traceback past the agent's `ok: true` check.
+        from scripts.track_state.misc import cmd_add_checkpoint
+        d = _phase_complete_track()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        o = _run(cmd_add_checkpoint, d, "one", "abc1234")
+        self.assertIn("error", o)
+        self.assertIn("integer", o["error"])
+        self.assertFalse(_has_checkpoint((Path(d) / "plan.md").read_text(), 1))
+
+    def test_hallucinated_sha_rejected_in_repo(self):
+        # A5: a well-formed fabricated sha would stamp a lying artifact that
+        # breaks the NEXT phase's `git diff <checkpoint> HEAD` — fail closed
+        # wherever a repo is discoverable.
+        from scripts.track_state.misc import cmd_add_checkpoint
+        d = _phase_complete_track()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        o = _run(cmd_add_checkpoint, d, 1, "1234567")
+        self.assertIn("error", o)
+        self.assertIn("does not resolve", o["error"])
+        self.assertFalse(_has_checkpoint((Path(d) / "plan.md").read_text(), 1))
+
+    def test_repo_less_dir_stamps_fail_open(self):
+        # A5's fail-open side: a plain tmpdir (no git) cannot verify — the
+        # format gate alone decides. (The detector-consistency tests below
+        # exercise the same path incidentally; this pins the contract.)
+        import tempfile
+        from scripts.track_state.misc import _stamp_checkpoint_in_plan
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        Path(d, "plan.md").write_text("# Plan\n\n## Phase 1: Build\n- [x] A\n")
+        r = _stamp_checkpoint_in_plan(d, 1, "abc1234")
+        self.assertTrue(r.get("ok"))
+
+
+class VerdictEnvelopeTests(TestCase):
+    """A2/A7: the verdict-handshake envelopes surface ``ensure_healthy``
+    auto-fixes (+ the relayed bookkeeping commit) and a verdict-completeness
+    advisory, instead of dropping both on the floor."""
+
+    def test_fixes_surfaced_with_bookkeeping_line(self):
+        # The live incident: phase-boundary auto-fixes leave track-state.json
+        # dirty with no relayed commit — surface them so the teleoperator
+        # stages the file instead of reverting a modification it did not make.
+        import scripts.track_state.dispatch as dispatch_mod
+        d = _phase_complete_track()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        state, _fixes, _verrors = dispatch_mod.ensure_healthy(d)
+        orig = dispatch_mod.ensure_healthy
+
+        def fake_healthy(_td):
+            return state, ["phase-status propagation"], []
+
+        dispatch_mod.ensure_healthy = fake_healthy
+        self.addCleanup(setattr, dispatch_mod, "ensure_healthy", orig)
+        o = _run(cmd_phase_verdict, d, "passed", None, None, "passed", "pytest -q")
+        self.assertEqual(o["fixes_applied"], ["phase-status propagation"])
+        self.assertIn("git add -A", o["bookkeeping"])
+        self.assertIn("auto-fix", o["bookkeeping"])
+
+    def test_no_fix_keys_when_clean(self):
+        # Post-fix shape: phase status already propagated + all verdicts
+        # transcribed → no fixes, no advisory, no bookkeeping line.
+        state = _make_state(
+            current_phase_index=0, current_task_index=0,
+            phases=[{"name": "Phase 1", "status": "completed", "tasks": [
+                {"name": "Task A", "status": "completed",
+                 "commit_sha": "abc1234"}]}])
+        plan = "# Plan\n\n## Phase 1: Build\n- [x] Task A\n"
+        d = _git_track_dir(state, plan_content=plan)
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        o = _run(cmd_phase_verdict, d, "passed", None, None, "passed", "pytest -q",
+                  "passed", "npx tsc --noEmit")
+        self.assertNotIn("fixes_applied", o)
+        self.assertNotIn("bookkeeping", o)
+        self.assertNotIn("missing_verdicts", o)
+
+    def test_missing_verdicts_advisory(self):
+        # A7: a fanned verifier with no transcribed status flags at the CLI —
+        # cheaper than the agent's dispatch-defect FAILURE backstop.
+        d = _phase_complete_track()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        o = _run(cmd_phase_verdict, d, "passed", None, None, None, None)
+        self.assertTrue(o["ok"])
+        self.assertEqual(o["missing_verdicts"], ["build-runner", "test-runner"])
+        self.assertIn("phase-verdict", o["hint"])
+
+    def test_complete_verdicts_carry_no_advisory(self):
+        d = _phase_complete_track()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        o = _run(cmd_phase_verdict, d, "passed", None, None, "passed", "pytest -q",
+                  "passed", "npx tsc --noEmit")
+        self.assertTrue(o["ok"])
+        self.assertNotIn("missing_verdicts", o)
+
+    def test_code_free_phase_absent_tiers_are_not_missing(self):
+        # A code-free phase narrows out the CODE tiers — their absence is
+        # legitimate fan-out narrowing, not a transcription miss.
+        state = _make_state(
+            current_phase_index=0, current_task_index=0,
+            phases=[{"name": "Phase 1", "status": "pending", "tasks": [
+                {"name": "[Config] Task A", "status": "completed",
+                 "commit_sha": "abc1234"}]}])
+        plan = "# Plan\n\n## Phase 1: Build\n- [x] [Config] Task A\n"
+        d = _git_track_dir(state, plan_content=plan)
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        o = _run(cmd_phase_verdict, d, "passed", None, None, None, None)
+        self.assertTrue(o["ok"])
+        self.assertNotIn("missing_verdicts", o)
 
 
 class CheckpointStampDetectorConsistencyTests(TestCase):
@@ -306,7 +483,7 @@ class CliWiringTests(TestCase):
         self.addCleanup(shutil.rmtree, d, ignore_errors=True)
         _run(cmd_phase_verdict, d, "passed", None, None, "passed", "pytest -q")
         self._invoke(["phase-checkpoint-review", d, "--status", "PASSED",
-                      "--sha", "abc1234"])
+                      "--sha", _head_short(d)])
         plan = (Path(d) / "plan.md").read_text()
         self.assertTrue(_has_checkpoint(plan, 1))
 

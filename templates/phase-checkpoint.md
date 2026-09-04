@@ -9,10 +9,7 @@
 2.  **Ensure Test Coverage for Phase Changes:**
     -   **Step 2.1: Determine Phase Scope:** To identify the files changed in this phase, you must first find the starting point. Read `plan.md` to find the Git commit SHA of the *previous* phase's checkpoint. If no previous checkpoint exists, the scope is all changes since the first commit.
     -   **Step 2.2: List Changed Files:** Execute `git diff --name-only <previous_checkpoint_sha> HEAD` to get a precise list of all files modified during this phase.
-    -   **Step 2.3: Verify and Create Tests:** For each file in the list:
-        -   **CRITICAL:** First, check its extension. Exclude non-code files (e.g., `.json`, `.md`, `.yaml`).
-        -   For each remaining code file, verify a corresponding test file exists.
-        -   If a test file is missing, you **must** create one. Before writing the test, **first, analyze other test files in the repository to determine the correct naming convention and testing style.** The new tests **must** validate the functionality described in this phase's tasks (`plan.md`).
+    -   **Step 2.3: Coverage scope:** which files owe a test is decided by the task-class gates — a file owes a test only if the task that produced it declares a class whose `gates` include coverage (the phase-checker's Step 2.2 addendum owns the rule) — never by a hardcoded extension list. Creating missing tests is owned by Step 3's fix-and-retry pass, which runs only when the test tier reports failure; a passing fleet already grounded the phase, so this step creates nothing on the happy path.
 
 3.  **Execute Automated Tests with Proactive Debugging:**
     -   Before execution, you **must** announce the exact shell command you will use to run the tests.
@@ -57,6 +54,7 @@
 
 6.  **Create Checkpoint Commit:**
     -   Stage all changes. If no changes occurred in this step, proceed with an empty commit.
+    -   **Orchestrator bookkeeping:** a modified `track-state.json` / `plan.md` you did NOT edit is conductor auto-bookkeeping — the phase-boundary auto-fixes (phase-status propagation, index syncs), surfaced as `fixes_applied` on the verdict envelope together with a `bookkeeping` commit line. Stage it with this checkpoint commit. NEVER restore/revert it — reverting un-completes the phase and desyncs state from plan.md.
     -   Perform the commit with a clear and concise message (e.g., `chore(conductor): Checkpoint end of Phase X`).
 
 7.  **Attach Auditable Verification Report using Git Notes:**
@@ -64,9 +62,9 @@
     -   **Step 7.2: Attach Note:** Use the `git notes` command and the full commit hash from the previous step to attach the full report to the checkpoint commit.
 
 8.  **Get and Record Phase Checkpoint SHA:**
-    -   **Step 8.1: Get Commit Hash:** Obtain the 7-char short hash of the *just-created checkpoint commit* (`git log -1 --format="%h"`).
+    -   **Step 8.1: Get Commit Hash:** Obtain the short hash of the *just-created checkpoint commit* (`git log -1 --format="%h"` — use exactly what git prints; large repositories extend past 7 characters).
     -   **Step 8.2: Update Plan:** Run `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/track-state" add-checkpoint {TRACK_DIR} {PHASE_INDEX} {sha}` to update the phase heading in `plan.md` with `[checkpoint: <sha>]`.
-    -   **Step 8.3: Verify:** Confirm the command output contains `ok: true`.
+    -   **Step 8.3: Verify:** Confirm the command output contains `ok: true`. An `error` JSON is a real gate — the command verifies the sha resolves to a commit in this repo; re-run `git log -1 --format="%h"` and retry once with the fresh value. NEVER hand-edit `[checkpoint: ...]` into plan.md to bypass the gate.
 
 9.  **Commit Plan Update:**
     - **Action:** Stage the modified `plan.md` file.

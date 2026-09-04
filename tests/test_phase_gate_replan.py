@@ -27,7 +27,7 @@ from scripts.track_state.quality import _CONDUCTOR_GITIGNORE
 
 # Shared git-backed fixtures (same reuse as test_phase_checkpoint_handshake /
 # test_telemetry_feeds).
-from tests.test_step import _make_state, _git_track_dir, _phase_complete_track
+from tests.test_step import _make_state, _git_track_dir, _phase_complete_track, _head_short
 
 
 def _run(fn, *args, **kwargs):
@@ -69,7 +69,7 @@ class StagingTests(TestCase):
     def test_stamp_stages_when_phases_remain(self):
         d = _two_phase_track()
         self.addCleanup(shutil.rmtree, d, ignore_errors=True)
-        o = _stamp_checkpoint_in_plan(d, 1, "abc1234")
+        o = _stamp_checkpoint_in_plan(d, 1, _head_short(d))
         self.assertTrue(o["ok"])
         self.assertEqual(json.loads(_marker_path(d).read_text()),
                          {"phase": 1})
@@ -79,7 +79,7 @@ class StagingTests(TestCase):
         # re-derive pass over rows that do not exist.
         d = _phase_complete_track()
         self.addCleanup(shutil.rmtree, d, ignore_errors=True)
-        o = _stamp_checkpoint_in_plan(d, 1, "fedcba9")
+        o = _stamp_checkpoint_in_plan(d, 1, _head_short(d))
         self.assertTrue(o["ok"])
         self.assertFalse(_marker_path(d).exists())
 
@@ -99,7 +99,7 @@ class StagingTests(TestCase):
         # same home — verified through the CLI wrapper, not the helper.
         d = _two_phase_track()
         self.addCleanup(shutil.rmtree, d, ignore_errors=True)
-        o = _run(cmd_add_checkpoint, d, 1, "abc1234")
+        o = _run(cmd_add_checkpoint, d, 1, _head_short(d))
         self.assertTrue(o["ok"])
         self.assertEqual(json.loads(_marker_path(d).read_text()),
                          {"phase": 1})
@@ -109,7 +109,7 @@ class StagingTests(TestCase):
         d = _two_phase_track()
         self.addCleanup(shutil.rmtree, d, ignore_errors=True)
         _run(cmd_phase_verdict, d, "passed", None, None, "passed", "pytest -q")
-        o = _run(cmd_phase_checkpoint_review, d, "PASSED", "abc1234", None)
+        o = _run(cmd_phase_checkpoint_review, d, "PASSED", _head_short(d), None)
         self.assertTrue(o["ok"])
         self.assertEqual(json.loads(_marker_path(d).read_text()),
                          {"phase": 1})
@@ -128,9 +128,9 @@ class StagingTests(TestCase):
         # A re-verified phase is a new settlement — the offer comes back.
         d = _two_phase_track()
         self.addCleanup(shutil.rmtree, d, ignore_errors=True)
-        _stamp_checkpoint_in_plan(d, 1, "abc1234")
+        _stamp_checkpoint_in_plan(d, 1, _head_short(d))
         _run(cmd_replan, d, ack=True)
-        o = _stamp_checkpoint_in_plan(d, 1, "abc1234")
+        o = _stamp_checkpoint_in_plan(d, 1, _head_short(d))
         self.assertTrue(o["ok"])
         self.assertTrue(_marker_path(d).exists())
 
@@ -142,7 +142,7 @@ class ReplanCommandTests(TestCase):
     def test_due_after_stamp(self):
         d = _two_phase_track()
         self.addCleanup(shutil.rmtree, d, ignore_errors=True)
-        _stamp_checkpoint_in_plan(d, 1, "abc1234")
+        _stamp_checkpoint_in_plan(d, 1, _head_short(d))
         o = _run(cmd_replan, d)
         self.assertTrue(o["ok"])
         self.assertTrue(o["replan_due"])
@@ -179,7 +179,7 @@ class ReplanCommandTests(TestCase):
     def test_ack_consumes_then_not_due(self):
         d = _two_phase_track()
         self.addCleanup(shutil.rmtree, d, ignore_errors=True)
-        _stamp_checkpoint_in_plan(d, 1, "abc1234")
+        _stamp_checkpoint_in_plan(d, 1, _head_short(d))
         o = _run(cmd_replan, d, ack=True)
         self.assertTrue(o["ok"])
         self.assertEqual(o["acked"], 1)
