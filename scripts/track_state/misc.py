@@ -1890,6 +1890,34 @@ def _write_replan_marker_fail_open(track_dir, phase_num):
         sys.stderr.write(f"replan offer staging skipped (advisory): {exc}\n")
 
 
+def _replan_pending(track_dir):
+    """Pure poll half of the replan handshake: marker read + staleness gate.
+
+    Returns the exact envelope ``cmd_replan``'s poll arm emits, as data (no
+    emit) — ``{replan_due, phase?, remaining_phases?, reason?}`` — so the shape
+    studio's whole-track graph annotates the pending offer through the SAME
+    read, never a second marker parser. Fail-open: an absent or corrupt marker
+    is simply not due.
+    """
+    marker = conductor_dir(track_dir) / REPLAN_PASS_MARKER
+    phase = None
+    try:
+        doc = json.loads(marker.read_text(encoding="utf-8"))
+        if isinstance(doc, dict) and isinstance(doc.get("phase"), int):
+            phase = doc["phase"]
+    except (OSError, json.JSONDecodeError):
+        pass
+    if phase is None:
+        return dict(replan_due=False, reason="no pending replan pass")
+    n_phases = len(load(track_dir).get("phases", []))
+    if not (1 <= phase < n_phases):
+        # Last-phase stamp, or the plan shrank since: no remaining rows to
+        # re-derive — the offer is stale, not due.
+        return dict(replan_due=False, phase=phase,
+                    reason="no phases remain after the checkpoint")
+    return dict(replan_due=True, phase=phase, remaining_phases=n_phases - phase)
+
+
 def cmd_replan(track_dir, ack=False):
     """Poll (default) or consume (``--ack``) the phase-gate replan offer.
 
@@ -1920,19 +1948,7 @@ def cmd_replan(track_dir, ack=False):
             sys.exit(1)
         out(dict(ok=True, acked=phase))
         return
-    if phase is None:
-        out(dict(ok=True, replan_due=False,
-                 reason="no pending replan pass"))
-        return
-    n_phases = len(load(track_dir).get("phases", []))
-    if not (1 <= phase < n_phases):
-        # Last-phase stamp, or the plan shrank since: no remaining rows to
-        # re-derive — the offer is stale, not due.
-        out(dict(ok=True, replan_due=False, phase=phase,
-                 reason="no phases remain after the checkpoint"))
-        return
-    out(dict(ok=True, replan_due=True, phase=phase,
-             remaining_phases=n_phases - phase))
+    out(dict(ok=True, **_replan_pending(track_dir)))
 
 
 def compile_track_findings_fail_open(track_dir, phase_num=None):

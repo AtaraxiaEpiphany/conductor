@@ -51,7 +51,7 @@ from . import workflow_shapes as ws
 from .constants import task_max_retries
 from .core import load as _load_state
 from .helpers import extract_tags, flag
-from .misc import build_view_envelope
+from .misc import build_view_envelope, _replan_pending
 
 
 # --- vocab + graph helpers (pure; shared with the resolve endpoint) ------------
@@ -223,6 +223,18 @@ def _vocab():
                             "gates": list(rv.GATES)},
             "effects": _effects(_TAG_FIELD_EFFECTS),
         },
+        # Read-only registries (B2): the studio renders them as VIEWERS —
+        # same origins machinery (B/O badges, merged view), no editor form.
+        # The vocab carries only the read_only marker + the sanctioned
+        # mutation surface so the UI never dead-ends.
+        "agent-roster": {
+            "read_only": True,
+            "mutate_hint": rs._REGISTRIES["agent-roster"]["mutate_hint"],  # noqa: SLF001 — registry-internal table read
+        },
+        "probes": {
+            "read_only": True,
+            "mutate_hint": rs._REGISTRIES["probes"]["mutate_hint"],  # noqa: SLF001 — registry-internal table read
+        },
     }
 
 
@@ -361,6 +373,19 @@ def _docfile_steps(text, limit=8):
     return steps
 
 
+def _route_agent(card):
+    """The agent a task dispatches to — the persona seam, card-driven.
+
+    A class-bound ``agent`` overrides the executor mapping (manual/explore
+    still route their own way — a persona IS an executor slot). Shared by the
+    per-task graph and the whole-track graph so the two cannot disagree.
+    """
+    if card.get("agent") and card.get("route") == "executor":
+        return card["agent"]
+    return {"explore": "explorer", "executor": "task-executor",
+            "manual": "user (manual)"}[card.get("route") or "executor"]
+
+
 def _task_graph(track_dir, phase, task, subtask):
     """The resolved per-task workflow graph for one task unit, or ``None``.
 
@@ -435,10 +460,7 @@ def _task_graph(track_dir, phase, task, subtask):
 
     # The persona seam: a class-bound `agent` overrides the executor mapping
     # (manual/explore still route their own way — a persona IS an executor).
-    persona = tp.agent_for([card["tag"]]) if card["tag"] else None
-    route_agent = (persona if persona and card["route"] == "executor" else
-                   {"explore": "explorer", "executor": "task-executor",
-                    "manual": "user (manual)"}[card["route"]])
+    route_agent = _route_agent(card)
 
     return {
         "ok": True,
@@ -454,6 +476,69 @@ def _task_graph(track_dir, phase, task, subtask):
         "gates": gates,
         "max_retries": task_max_retries(unit, shape),
     }
+
+
+def _track_graph(track_dir):
+    """The whole-track concrete-workflow DAG — one composition per phase.
+
+    The "what will this track actually run?" answer at track scope: every phase
+    with its task cards (resolved tag / persona / route agent + retry budget —
+    :func:`_task_card`), the checkpoint fan-out NARROWED for that phase (the
+    exact :func:`dispatch._build_verifier_wave` predicate: shape verifiers
+    minus the code tiers when :func:`task_profiles.phase_is_code_free` —
+    ``build_view_envelope`` narrows only the current phase; here every phase
+    gets its own), and the track-level loop annotations (checkpoint / verify /
+    recovery policies + the pending replan offer via :func:`misc._replan_pending`
+    — the same read ``track-state replan`` polls).
+
+    Built from ``build_view_envelope`` + registry accessors only: the ONE-join
+    invariant holds (studio-namespaced like ``task_cards`` — the dashboard /
+    status renderers never read this shape), and nothing drifts from what
+    dispatch computes.
+    """
+    env = build_view_envelope(track_dir)
+    state = _load_state(track_dir)
+    shape = (env.get("resolved_workflow") or {}).get("shape", "default")
+    shape_verifiers = list(ws.verifiers_for(shape))
+    checkpoint_on = "checkpoint" in set(ws.gates_for(shape))
+
+    phases = []
+    for ph in env.get("task_tree") or []:
+        pi = ph.get("index")
+        code_free = tp.phase_is_code_free(state, pi)
+        tasks = []
+        for tk in ph.get("tasks") or []:
+            card = _task_card(pi, tk)
+            card["route_agent"] = _route_agent(card)
+            card["max_retries"] = task_max_retries(tk, shape)
+            tasks.append(card)
+        phases.append(dict(
+            index=pi,
+            name=ph.get("name"),
+            status=ph.get("status"),
+            code_free=code_free,
+            checkpoint=dict(on=checkpoint_on,
+                            policy=ws.checkpoint_policy_for(shape)),
+            verifiers=([v for v in shape_verifiers if v not in rv.CODE_TIERS]
+                       if code_free else list(shape_verifiers)),
+            tasks=tasks,
+        ))
+
+    return dict(
+        ok=True,
+        track=(env.get("track") or {}).get("track_id"),
+        shape=shape,
+        position=(env.get("resolved_workflow") or {}).get("position"),
+        phases=phases,
+        loops=dict(
+            checkpoint_policy=ws.checkpoint_policy_for(shape),
+            verify_policy=ws.verify_policy_for(shape),
+            # The same absent-means-"ask" read cmd_set_recovery_policy's
+            # `previous` uses — the graph never renders a bare None.
+            recovery_policy=state.get("recovery_policy", "ask"),
+            replan=_replan_pending(track_dir),
+        ),
+    )
 
 
 def _validate_track_dir(track_dir, project_dir):
@@ -652,6 +737,23 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                     "skill": ar.wrapper_skill_for(name),
                 }
             _json_response(self, {"nodes": nodes, "roster": roster})
+            return
+        if path == "/api/track-graph":
+            # The whole-track concrete-workflow DAG (B1): one composition per
+            # phase — task cards with resolved route/persona/retry budget, the
+            # checkpoint fan-out narrowed per phase, loop annotations. Read-only;
+            # track validated like every other track-dir-taking endpoint.
+            resolved = _validate_track_dir(qs.get("track"), self._project_dir)
+            if resolved is None:
+                _json_response(self, {"ok": False,
+                                      "error": "invalid or unresolvable track"}, 400)
+                return
+            try:
+                graph = _track_graph(str(resolved))
+            except (OSError, KeyError, ValueError) as exc:
+                _json_response(self, {"ok": False, "error": str(exc)}, 400)
+                return
+            _json_response(self, graph)
             return
         if path == "/api/task-workflow":
             # The per-task resolved graph — what dispatch ACTUALLY runs for
@@ -1152,6 +1254,7 @@ _PAGE = r"""<!doctype html>
   .sg-conn { stroke:var(--acc); stroke-width:2; opacity:.65; fill:none; }
   .sg-arr { fill:var(--acc); }
   .sg-verif { fill:var(--over); fill-opacity:.13; stroke:var(--over); stroke-width:1.4; stroke-dasharray:5; }
+  .tg-task { fill:var(--acc); fill-opacity:.10; stroke:var(--acc); stroke-width:1.2; }
   .sg-gate-on { fill:var(--ok); fill-opacity:.16; stroke:var(--ok); stroke-width:1.3; }
   .sg-gate-off { fill:var(--panel-2); stroke:var(--bd); stroke-width:1.3; }
   .sg-gate-on-txt { fill:var(--ok); font-weight:600; }
@@ -1165,6 +1268,8 @@ _PAGE = r"""<!doctype html>
   <div class="seg">
     <button id="tab-shapes" class="active" onclick="switchTab('shapes')">Workflow Shapes</button>
     <button id="tab-task-types" onclick="switchTab('task-types')">Task Types</button>
+    <button id="tab-agent-roster" onclick="switchTab('agent-roster')">Agent Roster</button>
+    <button id="tab-probes" onclick="switchTab('probes')">Probes</button>
   </div>
   <span class="spacer"></span>
   <label class="muted">Track
@@ -1183,7 +1288,7 @@ _PAGE = r"""<!doctype html>
   <div class="pane left">
     <div class="entries-head">
       <h2 style="margin:0" id="entries-title">Shapes</h2>
-      <button class="btn ghost" onclick="addEntry()" style="padding:4px 10px;font-size:12px">+ new</button>
+      <button id="add-entry-btn" class="btn ghost" onclick="addEntry()" style="padding:4px 10px;font-size:12px">+ new</button>
     </div>
     <input type="text" id="entry-name" placeholder="(select or add)" disabled>
     <ul class="entries" id="entries"></ul>
@@ -1208,26 +1313,28 @@ _PAGE = r"""<!doctype html>
     </details>
     <h2>Resolved graph</h2>
     <div class="graph-wrap" id="graph-wrap"><div class="muted">Select an entry…</div></div>
+    <div id="track-graph"></div>
     <div id="track-view"></div>
     <div id="docfile-view"></div>
   </div>
   <div class="gsplit" data-split="right" title="drag to resize"></div>
   <div class="pane right">
-    <h2>Edit</h2>
+    <h2 id="edit-head">Edit</h2>
     <div id="form"><div class="muted">Select an entry to edit.</div></div>
-    <h2>Save</h2>
-    <div class="row">
+    <h2 id="save-head">Save</h2>
+    <div class="row" id="edit-target-row">
       <label class="fld">target</label>
       <select id="save-target" style="width:auto;flex:1">
         <option value="overlay">overlay (this project)</option>
         <option value="baseline">baseline (ALL projects)</option>
       </select>
     </div>
-    <div class="row">
+    <div class="row" id="save-row">
       <button class="btn" id="save-btn" onclick="save()" disabled>Save</button>
       <span id="save-status" class="status"></span>
     </div>
-    <div class="note">Validated before write (closed vocab + structure). A bad edit is rejected; nothing is written. A <code>.bak</code> of the prior file is kept.</div>
+    <div class="note" id="save-note">Validated before write (closed vocab + structure). A bad edit is rejected; nothing is written. A <code>.bak</code> of the prior file is kept.</div>
+    <div class="note" id="ro-note" style="display:none">Viewer registry — this surface renders rows and origins read-only; the row's sanctioned mutation surface (per the note above each row) is the only writer. The save gate rejects these server-side too.</div>
   </div>
 </main>
 
@@ -1255,18 +1362,35 @@ function applyTheme(choice){
 }
 
 // --- tabs + registry --------------------------------------------------------
+// Per-tab metadata: display title, the registry's data key, and read-only
+// (viewer) mode — the roster/probes tabs render origins + rows but no editor.
+const TABS = {
+  'shapes':        {title:'Shapes',       key:'shapes',  ro:false},
+  'task-types':    {title:'Task Types',   key:'tags',    ro:false},
+  'agent-roster':  {title:'Agent Roster', key:'agents',  ro:true},
+  'probes':        {title:'Probes',       key:'probes',  ro:true},
+};
 function switchTab(tab) {
   STATE.tab = tab; STATE.selected = null;
-  $('tab-shapes').classList.toggle('active', tab==='shapes');
-  $('tab-task-types').classList.toggle('active', tab==='task-types');
-  $('entries-title').textContent = tab==='shapes' ? 'Shapes' : 'Task Types';
+  for (const t of Object.keys(TABS)) $('tab-'+t).classList.toggle('active', tab===t);
+  $('entries-title').textContent = TABS[tab].title;
+  // Viewer vs editor affordances: the read-only tabs hide the editor's
+  // mutation surface entirely (the save gate rejects server-side too).
+  const ro = TABS[tab].ro;
+  $('add-entry-btn').style.display = ro ? 'none' : '';
+  $('edit-head').style.display = ro ? 'none' : '';
+  $('save-head').style.display = ro ? 'none' : '';
+  $('edit-target-row').style.display = ro ? 'none' : '';
+  $('save-row').style.display = ro ? 'none' : '';
+  $('save-note').style.display = ro ? 'none' : '';
+  $('ro-note').style.display = ro ? '' : 'none';
   loadRegistry();
 }
 async function loadRegistry() {
   STATE.data = await api('/api/registry?which='+STATE.tab);
   renderEntries(); renderForm(); renderGraph(); renderFieldGuide();
 }
-function dataKey(){ return STATE.tab==='shapes' ? 'shapes' : 'tags'; }
+function dataKey(){ return TABS[STATE.tab].key; }
 function entryDoc(){ return STATE.data && STATE.data.merged ? STATE.data.merged[dataKey()] || {} : {}; }
 function defaultDoc(){ return STATE.data && STATE.data.merged ? STATE.data.merged.default || {} : {}; }
 
@@ -1274,7 +1398,11 @@ function renderEntries() {
   const ul = $('entries'); ul.innerHTML = '';
   if (!STATE.data || (!STATE.data.ok && STATE.data.error)) { ul.innerHTML = '<li class="muted">'+esc(STATE.data && STATE.data.error || 'no data')+'</li>'; return; }
   const entries = entryDoc();
-  const names = ['default', ...Object.keys(entries).filter(n=>n!=='default')];
+  // The shapes/task-types registries carry a fallback "default" row the editor
+  // surfaces first; the read-only registries have no default block.
+  const names = TABS[STATE.tab].ro
+    ? Object.keys(entries)
+    : ['default', ...Object.keys(entries).filter(n=>n!=='default')];
   for (const name of names) {
     const origin = STATE.data.origins[name] || 'baseline';
     const li = document.createElement('li');
@@ -1299,7 +1427,22 @@ function fxPill(e) {
 }
 function renderForm() {
   const wrap = $('form');
-  if (!STATE.selected) { wrap.innerHTML = '<div class="muted">Select an entry to edit.</div>'; $('save-btn').disabled = true; return; }
+  if (!STATE.selected) { wrap.innerHTML = '<div class="muted">Select an entry to '+(TABS[STATE.tab].ro?'view':'edit')+'.</div>'; $('save-btn').disabled = true; return; }
+  if (TABS[STATE.tab].ro) {
+    // Viewer mode: the resolved row as a read-only definition list — no
+    // per-field editor metadata to invent for rows this surface can't write
+    // (their sanctioned mutation surfaces own the form). The save gate
+    // rejects these server-side too; the button is hidden, not just disabled.
+    const ent = entryDoc()[STATE.selected] || {};
+    let html = '<div class="note" style="margin:2px 0 8px">read-only view — mutate via '+esc((STATE.data.vocab||{}).mutate_hint||'its sanctioned CLI')+'</div>';
+    const fields = Object.entries(ent);
+    if (!fields.length) html += '<div class="muted">(empty row)</div>';
+    for (const [f, val] of fields) {
+      const text = typeof val === 'object' ? JSON.stringify(val, null, 1) : String(val);
+      html += '<div class="field"><label class="fld">'+esc(f)+'</label><textarea readonly rows="'+Math.max(1, Math.min(8, text.split('\n').length))+'">'+esc(text)+'</textarea></div>';
+    }
+    wrap.innerHTML = html; $('save-btn').disabled = true; return;
+  }
   const row = effectiveRow() || {};
   const v = STATE.data.vocab || {};
   const fx = (v.effects)||{};
@@ -1380,6 +1523,7 @@ async function save() {
 }
 function setStatus(msg, cls) { const s = $('save-status'); s.textContent = msg; s.className = 'status '+(cls||''); }
 function addEntry() {
+  if (TABS[STATE.tab].ro) return;  // viewer tab — the save gate rejects anyway
   const name = prompt('New '+(STATE.tab==='shapes'?'shape':'tag')+' name:');
   if (!name) return;
   STATE.selected = name;
@@ -1439,6 +1583,13 @@ async function renderGraph() {
     return;
   }
   if (!STATE.selected) { wrap.innerHTML = '<div class="muted">Select an entry…</div>'; return; }
+  if (TABS[STATE.tab].ro) {
+    // Viewer registries have no shape graph: their "resolution" IS the row
+    // (origin + fields), which the right pane renders. Point at the legend,
+    // which already explains each agent's guard/recovery posture.
+    wrap.innerHTML = '<div class="muted">Registry viewer — no shape graph for this registry. The resolved row (baseline ⊕ overlay) is in the edit pane; the node legend below-left maps every agent.</div>';
+    return;
+  }
   if (STATE.tab !== 'shapes') {
     const row = effectiveRow() || {};
     wrap.innerHTML = '<div class="muted">Task-type profile</div>'
@@ -1569,6 +1720,87 @@ function taskSVG(g) {
 }
 
 // --- track binding + whole-track live map -----------------------------------
+function renderTrackGraph(g) {
+  // The whole-track concrete-workflow DAG (B1): one composition per phase,
+  // rendered above the task tree. Empty when the fetch failed (the tree below
+  // is the fallback view, not a dependency of this one).
+  const wrap = $('track-graph');
+  if (!g || !g.ok) { wrap.innerHTML = ''; return; }
+  wrap.innerHTML = '<h2>Whole-track workflow · what this track runs, phase by phase</h2>'
+    + trackGraphSVG(g);
+}
+function trackGraphSVG(g) {
+  const phases = g.phases||[], loops = g.loops||{}, pos = g.position||{};
+  const GLYPH = {completed:'✓', in_progress:'◌', pending:'○', failed:'✗', skipped:'⊘', deferred:'⏳'};
+  const PW=168, PH=54, TW=150, TH=40, VW=150, VH=34, G=26, CK=44;
+  const rows = phases.map(ph=>{
+    const tasks=ph.tasks||[], vers=ph.verifiers||[];
+    const w = 10 + PW + G + Math.max(1,tasks.length)*(TW+G) + CK + G
+              + Math.max(1,vers.length)*(VW+10);
+    return {ph,tasks,vers,w};
+  });
+  const W = Math.max.apply(null, [640].concat(rows.map(r=>r.w)));
+  const RH=124, H = 14 + rows.length*RH;
+  const cur = pos.phase!=null ? +pos.phase : null;
+  let s = '<svg width="100%" viewBox="0 0 '+W+' '+H+'" font-size="12" font-family="inherit" role="img" aria-label="whole-track concrete workflow">';
+  s += '<defs><marker id="tgarr" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path class="sg-arr" d="M0,0 L7,4 L0,8 z"/></marker></defs>';
+  rows.forEach((r,ri)=>{
+    const y = 8 + ri*RH;
+    const dim = r.ph.status==='completed' ? ' opacity=".6"' : '';
+    const isCur = cur===+r.ph.index;
+    // Phase-to-phase spine down the left edge (the sequence the rows share).
+    if (ri>0) s += '<path class="sg-conn" d="M'+(10+PW/2)+' '+(y-RH+PH+2)+' L'+(10+PW/2)+' '+(y-2)+'" marker-end="url(#tgarr)"/>';
+    let x = 10;
+    const cy = y + PH/2;
+    s += '<g'+dim+'>';
+    s += '<rect class="sg-spine'+(isCur?' glow':'')+'" x="'+x+'" y="'+y+'" width="'+PW+'" height="'+PH+'" rx="11"/>';
+    s += '<text class="sg-node-text" x="'+(x+12)+'" y="'+(y+21)+'">Phase '+r.ph.index+' '+(GLYPH[r.ph.status]||'')+'</text>';
+    s += '<text class="sg-label" x="'+(x+12)+'" y="'+(y+38)+'">'+esc(String(r.ph.name||'').slice(0,22))+'</text>';
+    x += PW;
+    const arrow = ()=>{ s += '<path class="sg-conn" d="M'+(x+2)+' '+cy+' L'+(x+G-2)+' '+cy+'" marker-end="url(#tgarr)"/>'; x += G; };
+    arrow();
+    if (!r.tasks.length) {
+      s += '<text class="sg-label" x="'+x+'" y="'+(cy+4)+'">(no tasks)</text>';
+      x += 84;
+    }
+    r.tasks.forEach(t=>{
+      s += '<rect class="tg-task" x="'+x+'" y="'+(cy-TH/2)+'" width="'+TW+'" height="'+TH+'" rx="9"/>';
+      const nm = String(t.name||'(unnamed)');
+      s += '<text class="sg-node-text" x="'+(x+TW/2)+'" y="'+(cy-3)+'" text-anchor="middle">'+esc(nm.length>24?nm.slice(0,22)+'…':nm)+'</text>';
+      s += '<text class="sg-label" x="'+(x+TW/2)+'" y="'+(cy+12)+'" text-anchor="middle">→ '+esc(t.route_agent)+' · ↻'+esc(t.max_retries)+'</text>';
+      x += TW;
+      arrow();
+    });
+    // The checkpoint gate — a diamond, on/off per the shape's gate set.
+    const ckOn = r.ph.checkpoint && r.ph.checkpoint.on;
+    s += '<path class="'+(ckOn?'sg-gate-on':'sg-gate-off')+'" d="M'+(x+CK/2)+' '+(cy-16)+' L'+(x+CK)+' '+cy+' L'+(x+CK/2)+' '+(cy+16)+' L'+x+' '+cy+' Z"/>';
+    s += '<text class="sg-label" x="'+(x+CK/2)+'" y="'+(cy+30)+'" text-anchor="middle">'+(ckOn?'ck':'ck off')+'</text>';
+    x += CK;
+    arrow();
+    if (!r.vers.length) {
+      s += '<text class="sg-label" x="'+x+'" y="'+(cy+4)+'">(no verifiers)</text>';
+    }
+    r.vers.forEach(vn=>{
+      s += '<rect class="sg-verif" x="'+x+'" y="'+(cy-VH/2)+'" width="'+VW+'" height="'+VH+'" rx="9"/>';
+      s += '<text class="sg-node-text" x="'+(x+VW/2)+'" y="'+(cy+4)+'" text-anchor="middle">'+esc(vn)+'</text>';
+      x += VW + 10;   // fan-out: siblings, not a sequence — gap, no arrow
+    });
+    if (r.ph.code_free)
+      s += '<text class="sg-label" x="'+(x+4)+'" y="'+(cy+4)+'">code-free phase — code tiers dropped</text>';
+    s += '</g>';
+  });
+  s += '</svg>';
+  s += '<div class="row" style="margin-top:8px">'
+    + '<span class="pill">checkpoint_policy: '+esc(loops.checkpoint_policy||'—')+'</span>'
+    + '<span class="pill">verify_policy: '+esc(loops.verify_policy||'—')+'</span>'
+    + '<span class="pill">recovery: '+esc(loops.recovery_policy||'—')+'</span>'
+    + ((loops.replan&&loops.replan.replan_due)
+        ? '<span class="fx drives">replan offer pending (phase '+esc(loops.replan.phase)+') — poll `track-state replan`</span>'
+        : '<span class="pill">replan offer: none pending</span>')
+    + '</div>'
+    + '<div class="note" style="margin-top:6px">One composition per phase — task(s) → checkpoint gate → the verifier fan-out narrowed for THAT phase (code-free phases drop the code tiers). Click a task card below for the full per-task workflow.</div>';
+  return s;
+}
 async function loadTracks() {
   const res = await api('/api/tracks');
   STATE.tracks = res.tracks || [];
@@ -1585,12 +1817,14 @@ function onTrackChange() {
   STATE.boundTrack = dir || null;
   STATE.taskSel = null;                       // a task graph belongs to its track
   $('docfile-view').innerHTML = '';
-  if (!dir) { STATE.boundShape = null; $('track-shape-info').innerHTML=''; $('track-view').innerHTML=''; renderGraph(); return; }
+  if (!dir) { STATE.boundShape = null; $('track-shape-info').innerHTML=''; $('track-graph').innerHTML=''; $('track-view').innerHTML=''; renderGraph(); return; }
   const t = STATE.tracks.find(x=>x.dir===dir);
   STATE.boundShape = t ? t.workflow_shape : null;
   $('track-shape-info').innerHTML = 'shape <b>'+esc(STATE.boundShape||'?')+'</b> '
     + '<button class="btn ghost" onclick="bindShape()" style="padding:2px 8px;margin-left:8px;font-size:11px">bind current selection</button>';
   renderGraph();
+  fetch('/api/track-graph?track='+encodeURIComponent(dir)).then(r=>r.json())
+    .then(g=>{ renderTrackGraph(g); }).catch(()=>{ $('track-graph').innerHTML=''; });
   fetch('/api/resolve?track='+encodeURIComponent(dir)).then(r=>r.json()).then(env=>{ renderTrackView(env); }).catch(()=>{ $('track-view').innerHTML=''; });
 }
 async function bindShape() {

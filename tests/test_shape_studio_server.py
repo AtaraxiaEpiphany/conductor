@@ -844,5 +844,161 @@ class DocfileStepsTests(TestCase):
         self.assertEqual(ss._docfile_steps("# only headings\n\nno list\n"), [])
 
 
+class ReadOnlyRegistryViews(TestCase):
+    """B2 — the roster/probes viewer tabs over HTTP: snapshots serve origins +
+    a read-only vocab carrying the mutate hint; the save endpoint rejects
+    writes with the hint; the HTML ships the tab + viewer affordances."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.srv = _Server(self.tmp)
+
+    def tearDown(self):
+        self.srv.stop()
+
+    def test_registry_agent_roster_snapshot(self):
+        # The alias form a human types ("roster") normalizes server-side.
+        status, snap = _get_json(self.srv.base, "/api/registry?which=roster")
+        self.assertEqual(status, 200)
+        self.assertEqual(snap["which"], "agent-roster")
+        self.assertIn("phase-checker", snap["merged"]["agents"])
+        self.assertTrue(snap["vocab"]["read_only"])
+        self.assertIn("roster add", snap["vocab"]["mutate_hint"])
+
+    def test_registry_probes_snapshot(self):
+        status, snap = _get_json(self.srv.base, "/api/registry?which=probes")
+        self.assertEqual(status, 200)
+        self.assertEqual(snap["which"], "probes")
+        self.assertIn("gate-outcomes", snap["merged"]["probes"])
+        self.assertTrue(snap["vocab"]["read_only"])
+
+    def test_save_rejects_read_only_registry(self):
+        status, body = _post(self.srv.base, "/api/registry/save",
+                             {"which": "agent-roster", "target": "overlay",
+                              "doc": {"agents": {"x": {"class": "spine"}}}})
+        self.assertEqual(status, 400)
+        self.assertFalse(body["ok"])
+        self.assertTrue(any("read-only" in e for e in body.get("errors", [])))
+        self.assertTrue(any("roster add" in e for e in body.get("errors", [])))
+        # Nothing written.
+        self.assertFalse(
+            Path(self.tmp, "conductor", "workflow", "agent-roster.json").exists())
+
+    def test_html_carries_viewer_tabs_and_affordances(self):
+        # The frontend contract switchTab depends on: four tabs, and the ids
+        # it toggles must exist in the shipped HTML (a missing id is a JS
+        # TypeError that kills the whole registry pane).
+        status, body = _get(self.srv.base, "/")
+        self.assertEqual(status, 200)
+        for frag in ("tab-agent-roster", "tab-probes", "TABS",
+                     "add-entry-btn", "edit-target-row", "save-row",
+                     "save-note", "ro-note", "edit-head", "save-head"):
+            self.assertIn(frag, body, f"{frag} missing from studio HTML")
+
+
+class TrackGraph(TestCase):
+    """B1 — the whole-track concrete-workflow DAG: one composition per phase.
+
+    Pins the load-bearing invariant: the checkpoint fan-out is NARROWED PER
+    PHASE (a code-free phase drops the code tiers — the exact
+    ``_build_verifier_wave`` predicate), every task carries its resolved route
+    agent + retry budget, and the loop annotations (policies + the pending
+    replan offer) read through the same poll ``track-state replan`` uses.
+    """
+
+    def _track(self):
+        tmp = tempfile.mkdtemp()
+        tdir = Path(tmp, "conductor", "tracks", "auth")
+        tdir.mkdir(parents=True)
+        save(str(tdir), {
+            "track_id": "auth", "type": "feature", "status": "in_progress",
+            "workflow_shape": "default", "current_phase_index": 1,
+            "current_task_index": 1,
+            "phases": [
+                {"name": "Phase 1", "status": "in_progress", "tasks": [
+                    {"name": "[Migrate] Rename foo to bar",
+                     "status": "in_progress"},
+                    {"name": "Plain untagged task", "status": "pending"},
+                ]},
+                {"name": "Phase 2", "status": "pending", "tasks": [
+                    {"name": "[Config] Set the feature flag",
+                     "status": "pending"},
+                ]},
+            ],
+        })
+        return tmp, str(tdir)
+
+    def test_graph_shape_and_per_phase_narrowing(self):
+        _tmp, tdir = self._track()
+        g = ss._track_graph(tdir)
+        self.assertTrue(g["ok"])
+        self.assertEqual(g["shape"], "default")
+        self.assertEqual(len(g["phases"]), 2)
+        p1, p2 = g["phases"]
+        # Phase 1 (code-producing): the full shape fan-out, verbatim order.
+        self.assertFalse(p1["code_free"])
+        self.assertEqual(p1["verifiers"],
+                         ["ac-tracer", "build-runner", "test-runner"])
+        # Phase 2 (pure [Config]): the fan-out narrows — code tiers dropped,
+        # ac-tracer stays (ACs are still traced).
+        self.assertTrue(p2["code_free"])
+        self.assertEqual(p2["verifiers"], ["ac-tracer"])
+        # Every task carries its resolved route agent + retry budget.
+        self.assertEqual(len(p1["tasks"]), 2)
+        t1 = p1["tasks"][0]
+        self.assertEqual(t1["tag"], "Migrate")
+        self.assertEqual(t1["route_agent"], "task-executor")
+        self.assertIsInstance(t1["max_retries"], int)
+        self.assertGreaterEqual(t1["max_retries"], 1)
+        self.assertEqual(p1["tasks"][1]["tag"], None)
+        # The checkpoint gate is on for the default shape.
+        self.assertTrue(p1["checkpoint"]["on"])
+        self.assertEqual(p1["checkpoint"]["policy"], "run")
+        # Loop annotations: the shape/track control knobs.
+        loops = g["loops"]
+        self.assertEqual(loops["checkpoint_policy"], "run")
+        self.assertEqual(loops["verify_policy"], "checkpoint")
+        self.assertIn(loops["recovery_policy"], ("ask", "auto"))
+        self.assertFalse(loops["replan"]["replan_due"])
+
+    def test_pending_replan_offer_annotated(self):
+        # A staged replan-pass marker (mid-phase stamp, phases remaining)
+        # surfaces as loops.replan.replan_due — the same read cmd_replan polls.
+        _tmp, tdir = self._track()
+        cdir = Path(tdir, ".conductor")
+        cdir.mkdir(parents=True, exist_ok=True)
+        (cdir / "replan-pass.json").write_text('{"phase": 1}', encoding="utf-8")
+        g = ss._track_graph(tdir)
+        replan = g["loops"]["replan"]
+        self.assertTrue(replan["replan_due"])
+        self.assertEqual(replan["phase"], 1)
+        self.assertEqual(replan["remaining_phases"], 1)
+        # A LAST-phase marker is stale, not due — the graph must not cry wolf.
+        (cdir / "replan-pass.json").write_text('{"phase": 2}', encoding="utf-8")
+        g = ss._track_graph(tdir)
+        self.assertFalse(g["loops"]["replan"]["replan_due"])
+
+    def test_endpoint_serves_and_validates(self):
+        tmp, tdir = self._track()
+        with _Server(tmp) as srv:
+            status, g = _get_json(srv.base, "/api/track-graph?track=" + tdir)
+            self.assertEqual(status, 200)
+            self.assertTrue(g["ok"])
+            self.assertEqual(len(g["phases"]), 2)
+            # The security gate: a non-track path is a 400, not a read.
+            status, body = _get_json(
+                srv.base, "/api/track-graph?track=" + str(Path(tmp, "etc")))
+            self.assertEqual(status, 400)
+            self.assertFalse(body["ok"])
+
+    def test_html_carries_track_graph_mount(self):
+        # The div the whole-track DAG renders into must ship in the HTML.
+        with _Server(tempfile.mkdtemp()) as srv:
+            status, body = _get(srv.base, "/")
+            self.assertEqual(status, 200)
+            self.assertIn('id="track-graph"', body)
+            self.assertIn("trackGraphSVG", body)
+
+
 if __name__ == "__main__":
     main()

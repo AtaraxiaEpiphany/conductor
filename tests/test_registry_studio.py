@@ -304,5 +304,76 @@ class CmdWrappers(TestCase):
         self.assertFalse(out["ok"])
 
 
+class ReadOnlyRegistries(TestCase):
+    """B2 — agent-roster + probes render as studio VIEWERS.
+
+    Reads flow through the same origins machinery (B/O badges, merged view);
+    writes are rejected naming the sanctioned mutation surface. Their
+    baselines carry no top-level ``default`` block, which must not trip the
+    structural baseline read (the ``default_required`` gate is registry-aware).
+    """
+
+    def test_normalize_which_aliases(self):
+        for alias in ("agent-roster", "agent_roster", "roster", "agents", "agent"):
+            self.assertEqual(rs.normalize_which(alias), "agent-roster")
+        for alias in ("probes", "probe"):
+            self.assertEqual(rs.normalize_which(alias), "probes")
+
+    def test_load_agent_roster_no_default_block_required(self):
+        # The shipped baseline has no top-level default; the read must accept
+        # the FILE (not fail-open to _FALLBACK) — the viewer shows real rows.
+        tmp = tempfile.mkdtemp()
+        snap = rs.load_with_origins("agent-roster", project_dir=tmp)
+        self.assertEqual(snap["which"], "agent-roster")
+        self.assertIn("phase-checker", snap["baseline"]["agents"])
+        self.assertIn("phase-checker", snap["merged"]["agents"])
+        self.assertEqual(snap["origins"]["phase-checker"], "baseline")
+        self.assertEqual(snap["overlay"], {})
+
+    def test_load_probes_with_origins(self):
+        tmp = tempfile.mkdtemp()
+        snap = rs.load_with_origins("probes", project_dir=tmp)
+        self.assertEqual(snap["which"], "probes")
+        self.assertIn("gate-outcomes", snap["merged"]["probes"])
+        self.assertEqual(snap["origins"]["gate-outcomes"], "baseline")
+
+    def test_overlay_agent_row_attributed_overlay(self):
+        tmp = tempfile.mkdtemp()
+        path = _proj(tmp, "conductor", "workflow", "agent-roster.json")
+        path.write_text(json.dumps({"agents": {"my-probe-agent": {
+            "class": "verifier", "fence": "none", "recovery": "fail"}}}))
+        snap = rs.load_with_origins("agent-roster", project_dir=tmp)
+        self.assertEqual(snap["origins"]["my-probe-agent"], "overlay")
+        self.assertIn("my-probe-agent", snap["merged"]["agents"])
+        # A baseline row the overlay did not touch stays baseline.
+        self.assertEqual(snap["origins"]["phase-checker"], "baseline")
+
+    def test_save_registry_rejects_read_only_with_hint(self):
+        tmp = tempfile.mkdtemp()
+        # The read_only gate fires before validation, target, and doc checks —
+        # an attacker-ish payload must still only ever see the rejection.
+        cases = (("agent-roster", {"agents": {"x": {"class": "spine"}}}, "roster add"),
+                 ("probes", {"probes": {"x": {"kind": "test"}}}, "probes.json"))
+        for which, doc, hint_frag in cases:
+            res = rs.save_registry(which, "overlay", doc, project_dir=tmp)
+            self.assertFalse(res["ok"], which)
+            self.assertTrue(any("read-only" in e for e in res["errors"]), which)
+            self.assertTrue(any(hint_frag in e for e in res["errors"]), which)
+        # Nothing written for either registry.
+        self.assertFalse(
+            Path(tmp, "conductor", "workflow", "agent-roster.json").exists())
+        self.assertFalse(
+            Path(tmp, "conductor", "workflow", "probes.json").exists())
+
+    def test_cmd_registry_json_serves_read_only_registries(self):
+        # The read path is generic — the CLI wrapper gets both for free.
+        tmp = tempfile.mkdtemp()
+        for which, key, probe_row in (("agent-roster", "agents", "phase-checker"),
+                                      ("probes", "probes", "gate-outcomes")):
+            snap = _capture(rs.cmd_registry_json, which, project_dir=tmp)
+            self.assertEqual(snap["which"], which, which)
+            self.assertIn(probe_row, snap["merged"][key], which)
+
+
 if __name__ == "__main__":
     main()

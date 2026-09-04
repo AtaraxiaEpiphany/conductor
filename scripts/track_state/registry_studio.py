@@ -41,6 +41,8 @@ from pathlib import Path
 
 from lib.atomic_io import atomic_write_json
 
+from . import agent_roster as ar
+from . import probes as pr
 from . import registry_validate as rv
 from . import task_profiles as tp
 from . import workflow_shapes as ws
@@ -50,6 +52,18 @@ from .helpers import out  # noqa: F401 — re-exported; the CLI cmd_* wrappers e
 # data key ("shapes" vs "tags"), and the two validation entry points. The
 # closed vocabularies themselves live in :mod:`registry_validate` (single
 # source); this table only wires a registry to its module + validators.
+#
+# ``read_only`` registries (agent-roster, probes) render in the studio as
+# VIEWERS: reads flow through the same origins machinery (B/O badges, merged
+# view), but ``save_registry`` rejects writes — their sanctioned mutation
+# paths are their own CLIs/overlay conventions, not the registry editor
+# (roster add is a validated generator; the probes overlay is lint-gated).
+# They carry no validator keys: the read_only gate fires before validation,
+# and dead keys are a drift surface.
+#
+# ``default_block: False`` marks registries with no top-level ``default``
+# object (the shapes/task-types fail-open fallback target) — the baseline
+# structural read must not demand one.
 _REGISTRIES = {
     "shapes": {
         "module": ws,
@@ -65,11 +79,29 @@ _REGISTRIES = {
         "validate_fragment": rv.validate_task_types,
         "validate_merged": rv.validate_merged_task_types,
     },
+    "agent-roster": {
+        "module": ar,
+        "file": "agent-roster.json",
+        "data_key": "agents",
+        "read_only": True,
+        "default_block": False,
+        "mutate_hint": "`track-state roster add` (the validated generator)",
+    },
+    "probes": {
+        "module": pr,
+        "file": "probes.json",
+        "data_key": "probes",
+        "read_only": True,
+        "default_block": False,
+        "mutate_hint": "extend the project overlay "
+                       "<project>/conductor/workflow/probes.json — "
+                       "`track-state check` surfaces overlay lint",
+    },
 }
 
 
 def normalize_which(which):
-    """Canonicalize a registry selector to ``"shapes"`` / ``"task-types"``.
+    """Canonicalize a registry selector to a canonical registry name.
 
     Accepts the common aliases (the file stem, the data key, a singular form)
     so the CLI flag and the API query param can be lenient about which spelling
@@ -85,6 +117,10 @@ def normalize_which(which):
     if w in ("task-types", "task_types", "tags", "tag",
              "task-type-profiles", "task_type_profiles"):
         return "task-types"
+    if w in ("agent-roster", "agent_roster", "roster", "agents", "agent"):
+        return "agent-roster"
+    if w in ("probes", "probe"):
+        return "probes"
     return None
 
 
@@ -123,7 +159,7 @@ def _read_json(path):
     return {}
 
 
-def _read_baseline(module, data_key):
+def _read_baseline(module, data_key, default_required=True):
     """Read the plugin baseline FILE, fail-open to the module's ``_FALLBACK``.
 
     Mirrors ``module._load_baseline`` but returns the raw file content for
@@ -131,7 +167,10 @@ def _read_baseline(module, data_key):
     missing/unparseable baseline genuinely is the fallback case (the shipped
     file is the regression floor; if it is gone, the emergency mirror IS the
     baseline). The structural check matches ``_load_baseline``'s
-    "must have a dict ``data_key`` AND a dict ``default``" gate.
+    "must have a dict ``data_key``" gate; ``default_required`` adds the
+    "and a dict ``default``" half ONLY for registries that carry a fallback
+    target block (shapes/task-types — the read-only registries have no
+    ``default`` row to demand).
     """
     path = module._plugin_registry_path()
     try:
@@ -139,7 +178,8 @@ def _read_baseline(module, data_key):
             data = json.loads(path.read_text(encoding="utf-8"))
             if (isinstance(data, dict)
                     and isinstance(data.get(data_key), dict)
-                    and isinstance(data.get("default"), dict)):
+                    and (not default_required
+                         or isinstance(data.get("default"), dict))):
                 return data
             print(f"WARNING: baseline {path} has invalid shape; using fallback.",
                   file=sys.stderr)
@@ -225,11 +265,13 @@ def load_with_origins(which, project_dir=None):
     """
     which = normalize_which(which)
     if which is None:
-        raise ValueError("unknown registry 'which' (expected shapes|task-types)")
+        raise ValueError("unknown registry 'which' "
+                         "(expected shapes|task-types|agent-roster|probes)")
     cfg = _REGISTRIES[which]
     data_key = cfg["data_key"]
 
-    baseline_doc = _read_baseline(cfg["module"], data_key)
+    baseline_doc = _read_baseline(cfg["module"], data_key,
+                                  default_required=cfg.get("default_block", True))
     overlay_doc = _read_json(_overlay_path(which, project_dir))
 
     return {
@@ -289,8 +331,12 @@ def save_registry(which, target, doc, project_dir=None):
     which = normalize_which(which)
     if which is None:
         return {"ok": False, "errors": ["unknown registry 'which' "
-                                        "(expected shapes|task-types)"]}
+                                        "(expected shapes|task-types|agent-roster|probes)"]}
     cfg = _REGISTRIES[which]
+    if cfg.get("read_only"):
+        return {"ok": False, "errors": [
+            f"{which} is read-only in the studio (viewer) — mutate it through "
+            f"its sanctioned surface: {cfg.get('mutate_hint', 'its own CLI')}"]}
     data_key = cfg["data_key"]
 
     if target not in ("overlay", "baseline"):
