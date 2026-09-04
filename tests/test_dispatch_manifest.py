@@ -163,7 +163,8 @@ class PathDecisionTests(TestCase):
                                    _pre("[Docs] tweak readme"))
         self.assertIn("path: fast-path", body)
         self.assertIn("skip Steps 3-7", body)
-        self.assertIn("- tdd_exempt: true", body)
+        self.assertIn("- task class gates: checkpoint", body)
+        self.assertIn("- grounding: review", body)
 
     def test_tdd_only_exempt_tag_does_not_fast_path(self):
         # The trap the tightening closes: a tdd-only-exempt EXECUTOR tag owes
@@ -187,14 +188,15 @@ class PathDecisionTests(TestCase):
         self.assertIn("path: docfile `default-tdd.md`", body)
 
     def test_shape_drives_gates_independently_of_tags(self):
-        # Gates come from the workflow-shape; exemptions from the tag profile;
-        # the fire rule is the join. A migration shape drops tdd/coverage even
-        # for a non-exempt tag.
+        # Gates come from the workflow-shape; the task class gates come from
+        # the tag profile; the fire rule is the join. A migration shape drops
+        # tdd/coverage even for a non-exempt tag.
         state = _state("plain impl task")
         state["workflow_shape"] = "migration"
         body = dm.compose_manifest("/tmp/t", state, _pre("plain impl task"))
         self.assertIn("workflow-shape: migration", body)
-        self.assertIn("- gates: checkpoint", body)
+        self.assertIn("- shape gates: checkpoint", body)
+        self.assertIn("- fires: checkpoint", body)
 
 
 class _OverlayEnv:
@@ -317,8 +319,8 @@ class FloorAgreementTests(TestCase):
     def test_exempt_tag_agrees_on_fast_path(self):
         self._agree(
             "[Docs] tweak readme",
-            ["tdd_exempt: True"],
-            ["path: fast-path", "- tdd_exempt: true"])
+            ["coverage_exempt: True"],
+            ["path: fast-path", "- task class gates: checkpoint"])
 
     def test_overlay_inline_tag_agrees(self):
         proj = Path(tempfile.mkdtemp())

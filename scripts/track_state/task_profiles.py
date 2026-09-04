@@ -362,6 +362,21 @@ def gates_of(tag: str) -> tuple[str, ...]:
     return _FULL_GATES
 
 
+def resolved_gates(tags: list[str]) -> tuple[str, ...]:
+    """The gates a TASK owes: the intersection across its tags, in canonical
+    order — a gate survives only if EVERY tag carries it. This is the
+    positive form of the ANY-exemption rule (:func:`is_tdd_exempt` fires
+    when any one tag lacks the tdd gate); compose with the workflow-shape's
+    gates (a gate fires iff the shape lists it AND the task owes it).
+    Untagged tasks resolve the default profile.
+    """
+    if not tags:
+        gates = _resolved_default().get("gates")
+        return tuple(gates) if isinstance(gates, list) else _FULL_GATES
+    per_tag = [gates_of(t) for t in tags]
+    return tuple(g for g in _FULL_GATES if all(g in pt for pt in per_tag))
+
+
 def grounding_of(tag: str) -> str:
     """What "done, verified" MEANS for a task class's deliverable:
     ``test`` | ``review`` | ``data-check`` | ``human-attest``.

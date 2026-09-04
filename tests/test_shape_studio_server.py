@@ -199,7 +199,8 @@ class ResolveTrack(TestCase):
             # inline `workflow` string stays empty (two homes = drift).
             self.assertEqual(migrate["workflow_doc"], "migrate.md")
             self.assertEqual(migrate["workflow"], "")
-            self.assertFalse(migrate["coverage_exempt"])
+            self.assertEqual(migrate["gates"], ["tdd", "coverage", "checkpoint"])
+            self.assertEqual(migrate["grounding"], "test")
             self.assertEqual(migrate["phase"], 1)
             self.assertEqual(migrate["task"], 1)
             self.assertIsNone(migrate["subtask"])
@@ -378,8 +379,8 @@ class TaskProfileEndpoint(TestCase):
         self.assertEqual(status, 200)
         self.assertTrue(prof["known"])
         self.assertEqual(prof["route"], "executor")
-        self.assertFalse(prof["tdd_exempt"])
-        self.assertFalse(prof["coverage_exempt"])
+        self.assertEqual(prof["gates"], ["tdd", "coverage", "checkpoint"])
+        self.assertEqual(prof["grounding"], "test")
         # The bespoke workflow's single home is the docfile (workflow-as-data);
         # the inline `workflow` string stays empty.
         self.assertEqual(prof["workflow_doc"], "migrate.md")
@@ -590,7 +591,7 @@ class TaskWorkflowEndpoint(TestCase):
             self.assertEqual(status, 200)
             by_name = {x["name"]: x for x in g["gates"]}
             self.assertFalse(by_name["tdd"]["on"])
-            self.assertEqual(by_name["tdd"]["reason"], "tag exemption")
+            self.assertEqual(by_name["tdd"]["reason"], "class gates omit it")
             # code-free phase (ALL tasks code-free — the ANY-exempt task in a
             # mixed phase would keep the code tiers) narrows the fan-out.
             self.assertTrue(g["phase_code_free"])

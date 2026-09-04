@@ -76,7 +76,8 @@ class ComputeTaskContextTests(TestCase):
                                        "text": "The system loads settings from .env"}])
         self.assertEqual([t["id"] for t in ctx["tcs"]], ["TC-1.1", "TC-1.2"])
         self.assertEqual(ctx["tag_profile"]["tag"], "Config")
-        self.assertTrue(ctx["tag_profile"]["coverage_exempt"])
+        self.assertEqual(ctx["tag_profile"]["gates"], ["checkpoint"])
+        self.assertEqual(ctx["tag_profile"]["grounding"], "review")
         self.assertEqual(ctx["tag_profile"]["workflow"], "absent")
         self.assertEqual(ctx["errors"], [])
         self.assertEqual(ctx["warnings"], [])
@@ -100,7 +101,7 @@ class ComputeTaskContextTests(TestCase):
         with _track(plan, _SPEC) as td:
             ctx = compute_task_context(td, 1, 1)
         self.assertIn("Config", ctx["tags"])
-        self.assertTrue(ctx["tag_profile"]["coverage_exempt"])
+        self.assertEqual(ctx["tag_profile"]["gates"], ["checkpoint"])
 
     def test_dangling_ac_ref_warns(self):
         # AC in the plan annotation but NOT in spec.md → a warning, and the AC

@@ -113,15 +113,15 @@ _SHAPE_FIELD_EFFECTS = {
     "when_to_use": ("display", "Human/tooling reference prose — the rationale gloss for the machine `signals`. NOT injected into any prompt."),
     "max_retries": ("drives", "The shape-level default retry budget for tasks under this shape (int >= 1; 0/absent = inherit the global MAX_RETRIES=3). The chain: task.max_retries > shape max_retries > global — resolved by constants.task_max_retries at every enforcement site (fail requeue, exhausted scan, dispatch envelopes). Use when a job family needs a different ceiling — e.g. migration 1 (a retry re-runs a risky port), research 5 (dead ends are the job)."),
 }
-# Task-type fields: most of these DO drive behavior (routing, exemptions,
-# injected workflow prose) — the honesty story here is "nearly everything
-# matters except the hint," the inverse of the shapes story.
+# Task-type fields: most of these DO drive behavior (routing, gates,
+# grounding, injected workflow prose) — the honesty story here is "nearly
+# everything matters except the hint," the inverse of the shapes story.
 _TAG_FIELD_EFFECTS = {
     "workflow": ("drives", "Inline bespoke workflow prose, fetched on demand via registry-doc --tag (tier B). The LEGACY small-overlay form — for a full bespoke workflow prefer `workflow_doc`, which wins at render time; a row carrying both is a two-homes drift (the strict-write lint rejects new ones)."),
     "workflow_doc": ("drives", "Names the steps-library docfile the executor follows instead of default TDD (e.g. [Migrate] → migrate.md). The docfile lives in the plugin's templates/workflow/steps/ or the project's conductor/workflow/steps/ (project wins); registry-doc --tag renders it. The preferred form for a full bespoke workflow."),
     "route": ("drives", "Determines the dispatch category: manual (deferred) | explore (explorer) | executor (task-executor)."),
-    "tdd_exempt": ("drives", "Per-task exemption from the TDD (red/green/refactor) gate, composed with the shape's gates."),
-    "coverage_exempt": ("drives", "Per-task exemption from the coverage (F2/F3) gate, composed with the shape's gates."),
+    "gates": ("drives", "The quality gates this task class OWES — a positive subset of tdd/coverage/checkpoint (composed with the shape's gates: a gate fires iff the shape lists it AND the class owes it). The positive form of the legacy exemption booleans, which the editor no longer writes."),
+    "grounding": ("drives", "What 'done, verified' means for this class's deliverable: test | review | data-check | human-attest. The gates are the machinery; this is the claim the deliverable makes (tdd in gates requires test)."),
     "refactor": ("drives", "Opts the task into one tactical-refactorer pass after it succeeds."),
     "auto_propose": ("drives", "If false, derive_task_tag NEVER goal-detects this tag — it is opt-in (authored on the name) only."),
     "over_tag_risk": ("drives", "Flags the tag as an over-tagging risk so the advisory classifier guards against false positives."),
@@ -133,6 +133,37 @@ _TAG_FIELD_EFFECTS = {
 def _effects(table):
     """Shape an effects table into the {field: {class, text}} the frontend renders."""
     return {f: {"class": cls, "text": txt} for f, (cls, txt) in table.items()}
+
+
+def _positive_row(row):
+    """One task-type row in the positive editor form: ``_resolve_row``
+    normalized (gates always consistent) with the derived exemption booleans
+    STRIPPED — the editor's save builds whole rows from form fields, so a
+    served row carrying both encodings would save straight into the
+    two-homes form rejection, and a legacy boolean row would silently lose
+    its exemptions on an unrelated edit (no checkbox carries them).
+    """
+    resolved = tp._resolve_row(dict(row))  # noqa: SLF001 — same-module-family normalization
+    resolved.pop("tdd_exempt", None)
+    resolved.pop("coverage_exempt", None)
+    return resolved
+
+
+def _editor_normalize_task_doc(doc):
+    """A task-type doc with default + every tags row in the positive editor
+    form (read-only view: the FILES stay as written until a save replaces
+    the row — a save then writes the positive form the form produced).
+    """
+    if not isinstance(doc, dict):
+        return doc
+    out = dict(doc)
+    if isinstance(out.get("default"), dict):
+        out["default"] = _positive_row(out["default"])
+    if isinstance(out.get("tags"), dict):
+        out["tags"] = {name: (_positive_row(row) if isinstance(row, dict)
+                              else row)
+                       for name, row in out["tags"].items()}
+    return out
 
 
 def _vocab():
@@ -174,11 +205,16 @@ def _vocab():
             "effects": _effects(_SHAPE_FIELD_EFFECTS),
         },
         "task-types": {
-            "scalar_fields": {"route": list(rv.ROUTES)},
-            "bool_fields": ["tdd_exempt", "coverage_exempt", "refactor",
-                            "auto_propose", "over_tag_risk"],
+            # The positive form: gates (a vocab'd list field — same editor
+            # treatment as shape gates) + grounding (a scalar dropdown). The
+            # legacy exemption booleans are no longer editor-writable; the
+            # /api/registry view serves rows normalized to this form.
+            "scalar_fields": {"route": list(rv.ROUTES),
+                              "grounding": list(rv.TAG_GROUNDINGS)},
+            "bool_fields": ["refactor", "auto_propose", "over_tag_risk"],
             "text_fields": ["when_to_use", "workflow", "workflow_doc"],
-            "list_fields": {"signals": None},  # free-form keyword strings
+            "list_fields": {"signals": None,   # free-form keyword strings
+                            "gates": list(rv.GATES)},
             "effects": _effects(_TAG_FIELD_EFFECTS),
         },
     }
@@ -216,8 +252,9 @@ def _task_profile(tag):
         "tag": tag,
         "known": known,
         "route": prof.get("route", "executor"),
-        "tdd_exempt": bool(prof.get("tdd_exempt", False)),
-        "coverage_exempt": bool(prof.get("coverage_exempt", False)),
+        "gates": list(tp.gates_of(tag)) if tag else
+                 list(tp.resolved_gates([])),
+        "grounding": tp.grounding_of(tag) if tag else "",
         "refactor": bool(prof.get("refactor", False)),
         "auto_propose": bool(prof.get("auto_propose", True)),
         "over_tag_risk": bool(prof.get("over_tag_risk", False)),
@@ -264,8 +301,8 @@ def _task_card(phase_index, unit, parent_task=None):
         "workflow": prof["workflow"],
         "workflow_doc": prof["workflow_doc"],
         "when_to_use": prof["when_to_use"],
-        "tdd_exempt": prof["tdd_exempt"],
-        "coverage_exempt": prof["coverage_exempt"],
+        "gates": prof["gates"],
+        "grounding": prof["grounding"],
         "refactor": prof["refactor"],
     }
 
@@ -371,21 +408,20 @@ def _task_graph(track_dir, phase, task, subtask):
     if phase_code_free:
         verifiers = [v for v in verifiers if v not in rv.CODE_TIERS]
 
-    # Gates composed per task: shape gate ∧ not the tag's exemption. An off
-    # gate carries WHY (shape-level drop vs per-task exemption) — the honest
-    # answer to "why is verify strict for this task".
+    # Gates composed per task: shape gate ∧ class gate. An off gate carries
+    # WHY (shape-level drop vs the class not owing it) — the honest answer
+    # to "why is verify strict for this task".
     shape_gates = set(ws.gates_for(shape))
+    class_gates = set(card.get("gates") or tp.resolved_gates([]))
     gates = []
-    for name, exempt in (("tdd", card["tdd_exempt"]),
-                         ("coverage", card["coverage_exempt"])):
+    for name in ("tdd", "coverage", "checkpoint"):
         if name not in shape_gates:
             gates.append({"name": name, "on": False, "reason": "shape drops it"})
-        elif exempt:
-            gates.append({"name": name, "on": False, "reason": "tag exemption"})
+        elif name not in class_gates:
+            gates.append({"name": name, "on": False,
+                          "reason": "class gates omit it"})
         else:
             gates.append({"name": name, "on": True, "reason": ""})
-    gates.append({"name": "checkpoint", "on": "checkpoint" in shape_gates,
-                  "reason": "" if "checkpoint" in shape_gates else "shape drops it"})
 
     return {
         "ok": True,
@@ -538,6 +574,12 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             except (ValueError, OSError) as exc:
                 _json_response(self, {"ok": False, "error": str(exc)}, 400)
                 return
+            if which == "task-types":
+                # Editor parity with the flipped baseline: rows are served in
+                # the positive form so the form (gates checkboxes + grounding
+                # dropdown) always shows — and saves — the real semantics.
+                for view in ("baseline", "overlay", "merged"):
+                    snap[view] = _editor_normalize_task_doc(snap.get(view))
             snap["vocab"] = _vocab()[which]
             _json_response(self, snap)
             return
@@ -1385,8 +1427,9 @@ async function renderGraph() {
     const row = effectiveRow() || {};
     wrap.innerHTML = '<div class="muted">Task-type profile</div>'
       + '<div class="row" style="margin-top:8px"><span class="pill">route: '+esc(row.route||'executor (inherit)')+'</span>'
-      + (row.tdd_exempt?'<span class="pill">tdd-exempt</span>':'')
-      + (row.coverage_exempt?'<span class="pill">coverage-exempt</span>':'')
+      + (row.gates?'<span class="pill">gates: '+esc(row.gates.join('+'))+'</span>'
+       :(row.tdd_exempt!==undefined||row.coverage_exempt!==undefined?'<span class="pill">legacy exemption row</span>':''))
+      + (row.grounding?'<span class="pill">grounding: '+esc(row.grounding)+'</span>':'')
       + (row.refactor?'<span class="pill">+ tactical refactor</span>':'')
       + '</div>'
       + (row.workflow_doc?'<div class="wf" style="margin-top:8px"><b>workflow docfile:</b> '+esc(row.workflow_doc)+' (steps library; registry-doc --tag renders it)</div>'
@@ -1556,8 +1599,14 @@ function taskCardHTML(c, pos) {
     + '<div class="meta"><span class="stat '+(c.status||'pending')+'">'+esc(statusLabel(c.status))+'</span>';
   if (c.tag) h += '<span class="tag-chip'+(c.known?'':' unknown')+'" data-tag="'+esc(c.tag)+'" title="click: read the workflow docfile — '+esc(c.when_to_use||'')+'">['+esc(c.tag)+']</span>';
   else h += '<span class="pill sm">default TDD</span>';
-  if (c.tdd_exempt) h += '<span class="pill sm">tdd-exempt</span>';
-  if (c.coverage_exempt) h += '<span class="pill sm">cov-exempt</span>';
+  // Positive form: show the gate set only when it differs from the full
+  // default (tdd+coverage+checkpoint), plus the grounding when it is not
+  // the default test claim.
+  const FULL = ['tdd','coverage','checkpoint'];
+  if (c.gates && (c.gates.length!==FULL.length || FULL.some(g=>!c.gates.includes(g))))
+    h += '<span class="pill sm">gates: '+esc(c.gates.join('+'))+'</span>';
+  if (c.grounding && c.grounding!=='test')
+    h += '<span class="pill sm">'+esc(c.grounding)+'</span>';
   if (c.refactor) h += '<span class="pill sm">+ refactor</span>';
   if (c.coverage_pct!=null) h += '<span class="pill sm">'+c.coverage_pct+'% cov</span>';
   h += '</div>';

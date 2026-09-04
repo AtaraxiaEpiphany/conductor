@@ -2279,8 +2279,8 @@ _PLAN_REFUTE_CLAIM = (
     "reflects the user's stated intent, every AC is genuinely exercised by a "
     "Test Scenario (not merely name-matched), no task is semantically orphaned "
     "from the AC it claims to realize, AND every task tag is semantically "
-    "correct (no business-logic task is wrongly exempted from TDD by a "
-    "`tdd_exempt` tag).")
+    "correct (no business-logic task is wrongly exempted from TDD by a task "
+    "class whose `gates` omit the tdd/coverage gates).")
 
 
 def _render_ac_evidence(ac_evidence):

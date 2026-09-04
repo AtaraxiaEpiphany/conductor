@@ -167,20 +167,29 @@ def compose_manifest(track_dir, state, pre) -> str:
                 "re-tags it")
     except Exception:  # noqa: BLE001 — advisory only, never fatal
         pass
+    # Positive resolution: the task class owes the intersection of its tags'
+    # gate sets; a gate fires iff the shape lists it AND the task owes it.
+    # The grounding is the leading tag's claim (default profile when
+    # untagged) — what "done, verified" means for THIS deliverable.
+    from .task_profiles import grounding_of, resolved_gates
+    task_gates = resolved_gates(tags)
+    fired = [g for g in gates if g in task_gates]
     lines += [
         "",
         "## Resolved gates (workflow-shape: " + shape + ")",
-        f"- gates: {', '.join(gates) or '(none)'}",
+        f"- shape gates: {', '.join(gates) or '(none)'}",
+        f"- task class gates: {', '.join(task_gates) or '(none)'}",
+        f"- grounding: {grounding_of(leading or '')} "
+        f"(leading tag: {leading or '(none)'})",
+        f"- fires: {', '.join(fired) or '(none)'} — a gate fires iff the "
+        "shape lists it AND the task class owes it",
         f"- ac_grounding: {grounding}",
-        f"- tdd_exempt: {str(bool(is_tdd_exempt(tags))).lower()}",
-        f"- coverage_exempt: {str(bool(is_coverage_exempt(tags))).lower()}",
-        "- fire rule: a gate fires iff listed above AND the tag is not exempt",
         "",
         "## Workflow path",
     ]
     if kind == "fast-path":
         lines += [
-            "- path: fast-path (tdd-exempt tag → Step 8 commit only)",
+            "- path: fast-path (both-exempt tag → Step 8 commit only)",
             "- read Step 8 of ${CLAUDE_PLUGIN_ROOT}/templates/workflow/steps/"
             f"{DEFAULT_WORKFLOW_DOC} for the commit-message format (a project "
             "override at conductor/workflow/steps/ wins); skip Steps 3-7",

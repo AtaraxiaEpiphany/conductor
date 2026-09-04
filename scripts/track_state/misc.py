@@ -2046,8 +2046,8 @@ def cmd_registry_doc(tag=None, shape=None, roster=None):
     def _tag_row(tag):
         """One registry-derived table row for a tag (reused by full + filtered)."""
         route = tp.route_for([tag])
-        tdd = _yesno(tp.is_tdd_exempt([tag]))
-        cov = _yesno(tp.is_coverage_exempt([tag]))
+        gates = "+".join(tp.gates_of(tag)) or "(none)"
+        grounding = tp.grounding_of(tag)
         when = tp.when_to_use_for(tag).strip().replace("\n", " ")
         markers = []
         doc = tp.workflow_doc_for(tag)
@@ -2056,7 +2056,7 @@ def cmd_registry_doc(tag=None, shape=None, roster=None):
         if tp.refactor_for(tag):
             markers.append("refactor")
         marker = f" *({', '.join(markers)})*" if markers else ""
-        return f"| `{tag}` | `{route}` | {tdd} | {cov} | {when}{marker} |"
+        return f"| `{tag}` | `{route}` | `{gates}` | `{grounding}` | {when}{marker} |"
 
     def _explicit_signals(tag):
         """The tag's EXPLICIT ``signals`` keyword list, or ``None``.
@@ -2099,7 +2099,7 @@ def cmd_registry_doc(tag=None, shape=None, roster=None):
         if tag in tp.TAG_VOCAB():
             print(f"# Task Type `{tag}` (resolved: plugin baseline ⊕ project overlay)")
             print()
-            print("| Tag | Route | TDD-exempt | Coverage-exempt | When to use |")
+            print("| Tag | Route | Gates | Grounding | When to use |")
             print("|---|---|---|---|---|")
             print(_tag_row(tag))
             print()
@@ -2126,8 +2126,8 @@ def cmd_registry_doc(tag=None, shape=None, roster=None):
                 print(f"## `workflow` for `{tag}` (follow this prose instead of default TDD)")
                 print()
                 print(wf)
-            elif tp.is_tdd_exempt([tag]):
-                print(f"_(no bespoke workflow for `{tag}` → TDD-exempt fast "
+            elif tp.is_tdd_exempt([tag]) and tp.is_coverage_exempt([tag]):
+                print(f"_(no bespoke workflow for `{tag}` → both-exempt fast "
                       f"path: go straight to Step 8 of "
                       f"`templates/workflow/steps/default-tdd.md`)_")
             else:
@@ -2299,7 +2299,7 @@ def cmd_registry_doc(tag=None, shape=None, roster=None):
     tags = tp.TAG_VOCAB()
     print(f"## Task Types ({len(tags)})")
     print()
-    print("| Tag | Route | TDD-exempt | Coverage-exempt | When to use |")
+    print("| Tag | Route | Gates | Grounding | When to use |")
     print("|---|---|---|---|---|")
     for tag in tags:
         print(_tag_row(tag))

@@ -148,10 +148,10 @@ class RegistryDocMigration(TestCase):
         self.assertIn("3. **Write Failing Tests (Red)**", out)
 
     def test_tag_exempt_renders_fast_path_pointer(self):
-        # A TDD-exempt tag renders the Step-8 fast-path pointer, NOT the full
+        # A both-exempt tag renders the Step-8 fast-path pointer, NOT the full
         # default TDD cycle (exempt tasks skip Steps 3-7).
         out = self._run("--tag", "Docs")
-        self.assertIn("TDD-exempt fast path", out)
+        self.assertIn("both-exempt fast path", out)
         self.assertNotIn("3. **Write Failing Tests (Red)**", out)
 
     def test_shape_migration_renders_checkpoint_only_paradigm(self):

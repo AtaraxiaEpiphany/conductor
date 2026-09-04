@@ -15,7 +15,7 @@ Output shape::
      "errors", "warnings"}
 
 ``tag_profile`` is ``None`` for an untagged (default) task; otherwise it carries
-the leading tag's resolved profile (route / tdd_exempt / coverage_exempt) plus
+the leading tag's resolved profile (route / gates / grounding) plus
 whether the tag carries a ``workflow`` (the prose itself is fetched separately
 via ``registry-doc --tag``) and ``refactor``. The (phase, task) address is the
 top-level task; subtasks inherit their parent's refs, so no subtask dimension is
@@ -173,8 +173,8 @@ def compute_task_context(track_dir, phase, task):
         tag_profile = {
             "tag": leading,
             "route": prof.get("route", "executor"),
-            "tdd_exempt": bool(prof.get("tdd_exempt")),
-            "coverage_exempt": bool(prof.get("coverage_exempt")),
+            "gates": list(tp.gates_of(leading)),
+            "grounding": tp.grounding_of(leading),
             # The workflow prose/docfile is large + conditional → fetched on
             # demand (the dispatch manifest / registry-doc --tag, tier B), not
             # inlined here. "present"/"absent" is the pointer, mirroring
