@@ -25,7 +25,7 @@ from .validate import cmd_validate
 from .quality import cmd_init_from_plan, cmd_start, cmd_set_mode, cmd_set_recovery_policy, cmd_set_workflow_shape, cmd_finalize, cmd_archive, cmd_gc, cmd_checklist_verify
 from .misc import (
     cmd_reset, cmd_indices, cmd_shas, cmd_add_checkpoint,
-    cmd_deferred_report, cmd_phase_done, cmd_registry_update, cmd_registry_add,
+    cmd_deferred_report, cmd_phase_done, cmd_replan, cmd_registry_update, cmd_registry_add,
     cmd_registry_doc,
     cmd_record_summary, cmd_preflight, cmd_quality_snapshot,
     cmd_spec_integrity, cmd_view, cmd_status, cmd_derive_name, cmd_propose_shape,
@@ -465,6 +465,8 @@ COMMAND_HELP = {
                    "Check if all tasks in a phase are in terminal state"),
     "add-checkpoint": ("add-checkpoint <track-dir> <phase> <sha>",
                        "Add/update checkpoint SHA for a phase in plan.md"),
+    "replan": ("replan <track-dir> [--ack]",
+               "Poll/consume the phase-gate replan offer (replan_due after a PASSED checkpoint)"),
     "indices": ("indices <track-dir>",
                 "Print phase/task/subtask index mapping for the track"),
     "preflight": ("preflight <track-dir>",
@@ -839,6 +841,11 @@ def main():
             cmd_validate(track_dir, fix="--fix" in args)
         elif cmd == "phase-done":
             cmd_phase_done(track_dir, pos[0])
+        elif cmd == "replan":
+            # Poll the phase-gate replan offer by default; --ack consumes it
+            # after the re-derive pass runs (runtime/contracts/
+            # phase-gate-replanning.md).
+            cmd_replan(track_dir, ack="--ack" in args)
         elif cmd == "shas":
             cmd_shas(track_dir)
         elif cmd == "post-loop-status":

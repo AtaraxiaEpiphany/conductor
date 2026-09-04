@@ -56,7 +56,7 @@ All interaction happens through Claude Code slash commands:
 ### `track-state` CLI
 
 <!-- conductor:begin:cli-groups -->
-The `bin/track-state` command provides direct state management. Run `bin/track-state help` for the full, current list (94 subcommands across 18 groups) — it is grouped and self-describing. The complete surface, straight from `track_state/commands.py` (the same single source the pre-command guard derives its sanctioned set from):
+The `bin/track-state` command provides direct state management. Run `bin/track-state help` for the full, current list (95 subcommands across 18 groups) — it is grouped and self-describing. The complete surface, straight from `track_state/commands.py` (the same single source the pre-command guard derives its sanctioned set from):
 
 | Group | Subcommands |
 |-------|-------------|
@@ -72,7 +72,7 @@ The `bin/track-state` command provides direct state management. Run `bin/track-s
 | **Naming** | `derive-name`, `propose-shape`, `propose-grounding`, `resolve-track`, `check` |
 | **New-Track Resume** | `new-track-resume`, `new-track-init`, `new-track-step`, `new-track-set-mode`, `new-track-set-shape`, `new-track-finalize` |
 | **Brief** | `brief-resume`, `pending-briefs`, `brief-init`, `brief-finalize`, `brief-grill-done` |
-| **Diagnostics** | `validate`, `gc`, `shas`, `post-loop-status`, `checklist-verify`, `deferred-report`, `phase-done`, `add-checkpoint`, `preflight`, `quality-snapshot`, `spec-integrity`, `spec-anchors`, `spec-delta`, `task-context`, `view`, `status` |
+| **Diagnostics** | `validate`, `gc`, `shas`, `post-loop-status`, `checklist-verify`, `deferred-report`, `phase-done`, `add-checkpoint`, `replan`, `preflight`, `quality-snapshot`, `spec-integrity`, `spec-anchors`, `spec-delta`, `task-context`, `view`, `status` |
 | **Workflow Studio** | `shape-studio`, `registry-json`, `registry-save` |
 | **Roster** | `roster` |
 | **Task Types** | `tag` |

@@ -24,6 +24,7 @@ from lib.constants import (
     WAVE_LEDGER_NAME, WAVE_MARKER_NAME, WAVE_DRAIN_MARKER_NAME,
     DISPATCH_LOCK_NAME, BRIEF_PROGRESS_MARKER, FAILURE_ANALYSIS_MARKER,
     PHASE_RECOVERY_MARKER, AMENDMENT_STAGED_MARKER, DISPATCH_MANIFEST_MARKER,
+    REPLAN_PASS_MARKER,
     DISPATCH_INFLIGHT_TMPL, TRIPWIRE_COUNT_TMPL,
     MODIFIED_GUIDANCE_TMPL, AMENDMENT_GUIDANCE_TMPL,
 )
@@ -146,6 +147,12 @@ def _validate_plan_structure(plan):
 # .amendment-guidance-*.md is the amendment retry-guidance injection (dispatch.py
 # _amendment_guidance_path / on-subagent-start.py): consumed-on-read and cleared,
 # mirroring .modified-guidance-*.md. Transient.
+# replan-pass.json is the phase-gate replan offer marker (misc.py
+# _write_replan_marker_fail_open): staged by the checkpoint stamp when later
+# phases remain, polled by `track-state replan`, consumed by `--ack` once the
+# re-derive pass has run (runtime/contracts/phase-gate-replanning.md). Transient
+# bookkeeping — the pass's durable output, if any, is a plan edit + reconcile
+# commit, never this marker.
 # review-result.json is the post-loop code-review findings marker (on-subagent-stop.py):
 # carries review findings for the post-loop spine; transient per cycle.
 _RESULT_TMP_GLOB = ".result.tmp.*"  # explorer scratch files; globbed below in cleanup
@@ -195,6 +202,7 @@ _TRANSIENT_MARKERS = (
      AMENDMENT_GUIDANCE_TMPL.format(pi=1, ti=1, sub="")),
     (REVIEW_RESULT_MARKER, REVIEW_RESULT_MARKER),
     (DISPATCH_MANIFEST_MARKER, DISPATCH_MANIFEST_MARKER),
+    (REPLAN_PASS_MARKER, REPLAN_PASS_MARKER),
 )
 _PATTERNS = tuple(pattern for pattern, _sample in _TRANSIENT_MARKERS)
 # Derived so the ignore body and the drift-gate test's source of truth cannot

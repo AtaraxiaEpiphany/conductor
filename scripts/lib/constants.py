@@ -88,6 +88,7 @@ FAILURE_ANALYSIS_MARKER = "failure-analysis.json"  # failure-analyst handshake (
 PHASE_RECOVERY_MARKER = "phase-recovery.json"      # phase-checkpoint recovery (dispatch.py)
 AMENDMENT_STAGED_MARKER = "amendment-staged.json"  # spec-amendment staging (dispatch.py)
 DISPATCH_MANIFEST_MARKER = "dispatch-manifest.md"  # per-dispatch workflow manifest (dispatch_manifest.py)
+REPLAN_PASS_MARKER = "replan-pass.json"            # phase-gate replan offer (misc.py; polled/consumed by `replan`)
 
 # Path templates. ``{sub}`` interpolates to ``-N`` or ``""``; the other fields
 # are indices. quality.py derives each family's gitignore glob from the

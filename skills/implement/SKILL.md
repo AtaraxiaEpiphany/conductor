@@ -224,8 +224,10 @@ One bounded pass (no loop, no transient state). The refactorer runs the suite it
 track-state phase-done "<track_dir>" <phase>
 ```
 
-`complete=true` with `checkpoint_due: true` → fan out the `verifier_wave` members (§3.2 Step 1 — paste each member's `prompt` verbatim; the wave's code-free narrowing is already resolved), `PHASE=<phase>`. `complete=true` without `checkpoint_due` (checkpoint present or waived by shape) → Section 3.1. On the phase-checker: FAILED → HALT (surface `FAILURE_REASON`; an AC-trace authoring defect requires editing `spec.md`/`plan.md` then re-running the phase — not a `task-executor` retry). *(Rail A halts on a FAILED checkpoint. The step spine — `/conductor:implement-step` — instead routes a FAILED phase through the recovery router on an auto-routing track, so a long-running track finally succeeds; see `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/recovery-policy.md` § "Phase-level recovery".)* Otherwise → Section 3.1.
+`complete=true` with `checkpoint_due: true` → fan out the `verifier_wave` members (§3.2 Step 1 — paste each member's `prompt` verbatim; the wave's code-free narrowing is already resolved), `PHASE=<phase>`. `complete=true` without `checkpoint_due` (checkpoint present or waived by shape) → the replan poll below, then Section 3.1. On the phase-checker: FAILED → HALT (surface `FAILURE_REASON`; an AC-trace authoring defect requires editing `spec.md`/`plan.md` then re-running the phase — not a `task-executor` retry). *(Rail A halts on a FAILED checkpoint. The step spine — `/conductor:implement-step` — instead routes a FAILED phase through the recovery router on an auto-routing track, so a long-running track finally succeeds; see `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/recovery-policy.md` § "Phase-level recovery".*) Otherwise → the replan poll below, then Section 3.1.
 `complete=false` → Section 3.1.
+
+**Replan poll** (after a PASSED checkpoint lands for this phase — the phase-checker stamped it, or the stamp is already present on resume): run `track-state replan "<track_dir>"`. `replan_due: true` → execute the phase-gate replanning pass in `${CLAUDE_PLUGIN_ROOT}/runtime/contracts/phase-gate-replanning.md` (ends with `track-state replan "<track_dir>" --ack`, whatever it concluded). `replan_due: false` → continue; nothing to announce.
 
 ### 3.8 Action: `finalize`
 

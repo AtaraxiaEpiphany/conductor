@@ -16,6 +16,7 @@ from .mutations import _do_complete
 from .sync import _do_sync_plan
 from .git_ops import _git_commit, _git_head_sha, _ensure_note, docs_synced_for_track
 from .constants import TERMINAL_FOR_PARENT
+from lib.constants import REPLAN_PASS_MARKER
 from .quality import _checklist_status, _to_number
 from .spec_integrity import compute_ac_integrity
 from .handoff import compile_track_findings
@@ -1722,8 +1723,9 @@ def _stamp_checkpoint_in_plan(track_dir, p, sha):
     plan.md, malformed SHA, or phase heading not found.
 
     A successful stamp also compiles ``.conductor/track-findings.md`` for this
-    phase (advisory, fail-open) — the single home for that trigger; see the
-    comment at the tail of this function."""
+    phase and stages the phase-gate replan offer (both advisory, fail-open) —
+    the single home for both triggers; see the comments at the tail of this
+    function."""
     plan_path = Path(track_dir) / "plan.md"
     if not plan_path.exists():
         return dict(error="plan.md not found")
@@ -1770,7 +1772,83 @@ def _stamp_checkpoint_in_plan(track_dir, p, sha):
     # compile error must never block the advance (the checkpoint is already
     # stamped).
     compile_track_findings_fail_open(track_dir, phase_num)
+    # Same funnel, second boundary effect: stage the phase-gate replan offer
+    # (see _write_replan_marker_fail_open). Also fail-open by the same logic.
+    _write_replan_marker_fail_open(track_dir, phase_num)
     return dict(ok=True, phase=p, sha=sha)
+
+
+def _write_replan_marker_fail_open(track_dir, phase_num):
+    """Stage the phase-gate replan offer, fail-open (the stamp-home trigger).
+
+    Writes ``.conductor/replan-pass.json`` = ``{"phase": N}`` iff the stamped
+    phase has later phases — nothing left to re-derive on a last-phase stamp
+    (the track is heading to finalize, not to more dispatch). The orchestrator
+    polls it with ``track-state replan`` and consumes it with ``--ack`` once
+    the re-derive pass has run (``runtime/contracts/phase-gate-replanning.md``
+    is the procedure's single home). Called only from
+    :func:`_stamp_checkpoint_in_plan` so both stamp paths (add-checkpoint /
+    phase-checkpoint-review) stage exactly one offer per checkpoint. A
+    re-stamp of the same phase re-stages — a re-verified phase is a new
+    settlement; overwriting an un-consumed prior marker is correct (a
+    superseded offer is moot). Transient (gitignored via quality's tuple),
+    advisory: staging must never block the advance.
+    """
+    try:
+        n_phases = len(load(track_dir).get("phases", []))
+        if not (1 <= int(phase_num) < n_phases):
+            return
+        path = conductor_dir(track_dir) / REPLAN_PASS_MARKER
+        path.write_text(
+            json.dumps({"phase": int(phase_num)}, indent=2) + "\n",
+            encoding="utf-8")
+    except Exception as exc:  # noqa: BLE001 — advisory, never fatal
+        sys.stderr.write(f"replan offer staging skipped (advisory): {exc}\n")
+
+
+def cmd_replan(track_dir, ack=False):
+    """Poll (default) or consume (``--ack``) the phase-gate replan offer.
+
+    The once-per-checkpoint handshake for the re-derive pass: ``replan_due:
+    true`` means a PASSED checkpoint stamped with phases remaining and no pass
+    has acked yet — the caller runs the procedure in
+    ``runtime/contracts/phase-gate-replanning.md`` and ends it with ``--ack``
+    (whatever the pass concluded — amendments applied, declined, or nothing to
+    propose; an empty proposal acks just the same, silently). Read is
+    fail-open: an absent or corrupt marker is simply not due. ``--ack`` is
+    idempotent (acking with no marker pending is ``acked: null``, not an
+    error) so the skill's terminal step never wedges.
+    """
+    marker = conductor_dir(track_dir) / REPLAN_PASS_MARKER
+    phase = None
+    try:
+        doc = json.loads(marker.read_text(encoding="utf-8"))
+        if isinstance(doc, dict) and isinstance(doc.get("phase"), int):
+            phase = doc["phase"]
+    except (OSError, json.JSONDecodeError):
+        pass
+    if ack:
+        try:
+            if marker.exists():
+                marker.unlink()
+        except OSError as exc:
+            out(dict(error=f"cannot consume replan marker: {exc}"))
+            sys.exit(1)
+        out(dict(ok=True, acked=phase))
+        return
+    if phase is None:
+        out(dict(ok=True, replan_due=False,
+                 reason="no pending replan pass"))
+        return
+    n_phases = len(load(track_dir).get("phases", []))
+    if not (1 <= phase < n_phases):
+        # Last-phase stamp, or the plan shrank since: no remaining rows to
+        # re-derive — the offer is stale, not due.
+        out(dict(ok=True, replan_due=False, phase=phase,
+                 reason="no phases remain after the checkpoint"))
+        return
+    out(dict(ok=True, replan_due=True, phase=phase,
+             remaining_phases=n_phases - phase))
 
 
 def compile_track_findings_fail_open(track_dir, phase_num=None):
