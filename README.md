@@ -84,15 +84,16 @@ The `bin/track-state` command provides direct state management. Run `bin/track-s
 
 ## Registry-driven workflow
 
-The conductor's routing vocabulary is **data, not code.** Three registries, each an ordered JSON document, drive what was previously hardcoded Python sets and agent-prose `if/elif` ladders. Each resolves as **plugin baseline ⊕ project overlay** — a project drops any subset of the three JSON files at `conductor/workflow/` to add or override entries with **zero plugin edits** (opt-in by file presence; the project wins conflicts).
+The conductor's routing vocabulary is **data, not code.** Four registries, each an ordered JSON document, drive what was previously hardcoded Python sets and agent-prose `if/elif` ladders. Each resolves as **plugin baseline ⊕ project overlay** — a project drops any subset of the JSON files at `conductor/workflow/` to add or override entries with **zero plugin edits** (opt-in by file presence; the project wins conflicts).
 
 | Axis | What it declares | Source of the *name* | Mutable? |
 |------|------------------|----------------------|----------|
-| **Task-type** (`task-type-profiles.json`) | What a tag *means* — route, TDD/coverage exemption, when-to-use hint, optional executor workflow (`workflow_doc` docfile — preferred — or legacy inline `workflow`), optional `refactor: true` (tactical-refactor opt-in) | Re-derived from the task name's leading tag | No (re-parsed at every read; `task_type` is a typed cache) |
+| **Task-type** (`task-type-profiles.json`) | What a tag *means* — route, `gates` + `grounding` (the class's positive declaration of what "done, verified" means), optional executor `agent` (persona binding), when-to-use hint, optional executor workflow (`workflow_doc` docfile — preferred — or legacy inline `workflow`), optional `refactor: true` (tactical-refactor opt-in) | Re-derived from the task name's leading tag | No (re-parsed at every read; `task_type` is a typed cache) |
 | **Workflow shape** (`workflow-shapes.json`) | The **topology** — which dispatch agents run, in what order, its stop condition | The `workflow_shape` field on `track-state.json` | **Yes** — the one declaration/knob axis (`set-workflow-shape`). Advisory today: declares intended topology and surfaces `shape_violation` drift, but does not reorder dispatch (both built-in shapes plan-first) |
 | **Agent roster** (`agent-roster.json`) | The **dispatch scaffold** per agent — class (executor / verifier / reviewer / advisory), result fence, `[Conductor Registry]` injection, retry context, single-writer guard, stop-hook recovery | The agent name a skill dispatches | No (re-read per dispatch; changed only by editing the file) |
+| **Probes** (`probes.json`) | The **dynamic-context vocabulary** — named, read-only, side-effect-free snapshot commands an agent fetches on demand (`track-state probe <name>`): builtins (`test-state`, `label-accuracy`, `skill-fires`, `gate-outcomes`) or bounded project commands | The probe name an agent or skill asks for | No (re-read per fetch) |
 
-**Adding a task type, workflow shape, or agent is one row in the registry.** Tag extraction, TDD-gating, dispatch routing, the `[Conductor Registry]` block injected into agents, the SubagentStart/Stop scaffold, and the `registry-doc` render all derive from it automatically.
+**Adding a task type, workflow shape, agent, or probe is one row in a registry.** Tag extraction, gate derivation, dispatch routing, the `[Conductor Registry]` block injected into agents, the SubagentStart/Stop scaffold, and the `registry-doc` render all derive from it automatically.
 
 - **Integrating an agent is one row** — `"<name>": {class, fence, recovery, recovery_instruction}` in the overlay. The dispatch hooks read the merged roster: an executor-class row derives the single-writer guard; a `stdout-block` recovery row gets a recovery turn instruction; unrostered names stay fail-open (no scaffold, no deny — `track-state check` flags them instead).
 - **Integrating a skill is a wrapper agent + one row** — the conductor dispatches agents, not skills. Write a thin `.claude/agents/<name>.md` wrapper whose `skills:` frontmatter preloads the skill (procedure up front, reference on fetch), add its roster row, and the skill rides with conductor's full scaffold: safety floor, result fence, and recovery — zero plugin edits. `track-state roster add <name> --skill <skill>` (front-doored by `/conductor:adopt-skill`) generates both files validated — defaults mirror the task-executor scaffold, so most adoptions need just the two names.
@@ -102,6 +103,21 @@ The conductor's routing vocabulary is **data, not code.** Three registries, each
 - **Guardrails** — every cap is disclosed rather than silently enforced, the "definition of done" is read-only to the executing agent, and a drift-killer lint (`scripts/check-contract-registry-sync.py`) forbids a second hand-maintained vocabulary home in the contract.
 
 The authoritative grammar and invariants live in `runtime/contracts/plan-format-contract.md` (the registries own the *vocabulary*; the contract owns the *rules*).
+
+### Which seam do I extend?
+
+"I want conductor to do X — which seam?" Every extension is data (one registry row, one docfile, or one wrapper agent); zero plugin edits.
+
+| You want… | The seam |
+|---|---|
+| A new **kind of work** — a deliverable class with its own definition of done | One overlay row in `task-type-profiles.json` (`gates` + `grounding`) + one steps docfile declaring what its witness attests |
+| A class to run **through a skill** | A `.claude/agents/<name>.md` wrapper + an `agent-roster.json` row + `agent: <name>` on the class row (`/conductor:adopt-skill` generates all three) |
+| A different **topology** for a track | One row in `workflow-shapes.json` (plus a planning docfile if it plans differently) |
+| Different **step prose** for one class | One docfile at `conductor/workflow/steps/<name>.md` (project wins over the plugin's library) |
+| Different **planning doctrine** for one shape | One docfile at `conductor/planning/<name>.md` |
+| A **measurement** (a context snapshot or a cross-track aggregate) | One row in `probes.json` — builtin or a bounded read-only command |
+| The plan to **adapt mid-track** | Nothing to extend — phase-gate replanning is built in (`track-state replan` after each PASSED checkpoint; see `runtime/contracts/phase-gate-replanning.md`) |
+| A **guardrail** on tool use or session behavior | A hook (`hooks/hooks.json`) — the frozen anchor points |
 
 ## Recovery after a `git reset`
 

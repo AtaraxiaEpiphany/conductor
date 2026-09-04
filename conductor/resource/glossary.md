@@ -199,3 +199,45 @@ Warnings only — the invariant is delivery, never forced consumption.
 **Avoid:** *artifact dependency* (conflates data flow with the `deps:`
 control couplet — deps order execution, edges deliver data).
 
+
+## deliverable class
+
+What a task's *output kind* is — code, docs, config, data pipeline, research
+digest — declared by its task-type row (`gates` + `grounding`), re-derived
+from the plan row's leading tag. The any-job unit: code is one class among
+peers, each positively declaring its own witness; no class is an exemption
+from a code-shaped default. Not the tag itself — the tag *names* the class,
+the registry row *is* it.
+
+**Avoid:** *task type* as a synonym in this sense (that term names the whole
+registry axis — route, workflow docfile, persona binding too; the class is
+the gates/grounding face of it), *category* (says nothing about witness).
+
+## grounding
+
+How a deliverable class's done-state is **witnessed** — the declared answer
+to "verified how?": `test` (a test suite can fail it), `review` (a reviewer
+or check can reject it), `data-check` (an assertion over data/probe output
+attached as evidence), `human-attest` (only a human can sign it off). Lives
+on the task-type row; constrains `gates` (tdd/coverage require `test`).
+Distinct from shape-level `ac_grounding` (the spec-integrity scan mode for
+review shapes — same word family, different axis: that one says how a
+*review* grounds ACs, this one says how a *class* grounds done).
+
+**Avoid:** *verify_policy* (a mode knob, not a witness kind), *verification
+level* (implies an ordering; data-check is not "less" than test), conflating
+with `ac_grounding` (see above).
+
+## executor persona
+
+A rostered wrapper agent a task class binds as its executor — the class
+row's `agent: <roster-name>` field, roster-validated. The form a skill takes
+inside a track: the wrapper's `skills:` frontmatter preloads the procedure,
+and the persona rides conductor's full executor scaffold (single-writer
+guard, result fence, recovery, tripwire, telemetry — the
+`executor_slot` family). Serial rails only; wave members dispatch as
+task-executor regardless of binding.
+
+**Avoid:** *skill agent* (the skill is procedure the persona carries, not
+the persona itself), *custom executor* (suggests bespoke dispatch machinery;
+it is a roster row + one field).
