@@ -396,6 +396,29 @@ def grounding_of(tag: str) -> str:
     return "test" if ("tdd" in gates or "coverage" in gates) else "review"
 
 
+def agent_for(tags: list[str]) -> str | None:
+    """The rostered EXECUTOR PERSONA a tagged task dispatches, or ``None``.
+
+    A task class may bind an ``agent`` field naming an agent-roster row; a
+    ``[Tag]`` task carrying the binding dispatches that rostered wrapper as
+    its executor instead of ``task-executor`` (the persona seam — a skill
+    adopted as a wrapper agent becomes the deterministic executor for a whole
+    class of work). Reads the LEADING tag only (the class-declared field is
+    single-sourced, mirroring the route). Fail-open by design: an absent
+    binding, an untagged task, or a malformed value resolves ``None`` (the
+    default executor) — membership in the roster is validated at save/lint
+    time (:func:`registry_validate.validate_merged_task_types` +
+    ``misc._roster_lint_findings``), never at read time, so a stale binding
+    degrades to default dispatch instead of crashing one.
+    """
+    if not tags:
+        return None
+    declared = _profile(tags[0]).get("agent")
+    if isinstance(declared, str) and declared:
+        return declared
+    return None
+
+
 def is_tdd_exempt(tags: list[str]) -> bool:
     """True if the task is exempt from the TDD gate.
 
@@ -908,7 +931,7 @@ def derive_task_tag(description: str) -> str | None:
 # --- overlay generator ----------------------------------------------------------
 
 def tag_add(name, when_to_use=None, route=None, gates=None,
-            grounding=None, workflow=None,
+            grounding=None, agent=None, workflow=None,
             workflow_doc=None, refactor=False, auto_propose=False,
             over_tag_risk=False, signals=None, examples=None, force=False,
             project_dir=None) -> dict:
@@ -1046,6 +1069,12 @@ def tag_add(name, when_to_use=None, route=None, gates=None,
            "auto_propose": bool(auto_propose)}
     if over_tag_risk:
         row["over_tag_risk"] = True
+    if agent is not None:
+        # The executor-persona binding — written only when given (absent =
+        # default task-executor dispatch). Membership in the merged roster is
+        # enforced by the merged-level validation below (the fragment view
+        # cannot see project wrapper agents).
+        row["agent"] = agent
     if refactor:
         row["refactor"] = True
     if workflow is not None:

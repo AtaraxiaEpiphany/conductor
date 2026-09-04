@@ -120,7 +120,7 @@ _KNOWN_SHAPE_FIELDS = frozenset({
 _KNOWN_TAG_FIELDS = frozenset({
     "route", "tdd_exempt", "coverage_exempt", "gates", "grounding",
     "when_to_use", "workflow", "workflow_doc", "refactor", "auto_propose",
-    "over_tag_risk", "signals", "examples",
+    "over_tag_risk", "signals", "examples", "agent",
 })
 
 # Tag fields that must be booleans.
@@ -302,6 +302,14 @@ def validate_tag_row(name: str, row, *, form_checks: bool = True) -> list[str]:
     for s in ("when_to_use", "workflow", "workflow_doc"):
         if s in row and not isinstance(row[s], str):
             errs.append(f"tag {name!r}: {s} must be a string")
+
+    # The persona binding: a string naming an agent-roster row. Membership in
+    # the (merged) roster is checked at the merged level — a project overlay
+    # tag may bind a PROJECT wrapper agent that the fragment-level view cannot
+    # see (the probes-builtin precedent for lazy cross-registry checks).
+    if "agent" in row and (not isinstance(row["agent"], str) or not row["agent"]):
+        errs.append(f"tag {name!r}: agent must be a non-empty string "
+                    f"(a rostered wrapper agent name)")
 
     if "workflow_doc" in row and isinstance(row["workflow_doc"], str) \
             and not DOCFILE_NAME_RE.match(row["workflow_doc"]):
@@ -519,7 +527,7 @@ def validate_merged_shapes(merged) -> list[str]:
 def validate_merged_task_types(merged) -> list[str]:
     """Errors for a RESOLVED (baseline ⊕ overlay) task-type document.
 
-    Adds two things to :func:`validate_task_types`:
+    Adds three things to :func:`validate_task_types`:
 
     - the ``default`` requirement — the merged result MUST declare a
       top-level ``default`` object, the fail-open fallback target;
@@ -534,6 +542,12 @@ def validate_merged_task_types(merged) -> list[str]:
       inherited) fails HERE, at the save gate, instead of silently at
       runtime. An ABSENT grounding never fires (runtime fail-opens to
       "test" when tdd is owed — mirroring that floor exactly).
+    - the persona-membership cross-check: a tag's ``agent`` binding must name
+      a row in the MERGED agent roster (baseline ⊕ project overlay — a
+      project tag may bind a project wrapper agent). Raw-row validation can
+      only check string-ness; membership needs the resolved roster, so it
+      lives here at the save gate (the same lazy cross-registry pattern as
+      the probes-builtin check below).
 
     Rows re-validate with ``form_checks=False``: the merged *default* is a
     per-key merge and can legitimately carry both encodings (a legacy
@@ -554,6 +568,12 @@ def validate_merged_task_types(merged) -> list[str]:
     tags = merged.get("tags")
     if not isinstance(tags, dict):
         return errs
+    # The merged roster the binding is checked against — same lazy-import
+    # posture as task_profiles above (agent_roster's loader is fail-open; a
+    # missing roster yields the baseline names, so a baseline binding always
+    # resolves and an overlay binding to an unrostered name fails HERE).
+    from .agent_roster import merged_agent_names
+    roster = set(merged_agent_names())
     for name, row in tags.items():
         if not isinstance(row, dict):
             continue
@@ -566,6 +586,12 @@ def validate_merged_task_types(merged) -> list[str]:
                 f"grounding={grounding!r} (own or inherited from 'default') — "
                 f"tdd gates witness a test-grounded deliverable; use "
                 f"grounding 'test' or drop tdd from gates")
+        bound = row.get("agent")
+        if isinstance(bound, str) and bound and bound not in roster:
+            errs.append(
+                f"tag {name!r}: agent binding {bound!r} is not in the merged "
+                f"agent roster — `track-state roster add` the wrapper first, "
+                f"then bind it (runtime fail-opens to task-executor)")
     return errs
 
 

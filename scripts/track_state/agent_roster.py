@@ -537,7 +537,8 @@ writing one and printing the fence.
 
 
 def roster_add(name, skill, description=None, agent_class=None, fence=None,
-               recovery=None, recovery_instruction=None, force=False,
+               recovery=None, recovery_instruction=None,
+               retry=True, registry_injection=True, force=False,
                project_dir=None):
     """Generate the wrapper agent + overlay roster row that adopt a skill.
 
@@ -547,7 +548,16 @@ def roster_add(name, skill, description=None, agent_class=None, fence=None,
     ``<project>/conductor/workflow/agent-roster.json`` (row-level replace by
     name, ``_comment``/``_fields`` preserved, ``.bak`` + atomic write per the
     registry-studio precedent). Defaults mirror the task-executor scaffold;
-    ``--class``/``--fence``/``--recovery``/``--recovery-instruction`` override.
+    ``--class``/``--fence``/``--recovery``/``--recovery-instruction`` override,
+    and ``--no-retry``/``--no-registry-injection`` opt out of the scaffold
+    parity booleans (a persona bound as a task-class executor — the
+    ``agent`` field on a tag row — wants BOTH on: it dispatches through the
+    same retry + registry-injection machinery task-executor does).
+
+    ``retry``/``registry_injection`` are written EXPLICITLY either way (the
+    always-write-explicitly doctrine): at read time an absent ``registry_injection``
+    means "no injection" and an absent ``retry`` means "no retry budget", so a
+    generated row must never leave them to those defaults by accident.
 
     Validates the row (fragment + the baseline ⊕ new-overlay merge) BEFORE any
     write and returns ``{ok: False, errors: [...]}`` on a bad row, a name with
@@ -597,7 +607,11 @@ def roster_add(name, skill, description=None, agent_class=None, fence=None,
             "without a recovery kind never fires; set --recovery or drop it"]}
 
     row = {"class": agent_class or "executor",
-           "fence": fence or _DEFAULT_FENCE}
+           "fence": fence or _DEFAULT_FENCE,
+           # Scaffold parity with task-executor (the persona-binding target):
+           # written EXPLICIT, never left to the read-time defaults.
+           "registry_injection": bool(registry_injection),
+           "retry": bool(retry)}
     if kind != "none":
         row["recovery"] = kind
         row["recovery_instruction"] = (recovery_instruction

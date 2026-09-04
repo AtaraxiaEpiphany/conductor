@@ -120,6 +120,7 @@ _TAG_FIELD_EFFECTS = {
     "workflow": ("drives", "Inline bespoke workflow prose, fetched on demand via registry-doc --tag (tier B). The LEGACY small-overlay form — for a full bespoke workflow prefer `workflow_doc`, which wins at render time; a row carrying both is a two-homes drift (the strict-write lint rejects new ones)."),
     "workflow_doc": ("drives", "Names the steps-library docfile the executor follows instead of default TDD (e.g. [Migrate] → migrate.md). The docfile lives in the plugin's templates/workflow/steps/ or the project's conductor/workflow/steps/ (project wins); registry-doc --tag renders it. The preferred form for a full bespoke workflow."),
     "route": ("drives", "Determines the dispatch category: manual (deferred) | explore (explorer) | executor (task-executor)."),
+    "agent": ("drives", "Binds this class's executor PERSONA: a rostered wrapper agent name (roster add). [Tag] tasks of this class dispatch that agent instead of task-executor — serial rail only. Must be in the merged roster; runtime fail-opens to task-executor."),
     "gates": ("drives", "The quality gates this task class OWES — a positive subset of tdd/coverage/checkpoint (composed with the shape's gates: a gate fires iff the shape lists it AND the class owes it). The positive form of the legacy exemption booleans, which the editor no longer writes."),
     "grounding": ("drives", "What 'done, verified' means for this class's deliverable: test | review | data-check | human-attest. The gates are the machinery; this is the claim the deliverable makes (tdd in gates requires test)."),
     "refactor": ("drives", "Opts the task into one tactical-refactorer pass after it succeeds."),
@@ -210,7 +211,12 @@ def _vocab():
             # legacy exemption booleans are no longer editor-writable; the
             # /api/registry view serves rows normalized to this form.
             "scalar_fields": {"route": list(rv.ROUTES),
-                              "grounding": list(rv.TAG_GROUNDINGS)},
+                              "grounding": list(rv.TAG_GROUNDINGS),
+                              # The persona binding dropdown — the merged
+                              # roster's names (cross-module read, the probes
+                              # precedent); a save validates membership via
+                              # validate_merged_task_types.
+                              "agent": list(ar.merged_agent_names())},
             "bool_fields": ["refactor", "auto_propose", "over_tag_risk"],
             "text_fields": ["when_to_use", "workflow", "workflow_doc"],
             "list_fields": {"signals": None,   # free-form keyword strings
@@ -255,6 +261,7 @@ def _task_profile(tag):
         "gates": list(tp.gates_of(tag)) if tag else
                  list(tp.resolved_gates([])),
         "grounding": tp.grounding_of(tag) if tag else "",
+        "agent": tp.agent_for([tag]) if tag else None,
         "refactor": bool(prof.get("refactor", False)),
         "auto_propose": bool(prof.get("auto_propose", True)),
         "over_tag_risk": bool(prof.get("over_tag_risk", False)),
@@ -303,6 +310,9 @@ def _task_card(phase_index, unit, parent_task=None):
         "when_to_use": prof["when_to_use"],
         "gates": prof["gates"],
         "grounding": prof["grounding"],
+        "agent": prof["agent"],
+        "agent_skill": ar.wrapper_skill_for(prof["agent"])
+                       if prof["agent"] else None,
         "refactor": prof["refactor"],
     }
 
@@ -423,13 +433,19 @@ def _task_graph(track_dir, phase, task, subtask):
         else:
             gates.append({"name": name, "on": True, "reason": ""})
 
+    # The persona seam: a class-bound `agent` overrides the executor mapping
+    # (manual/explore still route their own way — a persona IS an executor).
+    persona = tp.agent_for([card["tag"]]) if card["tag"] else None
+    route_agent = (persona if persona and card["route"] == "executor" else
+                   {"explore": "explorer", "executor": "task-executor",
+                    "manual": "user (manual)"}[card["route"]])
+
     return {
         "ok": True,
         "track": (env.get("track") or {}).get("track_id"),
         "shape": shape,
         "card": card,
-        "route_agent": {"explore": "explorer", "executor": "task-executor",
-                        "manual": "user (manual)"}[card["route"]],
+        "route_agent": route_agent,
         "steps": steps,
         "steps_source": steps_source,
         "docfile": {"name": docfile.name, "declared": declared},
@@ -1607,6 +1623,7 @@ function taskCardHTML(c, pos) {
     h += '<span class="pill sm">gates: '+esc(c.gates.join('+'))+'</span>';
   if (c.grounding && c.grounding!=='test')
     h += '<span class="pill sm">'+esc(c.grounding)+'</span>';
+  if (c.agent) h += '<span class="pill sm" title="executor persona (class-bound agent)">persona: '+esc(c.agent)+(c.agent_skill?' · wraps skill: '+esc(c.agent_skill):'')+'</span>';
   if (c.refactor) h += '<span class="pill sm">+ refactor</span>';
   if (c.coverage_pct!=null) h += '<span class="pill sm">'+c.coverage_pct+'% cov</span>';
   h += '</div>';

@@ -130,6 +130,24 @@ def _roster_lint_findings():
         findings.append(
             "workflow-shape rows declare agents with no definition file in "
             "any harness home: " + ", ".join(dead_shape_names))
+
+    # The persona seam's check-time join: every tag's `agent` binding must
+    # name a merged roster row (the same cross-registry invariant
+    # validate_merged_task_types enforces at save time — here it catches a
+    # registry that DRIFTED after the save, e.g. a roster row renamed or
+    # removed while the tag binding survived). Runtime fail-opens to
+    # task-executor; this lint is where it gets loud.
+    from . import task_profiles as tpp
+    rostered = set(ar.merged_agent_names())
+    dead_bindings = sorted(
+        f"[{tag}] → {bound}"
+        for tag in tpp.TAG_VOCAB()
+        if (bound := tpp.agent_for([tag])) and bound not in rostered)
+    if dead_bindings:
+        findings.append(
+            "task-type rows bind executor personas not in the merged agent "
+            "roster (runtime fail-opens to task-executor): "
+            + ", ".join(dead_bindings))
     return findings
 
 

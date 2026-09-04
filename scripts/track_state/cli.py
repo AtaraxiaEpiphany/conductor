@@ -65,7 +65,8 @@ from .commands import (
 
 
 _BOOL_FLAGS = {"--full", "--fix", "--check", "--force", "--verify",
-               "--auto-propose", "--over-tag-risk", "--refactor"}
+               "--auto-propose", "--over-tag-risk", "--refactor",
+               "--no-retry", "--no-registry-injection"}
 
 # Commands EXCLUDED from short-id resolution (their ``<track-dir>`` positional
 # is not "an existing track to locate"):
@@ -317,15 +318,18 @@ COMMAND_HELP = {
     "roster": ("roster add <name> --skill <skill> [--description <text>]\n"
                "           [--class executor|verifier|reviewer|advisory] [--fence <text>]\n"
                "           [--recovery result-file|stdout-block|none] [--recovery-instruction <text>]\n"
+               "           [--no-retry] [--no-registry-injection]\n"
                "           [--force] [--project-dir <dir>]",
                "Adopt an outside skill as a conductor agent: generate the wrapper "
                ".claude/agents/<name>.md (skills-frontmatter preload + conductor result "
                "contract) and upsert its agent-roster overlay row (defaults = the "
-               "task-executor scaffold). Validated before write; keeps a .bak."),
+               "task-executor scaffold: retry + registry-injection ON — bind it as a "
+               "task-class executor persona via `tag add --agent <name>`). "
+               "Validated before write; keeps a .bak."),
     "tag": ("tag add <name> --when-to-use <text> [--route executor|manual|explore]\n"
             "         [--signals \"a,b\"] [--examples \"canonical case;borderline case\"]\n"
             "         [--gates tdd,coverage,checkpoint] [--grounding test|review|data-check|human-attest]\n"
-            "         [--over-tag-risk] [--refactor] [--auto-propose]\n"
+            "         [--agent <roster-name>] [--over-tag-risk] [--refactor] [--auto-propose]\n"
             "         [--workflow <prose> | --workflow-doc <name>.md] [--force] [--project-dir <dir>]",
             "Generate a project task-type: upsert one row into the project overlay "
             "conductor/workflow/task-type-profiles.json (existing rows/default preserved, "
@@ -770,6 +774,8 @@ def main():
                 fence=flag(rest, "--fence"),
                 recovery=flag(rest, "--recovery"),
                 recovery_instruction=flag(rest, "--recovery-instruction"),
+                retry="--no-retry" not in rest,
+                registry_injection="--no-registry-injection" not in rest,
                 force="--force" in rest,
                 project_dir=flag(rest, "--project-dir"))
             out(result)
@@ -796,6 +802,7 @@ def main():
                 route=flag(rest, "--route"),
                 gates=gates,
                 grounding=flag(rest, "--grounding"),
+                agent=flag(rest, "--agent"),
                 workflow=flag(rest, "--workflow"),
                 workflow_doc=flag(rest, "--workflow-doc"),
                 refactor="--refactor" in rest,

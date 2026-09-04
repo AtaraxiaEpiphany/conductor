@@ -1,0 +1,460 @@
+"""Track-2 persona binding — the registry groundwork (commit 1).
+
+The schema layer before the dispatch chokepoint lands: a tag row may declare
+``agent: <roster-name>`` (the executor PERSONA — a rostered wrapper agent that
+class's ``[Tag]`` tasks dispatch instead of task-executor). These tests pin:
+
+- ``agent_for`` — the leading-tag accessor: declared binding returned, absent
+  / untagged / malformed fail-open to ``None``;
+- validation — fragment-level string-ness (``validate_tag_row``) + the
+  merged-level roster-membership cross-check (``validate_merged_task_types``:
+  a project tag may bind a PROJECT wrapper agent, so membership needs the
+  resolved roster — the probes-precedent lazy join);
+- ``roster add`` scaffold parity — ``retry``/``registry_injection`` written
+  EXPLICITLY both ways (always-write-explicitly doctrine);
+- ``tag add --agent`` — the binding lands on the row, unrostered bindings
+  refused at the merged gate;
+- studio parity — the ``agent`` dropdown (merged roster names), the per-task
+  profile/card fields, and the task-graph ``route_agent`` persona arm
+  (executor-only: explore/manual still route their own way);
+- ``misc._roster_lint_findings`` — the check-time join catches a binding whose
+  roster row drifted away after the save.
+"""
+
+import json
+import os
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import TestCase
+
+
+class _ProjectEnv(TestCase):
+    """Env-snapshot discipline (mirror of test_grounding_resolution): snapshot
+    /restore ``CLAUDE_PROJECT_DIR`` + cache_clear on BOTH registry loaders —
+    profiles and roster (the persona seam joins the two)."""
+
+    def setUp(self):
+        from scripts.track_state import task_profiles, agent_roster
+        self.tp = task_profiles
+        self.ar = agent_roster
+        self._prior_proj = os.environ.get("CLAUDE_PROJECT_DIR")
+
+    def tearDown(self):
+        if self._prior_proj is None:
+            os.environ.pop("CLAUDE_PROJECT_DIR", None)
+        else:
+            os.environ["CLAUDE_PROJECT_DIR"] = self._prior_proj
+        self.tp._load.cache_clear()
+        self.ar._load.cache_clear()
+
+    def _mk_project(self):
+        proj = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(proj, ignore_errors=True))
+        Path(proj, "conductor", "tracks").mkdir(parents=True)
+        Path(proj, "conductor", "workflow").mkdir(parents=True)
+        return proj
+
+    def _set_project(self, proj):
+        os.environ["CLAUDE_PROJECT_DIR"] = proj
+        self.tp._load.cache_clear()
+        self.ar._load.cache_clear()
+
+    def _write_profiles_overlay(self, proj, data):
+        Path(proj, "conductor", "workflow", "task-type-profiles.json").write_text(
+            json.dumps(data), encoding="utf-8",
+        )
+        self.tp._load.cache_clear()
+
+    def _write_roster_overlay(self, proj, agents):
+        Path(proj, "conductor", "workflow", "agent-roster.json").write_text(
+            json.dumps({"agents": agents}), encoding="utf-8",
+        )
+        self.ar._load.cache_clear()
+
+
+class AgentForTests(_ProjectEnv):
+    """``agent_for``: the leading-tag persona lookup, fail-open."""
+
+    def test_absent_binding_and_untagged_fail_open_to_none(self):
+        # Shipped baseline carries no agent binding on any row.
+        self.assertIsNone(self.tp.agent_for([]))
+        self.assertIsNone(self.tp.agent_for(["Docs"]))
+        self.assertIsNone(self.tp.agent_for(["Refactor"]))
+
+    def test_declared_binding_returned_for_leading_tag(self):
+        proj = self._mk_project()
+        self._write_profiles_overlay(proj, {"tags": {"Data": {
+            "route": "executor", "when_to_use": "pipeline work",
+            "gates": ["checkpoint"], "grounding": "data-check",
+            "agent": "data-plumber",
+        }}})
+        self._set_project(proj)
+        self.assertEqual(self.tp.agent_for(["Data"]), "data-plumber")
+        # Leading tag only — the class-declared field is single-sourced
+        # (mirrors the route).
+        self.assertIsNone(self.tp.agent_for(["Docs", "Data"]))
+        self.assertEqual(self.tp.agent_for(["Data", "Docs"]), "data-plumber")
+
+    def test_malformed_binding_fails_open_to_none(self):
+        proj = self._mk_project()
+        self._write_profiles_overlay(proj, {"tags": {"Data": {
+            "route": "executor", "when_to_use": "pipeline work",
+            "gates": ["checkpoint"], "grounding": "data-check",
+            "agent": 123,
+        }}})
+        self._set_project(proj)
+        self.assertIsNone(self.tp.agent_for(["Data"]),
+                          "a malformed value must degrade to default "
+                          "dispatch, never crash one")
+
+
+class TagRowAgentValidation(TestCase):
+    """Fragment-level: string-ness only (a project tag may bind a project
+    wrapper the fragment view cannot see — membership is the merged gate)."""
+
+    def setUp(self):
+        from scripts.track_state.registry_validate import validate_tag_row
+        self.validate = validate_tag_row
+
+    def test_valid_string_binding_passes(self):
+        row = {"gates": ["checkpoint"], "grounding": "data-check",
+               "agent": "data-plumber"}
+        self.assertEqual(self.validate("Data", row), [])
+
+    def test_non_string_binding_refused(self):
+        row = {"gates": ["checkpoint"], "grounding": "data-check",
+               "agent": 123}
+        errs = self.validate("Data", row)
+        self.assertEqual(len(errs), 1, errs)
+        self.assertIn("agent must be a non-empty string", errs[0])
+
+    def test_empty_string_binding_refused(self):
+        row = {"gates": ["checkpoint"], "grounding": "data-check",
+               "agent": ""}
+        errs = self.validate("Data", row)
+        self.assertEqual(len(errs), 1, errs)
+        self.assertIn("agent must be a non-empty string", errs[0])
+
+
+class MergedMembershipTests(_ProjectEnv):
+    """The save-gate cross-check: a tag's ``agent`` must name a merged-roster
+    row (baseline ⊕ project overlay)."""
+
+    ROW = {"route": "executor", "when_to_use": "pipeline work",
+           "gates": ["checkpoint"], "grounding": "data-check"}
+
+    def _merged(self, agent):
+        from scripts.track_state.registry_validate import (
+            validate_merged_task_types)
+        row = {**self.ROW, **({"agent": agent} if agent is not None else {})}
+        return validate_merged_task_types({
+            "default": {"route": "executor", "gates": ["tdd", "coverage",
+                                                       "checkpoint"],
+                        "grounding": "test"},
+            "tags": {"Data": row},
+        })
+
+    def test_unrostered_binding_fails_the_merged_gate(self):
+        errs = self._merged("ghost-agent")
+        self.assertEqual(len([e for e in errs if "agent binding" in e]), 1, errs)
+        self.assertIn("'ghost-agent' is not in the merged agent roster", errs[0])
+        self.assertIn("fail-opens to task-executor", errs[0])
+
+    def test_absent_binding_passes(self):
+        self.assertEqual(self._merged(None), [])
+
+    def test_baseline_rostered_binding_passes(self):
+        self.assertEqual(self._merged("corpus-writer"), [])
+
+    def test_project_wrapper_binding_passes_when_rostered(self):
+        # The reason membership lives at the MERGED level: a project tag may
+        # bind a project wrapper agent, invisible to the plugin baseline.
+        proj = self._mk_project()
+        self._write_roster_overlay(proj, {"data-plumber": {
+            "class": "executor", "fence": "---TASK RESULT--- ... ---END RESULT---",
+            "registry_injection": True, "retry": True,
+        }})
+        self._set_project(proj)
+        self.assertEqual(self._merged("data-plumber"), [])
+
+
+class RosterAddParityTests(TestCase):
+    """``roster add`` writes the scaffold-parity booleans EXPLICITLY both ways
+    (absent reads mean OFF — a generated row must never leave them implicit)."""
+
+    def setUp(self):
+        from scripts.track_state import agent_roster
+        self.ar = agent_roster
+        self._prior_proj = os.environ.get("CLAUDE_PROJECT_DIR")
+
+    def tearDown(self):
+        if self._prior_proj is None:
+            os.environ.pop("CLAUDE_PROJECT_DIR", None)
+        else:
+            os.environ["CLAUDE_PROJECT_DIR"] = self._prior_proj
+        self.ar._load.cache_clear()
+
+    def _project(self):
+        proj = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(proj, ignore_errors=True))
+        Path(proj, "conductor", "tracks").mkdir(parents=True)
+        return proj
+
+    def _overlay_row(self, proj, name):
+        doc = json.loads(
+            Path(proj, "conductor", "workflow", "agent-roster.json")
+            .read_text(encoding="utf-8"))
+        return doc["agents"][name]
+
+    def test_defaults_written_explicitly_true(self):
+        proj = self._project()
+        res = self.ar.roster_add("data-plumber", "data-pipeline",
+                                 project_dir=proj)
+        self.assertTrue(res["ok"], res)
+        row = self._overlay_row(proj, "data-plumber")
+        self.assertIs(row["registry_injection"], True,
+                      "explicit, not implicit-by-absence")
+        self.assertIs(row["retry"], True)
+
+    def test_opt_outs_written_explicitly_false(self):
+        proj = self._project()
+        res = self.ar.roster_add("fast-one", "data-pipeline",
+                                 retry=False, registry_injection=False,
+                                 project_dir=proj)
+        self.assertTrue(res["ok"], res)
+        row = self._overlay_row(proj, "fast-one")
+        self.assertIs(row["registry_injection"], False)
+        self.assertIs(row["retry"], False)
+
+
+class TagAddAgentTests(_ProjectEnv):
+    """``tag add --agent``: binding lands on the row; the merged gate refuses
+    unrostered names at save time."""
+
+    def _add(self, proj, agent=None):
+        kwargs = {} if agent is None else {"agent": agent}
+        return self.tp.tag_add(
+            "Data", when_to_use="pipeline work", gates=["checkpoint"],
+            grounding="data-check", project_dir=proj, **kwargs)
+
+    def test_binding_written_on_the_row(self):
+        proj = self._mk_project()
+        # Roster the wrapper first (the merged gate reads the env ladder, so
+        # the project must be current BEFORE the add).
+        self._write_roster_overlay(proj, {"data-plumber": {
+            "class": "executor", "fence": "---TASK RESULT--- ... ---END RESULT---",
+            "registry_injection": True, "retry": True,
+        }})
+        self._set_project(proj)
+        res = self._add(proj, agent="data-plumber")
+        self.assertTrue(res["ok"], res)
+        doc = json.loads(
+            Path(proj, "conductor", "workflow", "task-type-profiles.json")
+            .read_text(encoding="utf-8"))
+        self.assertEqual(doc["tags"]["Data"]["agent"], "data-plumber")
+
+    def test_absent_agent_leaves_field_off_the_row(self):
+        proj = self._mk_project()
+        self._set_project(proj)
+        res = self._add(proj)
+        self.assertTrue(res["ok"], res)
+        doc = json.loads(
+            Path(proj, "conductor", "workflow", "task-type-profiles.json")
+            .read_text(encoding="utf-8"))
+        self.assertNotIn("agent", doc["tags"]["Data"],
+                         "absent = default task-executor dispatch")
+
+    def test_unrostered_binding_refused_at_save(self):
+        proj = self._mk_project()
+        self._set_project(proj)
+        res = self._add(proj, agent="ghost-agent")
+        self.assertFalse(res["ok"])
+        self.assertTrue(any("not in the merged agent roster" in e
+                            for e in res["errors"]), res["errors"])
+        # Refused BEFORE the write — no overlay row landed.
+        self.assertFalse(
+            Path(proj, "conductor", "workflow", "task-type-profiles.json")
+            .exists())
+
+
+class StudioVocabTests(_ProjectEnv):
+    """The ``agent`` dropdown sources from the merged roster (cross-module
+    read, the probes precedent) — a project wrapper appears as an option."""
+
+    def test_vocab_agent_options_follow_merged_roster(self):
+        from scripts.track_state import shape_studio as ss
+        proj = self._mk_project()
+        self._write_roster_overlay(proj, {"data-plumber": {
+            "class": "executor", "fence": "---TASK RESULT--- ... ---END RESULT---",
+            "registry_injection": True, "retry": True,
+        }})
+        self._set_project(proj)
+        options = ss._vocab()["task-types"]["scalar_fields"]["agent"]
+        self.assertIn("task-executor", options)
+        self.assertIn("data-plumber", options)
+
+    def test_task_profile_carries_agent_field(self):
+        from scripts.track_state import shape_studio as ss
+        proj = self._mk_project()
+        self._write_profiles_overlay(proj, {"tags": {"Data": {
+            "route": "executor", "when_to_use": "pipeline work",
+            "gates": ["checkpoint"], "grounding": "data-check",
+            "agent": "data-plumber",
+        }}})
+        self._set_project(proj)
+        prof = ss._task_profile("Data")
+        self.assertEqual(prof["agent"], "data-plumber")
+        self.assertIsNone(ss._task_profile("Docs")["agent"])
+
+    def test_task_card_carries_agent_and_wrapped_skill(self):
+        from scripts.track_state import shape_studio as ss
+        proj = self._mk_project()
+        self._write_profiles_overlay(proj, {"tags": {"Data": {
+            "route": "executor", "when_to_use": "pipeline work",
+            "gates": ["checkpoint"], "grounding": "data-check",
+            "agent": "data-plumber",
+        }}})
+        # The wrapper file wrapper_skill_for reads (project home first).
+        agents_dir = Path(proj, ".claude", "agents")
+        agents_dir.mkdir(parents=True)
+        (agents_dir / "data-plumber.md").write_text(
+            "---\nskills: [data-pipeline]\n---\nbody\n", encoding="utf-8")
+        self._set_project(proj)
+        card = ss._task_card(1, {"name": "[Data] Pump the pipeline",
+                                 "index": 1, "status": "pending"})
+        self.assertEqual(card["agent"], "data-plumber")
+        self.assertEqual(card["agent_skill"], "data-pipeline")
+
+
+class TaskGraphPersonaTests(TestCase):
+    """``/api/task-workflow``'s ``route_agent``: a class-bound persona
+    overrides the executor mapping; explore/manual route their own way."""
+
+    def setUp(self):
+        from scripts.track_state import task_profiles, agent_roster
+        from scripts.track_state.core import save
+        from test_shape_studio_server import _Server, _get_json
+        self._save = save
+        self._Server = _Server
+        self._get_json = _get_json
+        self.tp, self.ar = task_profiles, agent_roster
+        self._prior_proj = os.environ.get("CLAUDE_PROJECT_DIR")
+
+    def tearDown(self):
+        if self._prior_proj is None:
+            os.environ.pop("CLAUDE_PROJECT_DIR", None)
+        else:
+            os.environ["CLAUDE_PROJECT_DIR"] = self._prior_proj
+        self.tp._load.cache_clear()
+        self.ar._load.cache_clear()
+
+    def _project(self, tasks, profiles_overlay):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(tmp, ignore_errors=True))
+        tdir = Path(tmp, "conductor", "tracks", "auth")
+        tdir.mkdir(parents=True)
+        Path(tmp, "conductor", "workflow").mkdir(parents=True)
+        self._save(str(tdir), {
+            "track_id": "auth", "type": "feature", "status": "in_progress",
+            "workflow_shape": "default", "current_phase_index": 1,
+            "current_task_index": 1,
+            "phases": [{"name": "Phase 1", "status": "in_progress",
+                        "tasks": tasks}],
+        })
+        Path(tmp, "conductor", "workflow", "task-type-profiles.json").write_text(
+            json.dumps(profiles_overlay), encoding="utf-8")
+        Path(tmp, "conductor", "workflow", "agent-roster.json").write_text(
+            json.dumps({"agents": {"data-plumber": {
+                "class": "executor",
+                "fence": "---TASK RESULT--- ... ---END RESULT---",
+                "registry_injection": True, "retry": True}}}),
+            encoding="utf-8")
+        os.environ["CLAUDE_PROJECT_DIR"] = tmp
+        self.tp._load.cache_clear()
+        self.ar._load.cache_clear()
+        return tmp, tdir
+
+    _DATA_ROW = {"route": "executor", "when_to_use": "pipeline work",
+                 "gates": ["checkpoint"], "grounding": "data-check",
+                 "agent": "data-plumber"}
+    _EXPLORE_ROW = {"route": "explore", "when_to_use": "read-only look",
+                    "gates": ["coverage", "checkpoint"], "grounding": "review",
+                    "agent": "data-plumber"}
+
+    def test_persona_overrides_executor_mapping(self):
+        tmp, tdir = self._project(
+            tasks=[{"name": "[Data] Pump the pipeline", "status": "pending"}],
+            profiles_overlay={"tags": {"Data": self._DATA_ROW}})
+        with self._Server(tmp) as srv:
+            status, g = self._get_json(
+                srv.base, f"/api/task-workflow?track={tdir}&phase=1&task=1")
+            self.assertEqual(status, 200, g)
+            self.assertTrue(g["ok"], g)
+            self.assertEqual(g["route_agent"], "data-plumber")
+            self.assertEqual(g["card"]["agent"], "data-plumber")
+
+    def test_explore_route_ignores_persona_binding(self):
+        # A persona IS an executor — non-executor routes keep their mapping
+        # even when the class row carries a binding.
+        tmp, tdir = self._project(
+            tasks=[{"name": "[Map] the pipeline", "status": "pending"}],
+            profiles_overlay={"tags": {"Map": self._EXPLORE_ROW}})
+        with self._Server(tmp) as srv:
+            status, g = self._get_json(
+                srv.base, f"/api/task-workflow?track={tdir}&phase=1&task=1")
+            self.assertEqual(status, 200, g)
+            self.assertEqual(g["route_agent"], "explorer")
+
+    def test_unbound_executor_task_still_routes_task_executor(self):
+        tmp, tdir = self._project(
+            tasks=[{"name": "Plain feature work", "status": "pending"}],
+            profiles_overlay={"tags": {"Data": self._DATA_ROW}})
+        with self._Server(tmp) as srv:
+            status, g = self._get_json(
+                srv.base, f"/api/task-workflow?track={tdir}&phase=1&task=1")
+            self.assertEqual(status, 200, g)
+            self.assertEqual(g["route_agent"], "task-executor")
+
+
+class RosterLintJoinTests(_ProjectEnv):
+    """``misc._roster_lint_findings``: the check-time join — a binding whose
+    roster row drifted away after the save gets loud here."""
+
+    def _overlay(self, agent):
+        proj = self._mk_project()
+        row = {"route": "executor", "when_to_use": "pipeline work",
+               "gates": ["checkpoint"], "grounding": "data-check"}
+        if agent is not None:
+            row["agent"] = agent
+        self._write_profiles_overlay(proj, {"tags": {"Data": row}})
+        self._set_project(proj)
+        return proj
+
+    def test_dead_binding_surfaced(self):
+        self._overlay("ghost-agent")
+        from scripts.track_state import misc
+        findings = misc._roster_lint_findings()
+        hits = [f for f in findings if "ghost-agent" in f]
+        self.assertEqual(len(hits), 1, findings)
+        self.assertIn("[Data] → ghost-agent", hits[0])
+        self.assertIn("persona", hits[0])
+
+    def test_rostered_binding_silent(self):
+        # A baseline rostered name with a shipped agent file — no finding of
+        # either family (membership + declared-names both clean).
+        self._overlay("corpus-writer")
+        from scripts.track_state import misc
+        findings = misc._roster_lint_findings()
+        self.assertFalse([f for f in findings if "persona" in f
+                          or "corpus-writer" in f], findings)
+
+    def test_absent_binding_silent(self):
+        self._overlay(None)
+        from scripts.track_state import misc
+        findings = misc._roster_lint_findings()
+        self.assertFalse([f for f in findings if "persona" in f], findings)
+
+
+if __name__ == "__main__":
+    unittest.main()
