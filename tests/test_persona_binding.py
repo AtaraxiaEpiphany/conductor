@@ -840,5 +840,77 @@ class WrapperMaxTurnsTests(TestCase):
         self.assertIn("maxTurns: 64", text)
 
 
+class WaveScopePinTests(_ProjectEnv):
+    """The declared boundary: persona binding is SERIAL-RAIL-ONLY. Wave
+    members always dispatch task-executor (skills/parallel §3.2 dispatches
+    ``conductor:task-executor`` per member) — members carry no ``agent`` key
+    in the envelope, the ledger, or the projection whitelist, and the member
+    prompt never consults the binding. Extending waves to parallel personas
+    waits for a real need (extensibility decision, not an oversight)."""
+
+    def test_wave_members_dispatch_task_executor_regardless_of_binding(self):
+        import io
+        import subprocess
+        from scripts.track_state.core import save
+        from scripts.track_state.wave import (
+            cmd_dispatch_wave, _wave_ledger_path, _wave_assemble_member_prompt,
+            _ORCH_MEMBER_KEYS)
+
+        proj = self._mk_project()
+        self._write_profiles_overlay(proj, {"tags": {"Data": {
+            "route": "executor", "when_to_use": "pipeline work",
+            "gates": ["checkpoint"], "grounding": "data-check",
+            "agent": "data-plumber",
+        }}})
+        self._write_roster_overlay(proj, {"data-plumber": dict(_PERSONA_ROW)})
+        self._set_project(proj)
+
+        subprocess.run(["git", "init", "-q"], cwd=proj, check=True)
+        subprocess.run(["git", "config", "user.email", "t@t.t"], cwd=proj,
+                       check=True)
+        subprocess.run(["git", "config", "user.name", "t"], cwd=proj,
+                       check=True)
+        Path(proj, "README.md").write_text("# base\n", encoding="utf-8")
+        subprocess.run(["git", "add", "README.md"], cwd=proj, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=proj,
+                       check=True)
+        Path(proj, "plan.md").write_text(
+            "# Plan\n\n## Phase 1: Build\n"
+            "- [ ] [Data] Task 1: t1 <!-- deps: -->\n"
+            "- [ ] [Data] Task 2: t2 <!-- deps: -->\n",
+            encoding="utf-8")
+        save(str(proj), {
+            "track_id": "wtest", "type": "feature", "status": "in_progress",
+            "current_phase_index": 1, "current_task_index": 0,
+            "phases": [{"name": "Phase 1", "tasks": [
+                {"name": "[Data] Task 1: t1", "status": "pending"},
+                {"name": "[Data] Task 2: t2", "status": "pending"}]}],
+        })
+
+        old_out, old_err = sys.stdout, sys.stderr
+        sys.stdout, sys.stderr = io.StringIO(), io.StringIO()
+        try:
+            cmd_dispatch_wave(str(proj))
+            out = json.loads(sys.stdout.getvalue())
+        finally:
+            sys.stdout, sys.stderr = old_out, old_err
+        self.assertEqual(out["action"], "dispatch_wave")
+        members = out["wave"]
+        self.assertEqual(len(members), 2)
+        for m in members:
+            self.assertNotIn("agent", m,
+                             "the slim consumer shape carries no persona")
+        ledger = json.loads(_wave_ledger_path(str(proj)).read_text())
+        self.assertEqual(len(ledger["wave"]), 2)
+        for m in ledger["wave"]:
+            self.assertNotIn("agent", m, "the ledger is agent-free too")
+            prompt = _wave_assemble_member_prompt(m)
+            self.assertNotIn("data-plumber", prompt,
+                             "the pre-assembled member prompt never names "
+                             "the persona — task-executor dispatches it")
+        # Drift guard: the projection whitelist stays agent-free.
+        self.assertNotIn("agent", _ORCH_MEMBER_KEYS)
+
+
 if __name__ == "__main__":
     unittest.main()
