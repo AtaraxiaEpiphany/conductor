@@ -103,14 +103,15 @@ class RegistryDriftTests(TestCase):
         self.assertTrue(REGISTRY.exists(), "task-type-profiles.json registry must exist")
 
     def test_registry_has_semantics_for_every_tag(self):
-        # Each registered tag must declare route + both exemption flags (the
-        # fields the code reads). A row missing a key silently inherits the
-        # default profile — assert the intent is explicit so a future editor
-        # sees the full picture per row.
+        # Each registered tag must declare route + gates + grounding (the
+        # fields the code reads — the positive form; the exemption booleans
+        # are derived from gates by task_profiles._resolve_row). A row
+        # missing a key silently inherits the default profile — assert the
+        # intent is explicit so a future editor sees the full picture per row.
         import json
         data = json.loads(REGISTRY.read_text(encoding="utf-8"))
         for tag, prof in data["tags"].items():
-            for field in ("route", "tdd_exempt", "coverage_exempt"):
+            for field in ("route", "gates", "grounding"):
                 self.assertIn(
                     field, prof,
                     f"registry tag [{tag}] missing required field '{field}'",

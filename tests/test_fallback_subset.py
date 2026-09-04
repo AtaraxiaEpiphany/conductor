@@ -70,10 +70,16 @@ class FallbackSubsetTests(unittest.TestCase):
             fallback = tp._FALLBACK.get("tags", {})
             resolved = tp._load().get("tags", {})
         self.assertTrue(fallback, "task _FALLBACK has no 'tags' entities")
-        # Every fallback tag must exist in the baseline (no phantom fail-open tag).
+        # Every fallback tag must exist in the baseline (no phantom fail-open
+        # tag). Rows compare in NORMALIZED form (tp._resolve_row): the
+        # fallback is frozen in the legacy boolean form while the baseline
+        # carries the positive gates/grounding form — normalization puts both
+        # encodings on each side, so the subset contract still reads "the
+        # fallback declares nothing the real row dropped".
         for tag, frow in fallback.items():
             self.assertIn(tag, resolved, f"fallback tag {tag!r} not in baseline")
-            _assert_subset(self, f"task {tag}", frow, resolved[tag])
+            _assert_subset(self, f"task {tag}",
+                           tp._resolve_row(frow), tp._resolve_row(resolved[tag]))
 
     def test_workflow_shapes_fallback_subset_of_baseline(self):
         with _no_overlay():

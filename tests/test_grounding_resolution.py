@@ -10,8 +10,9 @@ booleans), but both forms already resolve. These tests pin:
   (new-form overlay rows work TODAY, before the baseline flips) — including
   the derivation-exactness invariant: for every baseline tag,
   ``is_tdd_exempt([t]) == ("tdd" not in gates_of(t))``;
-- ``validate_tag_row``'s new ``gates``/``grounding`` forms + guards 1–2
-  (tdd/coverage gates require a test grounding when the row declares one).
+- ``validate_tag_row``'s new ``gates``/``grounding`` forms + the tdd-gate
+  guard (tdd requires a test grounding when the row declares one; coverage
+  deliberately unconstrained — [Explore] owes coverage while review-grounded).
 """
 
 import json
@@ -265,19 +266,26 @@ class ValidateTagRowFormsTests(TestCase):
         errs = self.validate("X", {"gates": ["tdd", "bogus"]})
         self.assertTrue(any("not in" in e and "bogus" in e for e in errs))
 
-    def test_guards_test_witnessing_gates_need_test_grounding(self):
-        # Guard 1: tdd gate + non-test grounding declared on the row.
+    def test_guard_tdd_gate_needs_test_grounding(self):
+        # Guard 1: the tdd gate (red/green order) + non-test grounding
+        # declared on the row.
         errs = self.validate("X", {
             "gates": ["tdd", "checkpoint"], "grounding": "review"})
         self.assertEqual(len(errs), 1)
         self.assertIn("witness a test-grounded deliverable", errs[0])
-        # Guard 2: coverage gate + non-test grounding.
-        errs = self.validate("X", {
-            "gates": ["coverage", "checkpoint"], "grounding": "data-check"})
-        self.assertEqual(len(errs), 1)
-        # tdd/coverage with grounding test: clean.
+        # tdd with grounding test: clean.
         self.assertEqual(self.validate("X", {
-            "gates": ["coverage", "checkpoint"], "grounding": "test"}), [])
+            "gates": ["tdd", "coverage", "checkpoint"], "grounding": "test"}), [])
+
+    def test_coverage_gate_carries_no_grounding_constraint(self):
+        # Deliberate (the flip proved it): coverage is repo accounting, not
+        # deliverable test-witnessing — [Explore] owes coverage on adjacent
+        # changes while its findings report is review-grounded. A guard here
+        # would outlaw the shipped baseline row.
+        self.assertEqual(self.validate("X", {
+            "gates": ["coverage", "checkpoint"], "grounding": "review"}), [])
+        self.assertEqual(self.validate("X", {
+            "gates": ["coverage", "checkpoint"], "grounding": "data-check"}), [])
 
     def test_guards_only_fire_when_row_declares_grounding(self):
         # A gates-only row may inherit a consistent grounding from the

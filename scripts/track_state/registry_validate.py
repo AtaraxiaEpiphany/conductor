@@ -261,15 +261,17 @@ def validate_tag_row(name: str, row) -> list[str]:
             if bad:
                 errs.append(
                     f"tag {name!r}: gates entries {bad!r} not in {list(GATES)}")
-            # Guards 1+2: the test-witnessing gates (tdd's red/green order,
-            # coverage's 80% line floor) only make sense for a class whose
-            # grounding IS test — they are unmeasurable for a review/data/
-            # human-attested deliverable. Raw-row check: only fires when the
-            # row itself declares grounding; a gates-only row may inherit a
-            # consistent grounding from the default (the merged-level check
-            # in validate_registry catches the inheritance that violates).
-            if ("tdd" in val or "coverage" in val) and \
-                    "grounding" in row and row["grounding"] != "test":
+            # Guard 1: the tdd gate (red/green ORDER for the deliverable) only
+            # makes sense for a class whose grounding IS test. The coverage
+            # gate deliberately carries NO grounding constraint — it is repo
+            # accounting that also runs for classes whose own deliverable is
+            # not test-witnessed ([Explore] owes coverage on adjacent changes
+            # while its findings report is review-grounded). Raw-row check:
+            # only fires when the row itself declares grounding; a gates-only
+            # row may inherit a consistent grounding from the default (the
+            # merged-level check in validate_registry catches the
+            # inheritance that violates).
+            if "tdd" in val and "grounding" in row and row["grounding"] != "test":
                 errs.append(
                     f"tag {name!r}: gates include tdd/coverage but "
                     f"grounding={row['grounding']!r} — those gates witness a "
